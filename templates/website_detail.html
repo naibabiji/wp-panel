@@ -78,7 +78,7 @@
                 </label>
                 <label class="flex items-center space-x-2 text-sm text-gray-300 ml-4">
                     <span>保留</span>
-                    <input type="number" x-model="backupKeepCount" @change="saveBackupSettings()" class="input-field w-16 text-sm py-0.5 text-center" min="1" max="30">
+                    <input type="number" x-model.number="backupKeepCount" @change="saveBackupSettings()" class="input-field w-16 text-sm py-0.5 text-center" min="1" max="30">
                     <span>份</span>
                 </label>
             </div>
@@ -610,7 +610,7 @@ function websiteDetail() {
             try {
                 await api("/websites/" + this.site.id + "/backups/settings", {
                     method: "PUT",
-                    body: { enabled: this.backupEnabled, keep_count: this.backupKeepCount }
+                    body: { enabled: this.backupEnabled, keep_count: parseInt(this.backupKeepCount) || 7 }
                 });
             } catch(e) { showToast(e.message, "error"); }
         },
