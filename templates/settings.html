@@ -106,8 +106,7 @@
     </div>
 
     <div class="card mb-6" x-data="remoteBackup()" x-init="fetchRemote()">
-        <h3 class="text-lg font-semibold text-white mb-4">远程备份</h3>
-        <p class="text-xs text-gray-500 mb-4">备份完成后自动通过 SSH + rsync 同步到远程服务器</p>
+        <div class="flex items-center justify-between mb-4"><h3 class="text-lg font-semibold text-white">远程备份</h3><button @click="showHelp = true" class="text-xs py-1 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">使用说明</button></div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <!-- 左侧：备份设置 -->
@@ -212,6 +211,52 @@
                 </div>
             </div>
         </div>
+
+            <!-- 使用说明弹窗 -->
+            <div x-show="showHelp" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50" @click.self="showHelp = false">
+                <div class="rounded-lg shadow-xl w-full max-w-xl p-6 max-h-80vh overflow-y-auto" style="background-color: #1e293b; border: 1px solid #334155;">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-white">远程备份使用说明</h3>
+                        <button @click="showHelp = false" class="text-gray-400 hover:text-white text-xl">&times;</button>
+                    </div>
+                    <div class="text-sm text-gray-300 space-y-4">
+                        <div>
+                            <p class="font-medium text-blue-400 mb-1">工作流程</p>
+                            <ol class="text-gray-400 list-decimal list-inside space-y-1">
+                                <li>面板在本地完成数据库或文件备份</li>
+                                <li>自动通过 SSH + rsync 将备份文件传送到远程服务器</li>
+                                <li>如果关闭「保留本地备份」，传送成功后自动删除本地文件以节省空间</li>
+                            </ol>
+                        </div>
+                        <div>
+                            <p class="font-medium text-blue-400 mb-1">远程服务器要求</p>
+                            <ul class="text-gray-400 list-disc list-inside space-y-1">
+                                <li>已开启 SSH 服务并能从本机连接</li>
+                                <li>目标目录存在且备份账号有写入权限</li>
+                                <li>防火墙放行 SSH 端口（默认 22）</li>
+                            </ul>
+                        </div>
+                        <div>
+                            <p class="font-medium text-blue-400 mb-1">认证方式</p>
+                            <ul class="text-gray-400 list-disc list-inside space-y-1">
+                                <li><span class="text-yellow-300">SSH 密钥（推荐）</span>：面板自动生成密钥对，右侧助手生成的一键命令已包含公钥，远程粘贴执行即可。无需安装额外软件。</li>
+                                <li><span class="text-gray-500">密码</span>：面板保存设置时自动安装 sshpass，无需手动操作。</li>
+                            </ul>
+                        </div>
+                        <div>
+                            <p class="font-medium text-blue-400 mb-1">安全建议</p>
+                            <ul class="text-gray-400 list-disc list-inside space-y-1">
+                                <li>在远程服务器创建<span class="text-yellow-300">专用备份账号</span>，不要使用 root，权限最小化更安全</li>
+                                <li>远程备份目录不会自动清理旧文件，建议定期手动检查</li>
+                                <li>密钥文件位于 <code class="text-gray-500">/www/server/panel/remote_backup_key</code>，妥善保管</li>
+                            </ul>
+                        </div>
+                        <div class="p-3 rounded" style="background-color: #0f172a; border: 1px solid #334155;">
+                            <p class="text-gray-400 text-xs">提示：右侧「一键设置」助手生成的命令可直接复制到远程服务器 SSH 终端粘贴执行，回车即完成全部配置。</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
     </div>
 
     <div class="card" x-data="operationLogs()" x-init="fetchLogs()">
@@ -391,6 +436,7 @@ function remoteBackup() {
         saving: false,
         saveMsg: '',
         saveOK: false,
+        showHelp: false,
         helperUser: 'wpbackup',
         helperPass: '',
         helperDir: '',
