@@ -174,6 +174,9 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/settings", settingsHandler.GetSettings)
 	protected.PUT("/api/settings", settingsHandler.UpdateSettings)
 	protected.GET("/api/settings/logs", settingsHandler.GetOperationLogs)
+		protected.GET("/api/settings/remote-backup", handlers.GetRemoteBackup)
+		protected.PUT("/api/settings/remote-backup", handlers.SaveRemoteBackup)
+		protected.POST("/api/settings/remote-backup/test", handlers.TestRemoteBackup)
 
 	protected.GET("/", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "dashboard.html", pageData(suffix, "dashboard", "dashboard_content", c))

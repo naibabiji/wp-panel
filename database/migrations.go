@@ -261,4 +261,21 @@ var migrations = []string{
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_alert_log_type ON alert_log(alert_type, created_at)`,
+
+		// 远程备份设置
+		`CREATE TABLE IF NOT EXISTS remote_backup_settings (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			enabled     INTEGER NOT NULL DEFAULT 0,
+			host        TEXT    NOT NULL DEFAULT '',
+			port        INTEGER NOT NULL DEFAULT 22,
+			username    TEXT    NOT NULL DEFAULT 'root',
+			auth_type   TEXT    NOT NULL DEFAULT 'password',
+			password    TEXT    NOT NULL DEFAULT '',
+			ssh_key     TEXT    NOT NULL DEFAULT '',
+			remote_path TEXT    NOT NULL DEFAULT '',
+			keep_local  INTEGER NOT NULL DEFAULT 1,
+			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`INSERT OR IGNORE INTO remote_backup_settings (id) VALUES (1)`,
 }

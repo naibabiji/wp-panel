@@ -67,9 +67,10 @@ func ExecuteFileBackup(siteID int, mode string) (string, error) {
 	// Clean old backups, keep 7
 	cleanOldBackups(backupDir, 7)
 
-	logMsg := fmt.Sprintf("%s 文件备份成功: %s (%s)", domain, tarName, map[bool]string{true: "全量", false: "增量"}[isFull])
-	appendCronLog(logMsg)
-	return logMsg, nil
+		go SyncBackupsDir()
+		logMsg := fmt.Sprintf("%s 文件备份成功: %s (%s)", domain, tarName, map[bool]string{true: "全量", false: "增量"}[isFull])
+		appendCronLog(logMsg)
+		return logMsg, nil
 }
 
 func cleanOldBackups(dir string, keep int) {
