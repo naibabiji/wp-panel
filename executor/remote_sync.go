@@ -68,5 +68,5 @@ func syncLog(msg string) {
 	fmt.Printf("[WP-Panel] %s %s\n", timestamp, msg)
 	database.GetDB().Exec(
 		"INSERT INTO operation_logs (operation, target, status, message) VALUES (?, ?, ?, ?)",
-		"远程备份", "", "info", msg)
+		"远程备份", "", "success", msg)
 }
