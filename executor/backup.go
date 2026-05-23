@@ -215,6 +215,7 @@ func executeAutoBackups() {
 		db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, auto) VALUES (?, ?, ?, ?, 1)`,
 			siteID, filename, size, dbName)
 
+			go SyncBackupToRemote(filePath)
 		cleanupOldBackups(siteID, domain, keepCount)
 	}
 }
