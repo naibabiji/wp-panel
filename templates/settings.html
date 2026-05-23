@@ -212,6 +212,136 @@
             </div>
         </div>
     </div>
+
+    <div class="card" x-data="operationLogs()" x-init="fetchLogs()">
+        <h3 class="text-lg font-semibold text-white mb-4">最近操作日志</h3>
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead class="border-b border-gray-700">
+                    <tr>
+                        <th class="table-header">时间</th>
+                        <th class="table-header">操作</th>
+                        <th class="table-header">目标</th>
+                        <th class="table-header">状态</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="log in logs" :key="log.id">
+                        <tr class="border-b border-gray-700/50">
+                            <td class="table-cell text-xs" x-text="fmtTime(log.created_at)"></td>
+                            <td class="table-cell text-sm" x-text="log.operation"></td>
+                            <td class="table-cell text-sm" x-text="log.target || '--'"></td>
+                            <td class="table-cell">
+                                <span :class="log.status === 'success' ? 'badge-success' : 'badge-danger'"
+                                      x-text="log.status === 'success' ? '成功' : '失败'"></span>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function panelSettings() {
+    return {
+        panelTitle: 'WP Panel',
+        username: '',
+        basicAuthUser: '',
+        timezone: '',
+        hostname: '',
+        serverTime: '',
+        ntpSynced: false,
+        accountSaving: false,
+        accountSaved: false,
+        pw: { old: '', new1: '', new2: '', basic: '' },
+        async fetchSettings() {
+            try {
+                const r = await api('/settings');
+                if (r.success) {
+                    this.panelTitle = r.data.panel_title || 'WP Panel';
+                    this.username = r.data.username || '';
+                    this.basicAuthUser = r.data.basic_auth_user || '';
+                    this.timezone = r.data.timezone || '';
+                    this.hostname = r.data.hostname || '';
+                    this.ntpSynced = r.data.ntp_synced || false;
+                }
+            } catch(e) {}
+            this.tickTime();
+            setInterval(() => this.tickTime(), 1000);
+        },
+        tickTime() {
+            const tz = this.timezone || 'UTC';
+            const d = new Date();
+            const opts = { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+            this.serverTime = d.toLocaleString('zh-CN', opts);
+        },
+        async saveAccount() {
+            const body = {};
+
+            if (this.basicAuthUser) body.basic_auth_user = this.basicAuthUser;
+            if (this.pw.basic && this.pw.basic.length >= 8) body.basic_auth_password = this.pw.basic;
+            else if (this.pw.basic && this.pw.basic.length < 8) { showToast('BasicAuth 密码至少8位', 'error'); return; }
+
+            if (this.username) body.username = this.username;
+            if (this.pw.new1 || this.pw.new2) {
+                if (!this.pw.old) { showToast('修改 Web 密码需输入当前密码', 'error'); return; }
+                if (this.pw.new1 !== this.pw.new2) { showToast('两次密码不一致', 'error'); return; }
+                if (this.pw.new1.length < 8) { showToast('新密码至少8位', 'error'); return; }
+                body.old_password = this.pw.old;
+                body.new_password = this.pw.new1;
+            }
+
+            if (Object.keys(body).length === 0) { showToast('无修改内容', 'info'); return; }
+
+            this.accountSaving = true;
+            try {
+                await api('/settings', { method: 'PUT', body });
+                this.accountSaved = true;
+                this.pw = { old: '', new1: '', new2: '', basic: '' };
+                showToast('账户设置已保存，即将退出登录', 'success');
+                setTimeout(async () => {
+                    try { await api('/auth/logout', { method: 'POST' }); } catch(e) {}
+                    window.location.href = (document.body.dataset.panelPrefix || '') + '/login';
+                }, 1500);
+            } catch(e) { showToast(e.message, 'error'); this.accountSaving = false; }
+        },
+        async syncNTP() {
+            try {
+                const r = await api('/settings', { method: 'PUT', body: { ntp_sync: true } });
+                showToast(r.data?.message || '时间同步已触发', 'success');
+                this.ntpSynced = true;
+            } catch(e) { showToast(e.message, 'error'); }
+        },
+        async saveBasic() {
+            try {
+                await api('/settings', { method: 'PUT', body: { panel_title: this.panelTitle } });
+                showToast('已保存', 'success');
+            } catch(e) { showToast(e.message, 'error'); }
+        },
+        async saveServerSetting(key, val) {
+            try {
+                const body = {};
+                body[key] = val;
+                await api('/settings', { method: 'PUT', body });
+                showToast('已更新', 'success');
+            } catch(e) { showToast(e.message, 'error'); }
+        }
+    }
+}
+function versionCheck() {
+    return {
+        currentVersion: "",
+        latestVersion: "",
+        releaseNotes: "",
+        hasUpdate: false,
+        checking: false,
+        updating: false,
+        updateError: "",
+        async fetchVersion() {
+            try {
+                const r = await api("/update/check");
                 if (r.success) {
                     this.currentVersion = r.data.current_version;
                     this.latestVersion = r.data.latest_version || "";
@@ -250,7 +380,6 @@ function operationLogs() {
         }
     }
 }
-
 function remoteBackup() {
     return {
         cfg: { enabled: false, host: '', port: 22, username: 'root', auth_type: 'key', password: '', remote_path: '', keep_local: true },
@@ -310,41 +439,42 @@ function remoteBackup() {
             this.helperPass = pw;
         },
         genCmd() {
-            const u = this.helperUser || 'backup';
-            const p = this.helperPass || this.genPassword() || 'changeme';
-            const dir = this.helperDir || '/home/' + u + '/backup';
-            const authType = this.cfg.auth_type || 'key';
+            var u = this.helperUser || 'backup';
+            var p = this.helperPass || '请填写密码';
+            var dir = this.helperDir || '/home/' + u + '/backup';
+            var authType = this.cfg.auth_type || 'key';
+            var NL = '\n';
 
-            let cmd = `# === 远程备份账号一键设置 ===
-# 在远程服务器以 root 执行以下全部命令：
-
-useradd -m -s /bin/bash ${u}
-echo '${u}:${p}' | chpasswd
-mkdir -p ${dir}`;
+            var lines = [
+                '# === 远程备份账号一键设置 ===',
+                '# 在远程服务器以 root 执行以下全部命令：',
+                '',
+                'useradd -m -s /bin/bash ' + u,
+                "echo '" + u + ':' + p + "' | chpasswd",
+                'mkdir -p ' + dir
+            ];
 
             if (authType === 'key' && this.publicKey) {
-                cmd += `
-mkdir -p /home/${u}/.ssh
-echo '${this.publicKey.trim()}' >> /home/${u}/.ssh/authorized_keys
-chmod 700 /home/${u}/.ssh
-chmod 600 /home/${u}/.ssh/authorized_keys`;
+                lines.push('mkdir -p /home/' + u + '/.ssh');
+                lines.push("echo '" + this.publicKey.trim() + "' >> /home/" + u + '/.ssh/authorized_keys');
+                lines.push('chmod 700 /home/' + u + '/.ssh');
+                lines.push('chmod 600 /home/' + u + '/.ssh/authorized_keys');
             }
 
-            cmd += `
-chown -R ${u}:${u} ${dir} /home/${u}
-chmod 755 ${dir}
-echo '账号 ${u} 创建完成，备份目录：${dir}'`;
+            lines.push('chown -R ' + u + ':' + u + ' ' + dir + ' /home/' + u);
+            lines.push('chmod 755 ' + dir);
+            lines.push("echo '账号 " + u + " 创建完成，备份目录：" + dir + "'");
 
-            return cmd;
+            return lines.join(NL);
         },
         async copyCmd() {
-            const cmd = this.genCmd();
+            var cmd = this.genCmd();
             if (!cmd) return;
             try {
                 await navigator.clipboard.writeText(cmd);
                 showToast('命令已复制，粘贴到远程服务器以 root 执行', 'success');
             } catch(e) {
-                const ta = document.createElement('textarea');
+                var ta = document.createElement('textarea');
                 ta.value = cmd;
                 document.body.appendChild(ta);
                 ta.select();
