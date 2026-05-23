@@ -54,7 +54,7 @@ func executeCreateBackup(task *Task) TaskResult {
 	db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, auto) VALUES (?, ?, ?, ?, ?)`,
 		site.ID, filename, size, site.DBName, autoVal)
 
-	go SyncBackupsDir()
+	go SyncBackupToRemote(filePath)
 
 	return TaskResult{Success: true, Message: "备份完成: " + filename}
 }

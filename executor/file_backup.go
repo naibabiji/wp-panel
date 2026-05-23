@@ -24,6 +24,7 @@ func ExecuteFileBackup(siteID int, mode string) (string, error) {
 
 	ts := time.Now().Format("20060102_150405")
 	var tarName string
+		var fullPath string
 	var isFull bool
 
 	if mode == "full" {
@@ -37,7 +38,7 @@ func ExecuteFileBackup(siteID int, mode string) (string, error) {
 
 	if isFull {
 		tarName = fmt.Sprintf("file_full_%s.tar.gz", ts)
-		fullPath := filepath.Join(backupDir, tarName)
+		fullPath = filepath.Join(backupDir, tarName)
 		cmd := exec.Command("tar", "-czf", fullPath, "-C", filepath.Dir(webRoot), filepath.Base(webRoot))
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -45,7 +46,7 @@ func ExecuteFileBackup(siteID int, mode string) (string, error) {
 		}
 	} else {
 		tarName = fmt.Sprintf("file_inc_%s.tar.gz", ts)
-		fullPath := filepath.Join(backupDir, tarName)
+		fullPath = filepath.Join(backupDir, tarName)
 		uploadsDir := filepath.Join(webRoot, "wp-content", "uploads")
 		if _, err := os.Stat(uploadsDir); os.IsNotExist(err) {
 			return "", fmt.Errorf("uploads 目录不存在")
@@ -67,7 +68,7 @@ func ExecuteFileBackup(siteID int, mode string) (string, error) {
 	// Clean old backups, keep 7
 	cleanOldBackups(backupDir, 7)
 
-		go SyncBackupsDir()
+		go SyncBackupToRemote(fullPath)
 		logMsg := fmt.Sprintf("%s 文件备份成功: %s (%s)", domain, tarName, map[bool]string{true: "全量", false: "增量"}[isFull])
 		appendCronLog(logMsg)
 		return logMsg, nil

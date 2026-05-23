@@ -107,16 +107,20 @@ func TestRemoteBackup(c *gin.Context) {
 		return
 	}
 
-	// 测试 rsync
+	// 创建临时测试文件并测试 rsync
+	testFile := "/tmp/wp-panel-rsync-test.txt"
+	os.WriteFile(testFile, []byte("WP Panel rsync test"), 0644)
+	defer os.Remove(testFile)
+
 	var testCmd *exec.Cmd
 	if authType == "key" {
 		testCmd = exec.Command("rsync", "-avz", "-e",
 			fmt.Sprintf("ssh -i /www/server/panel/remote_backup_key -o StrictHostKeyChecking=no -p %d", port),
-			"/www/server/panel/backups/", username+"@"+host+":/tmp/wp-panel-rsync-test/")
+			testFile, username+"@"+host+":/tmp/wp-panel-rsync-test.txt")
 	} else {
 		testCmd = exec.Command("sshpass", "-p", password, "rsync", "-avz", "-e",
 			fmt.Sprintf("ssh -o StrictHostKeyChecking=no -p %d", port),
-			"/www/server/panel/backups/", username+"@"+host+":/tmp/wp-panel-rsync-test/")
+			testFile, username+"@"+host+":/tmp/wp-panel-rsync-test.txt")
 	}
 	testOut, testErr := testCmd.CombinedOutput()
 	if testErr != nil {
