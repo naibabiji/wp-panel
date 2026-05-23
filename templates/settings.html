@@ -131,7 +131,7 @@
                         </div>
                         <div>
                             <label class="label">用户名</label>
-                            <input type="text" x-model="cfg.username" class="input-field text-sm" placeholder="backup">
+                            <input type="text" x-model="cfg.username" class="input-field text-sm" placeholder="wpbackup">
                         </div>
                     </div>
                     <div>
@@ -157,15 +157,16 @@
                         <span>保留本地备份</span>
                     </label>
 
-                    <div class="flex items-center space-x-3 pt-2">
-                        <button @click="testConnection()" :disabled="testing" class="btn-secondary text-sm" x-text="testing ? '测试中...' : '测试连接'"></button>
-                        <button @click="saveRemote()" :disabled="saving" class="btn-primary text-sm" x-text="saving ? '保存中...' : '保存设置'"></button>
-                    </div>
-                    <p x-show="saveMsg" class="text-sm" :class="saveOK ? 'text-green-400' : 'text-red-400'" x-text="saveMsg"></p>
-                    <p x-show="testResult" class="text-sm" :class="testOK ? 'text-green-400' : 'text-red-400'" x-text="testResult"></p>
                 </div>
 
-                <div x-show="!cfg.enabled" class="text-xs text-gray-600 py-8 text-center">
+                <div class="flex items-center space-x-3 pt-2">
+                    <button @click="testConnection()" :disabled="testing || !cfg.enabled" class="btn-secondary text-sm" x-text="testing ? '测试中...' : '测试连接'"></button>
+                    <button @click="saveRemote()" :disabled="saving" class="btn-primary text-sm" x-text="saving ? '保存中...' : '保存设置'"></button>
+                </div>
+                <p x-show="saveMsg" class="text-sm" :class="saveOK ? 'text-green-400' : 'text-red-400'" x-text="saveMsg"></p>
+                <p x-show="testResult" class="text-sm" :class="testOK ? 'text-green-400' : 'text-red-400'" x-text="testResult"></p>
+
+                <div x-show="!cfg.enabled" class="text-xs text-gray-600 py-4 text-center">
                     开启后，每次备份完成自动同步到远程服务器
                 </div>
             </div>
@@ -179,7 +180,7 @@
                     <div class="grid grid-cols-3 gap-2">
                         <div class="col-span-2">
                             <label class="text-gray-500">用户名</label>
-                            <input type="text" x-model="helperUser" class="input-field text-sm py-1 w-full" placeholder="backup">
+                            <input type="text" x-model="helperUser" class="input-field text-sm py-1 w-full" placeholder="wpbackup">
                         </div>
                         <div>
                             <label class="text-gray-500">密码</label>
@@ -382,7 +383,7 @@ function operationLogs() {
 }
 function remoteBackup() {
     return {
-        cfg: { enabled: false, host: '', port: 22, username: 'root', auth_type: 'key', password: '', remote_path: '', keep_local: true },
+        cfg: { enabled: false, host: '', port: 22, username: 'wpbackup', auth_type: 'key', password: '', remote_path: '', keep_local: true },
         publicKey: '',
         testing: false,
         testResult: '',
@@ -390,7 +391,7 @@ function remoteBackup() {
         saving: false,
         saveMsg: '',
         saveOK: false,
-        helperUser: 'backup',
+        helperUser: 'wpbackup',
         helperPass: '',
         helperDir: '',
         async fetchRemote() {
@@ -398,7 +399,7 @@ function remoteBackup() {
                 const r = await api('/settings/remote-backup');
                 if (r.success) {
                     Object.assign(this.cfg, r.data);
-                    this.helperUser = this.cfg.username || 'backup';
+                    this.helperUser = this.cfg.username || 'wpbackup';
                     this.helperDir = this.cfg.remote_path || '';
                 }
                 if (this.cfg.auth_type === 'key') this.loadPublicKey();
@@ -439,7 +440,7 @@ function remoteBackup() {
             this.helperPass = pw;
         },
         genCmd() {
-            var u = this.helperUser || 'backup';
+            var u = this.helperUser || 'wpbackup';
             var p = this.helperPass || '请填写密码';
             var dir = this.helperDir || '/home/' + u + '/backup';
             var authType = this.cfg.auth_type || 'key';
