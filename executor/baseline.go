@@ -56,13 +56,6 @@ server {
     http2 on;
     ssl_reject_handshake on;
 }
-
-# WP Panel — 默认 HTTP 服务器，拒绝未配置域名的请求
-server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    return 444;
-}
 `
 	} else {
 		// 旧版本 Nginx 降级方案：自签名证书 + 关闭连接
@@ -82,13 +75,6 @@ server {
     http2 on;
     ssl_certificate %s;
     ssl_certificate_key %s;
-    return 444;
-}
-
-# WP Panel — 默认 HTTP 服务器，拒绝未配置域名的请求
-server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
     return 444;
 }
 `, certPath, keyPath)
