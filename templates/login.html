@@ -26,11 +26,11 @@
             <form @submit.prevent="login" x-show="!loading">
                 <div class="mb-4">
                     <label class="label">用户名</label>
-                    <input type="text" x-model="username" class="input-field" placeholder="admin" autocomplete="username">
+                    <input type="text" x-model="username" name="username" class="input-field" placeholder="admin" autocomplete="username">
                 </div>
                 <div class="mb-6">
                     <label class="label">密码</label>
-                    <input type="password" x-model="password" class="input-field" placeholder="请输入密码" autocomplete="current-password">
+                    <input type="password" x-model="password" name="password" class="input-field" placeholder="请输入密码" autocomplete="current-password">
                 </div>
 
                 <div x-show="error" class="mb-4 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm"
