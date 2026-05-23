@@ -170,6 +170,46 @@
                 <button @click="testConnection()" :disabled="testing" class="btn-secondary text-sm" x-text="testing ? '测试中...' : '测试连接'"></button>
                 <p x-show="testResult" class="text-sm" :class="testOK ? 'text-green-400' : 'text-red-400'" x-text="testResult"></p>
             </div>
+
+            <!-- 远程服务器设置助手 -->
+            <div class="mt-4 p-4 rounded" style="background-color: #0f172a; border: 1px solid #334155;">
+                <button @click="showHelper = !showHelper" class="flex items-center justify-between w-full text-left">
+                    <span class="text-sm font-medium text-gray-300">远程服务器设置助手</span>
+                    <span class="text-gray-400 text-lg" x-text="showHelper ? '▾' : '▸'"></span>
+                </button>
+                <div x-show="showHelper" class="mt-3 space-y-4 text-xs text-gray-400">
+                    <p class="text-blue-400 font-medium">先在远程服务器执行以下命令创建备份专用账号：</p>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <input type="text" x-model="helperUser" class="input-field text-sm py-1" placeholder="备份用户名（如 backup）">
+                        <input type="text" x-model="helperPass" class="input-field text-sm py-1" placeholder="备份用户密码">
+                    </div>
+
+                    <div class="p-3 rounded" style="background-color: #020617; border: 1px solid #1e293b;">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-gray-500">远程服务器命令：</span>
+                            <button @click="copyCmd()" class="text-xs py-0.5 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">复制命令</button>
+                        </div>
+                        <pre class="font-mono text-gray-300 whitespace-pre-wrap" x-text="genCmd()" style="word-break: break-all;"></pre>
+                    </div>
+
+                    <template x-if="cfg.auth_type === 'key'">
+                    <div class="p-3 rounded" style="background-color: #020617; border: 1px solid #1e293b;">
+                        <p class="text-gray-500 mb-2">密钥认证还需追加公钥：</p>
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-gray-500">远程服务器命令：</span>
+                            <button @click="copyKeyCmd()" class="text-xs py-0.5 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">复制命令</button>
+                        </div>
+                        <pre class="font-mono text-gray-300 whitespace-pre-wrap" x-text="genKeyCmd()" style="word-break: break-all;"></pre>
+                    </div>
+                    </template>
+
+                    <ul class="space-y-1 text-gray-500">
+                        <li>· 备份账号不需要管理员权限，只需能写入目标目录</li>
+                        <li>· 如果远程服务器也是 WP Panel 面板管理的，建议在面板中创建一个「通用 PHP」网站来存放备份文件</li>
+                    </ul>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -347,6 +387,9 @@ function remoteBackup() {
         testing: false,
         testResult: '',
         testOK: false,
+        showHelper: false,
+        helperUser: 'backup',
+        helperPass: '',
         async fetchRemote() {
             try {
                 const r = await api('/settings/remote-backup');
@@ -375,6 +418,41 @@ function remoteBackup() {
                 this.testResult = r.data?.message || (r.success ? '连接成功' : '连接失败');
             } catch(e) { this.testOK = false; this.testResult = e.message; }
             this.testing = false;
+        },
+        genCmd() {
+            const u = this.helperUser || 'backup';
+            const p = this.helperPass || '请填写密码';
+            const dir = this.cfg.remote_path || '/backup/wp-panel';
+            return `# SSH 登录远程服务器后执行以下命令：
+useradd -m -s /bin/bash ${u}
+echo '${u}:${p}' | chpasswd
+mkdir -p ${dir}
+chown -R ${u}:${u} ${dir}
+chmod 755 ${dir}`;
+        },
+        genKeyCmd() {
+            const u = this.helperUser || 'backup';
+            return `mkdir -p /home/${u}/.ssh
+echo '粘贴上面的公钥' >> /home/${u}/.ssh/authorized_keys
+chmod 700 /home/${u}/.ssh
+chmod 600 /home/${u}/.ssh/authorized_keys
+chown -R ${u}:${u} /home/${u}/.ssh`;
+        },
+        async copyCmd() {
+            try {
+                await navigator.clipboard.writeText(this.genCmd());
+                showToast('命令已复制，粘贴到远程服务器执行', 'success');
+            } catch(e) {
+                showToast('复制失败，请手动选中复制', 'error');
+            }
+        },
+        async copyKeyCmd() {
+            try {
+                await navigator.clipboard.writeText(this.genKeyCmd());
+                showToast('命令已复制，粘贴到远程服务器执行', 'success');
+            } catch(e) {
+                showToast('复制失败，请手动选中复制', 'error');
+            }
         },
         async copyKey() {
             try {
