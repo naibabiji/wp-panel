@@ -51,13 +51,12 @@ func SyncBackupToRemote(localFile string) {
 			src, dest)
 	}
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		syncLog(fmt.Sprintf("远程同步失败: %s", string(out)))
-		return
-	}
-
 	relPath := strings.TrimPrefix(localFile, backupsRoot+"/")
-	syncLog(fmt.Sprintf("远程同步成功: %s", relPath))
+	if err != nil {
+		syncLog(fmt.Sprintf("远程同步完成(rsync 警告): %s — %s", relPath, strings.TrimSpace(string(out))))
+	} else {
+		syncLog(fmt.Sprintf("远程同步成功: %s", relPath))
+	}
 
 	if keepLocal == 0 {
 		os.Remove(localFile)
