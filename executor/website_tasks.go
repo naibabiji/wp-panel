@@ -52,6 +52,9 @@ func executeCreateSite(task *Task) TaskResult {
 	}
 
 	systemUser := "wp_" + siteName
+	if payload.SiteType == "php" {
+		systemUser = "php_" + siteName
+	}
 	webRoot := filepath.Join(cfg.Paths.WWWRoot, domain)
 	logDir := filepath.Join(cfg.Paths.WWWLogs, domain)
 	dbName := "db_" + siteName
@@ -88,12 +91,14 @@ func executeCreateSite(task *Task) TaskResult {
 		return nil
 	}})
 
-	// Step 3: Deploy WordPress
-	wpPackagePath := cfg.Paths.WordPressPackage
-	tmpDir := "/tmp/wp_deploy_" + siteName + "_" + generatePassword(8)
-	if err := deployWordPress(wpPackagePath, webRoot, tmpDir); err != nil {
-		rollback()
-		return TaskResult{Success: false, Message: "WordPress 部署失败: " + err.Error()}
+	// Step 3: Deploy site files
+	if payload.SiteType != "php" {
+		wpPackagePath := cfg.Paths.WordPressPackage
+		tmpDir := "/tmp/wp_deploy_" + siteName + "_" + generatePassword(8)
+		if err := deployWordPress(wpPackagePath, webRoot, tmpDir); err != nil {
+			rollback()
+			return TaskResult{Success: false, Message: "WordPress 部署失败: " + err.Error()}
+		}
 	}
 
 	// Step 4: Chown
@@ -111,10 +116,12 @@ func executeCreateSite(task *Task) TaskResult {
 		return dropMariaDBDatabase(dbName, dbUser, cfg)
 	}})
 
-	// Step 6: Generate wp-config.php
-	if err := generateWPConfig(webRoot, dbName, dbUser, dbPassword); err != nil {
-		rollback()
-		return TaskResult{Success: false, Message: "生成 wp-config.php 失败: " + err.Error()}
+	// Step 6: Generate wp-config.php (wordpress only)
+	if payload.SiteType != "php" {
+		if err := generateWPConfig(webRoot, dbName, dbUser, dbPassword); err != nil {
+			rollback()
+			return TaskResult{Success: false, Message: "生成 wp-config.php 失败: " + err.Error()}
+		}
 	}
 
 	// Step 7: Generate Nginx + PHP-FPM configs
@@ -152,6 +159,7 @@ func executeCreateSite(task *Task) TaskResult {
 		SystemUser:  systemUser,
 		UseSSL:      false,
 		PHPProxy:    "unix:" + phpSockPath,
+		SiteType:    payload.SiteType,
 		TemplateVer: "v1.0",
 	}
 
@@ -206,6 +214,7 @@ func executeCreateSite(task *Task) TaskResult {
 			SSLCertPath: certPath,
 			SSLKeyPath:  keyPath,
 			PHPProxy:    "unix:" + phpSockPath,
+			SiteType:    payload.SiteType,
 			TemplateVer: "v1.0",
 		}
 
@@ -227,10 +236,10 @@ func executeCreateSite(task *Task) TaskResult {
 	db := database.GetDB()
 	_, err = db.Exec(
 		`INSERT INTO websites (name, domain, aliases, status, system_user, web_root, log_dir,
-		 db_name, db_user, php_pool_path, nginx_conf_path, ssl_enabled, ssl_cert_path, ssl_key_path, ssl_expires_at, template_version, access_log_mode, expires_at)
-		 VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v1.0', 'off', ?)`,
+		 db_name, db_user, php_pool_path, nginx_conf_path, site_type, ssl_enabled, ssl_cert_path, ssl_key_path, ssl_expires_at, template_version, access_log_mode, expires_at)
+		 VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v1.0', 'off', ?)`,
 		siteName, domain, strings.Join(payload.Aliases, "\n"), systemUser,
-		webRoot, logDir, dbName, dbUser, phpPoolPath, nginxConfPath, sslEnabled,
+		webRoot, logDir, dbName, dbUser, phpPoolPath, nginxConfPath, payload.SiteType, sslEnabled,
 		certPath, keyPath, sslExpiry, nilIfEmpty(payload.ExpiresAt),
 	)
 	if err != nil {
@@ -478,6 +487,7 @@ func executeUpdateDomains(task *Task) TaskResult {
 			SSLCertPath: site.SSLCertPath,
 			SSLKeyPath:  site.SSLKeyPath,
 			PHPProxy:    "unix:" + newSock,
+			SiteType:    site.SiteType,
 			TemplateVer: site.TemplateVersion,
 		}
 
@@ -526,6 +536,7 @@ func executeUpdateDomains(task *Task) TaskResult {
 		SSLCertPath: site.SSLCertPath,
 		SSLKeyPath:  site.SSLKeyPath,
 		PHPProxy:    "unix:" + phpSockPath,
+		SiteType:    site.SiteType,
 		TemplateVer: site.TemplateVersion,
 	}
 

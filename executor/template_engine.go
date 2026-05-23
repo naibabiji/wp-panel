@@ -27,6 +27,7 @@ type NginxSiteData struct {
 	FCacheEnabled bool
 	FCacheTTL     int
 	FCacheKey     string
+	SiteType      string
 }
 
 type PHPFPMPoolData struct {
@@ -68,7 +69,7 @@ func (e *TemplateEngine) RenderNginxConfig(data *NginxSiteData) (string, error) 
 		tmplName = "nginx_https"
 	}
 
-	tmpl, err := template.New(tmplName).Parse(getNginxTemplate(data.UseSSL))
+	tmpl, err := template.New(tmplName).Parse(getNginxTemplate(data.UseSSL, data.SiteType))
 	if err != nil {
 		return "", fmt.Errorf("模板解析失败: %w", err)
 	}
@@ -216,7 +217,13 @@ func getConfBaseName(path string) string {
 	return path
 }
 
-func getNginxTemplate(useSSL bool) string {
+func getNginxTemplate(useSSL bool, siteType string) string {
+	if siteType == "php" {
+		if useSSL {
+			return phpHTTPSTemplate
+		}
+		return phpHTTPTemplate
+	}
 	if useSSL {
 		return nginxHTTPSTemplate
 	}

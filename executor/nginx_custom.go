@@ -83,6 +83,7 @@ func executeSetAccessLogMode(task *Task) TaskResult {
 		LogDir:        site.LogDir,
 		SystemUser:    site.SystemUser,
 		UseSSL:        site.SSLEnabled,
+		SiteType:     site.SiteType,
 		SSLCertPath:   site.SSLCertPath,
 		SSLKeyPath:    site.SSLKeyPath,
 		PHPProxy:      "unix:" + phpSockPath,

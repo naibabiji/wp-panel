@@ -50,15 +50,15 @@ func ClearSiteCache(siteID int) {
 
 func RegenerateSiteNginx(siteID int) {
 	db := database.GetDB()
-	var domain, aliases, systemUser, webRoot, logDir, accessLogMode, cacheKey string
+	var domain, aliases, siteType, systemUser, webRoot, logDir, accessLogMode, cacheKey string
 	var sslEnabled, fCacheEnabled int
 	var fCacheTTL int
 
 	err := db.QueryRow(
-		`SELECT domain, aliases, system_user, web_root, log_dir, ssl_enabled,
+		`SELECT domain, aliases, site_type, system_user, web_root, log_dir, ssl_enabled,
 		        access_log_mode, fastcgi_cache_enabled, fastcgi_cache_ttl, fastcgi_cache_key
 		 FROM websites WHERE id = ?`, siteID,
-	).Scan(&domain, &aliases, &systemUser, &webRoot, &logDir, &sslEnabled, &accessLogMode, &fCacheEnabled, &fCacheTTL, &cacheKey)
+	).Scan(&domain, &aliases, &siteType, &systemUser, &webRoot, &logDir, &sslEnabled, &accessLogMode, &fCacheEnabled, &fCacheTTL, &cacheKey)
 	if err != nil || domain == "" {
 		return
 	}
@@ -83,6 +83,7 @@ func RegenerateSiteNginx(siteID int) {
 		WebRoot:       webRoot,
 		LogDir:        logDir,
 		SystemUser:    systemUser,
+		SiteType:     siteType,
 		PHPProxy:      "unix:" + filepath.Join(cfg.Paths.PHPFPMSock, domain+".sock"),
 		TemplateVer:   "v1.0",
 		AccessLogMode: accessLogMode,

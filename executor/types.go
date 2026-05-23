@@ -60,6 +60,7 @@ type CreateSitePayload struct {
 	SSLEnabled bool
 	DBPassword string
 	ExpiresAt  string
+	SiteType   string
 }
 
 type DeleteSitePayload struct {

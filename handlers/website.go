@@ -21,7 +21,7 @@ import (
 
 // canonical column list shared by all website queries.
 const websiteCols = `id, name, domain, aliases, status, system_user, web_root, log_dir,
-	db_name, db_user, php_pool_path, nginx_conf_path, ssl_enabled,
+	db_name, db_user, php_pool_path, nginx_conf_path, site_type, ssl_enabled,
 	ssl_cert_path, ssl_key_path, ssl_expires_at, template_version, access_log_mode,
 	fastcgi_cache_enabled, fastcgi_cache_ttl, fastcgi_cache_key,
 	monitoring_enabled, monitoring_interval, expires_at, created_at, updated_at`
@@ -37,7 +37,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 	err := scanner(
 		&w.ID, &w.Name, &w.Domain, &aliases, &status, &w.SystemUser,
 		&w.WebRoot, &w.LogDir, &w.DBName, &w.DBUser, &w.PHPPoolPath,
-		&w.NginxConfPath, &sslEnabled, &w.SSLCertPath, &w.SSLKeyPath,
+		&w.NginxConfPath, &w.SiteType, &sslEnabled, &w.SSLCertPath, &w.SSLKeyPath,
 		&w.SSLExpiresAt, &w.TemplateVersion, &w.AccessLogMode,
 		&fCacheEnabled, &w.FCacheTTL, &w.FCacheKey,
 		&monitoringEnabled, &monitoringInterval, &w.ExpiresAt,
@@ -134,12 +134,18 @@ func (h *WebsiteHandler) Create(c *gin.Context) {
 		return
 	}
 
+	siteType := req.SiteType
+	if siteType != "php" {
+		siteType = "wordpress"
+	}
+
 	payload := &executor.CreateSitePayload{
 		Domain:     req.Domain,
 		Aliases:    req.Aliases,
 		SSLEnabled: req.SSLEnabled,
 		DBPassword: req.DBPassword,
 		ExpiresAt:  req.ExpiresAt,
+		SiteType:   siteType,
 	}
 
 	task := executor.GlobalQueue.Enqueue(executor.TaskCreateSite, payload)
@@ -738,12 +744,17 @@ func (h *WebsiteHandler) ReinstallWordPress(c *gin.Context) {
 		return
 	}
 
-	var domain, webRoot, systemUser, dbName, dbUser string
+	var domain, webRoot, systemUser, dbName, dbUser, siteType string
 	err = database.GetDB().QueryRow(
-		"SELECT domain, web_root, system_user, db_name, db_user FROM websites WHERE id = ?", id,
-	).Scan(&domain, &webRoot, &systemUser, &dbName, &dbUser)
+		"SELECT domain, web_root, system_user, db_name, db_user, site_type FROM websites WHERE id = ?", id,
+	).Scan(&domain, &webRoot, &systemUser, &dbName, &dbUser, &siteType)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+
+	if siteType != "wordpress" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("仅 WordPress 站点支持重装功能"))
 		return
 	}
 

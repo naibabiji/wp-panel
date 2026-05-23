@@ -28,6 +28,7 @@ var migrations = []string{
 		db_user               TEXT    NOT NULL,
 		php_pool_path         TEXT    NOT NULL,
 		nginx_conf_path       TEXT    NOT NULL,
+		site_type             TEXT    NOT NULL DEFAULT 'wordpress',
 		ssl_enabled           INTEGER NOT NULL DEFAULT 0,
 		ssl_cert_path         TEXT    DEFAULT '',
 		ssl_key_path          TEXT    DEFAULT '',

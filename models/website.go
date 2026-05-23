@@ -25,6 +25,7 @@ type Website struct {
 	DBUser          string        `json:"db_user"`
 	PHPPoolPath     string        `json:"php_pool_path"`
 	NginxConfPath   string        `json:"nginx_conf_path"`
+	SiteType        string        `json:"site_type"`
 	SSLEnabled      bool          `json:"ssl_enabled"`
 	SSLCertPath     string        `json:"ssl_cert_path"`
 	SSLKeyPath      string        `json:"ssl_key_path"`
@@ -47,6 +48,7 @@ type CreateWebsiteRequest struct {
 	SSLEnabled bool     `json:"ssl_enabled"`
 	DBPassword string   `json:"db_password"`
 	ExpiresAt  string   `json:"expires_at"`
+	SiteType   string   `json:"site_type"`
 }
 
 type UpdateWebsiteStatusRequest struct {

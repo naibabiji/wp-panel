@@ -61,7 +61,7 @@
                                     <button @click="toggleStatus(site)" class="text-xs py-1 px-2 rounded"
                                             :class="site.status === 'active' ? 'btn-warning bg-yellow-700 hover:bg-yellow-600 text-white' : 'btn-success text-xs'"
                                             x-text="site.status === 'active' ? '暂停' : '启用'"></button>
-                                    <button @click="reinstallWP(site)" :disabled="reinstallingId === site.id" class="text-xs py-1 px-2 rounded" style="background-color: #7f1d1d; color: #fca5a5;" x-text="reinstallingId === site.id ? '重装中...' : '重装'"></button>
+                                    <button x-show="site.site_type === 'wordpress'" @click="reinstallWP(site)" :disabled="reinstallingId === site.id" class="text-xs py-1 px-2 rounded" style="background-color: #7f1d1d; color: #fca5a5;" x-text="reinstallingId === site.id ? '重装中...' : '重装'"></button>
                                     <button @click="deleteSite(site)" class="btn-danger text-xs py-1 px-2">删除</button>
                                 </div>
                             </td>

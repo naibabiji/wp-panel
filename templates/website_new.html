@@ -5,6 +5,19 @@
     <div class="card max-w-2xl">
         <form @submit.prevent="submit">
             <div class="mb-4">
+                <label class="label">网站类型</label>
+                <div class="flex space-x-4 mt-1">
+                    <label class="flex items-center space-x-2 cursor-pointer text-gray-300">
+                        <input type="radio" x-model="siteType" value="wordpress" class="w-4 h-4 text-blue-600 focus:ring-blue-500">
+                        <span>WordPress</span>
+                    </label>
+                    <label class="flex items-center space-x-2 cursor-pointer text-gray-300">
+                        <input type="radio" x-model="siteType" value="php" class="w-4 h-4 text-blue-600 focus:ring-blue-500">
+                        <span>通用 PHP 网站</span>
+                    </label>
+                </div>
+            </div>
+            <div class="mb-4">
                 <label class="label">主域名</label>
                 <input type="text" x-model="domain" class="input-field" placeholder="example.com" required>
             </div>
@@ -15,9 +28,10 @@
             <div class="mb-4">
                 <label class="label">数据库密码</label>
                 <div class="flex space-x-2">
-                    <input type="text" x-model="dbPassword" class="input-field flex-1" placeholder="留空自动生成随机密码">
-                    <button type="button" @click="generatePassword()" class="btn-secondary">生成随机密码</button>
+                    <input type="text" x-model="dbPassword" class="input-field flex-1" :placeholder="siteType === 'php' ? '请输入数据库密码' : '留空自动生成随机密码'" :required="siteType === 'php'">
+                    <button type="button" @click="generatePassword()" class="btn-secondary" x-show="siteType !== 'php'">生成随机密码</button>
                 </div>
+                <p class="text-xs text-gray-500 mt-1" x-show="siteType === 'php'">通用 PHP 网站请自行设置并记录密码，遗忘后需通过详情页修改密码获取新密码。</p>
             </div>
             <div class="mb-4">
                 <label class="label">网站到期时间（可选）</label>
@@ -52,6 +66,7 @@ function createWebsite() {
         dbPassword: '',
         sslEnabled: false,
         expiresAt: '',
+        siteType: 'wordpress',
         loading: false,
         error: '',
         success: '',
@@ -74,7 +89,8 @@ function createWebsite() {
                         aliases: aliasesList,
                         db_password: this.dbPassword,
                         ssl_enabled: this.sslEnabled,
-                        expires_at: this.expiresAt || null
+                        expires_at: this.expiresAt || null,
+                        site_type: this.siteType
                     }
                 });
                 if (resp.success) {

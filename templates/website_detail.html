@@ -24,6 +24,7 @@
                     <button @click="domainModalOpen = true; editDomain = site.domain; editAliasesStr = site.aliases || ''" class="text-sm py-1.5 px-3 rounded" style="background-color: #1e3a5f; color: #93c5fd;">编辑域名</button>
                 </div>
                 <div><dt class="text-sm text-gray-400">状态</dt><dd><span :class="site.status === 'active' ? 'badge-success' : 'badge-warning'" x-text="site.status === 'active' ? '运行中' : '已暂停'"></span></dd></div>
+                <div><dt class="text-sm text-gray-400">类型</dt><dd class="text-white" x-text="site.site_type === 'php' ? '通用 PHP 网站' : 'WordPress'"></dd></div>
                 <div><dt class="text-sm text-gray-400">系统用户</dt><dd class="text-white font-mono" x-text="site.system_user"></dd></div>
                 <div><dt class="text-sm text-gray-400">网站根目录</dt><dd class="text-white font-mono text-sm" x-text="site.web_root"></dd></div>
                 <div><dt class="text-sm text-gray-400">日志目录</dt><dd class="text-white font-mono text-sm" x-text="site.log_dir"></dd></div>
@@ -173,18 +174,19 @@
             </div>
             <div x-show="fcacheEnabled" class="flex items-center space-x-3 mb-3">
                 <button @click="clearFCache()" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">清除缓存</button>
-                <button x-show="pluginStatus === 'not_installed'" @click="installPlugin()" :disabled="pluginInstalling" class="btn-primary text-sm py-1.5" x-text="pluginInstalling ? '安装中...' : '安装配套插件'"></button>
-                <button x-show="pluginStatus === 'update_available'" @click="installPlugin()" :disabled="pluginInstalling" class="text-sm py-1.5 px-3 rounded" style="background-color: #166534; color: #bbf7d0;" x-text="pluginInstalling ? '更新中...' : '更新配套插件'"></button>
-                <span x-show="pluginStatus === 'installed'" class="text-xs text-green-400">✓ 插件已安装</span>
+                <button x-show="pluginStatus === 'not_installed' && site.site_type === 'wordpress'" @click="installPlugin()" :disabled="pluginInstalling" class="btn-primary text-sm py-1.5" x-text="pluginInstalling ? '安装中...' : '安装配套插件'"></button>
+                <button x-show="pluginStatus === 'update_available' && site.site_type === 'wordpress'" @click="installPlugin()" :disabled="pluginInstalling" class="text-sm py-1.5 px-3 rounded" style="background-color: #166534; color: #bbf7d0;" x-text="pluginInstalling ? '更新中...' : '更新配套插件'"></button>
+                <span x-show="pluginStatus === 'installed' && site.site_type === 'wordpress'" class="text-xs text-green-400">✓ 插件已安装</span>
             </div>
             <div class="mt-3 p-3 rounded text-xs" style="background-color: #0f172a;">
                 <p class="text-gray-300 font-medium mb-2">工作原理</p>
                 <ul class="text-gray-400 space-y-1 list-disc list-inside">
                     <li>Nginx 将 PHP 页面输出为静态 HTML 缓存在磁盘，访客直接拿到 HTML 无需经过 PHP/MariaDB</li>
                     <li>每站点独立缓存版本密钥，点击「清除缓存」更换密钥，旧缓存文件 60 分钟后自动删除</li>
-                    <li>已登录用户、POST 请求、wp-admin 后台自动跳过缓存</li>
+                    <li x-show="site.site_type === 'wordpress'">已登录用户、POST 请求、wp-admin 后台自动跳过缓存</li>
+                    <li x-show="site.site_type === 'php'">POST 请求和带查询参数的请求自动跳过缓存</li>
                 </ul>
-                <p class="text-gray-500 mt-2">配套插件（wp-panel-cache-helper）安装到网站后，网站管理员可自行在 WordPress 后台清除缓存和控制 TTL，无需面板权限。不要安装第三方缓存插件（WP Rocket / W3 Total Cache 等的 Nginx 模式），会与本卡片冲突。</p>
+                <p class="text-gray-500 mt-2" x-show="site.site_type === 'wordpress'">配套插件（wp-panel-cache-helper）安装到网站后，网站管理员可自行在 WordPress 后台清除缓存和控制 TTL，无需面板权限。不要安装第三方缓存插件（WP Rocket / W3 Total Cache 等的 Nginx 模式），会与本卡片冲突。</p>
             </div>
         </div>
     </div>
@@ -224,7 +226,8 @@
                 <label class="block text-sm text-gray-300 mb-1">新密码（留空则随机生成）</label>
                 <input type="text" x-model="newDBPassword" class="w-full rounded p-2 text-sm font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0;" placeholder="留空自动生成24位随机密码">
             </div>
-            <p class="text-gray-500 text-xs mb-4">修改后会自动更新 wp-config.php 中的密码，无需手动修改。</p>
+            <p class="text-gray-500 text-xs mb-4" x-show="site.site_type === 'wordpress'">修改后会自动更新 wp-config.php 中的密码，无需手动修改。</p>
+            <p class="text-gray-500 text-xs mb-4" x-show="site.site_type === 'php'">修改后请将新密码更新到网站代码的数据库配置中。</p>
             <div class="flex justify-end space-x-3">
                 <button @click="dbPasswordModal = false" class="btn-secondary">取消</button>
                 <button @click="changeDBPassword()" :disabled="dbSubmitting" class="btn-primary" x-text="dbSubmitting ? '处理中...' : '确认修改'"></button>
@@ -248,7 +251,7 @@
                 <textarea x-model="editAliasesStr" rows="4" class="w-full rounded p-2 text-sm font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;" placeholder="www.aaa.com&#10;blog.aaa.com"></textarea>
             </div>
             <div x-show="editDomain !== site.domain" class="mb-3 p-3 rounded text-sm" style="background-color: #422006; border: 1px solid #78350f; color: #fbbf24;">
-                主域名变更后将重命名网站目录、日志目录、Nginx配置、PHP-FPM Pool及SSL证书目录。系统用户（<span x-text="site.system_user" class="font-mono"></span>）和数据库名保持不变。WordPress 站点 URL 需自行在 WP 后台修改。
+                主域名变更后将重命名网站目录、日志目录、Nginx配置、PHP-FPM Pool及SSL证书目录。系统用户（<span x-text="site.system_user" class="font-mono"></span>）和数据库名保持不变。<span x-show="site.site_type === 'wordpress'">WordPress 站点 URL 需自行在 WP 后台修改。</span>
             </div>
             <p x-show="site.ssl_enabled" class="text-yellow-400 text-xs mb-3">修改域名后需重新申请 SSL 证书以匹配新域名。</p>
             <div class="flex justify-end space-x-3">
