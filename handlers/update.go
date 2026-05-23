@@ -234,15 +234,17 @@ func verifySHA256(filePath, shaFile string) error {
 func compareVersions(a, b string) int {
 	a = strings.TrimPrefix(a, "v")
 	b = strings.TrimPrefix(b, "v")
-	ap := strings.Split(a, ".")
-	bp := strings.Split(b, ".")
+	ap := strings.SplitN(a, "-", 2)
+	bp := strings.SplitN(b, "-", 2)
+	aNums := strings.Split(ap[0], ".")
+	bNums := strings.Split(bp[0], ".")
 	for i := 0; i < 3; i++ {
 		av, bv := 0, 0
-		if i < len(ap) {
-			fmt.Sscanf(ap[i], "%d", &av)
+		if i < len(aNums) {
+			fmt.Sscanf(aNums[i], "%d", &av)
 		}
-		if i < len(bp) {
-			fmt.Sscanf(bp[i], "%d", &bv)
+		if i < len(bNums) {
+			fmt.Sscanf(bNums[i], "%d", &bv)
 		}
 		if av > bv {
 			return 1
@@ -251,5 +253,22 @@ func compareVersions(a, b string) int {
 			return -1
 		}
 	}
-	return 0
+	aPre := ""
+	bPre := ""
+	if len(ap) > 1 {
+		aPre = ap[1]
+	}
+	if len(bp) > 1 {
+		bPre = bp[1]
+	}
+	if aPre == "" && bPre == "" {
+		return 0
+	}
+	if aPre == "" {
+		return 1
+	}
+	if bPre == "" {
+		return -1
+	}
+	return strings.Compare(aPre, bPre)
 }
