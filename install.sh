@@ -88,6 +88,12 @@ do_purge() {
     systemctl stop fail2ban 2>/dev/null || true
     echo -e "  ${GREEN}✓${NC} 服务已停止"
 
+    echo -e "  → 清理网站 Nginx 和 PHP-FPM 配置..."
+    rm -f /etc/nginx/sites-enabled/*
+    rm -f /etc/nginx/sites-available/*
+    rm -f /etc/php/8.3/fpm/pool.d/*.conf
+    echo -e "  ${GREEN}✓${NC} 配置已清理"
+
     echo -e "  → 卸载软件包（可能需要 1-2 分钟）..."
     DEBIAN_FRONTEND=noninteractive apt-get purge -y nginx nginx-common mariadb-server mariadb-common redis-server fail2ban php8.3-* 2>/dev/null || true
     DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || true
