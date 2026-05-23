@@ -125,7 +125,7 @@ func (h *BackupHandler) Restore(c *gin.Context) {
 	}
 
 		// 检查本地文件是否存在
-		backupDir := filepath.Join("/www/server/panel/backups", site.Domain)
+		backupDir := filepath.Join("/www/server/panel/backups", site.Domain, "db")
 		filePath := filepath.Join(backupDir, filename)
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
 			var remoteEnabled int
