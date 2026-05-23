@@ -559,12 +559,13 @@ systemctl start wp-panel
 # ============================================================
 PORT_OK=false
 if systemctl is-active --quiet wp-panel; then
-    for i in 1 2 3 4 5; do
+    sleep 3
+    for i in 1 2 3 4 5 6 7 8; do
         if ss -tlnp 2>/dev/null | grep -q ":8443"; then
             PORT_OK=true
             break
         fi
-        sleep 1
+        sleep 2
     done
 fi
 
