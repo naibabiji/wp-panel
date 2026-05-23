@@ -124,6 +124,20 @@ func (h *BackupHandler) Restore(c *gin.Context) {
 		return
 	}
 
+		// 检查本地文件是否存在
+		backupDir := filepath.Join("/www/server/panel/backups", site.Domain)
+		filePath := filepath.Join(backupDir, filename)
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			var remoteEnabled int
+			database.GetDB().QueryRow("SELECT enabled FROM remote_backup_settings WHERE id = 1").Scan(&remoteEnabled)
+			if remoteEnabled == 1 {
+				c.JSON(http.StatusNotFound, models.ErrorResponse("该备份已同步至远程服务器，本地文件已按设置删除。请从远程服务器下载后上传恢复。"))
+			} else {
+				c.JSON(http.StatusNotFound, models.ErrorResponse("备份文件不存在，可能已被清理"))
+			}
+			return
+		}
+
 	payload := &executor.RestoreBackupPayload{Site: site, Filename: filename}
 	task := executor.GlobalQueue.Enqueue(executor.TaskRestoreBackup, payload)
 	result := <-task.ResultCh
