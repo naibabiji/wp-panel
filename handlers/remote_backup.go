@@ -55,6 +55,11 @@ func SaveRemoteBackup(c *gin.Context) {
 				return
 			}
 		}
+	} else if req.Enabled {
+		if _, err := exec.LookPath("sshpass"); err != nil {
+			exec.Command("apt-get", "update").Run()
+			exec.Command("apt-get", "install", "-y", "sshpass").Run()
+		}
 	}
 
 	enabledVal := 0

@@ -107,264 +107,111 @@
 
     <div class="card mb-6" x-data="remoteBackup()" x-init="fetchRemote()">
         <h3 class="text-lg font-semibold text-white mb-4">远程备份</h3>
-        <p class="text-xs text-gray-500 mb-3">备份完成后自动通过 SSH + rsync 同步到远程服务器</p>
+        <p class="text-xs text-gray-500 mb-4">备份完成后自动通过 SSH + rsync 同步到远程服务器</p>
 
-        <!-- 说明文档 -->
-        <div class="mb-4 p-3 rounded text-xs" style="background-color: #0f172a; border: 1px solid #1e293b;">
-            <p class="text-gray-300 font-medium mb-2">工作流程</p>
-            <ol class="text-gray-400 mb-2 list-decimal list-inside space-y-0.5">
-                <li>面板在本地完成数据库或文件备份</li>
-                <li>自动通过 SSH + rsync 将备份文件传送到远程服务器</li>
-                <li>如果关闭「保留本地备份」，传送成功后自动删除本地文件以节省空间</li>
-            </ol>
-            <p class="text-gray-300 font-medium mb-2 mt-3">安全建议</p>
-            <ul class="text-gray-400 mb-2 list-disc list-inside space-y-0.5">
-                <li>建议在远程服务器创建<span class="text-yellow-300 font-medium">专用备份账号</span>，不要使用 root</li>
-                <li>推荐使用 <span class="text-yellow-300 font-medium">SSH 密钥认证</span>，比密码更安全且无需安装额外软件</li>
-                <li>密码认证需要本机安装 sshpass（<code class="text-gray-500">apt install sshpass</code>）</li>
-                <li>远程备份目录建议定期检查，面板不会自动清理远程旧备份</li>
-            </ul>
-            <p class="text-gray-300 font-medium mb-2 mt-3">远程服务器要求</p>
-            <ul class="text-gray-400 list-disc list-inside space-y-0.5">
-                <li>已开启 SSH 服务并能从本机连接</li>
-                <li>目标目录存在且备份账号有写入权限</li>
-                <li>防火墙放行 SSH 端口（默认 22）</li>
-            </ul>
-        </div>
-
-        <div class="flex items-center space-x-3 mb-4">
-            <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-                <input type="checkbox" x-model="cfg.enabled" @change="saveRemote()">
-                <span>启用远程备份</span>
-            </label>
-        </div>
-
-        <div x-show="cfg.enabled" class="space-y-4">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                    <label class="label">远程地址</label>
-                    <input type="text" x-model="cfg.host" @change="saveRemote()" class="input-field text-sm" placeholder="192.168.1.100">
-                </div>
-                <div>
-                    <label class="label">SSH 端口</label>
-                    <input type="number" x-model="cfg.port" @change="saveRemote()" class="input-field text-sm" placeholder="22">
-                </div>
-                <div>
-                    <label class="label">用户名</label>
-                    <input type="text" x-model="cfg.username" @change="saveRemote()" class="input-field text-sm" placeholder="root">
-                </div>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                    <label class="label">认证方式</label>
-                    <select x-model="cfg.auth_type" @change="saveRemote()" class="input-field text-sm">
-                        <option value="password">密码</option>
-                        <option value="key">SSH 密钥</option>
-                    </select>
-                </div>
-                <div x-show="cfg.auth_type === 'password'">
-                    <label class="label">SSH 密码</label>
-                    <input type="password" x-model="cfg.password" @change="saveRemote()" class="input-field text-sm" placeholder="远程服务器密码">
-                </div>
-                <div x-show="cfg.auth_type === 'key'" class="col-span-2">
-                    <p class="text-xs text-gray-400 mb-1">面板已自动生成 ed25519 密钥对。请将以下公钥添加到远程服务器的 authorized_keys：</p>
-                    <div class="flex items-center space-x-2">
-                        <pre class="text-xs font-mono p-2 rounded flex-1 overflow-x-auto" style="background-color: #0f172a; border: 1px solid #334155; color: #94a3b8; max-height: 60px;" x-text="publicKey"></pre>
-                        <button @click="copyKey()" class="btn-secondary text-xs py-1 flex-shrink-0">复制</button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                    <label class="label">远程路径</label>
-                    <input type="text" x-model="cfg.remote_path" @change="saveRemote()" class="input-field text-sm" placeholder="/backup/wp-panel/">
-                </div>
-                <div class="flex items-end pb-1">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- 左侧：备份设置 -->
+            <div>
+                <div class="flex items-center space-x-3 mb-4">
                     <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-                        <input type="checkbox" x-model="cfg.keep_local" @change="saveRemote()">
-                        <span>保留本地备份</span>
+                        <input type="checkbox" x-model="cfg.enabled">
+                        <span>启用远程备份</span>
                     </label>
                 </div>
+
+                <div x-show="cfg.enabled" class="space-y-3">
+                    <div>
+                        <label class="label">远程服务器地址</label>
+                        <input type="text" x-model="cfg.host" class="input-field text-sm" placeholder="192.168.1.100 或域名">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="label">SSH 端口</label>
+                            <input type="number" x-model="cfg.port" class="input-field text-sm" placeholder="22">
+                        </div>
+                        <div>
+                            <label class="label">用户名</label>
+                            <input type="text" x-model="cfg.username" class="input-field text-sm" placeholder="backup">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="label">认证方式</label>
+                        <select x-model="cfg.auth_type" class="input-field text-sm">
+                            <option value="key">SSH 密钥（推荐）</option>
+                            <option value="password">密码</option>
+                        </select>
+                    </div>
+                    <div x-show="cfg.auth_type === 'password'">
+                        <label class="label">SSH 密码</label>
+                        <input type="password" x-model="cfg.password" class="input-field text-sm" placeholder="远程服务器密码">
+                    </div>
+                    <div x-show="cfg.auth_type === 'key'" class="text-xs text-gray-400">
+                        <p>面板已自动生成 ed25519 密钥对，公钥将嵌入下方的一键命令中。</p>
+                    </div>
+                    <div>
+                        <label class="label">远程备份路径</label>
+                        <input type="text" x-model="cfg.remote_path" class="input-field text-sm" :placeholder="'/home/' + cfg.username + '/backup'">
+                    </div>
+                    <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                        <input type="checkbox" x-model="cfg.keep_local">
+                        <span>保留本地备份</span>
+                    </label>
+
+                    <div class="flex items-center space-x-3 pt-2">
+                        <button @click="testConnection()" :disabled="testing" class="btn-secondary text-sm" x-text="testing ? '测试中...' : '测试连接'"></button>
+                        <button @click="saveRemote()" :disabled="saving" class="btn-primary text-sm" x-text="saving ? '保存中...' : '保存设置'"></button>
+                    </div>
+                    <p x-show="saveMsg" class="text-sm" :class="saveOK ? 'text-green-400' : 'text-red-400'" x-text="saveMsg"></p>
+                    <p x-show="testResult" class="text-sm" :class="testOK ? 'text-green-400' : 'text-red-400'" x-text="testResult"></p>
+                </div>
+
+                <div x-show="!cfg.enabled" class="text-xs text-gray-600 py-8 text-center">
+                    开启后，每次备份完成自动同步到远程服务器
+                </div>
             </div>
 
-            <div class="flex items-center space-x-3">
-                <button @click="testConnection()" :disabled="testing" class="btn-secondary text-sm" x-text="testing ? '测试中...' : '测试连接'"></button>
-                <p x-show="testResult" class="text-sm" :class="testOK ? 'text-green-400' : 'text-red-400'" x-text="testResult"></p>
-            </div>
+            <!-- 右侧：设置助手 -->
+            <div class="p-4 rounded" style="background-color: #0f172a; border: 1px solid #1e293b;">
+                <h4 class="text-sm font-medium text-gray-300 mb-3">远程服务器一键设置</h4>
+                <p class="text-xs text-gray-500 mb-3">在远程服务器以 root 执行以下命令，自动创建备份账号和目录：</p>
 
-            <!-- 远程服务器设置助手 -->
-            <div class="mt-4 p-4 rounded" style="background-color: #0f172a; border: 1px solid #334155;">
-                <button @click="showHelper = !showHelper" class="flex items-center justify-between w-full text-left">
-                    <span class="text-sm font-medium text-gray-300">远程服务器设置助手</span>
-                    <span class="text-gray-400 text-lg" x-text="showHelper ? '▾' : '▸'"></span>
-                </button>
-                <div x-show="showHelper" class="mt-3 space-y-4 text-xs text-gray-400">
-                    <p class="text-blue-400 font-medium">先在远程服务器执行以下命令创建备份专用账号：</p>
-
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <input type="text" x-model="helperUser" class="input-field text-sm py-1" placeholder="备份用户名（如 backup）">
-                        <input type="text" x-model="helperPass" class="input-field text-sm py-1" placeholder="备份用户密码">
+                <div class="space-y-3 text-xs">
+                    <div class="grid grid-cols-3 gap-2">
+                        <div class="col-span-2">
+                            <label class="text-gray-500">用户名</label>
+                            <input type="text" x-model="helperUser" class="input-field text-sm py-1 w-full" placeholder="backup">
+                        </div>
+                        <div>
+                            <label class="text-gray-500">密码</label>
+                            <div class="flex space-x-1">
+                                <input type="text" x-model="helperPass" class="input-field text-sm py-1 flex-1" placeholder="留空随机">
+                                <button @click="genPassword()" class="text-xs py-1 px-2 rounded flex-shrink-0" style="background-color: #1e3a5f; color: #93c5fd;" title="随机生成">随机</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="text-gray-500">备份目录</label>
+                        <input type="text" x-model="helperDir" class="input-field text-sm py-1 w-full" :placeholder="'/home/' + helperUser + '/backup'">
                     </div>
 
                     <div class="p-3 rounded" style="background-color: #020617; border: 1px solid #1e293b;">
                         <div class="flex items-center justify-between mb-2">
-                            <span class="text-gray-500">远程服务器命令：</span>
+                            <span class="text-gray-500">复制到远程服务器执行：</span>
                             <button @click="copyCmd()" class="text-xs py-0.5 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">复制命令</button>
                         </div>
-                        <pre class="font-mono text-gray-300 whitespace-pre-wrap" x-text="genCmd()" style="word-break: break-all;"></pre>
+                        <pre class="font-mono text-gray-300 whitespace-pre-wrap text-xs leading-relaxed" x-text="genCmd()" style="word-break: break-all;"></pre>
                     </div>
-
-                    <template x-if="cfg.auth_type === 'key'">
-                    <div class="p-3 rounded" style="background-color: #020617; border: 1px solid #1e293b;">
-                        <p class="text-gray-500 mb-2">密钥认证还需追加公钥：</p>
-                        <div class="flex items-center justify-between mb-2">
-                            <span class="text-gray-500">远程服务器命令：</span>
-                            <button @click="copyKeyCmd()" class="text-xs py-0.5 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">复制命令</button>
-                        </div>
-                        <pre class="font-mono text-gray-300 whitespace-pre-wrap" x-text="genKeyCmd()" style="word-break: break-all;"></pre>
-                    </div>
-                    </template>
 
                     <ul class="space-y-1 text-gray-500">
-                        <li>· 备份账号不需要管理员权限，只需能写入目标目录</li>
-                        <li>· 如果远程服务器也是 WP Panel 面板管理的，建议在面板中创建一个「通用 PHP」网站来存放备份文件</li>
+                        <li>· 密钥认证模式：命令已包含公钥，一条搞定</li>
+                        <li>· 密码认证模式：面板已自动安装 sshpass，无需手动操作</li>
+                        <li>· 建议使用<span class="text-yellow-300">专用备份账号</span>，勿用 root</li>
+                        <li>· 备份账号无需管理员权限，仅需写入目标目录</li>
                     </ul>
                 </div>
             </div>
         </div>
     </div>
-
-    <div class="card" x-data="operationLogs()" x-init="fetchLogs()">
-        <h3 class="text-lg font-semibold text-white mb-4">最近操作日志</h3>
-        <div class="overflow-x-auto">
-            <table class="w-full">
-                <thead class="border-b border-gray-700">
-                    <tr>
-                        <th class="table-header">时间</th>
-                        <th class="table-header">操作</th>
-                        <th class="table-header">目标</th>
-                        <th class="table-header">状态</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <template x-for="log in logs" :key="log.id">
-                        <tr class="border-b border-gray-700/50">
-                            <td class="table-cell text-xs" x-text="fmtTime(log.created_at)"></td>
-                            <td class="table-cell text-sm" x-text="log.operation"></td>
-                            <td class="table-cell text-sm" x-text="log.target || '--'"></td>
-                            <td class="table-cell">
-                                <span :class="log.status === 'success' ? 'badge-success' : 'badge-danger'"
-                                      x-text="log.status === 'success' ? '成功' : '失败'"></span>
-                            </td>
-                        </tr>
-                    </template>
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-
-<script>
-function panelSettings() {
-    return {
-        panelTitle: 'WP Panel',
-        username: '',
-        basicAuthUser: '',
-        timezone: '',
-        hostname: '',
-        serverTime: '',
-        ntpSynced: false,
-        accountSaving: false,
-        accountSaved: false,
-        pw: { old: '', new1: '', new2: '', basic: '' },
-        async fetchSettings() {
-            try {
-                const r = await api('/settings');
-                if (r.success) {
-                    this.panelTitle = r.data.panel_title || 'WP Panel';
-                    this.username = r.data.username || '';
-                    this.basicAuthUser = r.data.basic_auth_user || '';
-                    this.timezone = r.data.timezone || '';
-                    this.hostname = r.data.hostname || '';
-                    this.ntpSynced = r.data.ntp_synced || false;
-                }
-            } catch(e) {}
-            this.tickTime();
-            setInterval(() => this.tickTime(), 1000);
-        },
-        tickTime() {
-            const tz = this.timezone || 'UTC';
-            const d = new Date();
-            const opts = { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-            this.serverTime = d.toLocaleString('zh-CN', opts);
-        },
-        async saveAccount() {
-            const body = {};
-
-            if (this.basicAuthUser) body.basic_auth_user = this.basicAuthUser;
-            if (this.pw.basic && this.pw.basic.length >= 8) body.basic_auth_password = this.pw.basic;
-            else if (this.pw.basic && this.pw.basic.length < 8) { showToast('BasicAuth 密码至少8位', 'error'); return; }
-
-            if (this.username) body.username = this.username;
-            if (this.pw.new1 || this.pw.new2) {
-                if (!this.pw.old) { showToast('修改 Web 密码需输入当前密码', 'error'); return; }
-                if (this.pw.new1 !== this.pw.new2) { showToast('两次密码不一致', 'error'); return; }
-                if (this.pw.new1.length < 8) { showToast('新密码至少8位', 'error'); return; }
-                body.old_password = this.pw.old;
-                body.new_password = this.pw.new1;
-            }
-
-            if (Object.keys(body).length === 0) { showToast('无修改内容', 'info'); return; }
-
-            this.accountSaving = true;
-            try {
-                await api('/settings', { method: 'PUT', body });
-                this.accountSaved = true;
-                this.pw = { old: '', new1: '', new2: '', basic: '' };
-                showToast('账户设置已保存，即将退出登录', 'success');
-                setTimeout(async () => {
-                    try { await api('/auth/logout', { method: 'POST' }); } catch(e) {}
-                    window.location.href = (document.body.dataset.panelPrefix || '') + '/login';
-                }, 1500);
-            } catch(e) { showToast(e.message, 'error'); this.accountSaving = false; }
-        },
-        async syncNTP() {
-            try {
-                const r = await api('/settings', { method: 'PUT', body: { ntp_sync: true } });
-                showToast(r.data?.message || '时间同步已触发', 'success');
-                this.ntpSynced = true;
-            } catch(e) { showToast(e.message, 'error'); }
-        },
-        async saveBasic() {
-            try {
-                await api('/settings', { method: 'PUT', body: { panel_title: this.panelTitle } });
-                showToast('已保存', 'success');
-            } catch(e) { showToast(e.message, 'error'); }
-        },
-        async saveServerSetting(key, val) {
-            try {
-                const body = {};
-                body[key] = val;
-                await api('/settings', { method: 'PUT', body });
-                showToast('已更新', 'success');
-            } catch(e) { showToast(e.message, 'error'); }
-        }
-    }
-}
-function versionCheck() {
-    return {
-        currentVersion: "",
-        latestVersion: "",
-        releaseNotes: "",
-        hasUpdate: false,
-        checking: false,
-        updating: false,
-        updateError: "",
-        async fetchVersion() {
-            try {
-                const r = await api("/update/check");
                 if (r.success) {
                     this.currentVersion = r.data.current_version;
                     this.latestVersion = r.data.latest_version || "";
@@ -403,28 +250,41 @@ function operationLogs() {
         }
     }
 }
+
 function remoteBackup() {
     return {
-        cfg: { enabled: false, host: '', port: 22, username: 'root', auth_type: 'password', password: '', remote_path: '', keep_local: true },
+        cfg: { enabled: false, host: '', port: 22, username: 'root', auth_type: 'key', password: '', remote_path: '', keep_local: true },
         publicKey: '',
         testing: false,
         testResult: '',
         testOK: false,
-        showHelper: false,
+        saving: false,
+        saveMsg: '',
+        saveOK: false,
         helperUser: 'backup',
         helperPass: '',
+        helperDir: '',
         async fetchRemote() {
             try {
                 const r = await api('/settings/remote-backup');
-                if (r.success) Object.assign(this.cfg, r.data);
+                if (r.success) {
+                    Object.assign(this.cfg, r.data);
+                    this.helperUser = this.cfg.username || 'backup';
+                    this.helperDir = this.cfg.remote_path || '';
+                }
                 if (this.cfg.auth_type === 'key') this.loadPublicKey();
             } catch(e) {}
         },
         async saveRemote() {
+            this.saving = true;
+            this.saveMsg = '';
             try {
                 const r = await api('/settings/remote-backup', { method: 'PUT', body: this.cfg });
+                this.saveOK = r.success;
+                this.saveMsg = r.data?.message || (r.success ? '设置已保存' : '保存失败');
                 if (r.success && this.cfg.auth_type === 'key') this.loadPublicKey();
-            } catch(e) { showToast(e.message, 'error'); }
+            } catch(e) { this.saveOK = false; this.saveMsg = e.message; }
+            this.saving = false;
         },
         async loadPublicKey() {
             try {
@@ -435,60 +295,62 @@ function remoteBackup() {
         async testConnection() {
             this.testing = true;
             this.testResult = '';
+            this.testOK = false;
             try {
                 const r = await api('/settings/remote-backup/test', { method: 'POST' });
                 this.testOK = r.success;
                 this.testResult = r.data?.message || (r.success ? '连接成功' : '连接失败');
-            } catch(e) { this.testOK = false; this.testResult = e.message; }
+            } catch(e) { this.testResult = e.message; }
             this.testing = false;
+        },
+        genPassword() {
+            const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+            let pw = '';
+            for (let i = 0; i < 20; i++) pw += chars[Math.floor(Math.random() * chars.length)];
+            this.helperPass = pw;
         },
         genCmd() {
             const u = this.helperUser || 'backup';
-            const p = this.helperPass || '请填写密码';
-            const dir = this.cfg.remote_path || '/backup/wp-panel';
-            return `# SSH 登录远程服务器后执行以下命令：
+            const p = this.helperPass || this.genPassword() || 'changeme';
+            const dir = this.helperDir || '/home/' + u + '/backup';
+            const authType = this.cfg.auth_type || 'key';
+
+            let cmd = `# === 远程备份账号一键设置 ===
+# 在远程服务器以 root 执行以下全部命令：
+
 useradd -m -s /bin/bash ${u}
 echo '${u}:${p}' | chpasswd
-mkdir -p ${dir}
-chown -R ${u}:${u} ${dir}
-chmod 755 ${dir}`;
-        },
-        genKeyCmd() {
-            const u = this.helperUser || 'backup';
-            return `mkdir -p /home/${u}/.ssh
-echo '粘贴上面的公钥' >> /home/${u}/.ssh/authorized_keys
+mkdir -p ${dir}`;
+
+            if (authType === 'key' && this.publicKey) {
+                cmd += `
+mkdir -p /home/${u}/.ssh
+echo '${this.publicKey.trim()}' >> /home/${u}/.ssh/authorized_keys
 chmod 700 /home/${u}/.ssh
-chmod 600 /home/${u}/.ssh/authorized_keys
-chown -R ${u}:${u} /home/${u}/.ssh`;
+chmod 600 /home/${u}/.ssh/authorized_keys`;
+            }
+
+            cmd += `
+chown -R ${u}:${u} ${dir} /home/${u}
+chmod 755 ${dir}
+echo '账号 ${u} 创建完成，备份目录：${dir}'`;
+
+            return cmd;
         },
         async copyCmd() {
+            const cmd = this.genCmd();
+            if (!cmd) return;
             try {
-                await navigator.clipboard.writeText(this.genCmd());
-                showToast('命令已复制，粘贴到远程服务器执行', 'success');
-            } catch(e) {
-                showToast('复制失败，请手动选中复制', 'error');
-            }
-        },
-        async copyKeyCmd() {
-            try {
-                await navigator.clipboard.writeText(this.genKeyCmd());
-                showToast('命令已复制，粘贴到远程服务器执行', 'success');
-            } catch(e) {
-                showToast('复制失败，请手动选中复制', 'error');
-            }
-        },
-        async copyKey() {
-            try {
-                await navigator.clipboard.writeText(this.publicKey);
-                showToast('公钥已复制', 'success');
+                await navigator.clipboard.writeText(cmd);
+                showToast('命令已复制，粘贴到远程服务器以 root 执行', 'success');
             } catch(e) {
                 const ta = document.createElement('textarea');
-                ta.value = this.publicKey;
+                ta.value = cmd;
                 document.body.appendChild(ta);
                 ta.select();
                 document.execCommand('copy');
                 document.body.removeChild(ta);
-                showToast('公钥已复制', 'success');
+                showToast('命令已复制', 'success');
             }
         }
     }
