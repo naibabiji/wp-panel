@@ -107,7 +107,30 @@
 
     <div class="card mb-6" x-data="remoteBackup()" x-init="fetchRemote()">
         <h3 class="text-lg font-semibold text-white mb-4">远程备份</h3>
-        <p class="text-xs text-gray-500 mb-4">备份完成后自动通过 SSH + rsync 同步到远程服务器</p>
+        <p class="text-xs text-gray-500 mb-3">备份完成后自动通过 SSH + rsync 同步到远程服务器</p>
+
+        <!-- 说明文档 -->
+        <div class="mb-4 p-3 rounded text-xs" style="background-color: #0f172a; border: 1px solid #1e293b;">
+            <p class="text-gray-300 font-medium mb-2">工作流程</p>
+            <ol class="text-gray-400 mb-2 list-decimal list-inside space-y-0.5">
+                <li>面板在本地完成数据库或文件备份</li>
+                <li>自动通过 SSH + rsync 将备份文件传送到远程服务器</li>
+                <li>如果关闭「保留本地备份」，传送成功后自动删除本地文件以节省空间</li>
+            </ol>
+            <p class="text-gray-300 font-medium mb-2 mt-3">安全建议</p>
+            <ul class="text-gray-400 mb-2 list-disc list-inside space-y-0.5">
+                <li>建议在远程服务器创建<span class="text-yellow-300 font-medium">专用备份账号</span>，不要使用 root</li>
+                <li>推荐使用 <span class="text-yellow-300 font-medium">SSH 密钥认证</span>，比密码更安全且无需安装额外软件</li>
+                <li>密码认证需要本机安装 sshpass（<code class="text-gray-500">apt install sshpass</code>）</li>
+                <li>远程备份目录建议定期检查，面板不会自动清理远程旧备份</li>
+            </ul>
+            <p class="text-gray-300 font-medium mb-2 mt-3">远程服务器要求</p>
+            <ul class="text-gray-400 list-disc list-inside space-y-0.5">
+                <li>已开启 SSH 服务并能从本机连接</li>
+                <li>目标目录存在且备份账号有写入权限</li>
+                <li>防火墙放行 SSH 端口（默认 22）</li>
+            </ul>
+        </div>
 
         <div class="flex items-center space-x-3 mb-4">
             <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
