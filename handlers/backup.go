@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -230,12 +231,13 @@ func (h *BackupHandler) ClearDatabase(c *gin.Context) {
 
 	mysqlCmd := exec.Command("mysql", "-u", "root", "-p"+dbPass, site.DBName)
 	stdin, _ := mysqlCmd.StdinPipe()
+	var stderr bytes.Buffer
+	mysqlCmd.Stderr = &stderr
 	mysqlCmd.Start()
 	fmt.Fprintf(stdin, "SET FOREIGN_KEY_CHECKS = 0;\n%s\nSET FOREIGN_KEY_CHECKS = 1;\n", string(dropSQL))
 	stdin.Close()
-	out, err := mysqlCmd.CombinedOutput()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(fmt.Sprintf("清空数据库失败: %s", string(out))))
+	if err := mysqlCmd.Wait(); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(fmt.Sprintf("清空数据库失败: %s", stderr.String())))
 		return
 	}
 
