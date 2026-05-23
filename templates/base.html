@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{.CSRFToken}}">
+    <link rel="icon" type="image/png" sizes="180x180" href="{{.AssetPrefix}}/logo.png">
     <title>{{if .Title}}{{.Title}} - {{end}}{{.PanelTitle}}</title>
     <link rel="stylesheet" href="{{.AssetPrefix}}/css/main.css">
     <script defer src="{{.AssetPrefix}}/js/alpine.min.js"></script>
@@ -40,10 +41,7 @@
                    :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'">
                 <div class="p-4 border-b border-gray-800">
                     <h1 class="text-lg font-bold text-white flex items-center gap-2">
-                        <svg class="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                  d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-                        </svg>
+                        <img src="{{.AssetPrefix}}/logo.png" alt="WP Panel" class="w-6 h-6 rounded">
                         {{.PanelTitle}}
                     </h1>
                     <p class="text-xs text-gray-500 mt-1">WordPress 服务器管理</p>
