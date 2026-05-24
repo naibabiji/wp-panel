@@ -15,7 +15,13 @@
     </style>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen" data-panel-prefix="/{{.RandomSuffix}}">
-    <div x-data="{ sidebarOpen: window.innerWidth >= 1024 }"
+    <div x-data="{
+             sidebarOpen: window.innerWidth >= 1024,
+             async logout() {
+                 try { await api('/auth/logout', { method: 'POST' }); } catch(e) {}
+                 window.location.href = '/' + document.body.dataset.panelPrefix.replace('/', '') + '/login';
+             }
+         }"
          @resize.window="sidebarOpen = window.innerWidth >= 1024"
          x-cloak>
         <!-- Hamburger button — toggles icon -->
@@ -105,6 +111,16 @@
                         </svg>
                         面板设置
                     </a>
+
+                    <div class="border-t border-gray-800 pt-2 mt-2">
+                        <a href="#" @click.prevent="logout()"
+                           class="sidebar-link text-red-400 hover:text-red-300 hover:bg-red-900/20">
+                            <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                            </svg>
+                            退出登录
+                        </a>
+                    </div>
                 </nav>
             </aside>
 
