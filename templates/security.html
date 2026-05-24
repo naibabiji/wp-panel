@@ -15,7 +15,14 @@
                     <ul class="space-y-3 ml-2">
                         <li>
                             <p class="text-blue-400 font-medium">触发阈值（次）</p>
-                            <p>在统计窗口内，单个 IP 触发特征规则的次数达到此值即自动封禁。默认 <span class="text-blue-400">5</span> 次。调低会更敏感（容易误封），调高则更宽松。</p>
+                            <p>在统计窗口内，单个 IP 触发以下任一特征规则的次数达到此值即自动封禁。默认 <span class="text-blue-400">5</span> 次。调低更敏感（容易误封），调高更宽松。</p>
+                            <p class="text-gray-500 mt-1">检测的特征规则：</p>
+                            <ul class="list-disc list-inside ml-2 mt-1 space-y-0.5 text-gray-400 text-xs">
+                                <li><code class="text-gray-300">POST /wp-login.php</code> — 登录页暴力破解</li>
+                                <li><code class="text-gray-300">POST /xmlrpc.php</code> — XML-RPC 接口攻击（含 //xmlrpc.php 变体）</li>
+                                <li>返回 <span class="text-gray-300">HTTP 429</span> — 超出请求频率限制</li>
+                                <li>扫描敏感文件返回 <span class="text-gray-300">404</span> — 如 .env、.git、wp-config.php、.sql、压缩包等</li>
+                            </ul>
                         </li>
                         <li>
                             <p class="text-blue-400 font-medium">统计窗口（秒）</p>
@@ -68,7 +75,8 @@
                         </li>
                         <li>
                             <p class="text-blue-400 font-medium">突发缓冲（次）</p>
-                            <p>控制令牌桶容量，即页面打开瞬间允许的最大并发请求数。默认 <span class="text-blue-400">300</span> 次，可覆盖 Elementor + 多插件站点（单页 100+ 请求）同时打开 2-3 个标签页的场景。非 Elementor / 轻量站点可适当调低至 30-120。</p>
+                            <p>控制令牌桶容量，即页面打开瞬间允许的最大并发请求数。默认 <span class="text-blue-400">300</span> 次，可覆盖 Elementor + 多插件站点（单页 100+ 请求）同时打开 2-3 个标签页的场景。如需同时打开更多标签页，请设置更大值（如 500-600）。非 Elementor / 轻量站点可适当调低至 30-120。</p>
+                            <p class="text-green-400 mt-1">增大此值<span class="text-green-300 font-semibold">不会</span>延迟拦截机器人——机器人被持续速率（1 次/秒）压制，与突发缓冲大小无关，安全防护不削弱。</p>
                         </li>
                         <li>
                             <p class="text-red-400 font-semibold">⚠ 警告：多次返回 429 的 IP 将被 Fail2ban 自动封禁</p>

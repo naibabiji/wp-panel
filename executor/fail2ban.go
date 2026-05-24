@@ -133,7 +133,15 @@ func ApplyFail2banSettings() {
 	bt := parseIntOr(banTime, 600)
 
 	_ = deployFail2ban(mergedIPs, mr, ft, bt)
-	DeployWhitelistTimer()
+
+	var autoEnabled string
+	db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'auto_whitelist_enabled'`).Scan(&autoEnabled)
+	if autoEnabled == "false" {
+		executeCommand("systemctl", "stop", "wppanel-whitelist.timer")
+		executeCommand("systemctl", "disable", "wppanel-whitelist.timer")
+	} else {
+		DeployWhitelistTimer()
+	}
 }
 
 func SyncFail2banBans() {
