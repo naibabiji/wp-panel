@@ -46,13 +46,13 @@
                 <div class="mb-3">
                     <label class="text-sm text-gray-300 mb-1 block">启用</label>
                     <label class="flex items-center space-x-2 cursor-pointer">
-                        <input type="checkbox" x-model="cfg.webhook_enabled" @change="save">
+                        <input type="checkbox" x-model="cfg.webhook_enabled">
                         <span class="text-sm text-gray-400">开启 Webhook 推送通知</span>
                     </label>
                 </div>
                 <div class="mb-3">
                     <label class="text-sm text-gray-300 mb-1 block">推送渠道</label>
-                    <select x-model="cfg.webhook_channel" @change="save" class="input-field text-sm">
+                    <select x-model="cfg.webhook_channel" class="input-field text-sm">
                         <option value="wecom">企业微信</option>
                         <option value="dingtalk">钉钉</option>
                         <option value="feishu">飞书</option>
@@ -184,7 +184,11 @@ function webhookConfig() {
         async save() {
             this.saving = true;
             try {
-                await api('/alert/settings', { method: 'PUT', body: this.cfg });
+                const body = { ...this.cfg };
+                if (typeof body.webhook_enabled === 'boolean') {
+                    body.webhook_enabled = body.webhook_enabled ? 'true' : 'false';
+                }
+                await api('/alert/settings', { method: 'PUT', body });
                 showToast('Webhook 配置已保存', 'success');
             } catch(e) { showToast(e.message, 'error'); }
             this.saving = false;
