@@ -5,6 +5,7 @@
  * Description: 与 WP Panel 面板配合，管理 FastCGI 缓存、WordPress 自动更新、文件编辑等优化项。发布/更新文章自动清除缓存。
  * Version:     1.0.0
  * Author:      WP Panel
+ * Author URI:  https://blog.naibabiji.com
  * License:     GPL-2.0+
  */
 
