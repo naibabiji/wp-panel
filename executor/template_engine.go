@@ -293,7 +293,6 @@ server {
     }
 
     location ~* \.(env|git|config\.bak|sql|tar|gz|zip|old|swp|save)$ {
-        deny all;
         return 404;
     }
 
@@ -302,7 +301,6 @@ server {
     }
 
     location ~ /\. {
-        deny all;
         return 404;
     }
 
@@ -405,7 +403,6 @@ server {
     }
 
     location ~* \.(env|git|config\.bak|sql|tar|gz|zip|old|swp|save)$ {
-        deny all;
         return 404;
     }
 
@@ -414,7 +411,6 @@ server {
     }
 
     location ~ /\. {
-        deny all;
         return 404;
     }
 

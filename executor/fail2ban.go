@@ -49,7 +49,17 @@ maxretry = %d
 findtime = %d
 bantime = %d
 ignoreip = %s
-`, maxRetry, findTime, banTime, ignoreIPs)
+
+[wppanel-404]
+enabled = true
+filter = wppanel-404
+action = nftables-multiport[name=wppanel-404, port="http,https"]
+logpath = /www/wwwlogs/*/access.log
+maxretry = 30
+findtime = 60
+bantime = %d
+ignoreip = %s
+`, maxRetry, findTime, banTime, ignoreIPs, banTime, ignoreIPs)
 
 	if err := os.WriteFile(jailDir+"/wppanel.conf", []byte(jailConfig), 0644); err != nil {
 		return fmt.Errorf("写入 jail 配置失败: %w", err)
@@ -67,6 +77,16 @@ ignoreregex =
 
 	if err := os.WriteFile(filterDir+"/wppanel.conf", []byte(filterConfig), 0644); err != nil {
 		return fmt.Errorf("写入 filter 配置失败: %w", err)
+	}
+
+	filter404Config := `# WP Panel Generated — DO NOT EDIT MANUALLY
+[Definition]
+failregex = ^<HOST> - - \[.*\] ".*" 404 .*$
+ignoreregex =
+`
+
+	if err := os.WriteFile(filterDir+"/wppanel-404.conf", []byte(filter404Config), 0644); err != nil {
+		return fmt.Errorf("写入 404 filter 配置失败: %w", err)
 	}
 
 	_, _ = executeCommand("systemctl", "restart", "fail2ban")

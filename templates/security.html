@@ -22,6 +22,7 @@
                                 <li><code class="text-gray-300">POST /xmlrpc.php</code> — XML-RPC 接口攻击（含 //xmlrpc.php 变体）</li>
                                 <li>返回 <span class="text-gray-300">HTTP 429</span> — 超出请求频率限制</li>
                                 <li>扫描敏感文件返回 <span class="text-gray-300">404</span> — 如 .env、.git、wp-config.php、.sql、压缩包等</li>
+                                <li>大量 <span class="text-gray-300">404</span> 泛滥 — 任意路径返回 404，<span class="text-blue-400">30 次/60 秒</span>判定为目录扫描（独立规则，固定阈值，不受上方设置影响）</li>
                             </ul>
                         </li>
                         <li>
