@@ -89,9 +89,18 @@
             success: false,
             quote: '',
             error: '',
-            initAutofill() {
-                // 浏览器自动填充在 Alpine 初始化之后才注入值，
-                // 需要用延迟检测来把已填充的值同步到 x-model 状态
+            async initAutofill() {
+                // 1. 主动向浏览器索取已保存的密码（Chrome/Edge 需要此 API）
+                if (window.PasswordCredential && navigator.credentials) {
+                    try {
+                        const cred = await navigator.credentials.get({ password: true, mediation: 'optional' });
+                        if (cred && cred.type === 'password') {
+                            this.username = cred.id;
+                            this.password = cred.password || '';
+                        }
+                    } catch (e) { /* 浏览器不支持或无已存密码 */ }
+                }
+                // 2. 兜底：延迟检测浏览器传统方式 autofill 的值
                 const check = () => {
                     const u = this.$refs.usernameInput;
                     const p = this.$refs.passwordInput;
@@ -117,6 +126,17 @@
                         body: { username: this.username, password: this.password }
                     });
                     if (resp.success) {
+                        // 主动告诉 Chrome/Edge 保存密码（解决 XHR 登录浏览器不弹保存提示）
+                        if (window.PasswordCredential && navigator.credentials) {
+                            try {
+                                const cred = new PasswordCredential({
+                                    id: this.username,
+                                    password: this.password,
+                                    name: 'WP Panel',
+                                });
+                                await navigator.credentials.store(cred);
+                            } catch (e) { /* 静默忽略 */ }
+                        }
                         this.success = true;
                         this.quote = quotes[Math.floor(Math.random() * quotes.length)];
                         setTimeout(() => {
