@@ -7,7 +7,7 @@
     </div>
 
     <div x-show="showHelp" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="showHelp = false">
-        <div class="bg-gray-800 rounded-lg p-6 max-w-lg w-full mx-4 shadow-xl max-h-[80vh] overflow-y-auto">
+        <div class="bg-gray-800 rounded-lg p-6 max-w-2xl w-full mx-4 shadow-xl max-h-[80vh] overflow-y-auto">
             <h3 class="text-lg font-bold text-white mb-4">安全设置说明</h3>
             <div class="text-sm text-gray-300 space-y-4">
                 <div>
@@ -54,6 +54,35 @@
                         <li>累计 3 次 24 小时封禁 → 自动转为<span class="text-blue-400">永久封禁</span>，仅通过 Nftables 持久封锁</li>
                     </ul>
                     <p class="text-gray-500 mt-1">封禁列表页可通过"来源"列区分 Fail2ban 临时封禁 与 Nftables 持久封禁。</p>
+                </div>
+                <div>
+                    <p class="text-white font-semibold mb-2">请求频率限制详解</p>
+                    <ul class="space-y-3 ml-2">
+                        <li>
+                            <p class="text-blue-400 font-medium">工作原理：令牌桶算法</p>
+                            <p>系统为每个 IP 维护一个容量等于「突发缓冲」的令牌桶，每秒自动补充 1 个令牌（由请求频率决定）。请求到达时消耗令牌，耗尽后返回 429。<span class="text-green-400">人类浏览有自然停顿（阅读页面），停顿期间桶自动回满</span>；机器人持续不断请求，令牌耗尽后被限制在每秒仅 1 次请求。</p>
+                        </li>
+                        <li>
+                            <p class="text-blue-400 font-medium">请求频率（次/分钟）</p>
+                            <p>控制长期持续速率，即令牌补充速度。默认 <span class="text-blue-400">60</span> 次/分钟（= 1 次/秒）。机器人扫描通常远超此值，因此会在数秒内耗尽令牌桶，几乎所有请求都被返回 429。</p>
+                        </li>
+                        <li>
+                            <p class="text-blue-400 font-medium">突发缓冲（次）</p>
+                            <p>控制令牌桶容量，即页面打开瞬间允许的最大并发请求数。默认 <span class="text-blue-400">300</span> 次，可覆盖 Elementor + 多插件站点（单页 100+ 请求）同时打开 2-3 个标签页的场景。非 Elementor / 轻量站点可适当调低至 30-120。</p>
+                        </li>
+                        <li>
+                            <p class="text-red-400 font-semibold">⚠ 警告：多次返回 429 的 IP 将被 Fail2ban 自动封禁</p>
+                            <p class="text-red-400">429 响应会被 Fail2ban 规则捕获并计入违规次数（与 wp-login 暴力破解等同级处理）。累计触发阈值后将导致该 IP 被防火墙封锁。请确保突发缓冲足够日常使用，避免正常访客误触发 429 而被拉黑。</p>
+                        </li>
+                        <li>
+                            <p class="text-green-400 font-semibold">✓ 提高突发缓冲不影响拦截机器人</p>
+                            <p>机器人的特征是持续不断发请求（无人类浏览停顿），会被「请求频率」死死限制在 1 次/秒，令牌桶耗尽后几乎所有请求都返回 429。提高突发缓冲只会给人类访客更宽松的首屏加载空间，<span class="text-green-400">安全防护能力完全不受影响</span>。真正的限制来自持续速率，而非突发上限。</p>
+                        </li>
+                        <li>
+                            <p class="text-blue-400 font-medium">如何测试配置是否合适</p>
+                            <p>用浏览器无痕窗口打开网站，随机浏览 5-10 个页面（含首页、分类页、文章页）。打开开发者工具（F12）→ Network 标签，观察是否有红色 429 状态码。全部 200/304 即表示配置合理。</p>
+                        </li>
+                    </ul>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-2">服务器验证命令</p>
@@ -115,12 +144,13 @@
                 <div class="mb-4">
                     <label class="label">请求频率限制 (次/分钟)</label>
                     <input type="number" x-model="settings.rate_limit_rpm" class="input-field" min="10" max="600">
-                    <p class="text-xs text-gray-500 mt-1">非 Elementor 等重型页面建议 30-60。Elementor / 多插件站点建议 60-120。Q：如何测试？打开网站随机点 5-10 个页面，不出现 429 即可</p>
+                    <p class="text-xs text-gray-500 mt-1">非 Elementor 等重型页面建议 30-60。Elementor / 多插件站点建议 60-120。调整建议和测试方法详见右上角「帮助说明」</p>
                 </div>
                 <div class="mb-4">
                     <label class="label">突发缓冲 (次)</label>
                     <input type="number" x-model="settings.rate_limit_burst" class="input-field" min="5" max="600">
-                    <p class="text-xs text-gray-500 mt-1">页面首屏瞬间并发请求缓冲量。Elementor / 多插件站点建议 150-200，非 Elementor 建议 30-60。Q：如何测试？用浏览器无痕窗口打开网站首页，观察浏览器控制台 Network 标签是否有 429，无 429 即正常</p>
+                    <p class="text-xs text-gray-500 mt-1">页面首屏瞬间并发请求缓冲量。Elementor / 多插件站点建议 150-300，非 Elementor 建议 30-120。调整建议和测试方法详见右上角「帮助说明」</p>
+                    <p class="text-xs text-red-400 mt-1">注意：多次触发 429 的 IP 将被 Fail2ban 自动封禁，请确保预留足够缓冲</p>
                 </div>
                 <button type="submit" class="btn-primary">保存限速设置</button>
             </form>
@@ -176,7 +206,7 @@ function securitySettings() {
                 await api('/security/settings', { method: 'PUT', body: {
                     rate_limit_enabled: this.settings.rate_limit_enabled ? 'true' : 'false',
                     rate_limit_rpm: String(this.settings.rate_limit_rpm || 60),
-                    rate_limit_burst: String(this.settings.rate_limit_burst || 200),
+                    rate_limit_burst: String(this.settings.rate_limit_burst || 300),
                 } });
                 showToast('限速设置已保存', 'success');
             } catch(e) { showToast(e.message, 'error'); }

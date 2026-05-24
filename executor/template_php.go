@@ -8,7 +8,7 @@ server {
 
     server_name {{.ServerNames}};
 
-    limit_req zone=wp_req_limit burst=200 nodelay;
+    limit_req zone=wp_req_limit burst=300 nodelay;
     limit_req_status 429;
 
     set $wp_cache_ver "{{.FCacheKey}}";
@@ -81,7 +81,7 @@ server {
     listen [::]:80;
     server_name {{.ServerNames}};
 
-    limit_req zone=wp_req_limit burst=200 nodelay;
+    limit_req zone=wp_req_limit burst=300 nodelay;
     limit_req_status 429;
 
     set $wp_cache_ver "{{.FCacheKey}}";
@@ -95,7 +95,7 @@ server {
 
     server_name {{.ServerNames}};
 
-    limit_req zone=wp_req_limit burst=200 nodelay;
+    limit_req zone=wp_req_limit burst=300 nodelay;
     limit_req_status 429;
 
     set $wp_cache_ver "{{.FCacheKey}}";

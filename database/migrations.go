@@ -189,7 +189,7 @@ var migrations = []string{
 		('last_whitelist_update',    '',         '上次白名单更新时间'),
 		('rate_limit_enabled',       'true',     '是否开启全局限速'),
 		('rate_limit_rpm',           '60',       '每IP每分钟最大请求数'),
-		('rate_limit_burst',         '200',      '突发缓冲允许量'),
+		('rate_limit_burst',         '300',      '突发缓冲允许量'),
 		('smtp_host',                '',         'SMTP 服务器地址'),
 		('smtp_port',                '587',      'SMTP 端口'),
 		('smtp_encryption',          'starttls', '加密方式：starttls/ssl/none'),

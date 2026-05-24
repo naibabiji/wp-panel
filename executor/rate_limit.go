@@ -114,6 +114,6 @@ func GetRateLimitSettings() (enabled bool, rpm int, burst int) {
 
 	enabled = sEnabled != "false"
 	rpm = parseIntOr(sRPM, 60)
-	burst = parseIntOr(sBurst, 200)
+	burst = parseIntOr(sBurst, 300)
 	return
 }
