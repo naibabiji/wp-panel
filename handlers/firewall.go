@@ -114,7 +114,7 @@ func (h *FirewallHandler) PermanentBan(c *gin.Context) {
 	}
 
 	if _, err := db.Exec(
-		`UPDATE firewall_bans SET ban_level = 4, expires_at = NULL, is_manual = 1 WHERE id = ?`, id,
+		`UPDATE firewall_bans SET ban_level = 5, expires_at = NULL, is_manual = 1 WHERE id = ?`, id,
 	); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("永久封禁失败"))
 		return
