@@ -23,6 +23,8 @@ function wpp_optimizer_uninstall() {
 
 class WP_Panel_Optimizer {
 
+    const VERSION = '1.0.0';
+
     const OPTION_FCACHE_ENABLED = 'wpp_optimizer_fcache_enabled';
     const OPTION_FCACHE_TTL     = 'wpp_optimizer_fcache_ttl';
     const OPTION_NO_UPDATES     = 'wpp_optimizer_no_updates';
@@ -55,6 +57,7 @@ class WP_Panel_Optimizer {
         add_action('wp_update_comment_count', [__CLASS__, 'auto_comment_clear']);
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), [__CLASS__, 'action_links']);
         add_action('admin_notices', [__CLASS__, 'clear_notice']);
+        add_action('wp_ajax_wpp_optimizer_check_update', [__CLASS__, 'ajax_check_update']);
 
         // 禁止检测更新：完全屏蔽更新提示和通知
         if (get_option(self::OPTION_NO_UPDATES, '0') === '1') {
@@ -145,8 +148,13 @@ class WP_Panel_Optimizer {
         $log            = get_option(self::OPTION_LOG, []);
         ?>
         <div class="wrap">
+            <?php $pluginVersion = WP_Panel_Optimizer::VERSION; ?>
             <h1>WP Panel Optimizer</h1>
             <p>由 <a href="https://github.com/naibabiji/wp-panel" target="_blank">WP Panel</a> 面板统一管理。当前站点：<code><?php echo esc_html($currentDomain); ?></code></p>
+            <p>插件版本：<code><?php echo esc_html($pluginVersion); ?></code>
+                <button type="button" id="wpp-check-update-btn" class="button">检查更新</button>
+                <span id="wpp-update-result"></span>
+            </p>
             <?php echo wp_kses_post($notice); ?>
             <?php if ($missing): ?>
                 <div class="notice notice-error"><p><strong>配置文件缺失</strong> — 请在 WP Panel 面板中进入该网站详情页，点击 WordPress 优化卡片的「安装配套插件」按钮完成初始化。</p></div>
@@ -234,6 +242,31 @@ class WP_Panel_Optimizer {
                         msg.innerHTML = '<div class="notice notice-error"><p>✗ 网络错误：无法连接到面板 (' + e.message + ')</p></div>';
                     })
                     .finally(() => { btn.disabled = false; btn.textContent = '验证连接'; });
+            });
+
+            document.getElementById('wpp-check-update-btn').addEventListener('click', function() {
+                var btn = this, result = document.getElementById('wpp-update-result');
+                btn.disabled = true;
+                btn.textContent = '检查中...';
+                result.innerHTML = '';
+                fetch('<?php echo esc_url(admin_url('admin-ajax.php')); ?>?action=wpp_optimizer_check_update')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            var d = data.data;
+                            if (d.has_update) {
+                                result.innerHTML = ' <a href="' + d.release_url + '" target="_blank" style="color:#d63638;font-weight:bold">发现新版本 ' + d.latest + '（当前 ' + d.current + '）→ 在面板中更新</a>';
+                            } else {
+                                result.innerHTML = ' <span style="color:#00a32a">已是最新版本（' + d.current + '）</span>';
+                            }
+                        } else {
+                            result.innerHTML = ' <span style="color:#d63638">检查失败：' + (data.data?.message || '未知错误') + '</span>';
+                        }
+                    })
+                    .catch(e => {
+                        result.innerHTML = ' <span style="color:#d63638">网络错误：' + e.message + '</span>';
+                    })
+                    .finally(() => { btn.disabled = false; btn.textContent = '检查更新'; });
             });
             </script>
         </div>
@@ -327,6 +360,47 @@ class WP_Panel_Optimizer {
 
     public static function api_request_public($method, $path, $body = null) {
         return self::api_request($method, $path, $body);
+    }
+
+    public static function ajax_check_update() {
+        $result = self::check_github_release();
+        if (is_wp_error($result)) {
+            wp_send_json(['success' => false, 'data' => ['message' => $result->get_error_message()]]);
+            return;
+        }
+        $current  = self::VERSION;
+        $latest   = ltrim($result['tag_name'], 'v');
+        $hasUpdate = version_compare($latest, $current, '>');
+        wp_send_json([
+            'success'    => true,
+            'data'       => [
+                'current'     => $current,
+                'latest'      => $latest,
+                'has_update'  => $hasUpdate,
+                'release_url' => $result['html_url'],
+            ],
+        ]);
+    }
+
+    private static function check_github_release() {
+        $transient = get_transient('wpp_optimizer_release');
+        if ($transient !== false) return $transient;
+
+        $resp = wp_remote_get('https://api.github.com/repos/naibabiji/wp-panel/releases/latest', [
+            'timeout'   => 10,
+            'sslverify' => true,
+            'headers'   => ['Accept' => 'application/vnd.github+json', 'User-Agent' => 'WP-Panel-Optimizer'],
+        ]);
+        if (is_wp_error($resp)) return $resp;
+        $code = wp_remote_retrieve_response_code($resp);
+        if ($code !== 200) return new \WP_Error('github_error', "GitHub API 返回 HTTP $code");
+
+        $data = json_decode(wp_remote_retrieve_body($resp), true);
+        if (!$data || empty($data['tag_name'])) return new \WP_Error('parse_error', '无法解析版本信息');
+
+        $result = ['tag_name' => $data['tag_name'], 'html_url' => $data['html_url'] ?? 'https://github.com/naibabiji/wp-panel/releases'];
+        set_transient('wpp_optimizer_release', $result, HOUR_IN_SECONDS);
+        return $result;
     }
 
     private static function api_request($method, $path, $body = null) {
