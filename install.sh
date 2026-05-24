@@ -280,7 +280,7 @@ cat > /etc/nginx/conf.d/wppanel-ratelimit.conf << 'RATELIMITEOF'
 # WP Panel — 请求频率限制
 # 已登录 WordPress 用户不限速
 map $http_cookie $wp_rate_limit_key {
-    "~*wordpress_logged_in" "";
+    ~*wordpress_logged_in "";
     default $binary_remote_addr;
 }
 

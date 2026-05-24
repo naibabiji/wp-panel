@@ -23,7 +23,7 @@ func EnsureRateLimit(enabled bool, rpm, burst int) error {
 	content := fmt.Sprintf(`# WP Panel — 请求频率限制
 # 已登录 WordPress 用户不限速（检测 wordpress_logged_in cookie）
 map $http_cookie $wp_rate_limit_key {
-    "~*wordpress_logged_in" "";
+    ~*wordpress_logged_in "";
     default $binary_remote_addr;
 }
 
@@ -114,6 +114,6 @@ func GetRateLimitSettings() (enabled bool, rpm int, burst int) {
 
 	enabled = sEnabled != "false"
 	rpm = parseIntOr(sRPM, 60)
-	burst = parseIntOr(sBurst, 30)
+	burst = parseIntOr(sBurst, 200)
 	return
 }

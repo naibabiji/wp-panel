@@ -110,17 +110,17 @@
                         <input type="checkbox" x-model="settings.rate_limit_enabled" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600">
                         <span class="text-gray-300">开启全局限速</span>
                     </label>
-                    <p class="text-xs text-gray-500 mt-1">开启后每个 IP 分钟请求数受限，超限返回 429，触发多次 429 将被 Fail2ban 封禁</p>
+                    <p class="text-xs text-gray-500 mt-1">开启后未登录访客受频率限制，已登录 WordPress 用户自动豁免。触发多次 429 将被 Fail2ban 封禁</p>
                 </div>
                 <div class="mb-4">
                     <label class="label">请求频率限制 (次/分钟)</label>
                     <input type="number" x-model="settings.rate_limit_rpm" class="input-field" min="10" max="600">
-                    <p class="text-xs text-gray-500 mt-1">正常浏览约 30-50 次/分钟。攻击行为通常远超此值。建议 30-120</p>
+                    <p class="text-xs text-gray-500 mt-1">非 Elementor 等重型页面建议 30-60。Elementor / 多插件站点建议 60-120。Q：如何测试？打开网站随机点 5-10 个页面，不出现 429 即可</p>
                 </div>
                 <div class="mb-4">
                     <label class="label">突发缓冲 (次)</label>
-                    <input type="number" x-model="settings.rate_limit_burst" class="input-field" min="5" max="300">
-                    <p class="text-xs text-gray-500 mt-1">瞬间超出限制的额外允许量，页面含多图片/CSS/JS 时短期请求可能集中</p>
+                    <input type="number" x-model="settings.rate_limit_burst" class="input-field" min="5" max="600">
+                    <p class="text-xs text-gray-500 mt-1">页面首屏瞬间并发请求缓冲量。Elementor / 多插件站点建议 150-200，非 Elementor 建议 30-60。Q：如何测试？用浏览器无痕窗口打开网站首页，观察浏览器控制台 Network 标签是否有 429，无 429 即正常</p>
                 </div>
                 <button type="submit" class="btn-primary">保存限速设置</button>
             </form>
@@ -176,7 +176,7 @@ function securitySettings() {
                 await api('/security/settings', { method: 'PUT', body: {
                     rate_limit_enabled: this.settings.rate_limit_enabled ? 'true' : 'false',
                     rate_limit_rpm: String(this.settings.rate_limit_rpm || 60),
-                    rate_limit_burst: String(this.settings.rate_limit_burst || 30),
+                    rate_limit_burst: String(this.settings.rate_limit_burst || 200),
                 } });
                 showToast('限速设置已保存', 'success');
             } catch(e) { showToast(e.message, 'error'); }
