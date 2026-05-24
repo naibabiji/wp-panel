@@ -51,10 +51,9 @@ map $status $wp_loggable {
     default 0;
 }
 
-map $arg_wp_hc$status $wp_hc_loggable {
-    ~^[12345]\d{2}$  1;
-    ~^.+[45]\d{2}$   1;
-    default          0;
+map $arg_wp_hc $wp_hc_loggable {
+    ""      1;
+    default 0;
 }
 `
 	os.WriteFile(confPath, []byte(content), 0644)

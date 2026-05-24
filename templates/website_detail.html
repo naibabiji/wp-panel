@@ -352,7 +352,7 @@ function websiteDetail() {
         fcacheTTL: 300,
         disableWPUpdates: false,
         disableFileEditing: false,
-        logRetentionDays: 0,
+        logRetentionDays: 7,
         optimizationSaving: false,
         pluginStatus: 'not_installed',
         pluginInstalling: false,
@@ -375,7 +375,7 @@ function websiteDetail() {
                     this.fcacheTTL = r.data.fastcgi_cache_ttl || 300;
                     this.disableWPUpdates = r.data.disable_wp_updates || false;
                     this.disableFileEditing = r.data.disable_file_editing || false;
-                    this.logRetentionDays = r.data.log_retention_days || 0;
+                    this.logRetentionDays = r.data.log_retention_days || 7;
                     this.monitoringEnabled = r.data.monitoring_enabled || false;
                     this.monitoringInterval = r.data.monitoring_interval || 5;
                 }

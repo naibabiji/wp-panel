@@ -43,7 +43,7 @@ var migrations = []string{
 		monitoring_interval   INTEGER NOT NULL DEFAULT 5,
 		disable_wp_updates    INTEGER NOT NULL DEFAULT 0,
 		disable_file_editing  INTEGER NOT NULL DEFAULT 0,
-		log_retention_days    INTEGER NOT NULL DEFAULT 0,
+		log_retention_days    INTEGER NOT NULL DEFAULT 7,
 		expires_at            DATETIME,
 		created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP

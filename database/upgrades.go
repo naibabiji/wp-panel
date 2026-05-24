@@ -62,7 +62,7 @@ var upgrades = []Upgrade{
 		Version:     "1.0.2",
 		Description: "网站日志保留天数",
 		SQL: []string{
-			`ALTER TABLE websites ADD COLUMN log_retention_days INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE websites ADD COLUMN log_retention_days INTEGER NOT NULL DEFAULT 7`,
 		},
 	},
 }
