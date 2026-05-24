@@ -186,16 +186,20 @@ if [[ $TIDY_EXIT -ne 0 ]]; then
     go mod tidy 2>&1 || log_error "go mod tidy 失败，请检查网络连接"
 fi
 
+VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+LDFLAGS="-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}"
+
 log_info "编译 wp-panel (CGO_ENABLED=0 静态链接)..."
 set +e
-go build -ldflags="-s -w" -o wp-panel . 2>&1
+go build -ldflags="${LDFLAGS}" -o wp-panel . 2>&1
 BUILD_EXIT=$?
 set -e
 
 if [[ $BUILD_EXIT -ne 0 ]]; then
     log_warn "编译失败 (exit=$BUILD_EXIT)，重试一次..."
     go mod tidy 2>&1 || true
-    go build -ldflags="-s -w" -o wp-panel . 2>&1 || log_error "编译再次失败"
+    go build -ldflags="${LDFLAGS}" -o wp-panel . 2>&1 || log_error "编译再次失败"
 fi
 
 if [[ ! -f wp-panel ]]; then

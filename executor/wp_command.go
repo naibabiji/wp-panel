@@ -21,13 +21,6 @@ case "${1:-}" in
     unban)
         $BIN --unban-all
         ;;
-    status)
-        if systemctl is-active --quiet wp-panel; then
-            echo "WP Panel 运行中"
-        else
-            echo "WP Panel 未运行"
-        fi
-        ;;
     *)
         $BIN --info 2>/dev/null
         echo ""
@@ -49,7 +42,6 @@ case "${1:-}" in
         echo "  wp restart     重启面板"
         echo "  wp password    一键重置管理员账号密码"
         echo "  wp unban       一键清空所有IP封禁"
-        echo "  wp status      查看运行状态"
         ;;
 esac
 `

@@ -47,7 +47,11 @@ func main() {
 	if *showInfo {
 		fmt.Println("WP Panel 面板信息")
 		fmt.Println("─────────────────")
-		fmt.Printf("版本: %s (构建: %s)\n", Version, BuildTime)
+		if BuildTime != "" && BuildTime != "unknown" {
+			fmt.Printf("版本: %s (构建: %s)\n", Version, BuildTime)
+		} else {
+			fmt.Printf("版本: %s\n", Version)
+		}
 		fmt.Printf("HTTPS 端口: %d\n", cfg.Panel.TLSPort)
 		fmt.Printf("安全入口: /%s\n", cfg.Panel.RandomSuffix)
 		fmt.Printf("数据目录: %s\n", cfg.Panel.DataDir)
