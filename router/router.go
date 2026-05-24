@@ -14,7 +14,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var panelVersion string
+
 func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version string) *gin.Engine {
+	panelVersion = version
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 
@@ -261,6 +264,7 @@ func pageData(suffix string, active string, contentTpl string, c *gin.Context) g
 	return gin.H{
 		"Title":           title,
 		"PanelTitle":      handlers.GetPanelTitle(),
+			"PanelVersion":    panelVersion,
 		"ContentTemplate": contentTpl,
 		"RandomSuffix":    suffix,
 		"Active":          active,

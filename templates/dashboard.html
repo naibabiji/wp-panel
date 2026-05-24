@@ -1,7 +1,14 @@
 {{template "base" .}}
 {{define "dashboard_content"}}
 <div>
-    <h2 class="text-xl font-bold text-white mb-6">控制台</h2>
+    <div class="flex items-center justify-between mb-6" x-data="versionCheck()" x-init="check()">
+        <div class="flex items-center space-x-3">
+            <h2 class="text-xl font-bold text-white">控制台</h2>
+            <span class="text-xs text-gray-500 bg-gray-800 px-2 py-0.5 rounded">{{.PanelVersion}}</span>
+            <a x-show="hasUpdate" href="/{{.RandomSuffix}}/settings#version" class="text-xs bg-yellow-600 text-yellow-100 px-2 py-0.5 rounded hover:bg-yellow-500" x-text="'发现新版本 ' + latestVersion"></a>
+            <span x-show="checking" class="text-xs text-gray-600">检查更新中...</span>
+        </div>
+    </div>
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6" x-data="dashboardStats()" x-init="fetchStats()">
         <div class="card">
             <p class="text-gray-400 text-sm">CPU 使用率</p>
@@ -42,6 +49,25 @@
 </div>
 
 <script>
+function versionCheck() {
+    return {
+        hasUpdate: false,
+        checking: false,
+        latestVersion: '',
+        async check() {
+            this.checking = true;
+            try {
+                const r = await api('/update/check');
+                if (r.success && r.data.has_update) {
+                    this.hasUpdate = true;
+                    this.latestVersion = r.data.latest_version;
+                }
+            } catch(e) {}
+            this.checking = false;
+        }
+    }
+}
+
 function dashboardStats() {
     return {
         stats: {},
