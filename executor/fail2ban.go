@@ -547,3 +547,32 @@ func UnbanAllIPs() string {
 
 	return fmt.Sprintf("已清空所有封禁规则，共解封 %d 条记录", unbanCount)
 }
+
+func CleanExpiredBans() {
+	db := database.GetDB()
+
+	rows, err := db.Query(`SELECT id, ip_address, source_jail FROM firewall_bans
+		WHERE unbanned_at IS NULL AND expires_at IS NOT NULL AND expires_at <= datetime('now')`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int
+		var ip, jail string
+		if rows.Scan(&id, &ip, &jail) != nil {
+			continue
+		}
+
+		db.Exec("UPDATE firewall_bans SET unbanned_at = datetime('now') WHERE id = ?", id)
+
+		if jail == "panel_scan" {
+			RemovePersistBan(ip)
+		} else if jail == "wppanel" || jail == "panel" {
+			for _, j := range []string{"wppanel", "wppanel-404", "panel"} {
+				executeCommand("fail2ban-client", "set", j, "unbanip", ip)
+			}
+		}
+	}
+}
