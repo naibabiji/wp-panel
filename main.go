@@ -77,6 +77,9 @@ func main() {
 	if err := database.RunMigrations(); err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
+	if err := database.RunUpgrades(); err != nil {
+		log.Fatalf("数据库升级失败: %v", err)
+	}
 
 	if *resetAdmin {
 		resetAllAdmin(cfg)

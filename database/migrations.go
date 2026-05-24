@@ -199,10 +199,7 @@ var migrations = []string{
 		('alert_service',            'true',     '服务进程异常重启告警'),
 		('alert_ssl',                'true',     'SSL 证书到期告警'),
 		('alert_backup',             'true',     '数据库备份失败告警'),
-		('alert_website_expiry',     'true',     '网站到期告警'),
-			('webhook_enabled',           'false',    '是否启用 Webhook 推送'),
-			('webhook_channel',           'wecom',    '推送渠道：wecom/dingtalk/feishu/serverchan/bark/custom'),
-			('webhook_url',               '',         'Webhook 推送地址')`,
+		('alert_website_expiry',     'true',     '网站到期告警')`,
 
 	// ============================================================
 	// seed: template_versions
