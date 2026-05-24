@@ -202,7 +202,7 @@
 	                    <li x-show="site.site_type === 'wordpress'">已登录用户、POST 请求、wp-admin 后台自动跳过缓存</li>
 	                    <li x-show="site.site_type === 'php'">POST 请求和带查询参数的请求自动跳过缓存</li>
 	                </ul>
-	                <p class="text-gray-500 mt-2" x-show="site.site_type === 'wordpress'">配套插件（wp-panel-cache-helper）安装到网站后，网站管理员可自行在 WordPress 后台清除缓存和控制 TTL，无需面板权限。不要安装第三方缓存插件（WP Rocket / W3 Total Cache 等的 Nginx 模式），会与本卡片冲突。</p>
+	                <p class="text-gray-500 mt-2" x-show="site.site_type === 'wordpress'">配套插件（WP Panel Optimizer）安装到网站后，网站管理员可在 WordPress 后台管理缓存、禁止更新和文件编辑等优化项，与面板设置实时同步。不要安装第三方缓存插件（WP Rocket / W3 Total Cache 等的 Nginx 模式），会与本卡片冲突。</p>
 	            </div>
 	        </div>
     </div>

@@ -605,9 +605,9 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 		return
 	}
 
-	src := "/www/server/panel/packages/wp-panel-cache-helper.php"
-	pluginDir := filepath.Join(webRoot, "wp-content", "plugins", "wp-panel-cache-helper")
-	dst := filepath.Join(pluginDir, "wp-panel-cache-helper.php")
+	src := "/www/server/panel/packages/wp-panel-optimizer.php"
+	pluginDir := filepath.Join(webRoot, "wp-content", "plugins", "wp-panel-optimizer")
+	dst := filepath.Join(pluginDir, "wp-panel-optimizer.php")
 	os.MkdirAll(pluginDir, 0755)
 
 	srcData, err := os.ReadFile(src)
@@ -632,7 +632,7 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"message":   "插件已安装",
-		"path":      "wp-content/plugins/wp-panel-cache-helper/",
+		"path":      "wp-content/plugins/wp-panel-optimizer/",
 		"panel_url": panelURL,
 	}))
 }
@@ -651,9 +651,9 @@ func (h *WebsiteHandler) InstallPluginStatus(c *gin.Context) {
 		return
 	}
 
-	dst := filepath.Join(webRoot, "wp-content", "plugins", "wp-panel-cache-helper", "wp-panel-cache-helper.php")
+	dst := filepath.Join(webRoot, "wp-content", "plugins", "wp-panel-optimizer", "wp-panel-optimizer.php")
 	dstInfo, dstErr := os.Stat(dst)
-	srcInfo, srcErr := os.Stat("/www/server/panel/packages/wp-panel-cache-helper.php")
+	srcInfo, srcErr := os.Stat("/www/server/panel/packages/wp-panel-optimizer.php")
 
 	status := "not_installed"
 	if dstErr == nil {
@@ -665,7 +665,7 @@ func (h *WebsiteHandler) InstallPluginStatus(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"status":      status,
-		"plugin_path": "wp-content/plugins/wp-panel-cache-helper/",
+		"plugin_path": "wp-content/plugins/wp-panel-optimizer/",
 	}))
 }
 
@@ -933,15 +933,89 @@ func (h *CacheHelperHandler) FindByDomain(c *gin.Context) {
 		return
 	}
 
-	var siteID int
+	var siteID, fcacheEnabled, fcacheTTL, disableUpdates, disableEditing int
 	err := database.GetDB().QueryRow(
-		"SELECT id FROM websites WHERE domain = ? OR aliases LIKE ?",
+		"SELECT id, fastcgi_cache_enabled, fastcgi_cache_ttl, disable_wp_updates, disable_file_editing FROM websites WHERE domain = ? OR aliases LIKE ?",
 		domain, "%"+domain+"%",
-	).Scan(&siteID)
+	).Scan(&siteID, &fcacheEnabled, &fcacheTTL, &disableUpdates, &disableEditing)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"site_id": siteID, "domain": domain}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"site_id":                siteID,
+		"domain":                 domain,
+		"fastcgi_cache_enabled":  fcacheEnabled == 1,
+		"fastcgi_cache_ttl":      fcacheTTL,
+		"disable_wp_updates":     disableUpdates == 1,
+		"disable_file_editing":   disableEditing == 1,
+	}))
+}
+
+func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
+	var req struct {
+		Domain             string `json:"domain"`
+		Enabled            bool   `json:"enabled"`
+		TTL                int    `json:"ttl"`
+		DisableWPUpdates   bool   `json:"disable_wp_updates"`
+		DisableFileEditing bool   `json:"disable_file_editing"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Domain == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		return
+	}
+	if !h.checkAPIKey(req.Domain, c) {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse("API Key 无效"))
+		return
+	}
+	if req.TTL < 10 {
+		req.TTL = 300
+	}
+	if req.TTL > 86400 {
+		req.TTL = 86400
+	}
+
+	db := database.GetDB()
+
+	var oldFCacheEnabled, oldFCacheTTL int
+	db.QueryRow("SELECT fastcgi_cache_enabled, fastcgi_cache_ttl FROM websites WHERE domain = ? OR aliases LIKE '%' || ? || '%'", req.Domain, req.Domain).
+		Scan(&oldFCacheEnabled, &oldFCacheTTL)
+
+	fcEnabled := 0
+	if req.Enabled {
+		fcEnabled = 1
+	}
+	disableUpdates := 0
+	disableEditing := 0
+	if req.DisableWPUpdates {
+		disableUpdates = 1
+	}
+	if req.DisableFileEditing {
+		disableEditing = 1
+	}
+
+	db.Exec(`UPDATE websites SET
+		fastcgi_cache_enabled = ?, fastcgi_cache_ttl = ?,
+		disable_wp_updates = ?, disable_file_editing = ?
+		WHERE domain = ? OR aliases LIKE '%' || ? || '%'`,
+		fcEnabled, req.TTL, disableUpdates, disableEditing, req.Domain, req.Domain)
+
+	// 更新 wp-config.php
+	var webRoot string
+	db.QueryRow("SELECT web_root FROM websites WHERE domain = ? OR aliases LIKE '%' || ? || '%'", req.Domain, req.Domain).Scan(&webRoot)
+	if webRoot != "" {
+		executor.ApplyWPOptimizations(webRoot, req.DisableWPUpdates, req.DisableFileEditing)
+	}
+
+	// FastCGI 配置变化时重载 Nginx
+	if oldFCacheEnabled != fcEnabled || oldFCacheTTL != req.TTL {
+		var siteID int
+		db.QueryRow("SELECT id FROM websites WHERE domain = ? OR aliases LIKE '%' || ? || '%'", req.Domain, req.Domain).Scan(&siteID)
+		if siteID > 0 {
+			go executor.RegenerateSiteNginx(siteID)
+		}
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
 }

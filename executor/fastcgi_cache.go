@@ -26,9 +26,9 @@ fastcgi_cache_path /var/cache/nginx/fastcgi levels=1:2 keys_zone=WP_CACHE:200m i
 func EnsureCacheHelperPlugin(pluginFS embed.FS) {
 	pkgDir := "/www/server/panel/packages"
 	os.MkdirAll(pkgDir, 0755)
-	dst := filepath.Join(pkgDir, "wp-panel-cache-helper.php")
+	dst := filepath.Join(pkgDir, "wp-panel-optimizer.php")
 
-	data, err := pluginFS.ReadFile("wp-panel-cache-helper/wp-panel-cache-helper.php")
+	data, err := pluginFS.ReadFile("wp-panel-optimizer/wp-panel-optimizer.php")
 	if err != nil {
 		return
 	}

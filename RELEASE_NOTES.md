@@ -1,3 +1,4 @@
 - wp --info 构建时间按服务器时区显示（之前始终显示 UTC 时间）
 - 新增 Webhook 推送通知：支持企业微信/钉钉/飞书/Server酱/Bark/自定义渠道，告警触发时可通过 HTTP POST 推送到指定 URL
 - 网站详情页「FastCGI 缓存」卡片改为「WordPress 优化」，新增禁止自动更新（核心/插件/主题）和禁止后台文件编辑开关，统一保存生效
+- 配套插件重写为 WP Panel Optimizer，WordPress 后台可直接管理缓存、禁止更新、禁止文件编辑等优化项，与面板设置双向同步

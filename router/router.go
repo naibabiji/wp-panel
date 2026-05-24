@@ -89,6 +89,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	pluginGroup.GET("/api/sites/find", cacheHelper.FindByDomain)
 	pluginGroup.DELETE("/api/sites/clear-cache", cacheHelper.ClearByDomain)
 	pluginGroup.PUT("/api/sites/cache-settings", cacheHelper.UpdateCacheSettings)
+	pluginGroup.PUT("/api/sites/optimizer-settings", cacheHelper.UpdateOptimizerSettings)
 
 	protected := panelGroup.Group("")
 	protected.Use(middleware.SessionRequired())
