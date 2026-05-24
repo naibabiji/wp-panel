@@ -33,6 +33,9 @@ jobs:
           chmod +x bin/tailwindcss
           bin/tailwindcss -i input.css -o static/css/main.css --minify
 
+      - name: Static check
+        run: go vet ./...
+
       - name: Build binary
         run: |
           VERSION=${GITHUB_REF#refs/tags/}

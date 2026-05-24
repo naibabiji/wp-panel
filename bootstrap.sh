@@ -190,6 +190,9 @@ VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
 BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 LDFLAGS="-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}"
 
+log_info "静态检查 (go vet)..."
+go vet ./...
+
 log_info "编译 wp-panel (CGO_ENABLED=0 静态链接)..."
 set +e
 go build -ldflags="${LDFLAGS}" -o wp-panel . 2>&1
