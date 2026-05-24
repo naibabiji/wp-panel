@@ -182,7 +182,7 @@ class WP_Panel_Optimizer {
                         <th><label for="wpp-no-updates">禁止检测更新</label></th>
                         <td>
                             <label><input id="wpp-no-updates" name="no_updates" type="checkbox" value="1" <?php checked($noUpdates); ?>> 完全屏蔽 WordPress 核心、插件和主题的更新检测和提示</label>
-                            <p class="description">启用后 WordPress 仪表盘不再显示更新红点和通知，手动更新不受影响。</p>
+                            <p class="description">启用后完全屏蔽更新检测，仪表盘无红点无通知，后台「检查更新」也不生效。如需更新，先关闭此开关。</p>
                         </td>
                     </tr>
                     <tr>
