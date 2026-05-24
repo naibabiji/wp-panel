@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -756,7 +757,9 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 	var webRoot string
 	db.QueryRow("SELECT web_root FROM websites WHERE id = ?", id).Scan(&webRoot)
 	if webRoot != "" {
-		executor.ApplyWPOptimizations(webRoot, req.DisableWPUpdates, req.DisableFileEditing)
+		if err := executor.ApplyWPOptimizations(webRoot, req.DisableWPUpdates, req.DisableFileEditing); err != nil {
+			log.Printf("ApplyWPOptimizations 失败 (site %d): %v", id, err)
+		}
 	}
 
 	// FastCGI 配置变化时重载 Nginx
@@ -850,8 +853,8 @@ func (h *CacheHelperHandler) checkAPIKey(domain string, c *gin.Context) bool {
 	}
 	var storedKey string
 	err := database.GetDB().QueryRow(
-		"SELECT plugin_api_key FROM websites WHERE domain = ? OR aliases LIKE ?",
-		domain, "%"+domain+"%",
+		"SELECT plugin_api_key FROM websites WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%')",
+		domain, domain,
 	).Scan(&storedKey)
 	if err != nil {
 		return false
@@ -880,14 +883,14 @@ func (h *CacheHelperHandler) UpdateCacheSettings(c *gin.Context) {
 	}
 
 	db := database.GetDB()
-	_, err := db.Exec("UPDATE websites SET fastcgi_cache_ttl = ? WHERE (domain = ? OR aliases LIKE '%' || ? || '%')", req.TTL, req.Domain, req.Domain)
+	_, err := db.Exec("UPDATE websites SET fastcgi_cache_ttl = ? WHERE (domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%'))", req.TTL, req.Domain, req.Domain)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新失败"))
 		return
 	}
 
 	var siteID int
-	db.QueryRow("SELECT id FROM websites WHERE (domain = ? OR aliases LIKE '%' || ? || '%')", req.Domain, req.Domain).Scan(&siteID)
+	db.QueryRow("SELECT id FROM websites WHERE (domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%'))", req.Domain, req.Domain).Scan(&siteID)
 	if siteID > 0 {
 		go executor.RegenerateSiteNginx(siteID)
 	}
@@ -910,7 +913,7 @@ func (h *CacheHelperHandler) ClearByDomain(c *gin.Context) {
 
 	var siteID int
 	err := database.GetDB().QueryRow(
-		"SELECT id FROM websites WHERE (domain = ? OR aliases LIKE '%' || ? || '%')",
+		"SELECT id FROM websites WHERE (domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%'))",
 		req.Domain, req.Domain,
 	).Scan(&siteID)
 	if err != nil {
@@ -935,8 +938,8 @@ func (h *CacheHelperHandler) FindByDomain(c *gin.Context) {
 
 	var siteID, fcacheEnabled, fcacheTTL, disableUpdates, disableEditing int
 	err := database.GetDB().QueryRow(
-		"SELECT id, fastcgi_cache_enabled, fastcgi_cache_ttl, disable_wp_updates, disable_file_editing FROM websites WHERE domain = ? OR aliases LIKE ?",
-		domain, "%"+domain+"%",
+		"SELECT id, fastcgi_cache_enabled, fastcgi_cache_ttl, disable_wp_updates, disable_file_editing FROM websites WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%')",
+		domain, domain,
 	).Scan(&siteID, &fcacheEnabled, &fcacheTTL, &disableUpdates, &disableEditing)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
@@ -979,7 +982,7 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 	db := database.GetDB()
 
 	var oldFCacheEnabled, oldFCacheTTL int
-	db.QueryRow("SELECT fastcgi_cache_enabled, fastcgi_cache_ttl FROM websites WHERE domain = ? OR aliases LIKE '%' || ? || '%'", req.Domain, req.Domain).
+	db.QueryRow("SELECT fastcgi_cache_enabled, fastcgi_cache_ttl FROM websites WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%')", req.Domain, req.Domain).
 		Scan(&oldFCacheEnabled, &oldFCacheTTL)
 
 	fcEnabled := 0
@@ -998,20 +1001,22 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 	db.Exec(`UPDATE websites SET
 		fastcgi_cache_enabled = ?, fastcgi_cache_ttl = ?,
 		disable_wp_updates = ?, disable_file_editing = ?
-		WHERE domain = ? OR aliases LIKE '%' || ? || '%'`,
+		WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%')`,
 		fcEnabled, req.TTL, disableUpdates, disableEditing, req.Domain, req.Domain)
 
 	// 更新 wp-config.php
 	var webRoot string
-	db.QueryRow("SELECT web_root FROM websites WHERE domain = ? OR aliases LIKE '%' || ? || '%'", req.Domain, req.Domain).Scan(&webRoot)
+	db.QueryRow("SELECT web_root FROM websites WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%')", req.Domain, req.Domain).Scan(&webRoot)
 	if webRoot != "" {
-		executor.ApplyWPOptimizations(webRoot, req.DisableWPUpdates, req.DisableFileEditing)
+		if err := executor.ApplyWPOptimizations(webRoot, req.DisableWPUpdates, req.DisableFileEditing); err != nil {
+			log.Printf("ApplyWPOptimizations 失败 (site %d): %v", req.Domain, err)
+		}
 	}
 
 	// FastCGI 配置变化时重载 Nginx
 	if oldFCacheEnabled != fcEnabled || oldFCacheTTL != req.TTL {
 		var siteID int
-		db.QueryRow("SELECT id FROM websites WHERE domain = ? OR aliases LIKE '%' || ? || '%'", req.Domain, req.Domain).Scan(&siteID)
+		db.QueryRow("SELECT id FROM websites WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%')", req.Domain, req.Domain).Scan(&siteID)
 		if siteID > 0 {
 			go executor.RegenerateSiteNginx(siteID)
 		}

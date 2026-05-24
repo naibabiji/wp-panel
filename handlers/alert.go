@@ -50,7 +50,7 @@ func (h *AlertHandler) SaveSettings(c *gin.Context) {
 		default:
 			continue
 		}
-		db.Exec("INSERT INTO security_settings (skey, svalue, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(skey) DO UPDATE SET svalue = excluded.svalue, updated_at = excluded.updated_at", strVal, key)
+		db.Exec("INSERT INTO security_settings (skey, svalue, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(skey) DO UPDATE SET svalue = excluded.svalue, updated_at = excluded.updated_at", key, strVal)
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
 }
