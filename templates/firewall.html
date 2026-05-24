@@ -70,20 +70,20 @@
                     <p class="text-gray-500 mb-1">SSH 登录服务器执行以下命令查看当前封禁状态：</p>
                     <div class="bg-gray-900 rounded p-3 font-mono text-xs text-gray-300 space-y-2">
                         <div>
-                            <span class="text-gray-500"># 查看主 jail 封禁状态</span>
+                            <span class="text-gray-500"># 查看网站防护封禁</span>
                             <br><span class="text-green-400">fail2ban-client</span> status wppanel
                         </div>
                         <div>
-                            <span class="text-gray-500"># 查看 404 泛滥 jail 封禁状态</span>
+                            <span class="text-gray-500"># 查看 404 泛滥封禁</span>
                             <br><span class="text-green-400">fail2ban-client</span> status wppanel-404
                         </div>
                         <div>
-                            <span class="text-gray-500"># 查看 Nftables 持久封禁</span>
-                            <br><span class="text-green-400">nft</span> list set ip wppanel_persist banned_ips
+                            <span class="text-gray-500"># 查看面板认证封禁（Web 登录 + BasicAuth 失败）</span>
+                            <br><span class="text-green-400">fail2ban-client</span> status panel
                         </div>
                         <div>
-                            <span class="text-gray-500"># 查看面板扫描防御封禁</span>
-                            <br><span class="text-green-400">sqlite3</span> /www/server/panel/data.db <span class="text-gray-500">"SELECT ip_address, reason, banned_at, expires_at FROM firewall_bans WHERE source_jail='panel_scan' AND unbanned_at IS NULL;"</span>
+                            <span class="text-gray-500"># 查看 Nftables 持久封禁和扫描防御封禁</span>
+                            <br><span class="text-green-400">nft</span> list set ip wppanel_persist banned_ips
                         </div>
                     </div>
                 </div>
