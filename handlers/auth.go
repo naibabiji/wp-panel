@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"net/http"
+	"os/exec"
 
 	"github.com/naibabiji/wp-panel/middleware"
 	"github.com/naibabiji/wp-panel/models"
@@ -121,6 +122,7 @@ func recordWebLoginAttempt(ip string, db *sql.DB) {
 			 VALUES (?, 3, 'panel_web_login: 连续5次登录失败', 'panel', datetime('now', '+24 hours'), 1)`,
 			ip,
 		)
+		go exec.Command("fail2ban-client", "set", "panel", "banip", ip).Run()
 	}
 }
 
