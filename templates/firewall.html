@@ -3,55 +3,69 @@
 <div x-data="firewallManager()" x-init="fetchBans()">
     <div class="flex items-center justify-between mb-6">
         <h2 class="text-xl font-bold text-white">安全防御</h2>
-        <button @click="showRules = true" class="btn-secondary text-sm">封禁说明</button>
+        <button @click="showRules = true" class="btn-secondary text-sm">防御规则说明</button>
     </div>
 
     <div x-show="showRules" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="showRules = false">
-        <div class="bg-gray-800 rounded-lg p-6 max-w-lg w-full mx-4 shadow-xl">
-            <h3 class="text-lg font-bold text-white mb-4">自动封禁规则说明</h3>
+        <div class="bg-gray-800 rounded-lg p-6 max-w-4xl w-full mx-4 shadow-xl max-h-[80vh] overflow-y-auto">
+            <h3 class="text-lg font-bold text-white mb-4">安全防御规则说明</h3>
             <div class="text-sm text-gray-300 space-y-4">
                 <div>
                     <p class="text-white font-semibold mb-1">检测范围</p>
-                    <p>监控所有网站的 access.log 和 error.log</p>
+                    <p>监控所有网站的 access.log 和 error.log 日志。</p>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">触发条件（命中以下任一规则计为 1 次违规）</p>
                     <ul class="list-disc list-inside space-y-1 ml-2">
-                        <li>POST /wp-login.php — WordPress 登录暴力破解</li>
-                        <li>POST /xmlrpc.php — XML-RPC 接口攻击</li>
-                        <li>访问敏感文件返回 404 — 扫描 .env、.git、wp-config.php、.sql、.tar.gz、.zip 等</li>
+                        <li><code class="text-gray-300">POST /wp-login.php</code> — WordPress 登录暴力破解</li>
+                        <li><code class="text-gray-300">POST /xmlrpc.php</code> — XML-RPC 接口攻击（含 <code class="text-gray-300">//xmlrpc.php</code> 变体）</li>
+                        <li>返回 <span class="text-gray-300">HTTP 429</span> — 超出请求频率限制</li>
+                        <li>敏感文件扫描返回 <span class="text-gray-300">404</span> — 如 <code class="text-gray-300">.env</code>、<code class="text-gray-300">.git</code>、<code class="text-gray-300">wp-config.php</code>、<code class="text-gray-300">.sql</code>、压缩包等</li>
+                        <li class="text-green-400">404 泛滥检测 — 任意路径返回 404 达 <span class="text-green-300">30 次/60 秒</span> 判定为目录扫描（独立规则，固定阈值）</li>
                     </ul>
                 </div>
                 <div>
-                    <p class="text-white font-semibold mb-1">封禁阈值（可在安全设置中自定义）</p>
-                    <p>默认：<span class="text-blue-400">60 秒</span>内累计 <span class="text-blue-400">5 次</span>违规 → 自动封禁</p>
+                    <p class="text-white font-semibold mb-1">封禁阈值</p>
+                    <p>前 4 项规则默认 <span class="text-blue-400">60 秒</span>内累计 <span class="text-blue-400">5 次</span>违规 → 自动封禁（可在「安全设置」页面自定义阈值、窗口和封禁时长）。</p>
+                    <p>404 泛滥规则固定为 <span class="text-blue-400">30 次/60 秒</span>，不开放自定义。</p>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">多级渐进封禁</p>
-                    <ul class="list-disc list-inside space-y-1 ml-2">
-                        <li><span class="badge-warning">临时10分钟</span> — 初犯：Fail2ban 封禁 10 分钟，到期自动解除</li>
-                        <li><span class="badge-danger">临时24小时</span> — 累犯：解封后 <span class="text-blue-400">24 小时</span>内再次违规 → 升级为 24 小时，同时写入 Nftables 持久规则</li>
-                        <li><span class="badge-danger">永久封禁</span> — 惯犯：累计 <span class="text-blue-400">3 次</span> 24 小时封禁 → 自动转为永久封禁，仅通过 Nftables 持久规则封锁</li>
+                    <ul class="space-y-1 ml-2">
+                        <li>首次违规 → Fail2ban 封禁 <span class="text-blue-400">10 分钟</span>，到期自动解除</li>
+                        <li>24 小时内再次违规 → 升级为 <span class="text-blue-400">24 小时</span> 封禁，同时写入 Nftables 持久规则</li>
+                        <li>累计 3 次 24 小时封禁 → 自动转为<span class="text-red-400">永久封禁</span>，仅通过 Nftables 持久规则封锁</li>
                     </ul>
+                    <p class="text-gray-500 mt-1">封禁列表可通过「来源」列区分 Fail2ban 临时封禁 与 Nftables 持久封禁。</p>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">封禁机制</p>
                     <ul class="space-y-1 ml-2">
-                        <li><span class="text-blue-400">Fail2ban</span> — 管理临时封禁（10分钟/24小时），到期自动释放</li>
+                        <li><span class="text-blue-400">Fail2ban</span> — 管理临时封禁（jail: <code class="text-gray-300">wppanel</code>、<code class="text-gray-300">wppanel-404</code>），到期自动释放</li>
                         <li><span class="text-purple-400">Nftables 持久</span> — 管理永久封禁，独立于 Fail2ban，重启不丢失</li>
                     </ul>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">白名单豁免</p>
-                    <p>127.0.0.1、Cloudflare / Googlebot / Bingbot 官方 IP、自定义白名单 IP 不会被封禁</p>
+                    <p>127.0.0.1、Cloudflare / Googlebot / Bingbot 官方 IP 段、自定义白名单 IP 不会被封禁。白名单在「安全设置」页面管理。</p>
+                </div>
+                <div>
+                    <p class="text-white font-semibold mb-1">请求频率限制原理</p>
+                    <p>采用令牌桶算法：每 IP 一个桶，容量 = 突发缓冲（默认 300），每秒补充 1 个令牌。请求到达消耗令牌，耗尽后返回 429。人类浏览有自然停顿，停顿期间桶自动回满；机器人持续请求则被压制在 1 次/秒。</p>
+                    <p class="text-red-400 mt-1">⚠ 多次 429 会被 Fail2ban 自动封禁。请确保突发缓冲足够日常使用。</p>
+                    <p class="text-green-400">✓ 提高突发缓冲不影响拦截机器人，不削弱安全防护。</p>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">服务器验证命令</p>
                     <p class="text-gray-500 mb-1">SSH 登录服务器执行以下命令查看当前封禁状态：</p>
                     <div class="bg-gray-900 rounded p-3 font-mono text-xs text-gray-300 space-y-2">
                         <div>
-                            <span class="text-gray-500"># 查看 Fail2ban 临时封禁</span>
+                            <span class="text-gray-500"># 查看主 jail 封禁状态</span>
                             <br><span class="text-green-400">fail2ban-client</span> status wppanel
+                        </div>
+                        <div>
+                            <span class="text-gray-500"># 查看 404 泛滥 jail 封禁状态</span>
+                            <br><span class="text-green-400">fail2ban-client</span> status wppanel-404
                         </div>
                         <div>
                             <span class="text-gray-500"># 查看 Nftables 持久封禁</span>
