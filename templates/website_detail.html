@@ -189,7 +189,7 @@
 	                <button @click="saveWPOptimizations()" :disabled="optimizationSaving" class="btn-primary text-sm" x-text="optimizationSaving ? '保存中...' : '保存设置'"></button>
 	                <button x-show="fcacheEnabled" @click="clearFCache()" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">清除缓存</button>
 	            </div>
-	            <div x-show="fcacheEnabled && site.site_type === 'wordpress'" class="flex items-center space-x-3 mb-3">
+	            <div x-show="(fcacheEnabled || disableWPUpdates || disableFileEditing) && site.site_type === 'wordpress'" class="flex items-center space-x-3 mb-3">
 	                <button x-show="pluginStatus === 'not_installed'" @click="installPlugin()" :disabled="pluginInstalling" class="btn-primary text-sm py-1.5" x-text="pluginInstalling ? '安装中...' : '安装配套插件'"></button>
 	                <button x-show="pluginStatus === 'update_available'" @click="installPlugin()" :disabled="pluginInstalling" class="text-sm py-1.5 px-3 rounded" style="background-color: #166534; color: #bbf7d0;" x-text="pluginInstalling ? '更新中...' : '更新配套插件'"></button>
 	                <span x-show="pluginStatus === 'installed'" class="text-xs text-green-400">✓ 插件已安装</span>
