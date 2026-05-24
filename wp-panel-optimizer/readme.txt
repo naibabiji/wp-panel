@@ -13,6 +13,8 @@ License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
 WP Panel Optimizer 是 [WP Panel](https://github.com/naibabiji/wp-panel) 的配套插件，通过面板 API 与服务器端面板实时同步优化设置。
 
+作者：[naibabiji](https://blog.naibabiji.com) | 插件地址：[GitHub](https://github.com/naibabiji/wp-panel)
+
 = 功能 =
 
 * **FastCGI 缓存管理**：在 WordPress 后台开启/关闭 Nginx FastCGI 全站缓存，设置缓存有效期
