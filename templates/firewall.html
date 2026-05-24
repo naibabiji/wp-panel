@@ -50,9 +50,8 @@
                     <p class="text-white font-semibold mb-1">扫描防御</p>
                     <ul class="space-y-1 ml-2">
                         <li>针对面板 <span class="text-blue-400">8443</span> 端口的扫描防护，不作用于网站端口（80/443）</li>
-                        <li><span class="text-orange-400">蜜罐路径</span> — 请求已知漏洞路径（如 <code class="text-gray-300">/wp-admin</code>、<code class="text-gray-300">/.env</code>、<code class="text-gray-300">/phpmyadmin</code> 等 42 个特征路径）→ 立即封禁 <span class="text-red-400">30 天</span></li>
-                        <li><span class="text-orange-400">浏览器指纹</span> — 非浏览器特征请求（如 curl、脚本、扫描器）探测不存在路径 → 封禁 <span class="text-red-400">7 天</span></li>
-                        <li>仅对未命中随机入口（<code class="text-gray-300">/{suffix}</code>）的请求生效，正常访问不受影响</li>
+                        <li>任何非浏览器特征请求（如 curl、脚本、扫描器）访问面板端口且未命中随机入口 → 封禁 <span class="text-red-400">7 天</span></li>
+                        <li>命中随机入口（<code class="text-gray-300">/{suffix}</code>）的请求正常放行，不受影响</li>
                     </ul>
                     <p class="text-gray-500 mt-1">触发后写入面板封禁列表，来源标注为「扫描防御」，等级为临时 30 天。</p>
                 </div>

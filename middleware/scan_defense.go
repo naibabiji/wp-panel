@@ -10,19 +10,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var honeypotPaths = []string{
-	"/.env", "/.git", "/.git/config", "/wp-admin", "/wp-login",
-	"/admin", "/phpmyadmin", "/phpMyAdmin", "/phpmyadmin4", "/pma",
-	"/api", "/api/v1", "/config", "/backup", "/backups", "/dump",
-	"/shell", "/cmd", "/actuator", "/health", "/info", "/debug",
-	"/console", "/manager", "/jenkins", "/.DS_Store",
-	"/docker-compose.yml", "/composer.json", "/package.json",
-	"/robots.txt", "/sitemap.xml", "/crossdomain.xml",
-	"/owa", "/ecp", "/Autodiscover", "/solr", "/geoserver",
-	"/lang", "/swagger", "/swagger-ui", "/graphql",
-	"/vendor/phpunit", "/.svn", "/.hg", "/.bzr",
-}
-
 var browserUAs = []string{
 	"Mozilla", "Chrome", "Safari", "Firefox", "Edge", "Opera",
 	"MSIE", "Trident", "Edg", "OPR", "Brave", "Vivaldi",
@@ -83,16 +70,8 @@ func ScanDefense(db *sql.DB, randomSuffix string) gin.HandlerFunc {
 			return
 		}
 
-		for _, hp := range honeypotPaths {
-			if strings.HasPrefix(path, hp) {
-				banScanIP(db, c.ClientIP(), "高危扫描: 探测已知漏洞路径 "+path, 720)
-				c.AbortWithStatus(http.StatusForbidden)
-				return
-			}
-		}
-
 		if !isBrowserLike(c) {
-			banScanIP(db, c.ClientIP(), "高危扫描: 非浏览器特征探测 "+path, 168)
+			banScanIP(db, c.ClientIP(), "高危扫描: 非浏览器特征探测面板端口", 168)
 			c.AbortWithStatus(http.StatusForbidden)
 			return
 		}
