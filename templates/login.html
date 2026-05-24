@@ -20,7 +20,7 @@
                 <p class="text-gray-400 mt-2">请输入管理员密码完成登录</p>
             </div>
 
-            <form @submit.prevent="login" autocomplete="on" :class="{ 'pointer-events-none opacity-40': loading }">
+            <form @submit.prevent="login" autocomplete="on" method="post" :class="{ 'pointer-events-none opacity-40': loading }">
                 <div class="mb-4">
                     <label class="label">用户名</label>
                     <input type="text" x-model="username" x-ref="usernameInput" name="username" class="input-field" placeholder="admin" autocomplete="username">
@@ -33,7 +33,7 @@
                 <div x-show="error" class="mb-4 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm"
                      x-text="error"></div>
 
-                <button type="submit" class="btn-primary w-full" :class="{ 'opacity-50': !username || !password }">
+                <button type="submit" class="btn-primary w-full" :disabled="!username || !password">
                     登录
                 </button>
             </form>
