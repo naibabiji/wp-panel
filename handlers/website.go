@@ -1013,7 +1013,7 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 	db.QueryRow("SELECT web_root FROM websites WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%')", req.Domain, req.Domain).Scan(&webRoot)
 	if webRoot != "" {
 		if err := executor.ApplyWPOptimizations(webRoot, req.DisableWPUpdates, req.DisableFileEditing); err != nil {
-			log.Printf("ApplyWPOptimizations 失败 (site %d): %v", req.Domain, err)
+			log.Printf("ApplyWPOptimizations 失败 (site %s): %v", req.Domain, err)
 		}
 	}
 
