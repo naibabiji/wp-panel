@@ -42,15 +42,17 @@ func (s *SessionStore) Create(username string) *Session {
 }
 
 func (s *SessionStore) Get(token string) *Session {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	s.mu.RLock()
 	session, ok := s.sessions[token]
+	s.mu.RUnlock()
+
 	if !ok {
 		return nil
 	}
 	if time.Now().After(session.ExpiresAt) {
+		s.mu.Lock()
 		delete(s.sessions, token)
+		s.mu.Unlock()
 		return nil
 	}
 	// 滑动续期：每次有效访问延长 30 分钟

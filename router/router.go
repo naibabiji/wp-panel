@@ -52,6 +52,15 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	panelGroup.Use(middleware.RandomPath(suffix))
 	panelGroup.Use(middleware.BasicAuth(basicAuthChecker))
 
+	// 面板根路径重定向到登录页（解决用户访问面板地址不带 /login 的问题）
+	panelGroup.GET("", func(c *gin.Context) {
+		if c.Request.URL.Path == "/"+suffix {
+			c.Redirect(http.StatusFound, "/"+suffix+"/login")
+			return
+		}
+		c.Next()
+	})
+
 	panelGroup.GET("/login", func(c *gin.Context) {
 		middleware.SetCSRFToken(c)
 		csrfToken := middleware.GetCSRFToken(c)
