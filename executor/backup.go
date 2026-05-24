@@ -163,7 +163,7 @@ func restoreFromZip(filePath, dbName, dbPass string) TaskResult {
 
 func ExecuteDeleteBackup(siteID int, filename string) error {
 	cfg := config.AppConfig
-	backupDir := filepath.Join(cfg.Panel.BackupDir, getSiteDomain(siteID))
+	backupDir := filepath.Join(cfg.Panel.BackupDir, getSiteDomain(siteID), "db")
 	filePath := filepath.Join(backupDir, filename)
 	os.Remove(filePath)
 	db := database.GetDB()
@@ -191,7 +191,7 @@ func executeAutoBackups() {
 			continue
 		}
 
-		backupDir := filepath.Join(cfg.Panel.BackupDir, domain)
+		backupDir := filepath.Join(cfg.Panel.BackupDir, domain, "db")
 		os.MkdirAll(backupDir, 0700)
 
 		ts := time.Now().Format("20060102_150405")

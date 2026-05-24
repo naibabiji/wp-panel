@@ -97,7 +97,7 @@ func (h *BackupHandler) Download(c *gin.Context) {
 		return
 	}
 
-	backupDir := filepath.Join("/www/server/panel/backups", site.Domain)
+	backupDir := filepath.Join("/www/server/panel/backups", site.Domain, "db")
 	filePath := filepath.Join(backupDir, filename)
 	if _, err := os.Stat(filePath); err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("备份文件不存在"))
