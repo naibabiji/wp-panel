@@ -37,6 +37,8 @@ type Website struct {
 	FCacheKey            string        `json:"fastcgi_cache_key"`
 	MonitoringEnabled   bool          `json:"monitoring_enabled"`
 	MonitoringInterval  int           `json:"monitoring_interval"`
+	DisableWPUpdates    bool          `json:"disable_wp_updates"`
+	DisableFileEditing  bool          `json:"disable_file_editing"`
 	ExpiresAt           *time.Time    `json:"expires_at"`
 	CreatedAt         time.Time     `json:"created_at"`
 	UpdatedAt         time.Time     `json:"updated_at"`

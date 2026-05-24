@@ -50,6 +50,14 @@ var upgrades = []Upgrade{
 			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('webhook_url', '', 'Webhook 推送地址')`,
 		},
 	},
+	{
+		Version:     "1.0.1",
+		Description: "WordPress 优化字段：禁止自动更新、禁止文件编辑",
+		SQL: []string{
+			`ALTER TABLE websites ADD COLUMN disable_wp_updates INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE websites ADD COLUMN disable_file_editing INTEGER NOT NULL DEFAULT 0`,
+		},
+	},
 }
 
 // LatestVersion 返回 upgrades 列表中的最新版本号。

@@ -24,7 +24,7 @@ const websiteCols = `id, name, domain, aliases, status, system_user, web_root, l
 	db_name, db_user, php_pool_path, nginx_conf_path, site_type, ssl_enabled,
 	ssl_cert_path, ssl_key_path, ssl_expires_at, template_version, access_log_mode,
 	fastcgi_cache_enabled, fastcgi_cache_ttl, fastcgi_cache_key,
-	monitoring_enabled, monitoring_interval, expires_at, created_at, updated_at`
+	monitoring_enabled, monitoring_interval, disable_wp_updates, disable_file_editing, expires_at, created_at, updated_at`
 
 // scanWebsite scans the canonical columns into a Website model.
 // scanner is either row.Scan (for QueryRow) or rows.Scan (for Rows).
@@ -33,6 +33,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 	var aliases, status string
 	var sslEnabled, fCacheEnabled, monitoringEnabled int
 	var monitoringInterval int
+	var disableWPUpdates, disableFileEditing int
 
 	err := scanner(
 		&w.ID, &w.Name, &w.Domain, &aliases, &status, &w.SystemUser,
@@ -40,7 +41,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 		&w.NginxConfPath, &w.SiteType, &sslEnabled, &w.SSLCertPath, &w.SSLKeyPath,
 		&w.SSLExpiresAt, &w.TemplateVersion, &w.AccessLogMode,
 		&fCacheEnabled, &w.FCacheTTL, &w.FCacheKey,
-		&monitoringEnabled, &monitoringInterval, &w.ExpiresAt,
+		&monitoringEnabled, &monitoringInterval, &disableWPUpdates, &disableFileEditing, &w.ExpiresAt,
 		&w.CreatedAt, &w.UpdatedAt,
 	)
 	if err != nil {
@@ -53,6 +54,8 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 	w.FCacheEnabled = fCacheEnabled == 1
 	w.MonitoringEnabled = monitoringEnabled == 1
 	w.MonitoringInterval = monitoringInterval
+	w.DisableWPUpdates = disableWPUpdates == 1
+	w.DisableFileEditing = disableFileEditing == 1
 	return &w, nil
 }
 
@@ -697,6 +700,71 @@ func (h *WebsiteHandler) UpdateCache(c *gin.Context) {
 	go executor.RegenerateSiteNginx(id)
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "缓存设置已更新"}))
+}
+
+func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
+		return
+	}
+
+	var req struct {
+		FCacheEnabled      bool `json:"fcache_enabled"`
+		FCacheTTL          int  `json:"fcache_ttl"`
+		DisableWPUpdates   bool `json:"disable_wp_updates"`
+		DisableFileEditing bool `json:"disable_file_editing"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		return
+	}
+	if req.FCacheTTL < 10 {
+		req.FCacheTTL = 300
+	}
+	if req.FCacheTTL > 86400 {
+		req.FCacheTTL = 86400
+	}
+
+	db := database.GetDB()
+
+	// 检查 FastCGI 配置是否变化，决定是否重载 Nginx
+	var oldFCacheEnabled, oldFCacheTTL int
+	db.QueryRow("SELECT fastcgi_cache_enabled, fastcgi_cache_ttl FROM websites WHERE id = ?", id).
+		Scan(&oldFCacheEnabled, &oldFCacheTTL)
+
+	fcEnabled := 0
+	if req.FCacheEnabled {
+		fcEnabled = 1
+	}
+	disableUpdates := 0
+	if req.DisableWPUpdates {
+		disableUpdates = 1
+	}
+	disableEditing := 0
+	if req.DisableFileEditing {
+		disableEditing = 1
+	}
+
+	db.Exec(`UPDATE websites SET
+		fastcgi_cache_enabled = ?, fastcgi_cache_ttl = ?,
+		disable_wp_updates = ?, disable_file_editing = ?
+		WHERE id = ?`,
+		fcEnabled, req.FCacheTTL, disableUpdates, disableEditing, id)
+
+	// 更新 wp-config.php
+	var webRoot string
+	db.QueryRow("SELECT web_root FROM websites WHERE id = ?", id).Scan(&webRoot)
+	if webRoot != "" {
+		executor.ApplyWPOptimizations(webRoot, req.DisableWPUpdates, req.DisableFileEditing)
+	}
+
+	// FastCGI 配置变化时重载 Nginx
+	if oldFCacheEnabled != fcEnabled || oldFCacheTTL != req.FCacheTTL {
+		go executor.RegenerateSiteNginx(id)
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
 }
 
 func (h *WebsiteHandler) SaveMonitoring(c *gin.Context) {

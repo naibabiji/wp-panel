@@ -142,7 +142,7 @@
         </div>
     </div>
 
-    <!-- Row 3: Nginx 自定义配置 | FastCGI 缓存 -->
+    <!-- Row 3: Nginx 自定义配置 | WordPress优化 -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mt-6">
         <div class="card">
             <h3 class="text-lg font-semibold text-white mb-4">Nginx 自定义配置</h3>
@@ -161,35 +161,50 @@
             </div>
         </div>
 
-        <div class="card">
-            <h3 class="text-lg font-semibold text-white mb-4">FastCGI 缓存</h3>
-            <div class="flex items-center space-x-3 mb-3">
-                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-                    <input type="checkbox" x-model="fcacheEnabled" @change="saveFCache()">
-                    <span>开启缓存</span>
-                </label>
-            </div>
-            <div x-show="fcacheEnabled" class="mb-3">
-                <label class="text-sm text-gray-300 mb-1 block">缓存有效期（秒）</label>
-                <input type="number" x-model="fcacheTTL" @change="saveFCache()" class="input-field w-32 text-sm py-1" min="10" max="86400">
-            </div>
-            <div x-show="fcacheEnabled" class="flex items-center space-x-3 mb-3">
-                <button @click="clearFCache()" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">清除缓存</button>
-                <button x-show="pluginStatus === 'not_installed' && site.site_type === 'wordpress'" @click="installPlugin()" :disabled="pluginInstalling" class="btn-primary text-sm py-1.5" x-text="pluginInstalling ? '安装中...' : '安装配套插件'"></button>
-                <button x-show="pluginStatus === 'update_available' && site.site_type === 'wordpress'" @click="installPlugin()" :disabled="pluginInstalling" class="text-sm py-1.5 px-3 rounded" style="background-color: #166534; color: #bbf7d0;" x-text="pluginInstalling ? '更新中...' : '更新配套插件'"></button>
-                <span x-show="pluginStatus === 'installed' && site.site_type === 'wordpress'" class="text-xs text-green-400">✓ 插件已安装</span>
-            </div>
-            <div class="mt-3 p-3 rounded text-xs" style="background-color: #0f172a;">
-                <p class="text-gray-300 font-medium mb-2">工作原理</p>
-                <ul class="text-gray-400 space-y-1 list-disc list-inside">
-                    <li>Nginx 将 PHP 页面输出为静态 HTML 缓存在磁盘，访客直接拿到 HTML 无需经过 PHP/MariaDB</li>
-                    <li>每站点独立缓存版本密钥，点击「清除缓存」更换密钥，旧缓存文件 60 分钟后自动删除</li>
-                    <li x-show="site.site_type === 'wordpress'">已登录用户、POST 请求、wp-admin 后台自动跳过缓存</li>
-                    <li x-show="site.site_type === 'php'">POST 请求和带查询参数的请求自动跳过缓存</li>
-                </ul>
-                <p class="text-gray-500 mt-2" x-show="site.site_type === 'wordpress'">配套插件（wp-panel-cache-helper）安装到网站后，网站管理员可自行在 WordPress 后台清除缓存和控制 TTL，无需面板权限。不要安装第三方缓存插件（WP Rocket / W3 Total Cache 等的 Nginx 模式），会与本卡片冲突。</p>
-            </div>
-        </div>
+	        <div class="card">
+	            <h3 class="text-lg font-semibold text-white mb-4">WordPress优化</h3>
+	            <div class="flex items-center space-x-3 mb-3">
+	                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+	                    <input type="checkbox" x-model="fcacheEnabled">
+	                    <span>开启 FastCGI 缓存</span>
+	                </label>
+	            </div>
+	            <div x-show="fcacheEnabled" class="mb-3 ml-6">
+	                <label class="text-sm text-gray-300 mb-1 block">缓存有效期（秒）</label>
+	                <input type="number" x-model="fcacheTTL" class="input-field w-32 text-sm py-1" min="10" max="86400">
+	            </div>
+	            <div class="flex items-center space-x-3 mb-3">
+	                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+	                    <input type="checkbox" x-model="disableWPUpdates">
+	                    <span>禁止自动更新（核心/插件/主题）</span>
+	                </label>
+	            </div>
+	            <div class="flex items-center space-x-3 mb-4">
+	                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+	                    <input type="checkbox" x-model="disableFileEditing">
+	                    <span>禁止后台文件编辑</span>
+	                </label>
+	            </div>
+	            <div class="flex items-center space-x-3 mb-3">
+	                <button @click="saveWPOptimizations()" :disabled="optimizationSaving" class="btn-primary text-sm" x-text="optimizationSaving ? '保存中...' : '保存设置'"></button>
+	                <button x-show="fcacheEnabled" @click="clearFCache()" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">清除缓存</button>
+	            </div>
+	            <div x-show="fcacheEnabled && site.site_type === 'wordpress'" class="flex items-center space-x-3 mb-3">
+	                <button x-show="pluginStatus === 'not_installed'" @click="installPlugin()" :disabled="pluginInstalling" class="btn-primary text-sm py-1.5" x-text="pluginInstalling ? '安装中...' : '安装配套插件'"></button>
+	                <button x-show="pluginStatus === 'update_available'" @click="installPlugin()" :disabled="pluginInstalling" class="text-sm py-1.5 px-3 rounded" style="background-color: #166534; color: #bbf7d0;" x-text="pluginInstalling ? '更新中...' : '更新配套插件'"></button>
+	                <span x-show="pluginStatus === 'installed'" class="text-xs text-green-400">✓ 插件已安装</span>
+	            </div>
+	            <div class="mt-3 p-3 rounded text-xs" style="background-color: #0f172a;">
+	                <p class="text-gray-300 font-medium mb-2">FastCGI 缓存工作原理</p>
+	                <ul class="text-gray-400 space-y-1 list-disc list-inside">
+	                    <li>Nginx 将 PHP 页面输出为静态 HTML 缓存在磁盘，访客直接拿到 HTML 无需经过 PHP/MariaDB</li>
+	                    <li>每站点独立缓存版本密钥，点击「清除缓存」更换密钥，旧缓存文件 60 分钟后自动删除</li>
+	                    <li x-show="site.site_type === 'wordpress'">已登录用户、POST 请求、wp-admin 后台自动跳过缓存</li>
+	                    <li x-show="site.site_type === 'php'">POST 请求和带查询参数的请求自动跳过缓存</li>
+	                </ul>
+	                <p class="text-gray-500 mt-2" x-show="site.site_type === 'wordpress'">配套插件（wp-panel-cache-helper）安装到网站后，网站管理员可自行在 WordPress 后台清除缓存和控制 TTL，无需面板权限。不要安装第三方缓存插件（WP Rocket / W3 Total Cache 等的 Nginx 模式），会与本卡片冲突。</p>
+	            </div>
+	        </div>
     </div>
 
     <!-- Row 4: 网站日志 -->
@@ -330,6 +345,9 @@ function websiteDetail() {
         nginxSubmitting: false,
         fcacheEnabled: false,
         fcacheTTL: 300,
+        disableWPUpdates: false,
+        disableFileEditing: false,
+        optimizationSaving: false,
         pluginStatus: 'not_installed',
         pluginInstalling: false,
         monitoringEnabled: false,
@@ -349,6 +367,8 @@ function websiteDetail() {
                     this.site = r.data;
                     this.fcacheEnabled = r.data.fastcgi_cache_enabled;
                     this.fcacheTTL = r.data.fastcgi_cache_ttl || 300;
+                    this.disableWPUpdates = r.data.disable_wp_updates || false;
+                    this.disableFileEditing = r.data.disable_file_editing || false;
                     this.monitoringEnabled = r.data.monitoring_enabled || false;
                     this.monitoringInterval = r.data.monitoring_interval || 5;
                 }
@@ -590,14 +610,21 @@ function websiteDetail() {
             } catch(e) { showToast('保存失败: ' + e.message, 'error'); }
             this.monitoringSaving = false;
         },
-        async saveFCache() {
+        async saveWPOptimizations() {
+            this.optimizationSaving = true;
             try {
-                await api('/websites/' + this.site.id + '/cache', {
+                await api('/websites/' + this.site.id + '/wp-optimizations', {
                     method: 'PUT',
-                    body: { enabled: this.fcacheEnabled, ttl: parseInt(this.fcacheTTL) || 300 }
+                    body: {
+                        fcache_enabled: this.fcacheEnabled,
+                        fcache_ttl: parseInt(this.fcacheTTL) || 300,
+                        disable_wp_updates: this.disableWPUpdates,
+                        disable_file_editing: this.disableFileEditing
+                    }
                 });
-                showToast(this.fcacheEnabled ? '已开启 FastCGI 缓存' : '已关闭 FastCGI 缓存', 'success');
-            } catch(e) { showToast(e.message, 'error'); }
+                showToast('保存成功', 'success');
+            } catch(e) { showToast('保存失败: ' + e.message, 'error'); }
+            this.optimizationSaving = false;
         },
         async clearFCache() {
             if (!await confirmModal('确认清除 FastCGI 缓存？')) return;

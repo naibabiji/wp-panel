@@ -41,6 +41,8 @@ var migrations = []string{
 		plugin_api_key        TEXT    NOT NULL DEFAULT '',
 		monitoring_enabled    INTEGER NOT NULL DEFAULT 0,
 		monitoring_interval   INTEGER NOT NULL DEFAULT 5,
+		disable_wp_updates    INTEGER NOT NULL DEFAULT 0,
+		disable_file_editing  INTEGER NOT NULL DEFAULT 0,
 		expires_at            DATETIME,
 		created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
