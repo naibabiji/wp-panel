@@ -1,1 +1,2 @@
 - wp --info 构建时间按服务器时区显示（之前始终显示 UTC 时间）
+- 新增 Webhook 推送通知：支持企业微信/钉钉/飞书/Server酱/Bark/自定义渠道，告警触发时可通过 HTTP POST 推送到指定 URL

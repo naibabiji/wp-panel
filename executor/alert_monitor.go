@@ -64,6 +64,9 @@ func (m *alertManager) runChecks() {
 	cfg := GetSMTPConfig()
 	hasSMTP := cfg != nil && cfg.Host != "" && cfg.AdminEmail != ""
 
+	wCfg := GetWebhookConfig()
+	hasWebhook := wCfg != nil && wCfg.Enabled == "true" && wCfg.URL != ""
+
 	for _, r := range m.rules {
 		if !isRuleEnabled(r.key) {
 			r.firing = false
@@ -79,6 +82,9 @@ func (m *alertManager) runChecks() {
 			if hasSMTP {
 				go SendMail("", "WP Panel 告警 — "+alertLabel(r.key), msg)
 			}
+			if hasWebhook {
+				go SendWebhook("WP Panel 告警 — "+alertLabel(r.key), msg)
+			}
 		} else if !firing && r.firing {
 			// Transition: alert → normal
 			r.firing = false
@@ -87,6 +93,9 @@ func (m *alertManager) runChecks() {
 			if hasSMTP && time.Since(r.lastFired) > 5*time.Minute {
 				go SendMail("", "WP Panel 恢复通知", recoveryMsg)
 			}
+			if hasWebhook && time.Since(r.lastFired) > 5*time.Minute {
+				go SendWebhook("WP Panel 恢复通知", recoveryMsg)
+			}
 		} else if firing && r.firing {
 			// Continuous alert — re-send every 30 min
 			if time.Since(r.lastFired) > 30*time.Minute {
@@ -94,6 +103,9 @@ func (m *alertManager) runChecks() {
 				logAlert(r.key, "critical", msg)
 				if hasSMTP {
 					go SendMail("", "WP Panel 告警 — "+alertLabel(r.key)+"（持续中）", msg)
+				}
+				if hasWebhook {
+					go SendWebhook("WP Panel 告警 — "+alertLabel(r.key)+"（持续中）", msg)
 				}
 			}
 		}

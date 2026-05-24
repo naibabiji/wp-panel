@@ -154,6 +154,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/alert/settings", alertHandler.GetSettings)
 	protected.PUT("/api/alert/settings", alertHandler.SaveSettings)
 	protected.POST("/api/alert/test-smtp", alertHandler.TestSMTP)
+	protected.POST("/api/alert/test-webhook", alertHandler.TestWebhook)
 	protected.GET("/api/alert/log", alertHandler.GetLog)
 
 	cronHandler := &handlers.CronHandler{}

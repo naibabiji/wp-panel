@@ -4,39 +4,71 @@
     <h2 class="text-xl font-bold text-white mb-6">告警通知</h2>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-6">
-        <div class="card" x-data="smtpConfig()" x-init="fetch()">
-            <h3 class="text-lg font-semibold text-white mb-4">SMTP 邮件配置</h3>
-            <div class="mb-3">
-                <label class="text-sm text-gray-300 mb-1 block">SMTP 服务器</label>
-                <input type="text" x-model="cfg.smtp_host" class="input-field text-sm">
+        <div class="space-y-8">
+            <div class="card" x-data="smtpConfig()" x-init="fetch()">
+                <h3 class="text-lg font-semibold text-white mb-4">SMTP 邮件配置</h3>
+                <div class="mb-3">
+                    <label class="text-sm text-gray-300 mb-1 block">SMTP 服务器</label>
+                    <input type="text" x-model="cfg.smtp_host" class="input-field text-sm">
+                </div>
+                <div class="mb-3">
+                    <label class="text-sm text-gray-300 mb-1 block">端口</label>
+                    <input type="text" x-model="cfg.smtp_port" class="input-field text-sm">
+                </div>
+                <div class="mb-3">
+                    <label class="text-sm text-gray-300 mb-1 block">加密方式</label>
+                    <select x-model="cfg.smtp_encryption" class="input-field text-sm">
+                        <option value="starttls">STARTTLS</option>
+                        <option value="ssl">SSL</option>
+                        <option value="none">无</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="text-sm text-gray-300 mb-1 block">发件邮箱</label>
+                    <input type="text" x-model="cfg.smtp_user" class="input-field text-sm">
+                </div>
+                <div class="mb-3">
+                    <label class="text-sm text-gray-300 mb-1 block">密码/授权码</label>
+                    <input type="password" x-model="cfg.smtp_pass" class="input-field text-sm">
+                </div>
+                <div class="mb-3">
+                    <label class="text-sm text-gray-300 mb-1 block">管理员通知邮箱</label>
+                    <input type="text" x-model="cfg.admin_email" class="input-field text-sm" placeholder="admin@example.com">
+                </div>
+                <div class="flex space-x-3">
+                    <button @click="save" :disabled="saving" class="btn-primary text-sm" x-text="saving ? '保存中...' : '保存'"></button>
+                    <button @click="test" :disabled="testing" class="btn-secondary text-sm" x-text="testing ? '发送中...' : '测试发送'"></button>
+                </div>
             </div>
-            <div class="mb-3">
-                <label class="text-sm text-gray-300 mb-1 block">端口</label>
-                <input type="text" x-model="cfg.smtp_port" class="input-field text-sm">
-            </div>
-            <div class="mb-3">
-                <label class="text-sm text-gray-300 mb-1 block">加密方式</label>
-                <select x-model="cfg.smtp_encryption" class="input-field text-sm">
-                    <option value="starttls">STARTTLS</option>
-                    <option value="ssl">SSL</option>
-                    <option value="none">无</option>
-                </select>
-            </div>
-            <div class="mb-3">
-                <label class="text-sm text-gray-300 mb-1 block">发件邮箱</label>
-                <input type="text" x-model="cfg.smtp_user" class="input-field text-sm">
-            </div>
-            <div class="mb-3">
-                <label class="text-sm text-gray-300 mb-1 block">密码/授权码</label>
-                <input type="password" x-model="cfg.smtp_pass" class="input-field text-sm">
-            </div>
-            <div class="mb-3">
-                <label class="text-sm text-gray-300 mb-1 block">管理员通知邮箱</label>
-                <input type="text" x-model="cfg.admin_email" class="input-field text-sm" placeholder="admin@example.com">
-            </div>
-            <div class="flex space-x-3">
-                <button @click="save" :disabled="saving" class="btn-primary text-sm" x-text="saving ? '保存中...' : '保存'"></button>
-                <button @click="test" :disabled="testing" class="btn-secondary text-sm" x-text="testing ? '发送中...' : '测试发送'"></button>
+
+            <div class="card" x-data="webhookConfig()" x-init="fetch()">
+                <h3 class="text-lg font-semibold text-white mb-4">Webhook 推送</h3>
+                <div class="mb-3">
+                    <label class="text-sm text-gray-300 mb-1 block">启用</label>
+                    <label class="flex items-center space-x-2 cursor-pointer">
+                        <input type="checkbox" x-model="cfg.webhook_enabled" @change="save">
+                        <span class="text-sm text-gray-400">开启 Webhook 推送通知</span>
+                    </label>
+                </div>
+                <div class="mb-3">
+                    <label class="text-sm text-gray-300 mb-1 block">推送渠道</label>
+                    <select x-model="cfg.webhook_channel" @change="save" class="input-field text-sm">
+                        <option value="wecom">企业微信</option>
+                        <option value="dingtalk">钉钉</option>
+                        <option value="feishu">飞书</option>
+                        <option value="serverchan">Server酱</option>
+                        <option value="bark">Bark</option>
+                        <option value="custom">自定义</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="text-sm text-gray-300 mb-1 block">Webhook URL</label>
+                    <input type="text" x-model="cfg.webhook_url" class="input-field text-sm" placeholder="https://...">
+                </div>
+                <div class="flex space-x-3">
+                    <button @click="save" :disabled="saving" class="btn-primary text-sm" x-text="saving ? '保存中...' : '保存'"></button>
+                    <button @click="test" :disabled="testing" class="btn-secondary text-sm" x-text="testing ? '发送中...' : '测试发送'"></button>
+                </div>
             </div>
         </div>
 
@@ -134,6 +166,34 @@ function smtpConfig() {
             this.testing = true;
             try {
                 const r = await api('/alert/test-smtp', { method: 'POST', body: { email: this.cfg.admin_email || '' } });
+                showToast(r.data?.message || '发送成功', 'success');
+            } catch(e) { showToast(e.message || '发送失败', 'error'); }
+            this.testing = false;
+        }
+    }
+}
+
+function webhookConfig() {
+    return {
+        cfg: { webhook_enabled: 'false', webhook_channel: 'wecom', webhook_url: '' },
+        saving: false,
+        testing: false,
+        async fetch() {
+            try { const r = await api('/alert/settings'); if (r.success) { const d = r.data || {}; if (d.webhook_enabled) this.cfg.webhook_enabled = d.webhook_enabled; if (d.webhook_channel) this.cfg.webhook_channel = d.webhook_channel; if (d.webhook_url) this.cfg.webhook_url = d.webhook_url; } } catch(e) {}
+        },
+        async save() {
+            this.saving = true;
+            try {
+                await api('/alert/settings', { method: 'PUT', body: this.cfg });
+                showToast('Webhook 配置已保存', 'success');
+            } catch(e) { showToast(e.message, 'error'); }
+            this.saving = false;
+        },
+        async test() {
+            if (!this.cfg.webhook_url) { showToast('请填写 Webhook URL', 'error'); return; }
+            this.testing = true;
+            try {
+                const r = await api('/alert/test-webhook', { method: 'POST', body: { channel: this.cfg.webhook_channel, url: this.cfg.webhook_url } });
                 showToast(r.data?.message || '发送成功', 'success');
             } catch(e) { showToast(e.message || '发送失败', 'error'); }
             this.testing = false;

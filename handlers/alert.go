@@ -14,7 +14,7 @@ type AlertHandler struct{}
 
 func (h *AlertHandler) GetSettings(c *gin.Context) {
 	db := database.GetDB()
-	rows, err := db.Query("SELECT id, skey, svalue, description, updated_at FROM security_settings WHERE skey LIKE 'alert_%' OR skey LIKE 'smtp_%' OR skey = 'admin_email'")
+	rows, err := db.Query("SELECT id, skey, svalue, description, updated_at FROM security_settings WHERE skey LIKE 'alert_%' OR skey LIKE 'smtp_%' OR skey = 'admin_email' OR skey LIKE 'webhook_%'")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询失败"))
 		return
@@ -69,6 +69,23 @@ func (h *AlertHandler) TestSMTP(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "测试邮件已发送至 " + req.Email}))
+}
+
+func (h *AlertHandler) TestWebhook(c *gin.Context) {
+	var req struct {
+		Channel string `json:"channel"`
+		URL     string `json:"url"`
+	}
+	c.ShouldBindJSON(&req)
+	if req.Channel == "" || req.URL == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("请填写推送渠道和 Webhook URL"))
+		return
+	}
+	if err := executor.TestWebhook(req.Channel, req.URL); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("发送失败: "+err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "测试消息已发送"}))
 }
 
 func (h *AlertHandler) GetLog(c *gin.Context) {
