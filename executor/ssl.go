@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -449,5 +450,20 @@ func executeRenewSSL(task *Task) TaskResult {
 		msg += "; 失败: " + strings.Join(failed, ", ")
 	}
 
+	if len(renewed) > 0 {
+		log.Printf("SSL 自动续期: %s", msg)
+	}
+
 	return TaskResult{Success: true, Message: msg, Data: map[string]interface{}{"renewed": renewed, "failed": failed}}
+}
+
+func StartSSLRenewalScheduler() {
+	go func() {
+		for {
+			now := time.Now()
+			next := time.Date(now.Year(), now.Month(), now.Day()+1, 3, 0, 0, 0, now.Location())
+			time.Sleep(next.Sub(now))
+			GlobalQueue.Enqueue(TaskRenewSSL, nil)
+		}
+	}()
 }

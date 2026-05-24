@@ -129,6 +129,8 @@ func main() {
 	log.Println("告警监控已启动")
 	executor.StartAutoBackupScheduler()
 	log.Println("自动备份调度器已启动")
+	executor.StartSSLRenewalScheduler()
+	log.Println("SSL 自动续期调度器已启动")
 
 	r := router.SetupRouter(cfg, TemplatesFS, StaticFS, Version)
 
