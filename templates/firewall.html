@@ -43,7 +43,17 @@
                     <ul class="space-y-1 ml-2">
                         <li><span class="text-blue-400">Fail2ban</span> — 管理临时封禁（jail: <code class="text-gray-300">wppanel</code>、<code class="text-gray-300">wppanel-404</code>），到期自动释放</li>
                         <li><span class="text-purple-400">Nftables 持久</span> — 管理永久封禁，独立于 Fail2ban，重启不丢失</li>
+                        <li><span class="text-orange-400">扫描防御</span> — 面板层面直接拦截（来源: <code class="text-gray-300">panel_scan</code>），写入面板封禁列表，不依赖 Fail2ban</li>
                     </ul>
+                </div>
+                <div>
+                    <p class="text-white font-semibold mb-1">扫描防御<span class="text-xs text-orange-400 ml-1">NEW</span></p>
+                    <ul class="space-y-1 ml-2">
+                        <li><span class="text-orange-400">蜜罐路径</span> — 请求已知漏洞路径（如 <code class="text-gray-300">/wp-admin</code>、<code class="text-gray-300">/.env</code>、<code class="text-gray-300">/phpmyadmin</code> 等 42 个特征路径）→ 立即封禁 <span class="text-red-400">30 天</span></li>
+                        <li><span class="text-orange-400">浏览器指纹</span> — 非浏览器特征请求（如 curl、脚本、扫描器）探测不存在路径 → 封禁 <span class="text-red-400">7 天</span></li>
+                        <li>仅对未命中随机入口（<code class="text-gray-300">/{suffix}</code>）的请求生效，正常访问不受影响</li>
+                    </ul>
+                    <p class="text-gray-500 mt-1">触发后写入面板封禁列表，来源标注为「扫描防御」，等级为临时 30 天。</p>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">白名单豁免</p>
@@ -188,12 +198,13 @@ function firewallManager() {
         async fetchBans() {
             try { const r = await api('/firewall/bans'); if (r.success) this.bans = r.data || []; } catch(e) {}
         },
-        banLevelText(l) { return ['','限速','临时10分钟','临时24小时','永久封禁'][l] || '未知'; },
-        banLevelClass(l) { return ['','badge-info','badge-warning','badge-danger','badge-danger'][l] || 'badge-info'; },
+        banLevelText(l) { return ['','限速','临时10分钟','临时24小时','永久封禁','临时30天'][l] || '未知'; },
+        banLevelClass(l) { return ['','badge-info','badge-warning','badge-danger','badge-danger','badge-danger'][l] || 'badge-info'; },
         sourceLabel(ban) {
             if (ban.ban_level >= 4) return 'Nftables 持久';
             if (ban.source_jail === 'wppanel') return 'Fail2ban';
             if (ban.source_jail === 'panel') return '面板';
+            if (ban.source_jail === 'panel_scan') return '扫描防御';
             return ban.source_jail || '--';
         },
         sourceClass(ban) {
