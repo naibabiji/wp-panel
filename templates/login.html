@@ -10,7 +10,7 @@
     <script src="{{.AssetPrefix}}/js/app.js"></script>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen" data-panel-prefix="/{{.RandomSuffix}}">
-    <div class="min-h-screen flex items-center justify-center" x-data="loginForm()">
+    <div class="min-h-screen flex items-center justify-center" x-data="loginForm()" x-init="initAutofill()">
         <div class="card max-w-md w-full">
             <div class="text-center mb-8">
                 <div class="w-16 h-16 mx-auto mb-4">
@@ -23,11 +23,11 @@
             <form @submit.prevent="login" x-show="!loading">
                 <div class="mb-4">
                     <label class="label">用户名</label>
-                    <input type="text" x-model="username" name="username" class="input-field" placeholder="admin" autocomplete="username">
+                    <input type="text" x-model="username" x-ref="usernameInput" name="username" class="input-field" placeholder="admin" autocomplete="username">
                 </div>
                 <div class="mb-6">
                     <label class="label">密码</label>
-                    <input type="password" x-model="password" name="password" class="input-field" placeholder="请输入密码" autocomplete="current-password">
+                    <input type="password" x-model="password" x-ref="passwordInput" name="password" class="input-field" placeholder="请输入密码" autocomplete="current-password">
                 </div>
 
                 <div x-show="error" class="mb-4 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm"
@@ -89,6 +89,21 @@
             success: false,
             quote: '',
             error: '',
+            initAutofill() {
+                // 浏览器自动填充在 Alpine 初始化之后才注入值，
+                // 需要用延迟检测来把已填充的值同步到 x-model 状态
+                const check = () => {
+                    const u = this.$refs.usernameInput;
+                    const p = this.$refs.passwordInput;
+                    if (u && u.value && !this.username) this.username = u.value;
+                    if (p && p.value && !this.password) this.password = p.value;
+                };
+                this.$nextTick(() => {
+                    check();
+                    setTimeout(check, 200);
+                    setTimeout(check, 600);
+                });
+            },
             async login() {
                 this.loading = true;
                 this.error = '';
