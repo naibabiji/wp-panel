@@ -71,7 +71,7 @@ func ScanDefense(db *sql.DB, randomSuffix string) gin.HandlerFunc {
 		}
 
 		if !isBrowserLike(c) {
-			banScanIP(db, c.ClientIP(), "高危扫描: 非浏览器特征探测面板端口", 168)
+			banScanIP(db, c.ClientIP(), "高危扫描: 非浏览器特征探测面板端口", 720)
 			c.AbortWithStatus(http.StatusForbidden)
 			return
 		}
