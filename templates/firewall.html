@@ -43,7 +43,7 @@
                     <ul class="space-y-1 ml-2">
                         <li><span class="text-blue-400">Fail2ban</span> — 管理临时封禁（jail: <code class="text-gray-300">wppanel</code>、<code class="text-gray-300">wppanel-404</code>），到期自动释放</li>
                         <li><span class="text-purple-400">Nftables 持久</span> — 管理永久封禁，独立于 Fail2ban，重启不丢失</li>
-                        <li><span class="text-orange-400">扫描防御</span> — 面板层面直接拦截（来源: <code class="text-gray-300">panel_scan</code>），写入面板封禁列表，不依赖 Fail2ban</li>
+                        <li><span class="text-orange-400">扫描防御</span> — 面板中间件检测非浏览器请求，通过 Nftables 直接丢弃数据包（来源: <code class="text-gray-300">panel_scan</code>）</li>
                     </ul>
                 </div>
                 <div>
