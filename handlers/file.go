@@ -39,6 +39,15 @@ func fileBasePath(siteID int) (string, error) {
 	return site.WebRoot, nil
 }
 
+func isPathWithin(basePath, targetPath string) bool {
+	base := filepath.Clean(basePath)
+	target := filepath.Clean(targetPath)
+	if target == base {
+		return true
+	}
+	return strings.HasPrefix(target, base+string(filepath.Separator))
+}
+
 func (h *FileHandler) List(c *gin.Context) {
 	siteIDStr := c.Query("site_id")
 	relPath := c.DefaultQuery("path", "/")
@@ -57,7 +66,7 @@ func (h *FileHandler) List(c *gin.Context) {
 
 	fullPath := filepath.Join(basePath, relPath)
 	fullPath = filepath.Clean(fullPath)
-	if !strings.HasPrefix(fullPath, filepath.Clean(basePath)) {
+	if !isPathWithin(basePath, fullPath) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
 		return
 	}
@@ -117,7 +126,7 @@ func (h *FileHandler) Upload(c *gin.Context) {
 
 	destPath := filepath.Join(basePath, relPath, filepath.Base(file.Filename))
 	destPath = filepath.Clean(destPath)
-	if !strings.HasPrefix(destPath, filepath.Clean(basePath)) {
+	if !isPathWithin(basePath, destPath) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
 		return
 	}
@@ -150,7 +159,7 @@ func (h *FileHandler) Download(c *gin.Context) {
 
 	fullPath := filepath.Join(basePath, relPath)
 	fullPath = filepath.Clean(fullPath)
-	if !strings.HasPrefix(fullPath, filepath.Clean(basePath)) {
+	if !isPathWithin(basePath, fullPath) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
 		return
 	}
@@ -182,7 +191,7 @@ func (h *FileHandler) Delete(c *gin.Context) {
 
 	fullPath := filepath.Join(basePath, relPath)
 	fullPath = filepath.Clean(fullPath)
-	if !strings.HasPrefix(fullPath, filepath.Clean(basePath)) {
+	if !isPathWithin(basePath, fullPath) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
 		return
 	}
@@ -230,8 +239,8 @@ func (h *FileHandler) Rename(c *gin.Context) {
 	oldFull := filepath.Join(basePath, req.OldPath)
 	newFull := filepath.Join(filepath.Dir(oldFull), req.NewName)
 
-	if !strings.HasPrefix(filepath.Clean(oldFull), filepath.Clean(basePath)) ||
-		!strings.HasPrefix(filepath.Clean(newFull), filepath.Clean(basePath)) {
+	if !isPathWithin(basePath, oldFull) ||
+		!isPathWithin(basePath, newFull) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
 		return
 	}
@@ -263,7 +272,7 @@ func (h *FileHandler) Permissions(c *gin.Context) {
 
 	fullPath := filepath.Join(basePath, relPath)
 	fullPath = filepath.Clean(fullPath)
-	if !strings.HasPrefix(fullPath, filepath.Clean(basePath)) {
+	if !isPathWithin(basePath, fullPath) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
 		return
 	}
@@ -303,7 +312,7 @@ func (h *FileHandler) BatchCompress(c *gin.Context) {
 
 	workPath := filepath.Join(basePath, req.Path)
 	workPath = filepath.Clean(workPath)
-	if !strings.HasPrefix(workPath, filepath.Clean(basePath)) {
+	if !isPathWithin(basePath, workPath) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
 		return
 	}
@@ -333,7 +342,7 @@ func (h *FileHandler) BatchCompress(c *gin.Context) {
 			continue
 		}
 		fullPath := filepath.Join(basePath, filepath.Clean(name))
-		if !strings.HasPrefix(fullPath, filepath.Clean(basePath)) {
+		if !isPathWithin(basePath, fullPath) {
 			continue
 		}
 		info, err := os.Stat(fullPath)
@@ -411,7 +420,7 @@ func (h *FileHandler) Compress(c *gin.Context) {
 
 	fullPath := filepath.Join(basePath, relPath)
 	fullPath = filepath.Clean(fullPath)
-	if !strings.HasPrefix(fullPath, filepath.Clean(basePath)) {
+	if !isPathWithin(basePath, fullPath) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
 		return
 	}
@@ -513,7 +522,7 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 
 	fullPath := filepath.Join(basePath, relPath)
 	fullPath = filepath.Clean(fullPath)
-	if !strings.HasPrefix(fullPath, filepath.Clean(basePath)) {
+	if !isPathWithin(basePath, fullPath) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
 		return
 	}
@@ -726,7 +735,7 @@ func (h *FileHandler) CreateDir(c *gin.Context) {
 
 	fullPath := filepath.Join(basePath, relPath, name)
 	fullPath = filepath.Clean(fullPath)
-	if !strings.HasPrefix(fullPath, filepath.Clean(basePath)) {
+	if !isPathWithin(basePath, fullPath) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
 		return
 	}

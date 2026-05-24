@@ -62,6 +62,10 @@ server {
         return 404;
     }
 
+    location ~* /wp-panel-config\.json$ {
+        return 404;
+    }
+
     location ^~ /.well-known/acme-challenge/ {
         try_files $uri =404;
     }
@@ -151,6 +155,10 @@ server {
     }
 
     location ~* \.(env|git|config\.bak|sql|tar|gz|zip|old|swp|save)$ {
+        return 404;
+    }
+
+    location ~* /wp-panel-config\.json$ {
         return 404;
     }
 
