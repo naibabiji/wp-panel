@@ -639,6 +639,7 @@ function websiteDetail() {
                     method: "PUT",
                     body: { enabled: this.backupEnabled, keep_count: parseInt(this.backupKeepCount) || 7 }
                 });
+                showToast('备份设置已保存', 'success');
             } catch(e) { showToast(e.message, "error"); }
         },
     }
