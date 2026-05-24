@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -50,7 +51,7 @@ func (h *FileHandler) List(c *gin.Context) {
 
 	basePath, err := fileBasePath(siteID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse(err.Error()))
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
 
@@ -63,7 +64,8 @@ func (h *FileHandler) List(c *gin.Context) {
 
 	entries, err := os.ReadDir(fullPath)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取目录失败: "+err.Error()))
+		log.Printf("读取目录失败 path=%s: %v", fullPath, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取目录失败"))
 		return
 	}
 
@@ -121,7 +123,8 @@ func (h *FileHandler) Upload(c *gin.Context) {
 	}
 
 	if err := c.SaveUploadedFile(file, destPath); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("上传失败: "+err.Error()))
+		log.Printf("文件上传失败 path=%s: %v", destPath, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("上传失败"))
 		return
 	}
 	os.Chmod(destPath, 0644)
@@ -190,14 +193,16 @@ func (h *FileHandler) Delete(c *gin.Context) {
 		return
 	}
 
-if info.IsDir() {
+	if info.IsDir() {
 		if err := os.RemoveAll(fullPath); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("删除失败: "+err.Error()))
+			log.Printf("删除失败 path=%s: %v", fullPath, err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("删除失败"))
 			return
 		}
 	} else {
 		if err := os.Remove(fullPath); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("删除失败: "+err.Error()))
+			log.Printf("删除失败 path=%s: %v", fullPath, err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("删除失败"))
 			return
 		}
 	}
@@ -216,8 +221,8 @@ func (h *FileHandler) Rename(c *gin.Context) {
 		return
 	}
 
-basePath, err := fileBasePath(req.SiteID)
-if err != nil {
+	basePath, err := fileBasePath(req.SiteID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
@@ -232,7 +237,8 @@ if err != nil {
 	}
 
 	if err := os.Rename(oldFull, newFull); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("重命名失败: "+err.Error()))
+		log.Printf("重命名失败 old=%s new=%s: %v", oldFull, newFull, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("重命名失败"))
 		return
 	}
 
@@ -289,8 +295,8 @@ func (h *FileHandler) BatchCompress(c *gin.Context) {
 		return
 	}
 
-basePath, err := fileBasePath(req.SiteID)
-if err != nil {
+	basePath, err := fileBasePath(req.SiteID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
@@ -532,7 +538,7 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 		target := filepath.Join(destDir, filepath.FromSlash(f.Name))
 		target = filepath.Clean(target)
 		if !strings.HasPrefix(target, cleanRoot) || !strings.HasPrefix(target, destDir) {
-			c.JSON(http.StatusForbidden, models.ErrorResponse("压缩包包含非法路径: " + f.Name))
+			c.JSON(http.StatusForbidden, models.ErrorResponse("压缩包包含非法路径: "+f.Name))
 			return
 		}
 		if !f.FileInfo().IsDir() && !overwrite {
@@ -550,7 +556,7 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 		target := filepath.Join(destDir, filepath.FromSlash(f.Name))
 		target = filepath.Clean(target)
 		if !strings.HasPrefix(target, cleanRoot) || !strings.HasPrefix(target, destDir) {
-			c.JSON(http.StatusForbidden, models.ErrorResponse("压缩包包含非法路径: " + f.Name))
+			c.JSON(http.StatusForbidden, models.ErrorResponse("压缩包包含非法路径: "+f.Name))
 			return
 		}
 
@@ -589,8 +595,8 @@ func (h *FileHandler) Move(c *gin.Context) {
 		return
 	}
 
-basePath, err := fileBasePath(req.SiteID)
-if err != nil {
+	basePath, err := fileBasePath(req.SiteID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
@@ -630,8 +636,8 @@ func (h *FileHandler) Copy(c *gin.Context) {
 		return
 	}
 
-basePath, err := fileBasePath(req.SiteID)
-if err != nil {
+	basePath, err := fileBasePath(req.SiteID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
@@ -726,7 +732,8 @@ func (h *FileHandler) CreateDir(c *gin.Context) {
 	}
 
 	if err := os.MkdirAll(fullPath, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建目录失败: "+err.Error()))
+		log.Printf("创建目录失败 path=%s: %v", fullPath, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建目录失败"))
 		return
 	}
 
@@ -763,7 +770,8 @@ func (h *FileHandler) FixPermissions(c *gin.Context) {
 		return nil
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("权限修复失败: "+err.Error()))
+		log.Printf("权限修复失败 root=%s: %v", webRoot, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("权限修复失败"))
 		return
 	}
 

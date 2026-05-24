@@ -110,4 +110,3 @@ func downloadWP(localPath, destPath string) error {
 
 	return nil
 }
-

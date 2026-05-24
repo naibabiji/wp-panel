@@ -83,7 +83,7 @@ func RegenerateSiteNginx(siteID int) {
 		WebRoot:       webRoot,
 		LogDir:        logDir,
 		SystemUser:    systemUser,
-		SiteType:     siteType,
+		SiteType:      siteType,
 		PHPProxy:      "unix:" + filepath.Join(cfg.Paths.PHPFPMSock, domain+".sock"),
 		TemplateVer:   "v1.0",
 		AccessLogMode: accessLogMode,

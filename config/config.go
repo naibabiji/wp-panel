@@ -53,12 +53,12 @@ type PathsConfig struct {
 }
 
 type SecurityConfig struct {
-	BasicAuthEnabled     bool   `json:"basic_auth_enabled"`
-	MaxLoginAttempts     int    `json:"max_login_attempts"`
-	AttemptWindowMinutes int    `json:"attempt_window_minutes"`
-	BanDurationHours     int    `json:"ban_duration_hours"`
-	AutoWhitelistEnabled bool   `json:"auto_whitelist_enabled"`
-	CorePorts            []int  `json:"core_ports"`
+	BasicAuthEnabled     bool  `json:"basic_auth_enabled"`
+	MaxLoginAttempts     int   `json:"max_login_attempts"`
+	AttemptWindowMinutes int   `json:"attempt_window_minutes"`
+	BanDurationHours     int   `json:"ban_duration_hours"`
+	AutoWhitelistEnabled bool  `json:"auto_whitelist_enabled"`
+	CorePorts            []int `json:"core_ports"`
 }
 
 type SystemdConfig struct {

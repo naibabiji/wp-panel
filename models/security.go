@@ -11,11 +11,11 @@ type SecuritySetting struct {
 }
 
 type UpdateSecuritySettingsRequest struct {
-	Fail2banMaxRetry  *int    `json:"fail2ban_maxretry"`
-	Fail2banFindTime  *int    `json:"fail2ban_findtime"`
-	Fail2banBanTime   *int    `json:"fail2ban_bantime"`
-	AutoWhitelist     *bool   `json:"auto_whitelist_enabled"`
-	WhitelistIPs      *string `json:"whitelist_ips"`
+	Fail2banMaxRetry *int    `json:"fail2ban_maxretry"`
+	Fail2banFindTime *int    `json:"fail2ban_findtime"`
+	Fail2banBanTime  *int    `json:"fail2ban_bantime"`
+	AutoWhitelist    *bool   `json:"auto_whitelist_enabled"`
+	WhitelistIPs     *string `json:"whitelist_ips"`
 }
 
 type OperationLog struct {

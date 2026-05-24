@@ -19,10 +19,10 @@ const (
 	TaskEnableSSL        TaskType = "enable_ssl"
 	TaskRemoveSSL        TaskType = "remove_ssl"
 	TaskChangeDBPassword TaskType = "change_db_password"
-	TaskUpdateDomains     TaskType = "update_domains"
-	TaskSaveNginxCustom    TaskType = "save_nginx_custom"
-	TaskSetAccessLogMode   TaskType = "set_access_log_mode"
-	TaskRenewSSL           TaskType = "renew_ssl"
+	TaskUpdateDomains    TaskType = "update_domains"
+	TaskSaveNginxCustom  TaskType = "save_nginx_custom"
+	TaskSetAccessLogMode TaskType = "set_access_log_mode"
+	TaskRenewSSL         TaskType = "renew_ssl"
 	TaskRenderCron       TaskType = "render_cron"
 	TaskRunCron          TaskType = "run_cron"
 	TaskManualBan        TaskType = "manual_ban"
@@ -33,10 +33,10 @@ const (
 type TaskStatus string
 
 const (
-	TaskStatusWaiting  TaskStatus = "waiting"
-	TaskStatusRunning  TaskStatus = "running"
-	TaskStatusSuccess  TaskStatus = "success"
-	TaskStatusFailed   TaskStatus = "failed"
+	TaskStatusWaiting TaskStatus = "waiting"
+	TaskStatusRunning TaskStatus = "running"
+	TaskStatusSuccess TaskStatus = "success"
+	TaskStatusFailed  TaskStatus = "failed"
 )
 
 type Task struct {
@@ -104,8 +104,8 @@ type SaveNginxCustomPayload struct {
 }
 
 type SetAccessLogModePayload struct {
-	Site    *models.Website `json:"-"`
-	Mode   string          `json:"mode"`
+	Site *models.Website `json:"-"`
+	Mode string          `json:"mode"`
 }
 
 type RunCronPayload struct {

@@ -7,10 +7,10 @@ type ApiResponse struct {
 }
 
 type PaginatedResult struct {
-	Items      interface{} `json:"items"`
-	Total      int         `json:"total"`
-	Page       int         `json:"page"`
-	PageSize   int         `json:"page_size"`
+	Items    interface{} `json:"items"`
+	Total    int         `json:"total"`
+	Page     int         `json:"page"`
+	PageSize int         `json:"page_size"`
 }
 
 func SuccessResponse(data interface{}) ApiResponse {

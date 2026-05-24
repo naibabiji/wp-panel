@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -26,10 +27,10 @@ type guardResponse struct {
 }
 
 var versionCmds = map[string]string{
-	"nginx":         "nginx -v 2>&1 | awk -F/ '{print $2}'",
-	"php8.3-fpm":    "php -v 2>/dev/null | head -1 | awk '{print $2}'",
-	"mariadb":       "mariadb --version 2>/dev/null | awk '{print $3}' | cut -d, -f1",
-	"redis-server":  "redis-server --version 2>/dev/null | awk '{print $3}' | cut -d= -f2",
+	"nginx":        "nginx -v 2>&1 | awk -F/ '{print $2}'",
+	"php8.3-fpm":   "php -v 2>/dev/null | head -1 | awk '{print $2}'",
+	"mariadb":      "mariadb --version 2>/dev/null | awk '{print $3}' | cut -d, -f1",
+	"redis-server": "redis-server --version 2>/dev/null | awk '{print $3}' | cut -d= -f2",
 }
 
 type softwareItem struct {
@@ -62,14 +63,14 @@ func (h *SoftwareHandler) List(c *gin.Context) {
 }
 
 var configDefaults = map[string]string{
-	"memory_limit":             "128M",
-	"upload_max_filesize":      "2M",
-	"post_max_size":            "8M",
-	"max_execution_time":       "30",
-	"max_input_vars":           "1000",
-	"client_max_body_size":     "1m",
-	"innodb_buffer_pool_size":  "128M",
-	"maxmemory":                "0",
+	"memory_limit":            "128M",
+	"upload_max_filesize":     "2M",
+	"post_max_size":           "8M",
+	"max_execution_time":      "30",
+	"max_input_vars":          "1000",
+	"client_max_body_size":    "1m",
+	"innodb_buffer_pool_size": "128M",
+	"maxmemory":               "0",
 }
 
 func populateConfigValues(item *softwareItem) {
@@ -96,9 +97,9 @@ func populateConfigValues(item *softwareItem) {
 
 var softwareLogPaths = map[string]string{
 	"Nginx":   "/var/log/nginx/error.log",
-	"PHP":    "/var/log/php8.3-fpm.log",
+	"PHP":     "/var/log/php8.3-fpm.log",
 	"MariaDB": "/var/log/mysql/error.log",
-	"Redis":  "/var/log/redis/redis-server.log",
+	"Redis":   "/var/log/redis/redis-server.log",
 }
 
 func (h *SoftwareHandler) ViewLog(c *gin.Context) {
@@ -132,7 +133,8 @@ func (h *SoftwareHandler) ClearLog(c *gin.Context) {
 		return
 	}
 	if err := os.WriteFile(path, []byte{}, 0644); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("清空失败: "+err.Error()))
+		log.Printf("清空软件日志失败 name=%s: %v", name, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("清空失败"))
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": name + " 日志已清空"}))
@@ -169,7 +171,8 @@ func (h *SoftwareHandler) GuardAction(c *gin.Context) {
 		return
 	}
 	if err := executor.SetServiceState(req.Service, req.Action); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("操作失败: "+err.Error()))
+		log.Printf("守护操作失败 service=%s action=%s: %v", req.Service, req.Action, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("操作失败"))
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": req.Service + " " + req.Action + " 成功"}))
@@ -177,9 +180,9 @@ func (h *SoftwareHandler) GuardAction(c *gin.Context) {
 
 func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 	var req struct {
-		Name  string         `json:"name"`
-		Key   string         `json:"key"`
-		Value string         `json:"value"`
+		Name  string `json:"name"`
+		Key   string `json:"key"`
+		Value string `json:"value"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
@@ -261,7 +264,7 @@ func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 			return
 		}
 	} else if oldValue == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("未找到配置项: " + req.Key))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("未找到配置项: "+req.Key))
 		return
 	}
 
@@ -285,9 +288,9 @@ func getPHPInfo() softwareItem {
 	ver := runCmd("php -v 2>/dev/null | head -1 | awk '{print $2}'")
 	extCount := runCmd("php -m 2>/dev/null | wc -l")
 	return softwareItem{
-		Name:    "PHP",
-		Version: strings.TrimSpace(ver),
-		Status:  "已安装 " + strings.TrimSpace(extCount) + " 个扩展",
+		Name:       "PHP",
+		Version:    strings.TrimSpace(ver),
+		Status:     "已安装 " + strings.TrimSpace(extCount) + " 个扩展",
 		ConfigPath: "/etc/php/8.3/fpm/php.ini",
 		Configs: []softwareConfig{
 			{Key: "memory_limit", Label: "memory_limit — PHP 内存限制", Hint: "单个 PHP 进程最大内存。简单博客 128M，多插件站 256M，WooCommerce/Elementor 512M"},
@@ -302,9 +305,9 @@ func getPHPInfo() softwareItem {
 func getNginxInfo() softwareItem {
 	ver := runCmd("nginx -v 2>&1 | awk -F/ '{print $2}'")
 	return softwareItem{
-		Name:    "Nginx",
-		Version: strings.TrimSpace(ver),
-		Status:  "已安装",
+		Name:       "Nginx",
+		Version:    strings.TrimSpace(ver),
+		Status:     "已安装",
 		ConfigPath: "/etc/nginx/conf.d/wppanel.conf",
 		Configs: []softwareConfig{
 			{Key: "client_max_body_size", Label: "client_max_body_size — 请求体大小上限", Hint: "需与 PHP upload_max_filesize 一致。导入大型主题或备份时调大"},
@@ -315,9 +318,9 @@ func getNginxInfo() softwareItem {
 func getMariaDBInfo() softwareItem {
 	ver := runCmd("mariadb --version 2>/dev/null | awk '{print $3}' | cut -d, -f1")
 	return softwareItem{
-		Name:    "MariaDB",
-		Version: strings.TrimSpace(ver),
-		Status:  "已安装",
+		Name:       "MariaDB",
+		Version:    strings.TrimSpace(ver),
+		Status:     "已安装",
 		ConfigPath: "/etc/mysql/mariadb.conf.d/99-wppanel.cnf",
 		Configs: []softwareConfig{
 			{Key: "innodb_buffer_pool_size", Label: "innodb_buffer_pool_size — InnoDB 缓冲池", Hint: "保守建议物理内存的 10%~25%。1G 设 128M，2G 设 256M，4G 设 512M，8G+ 设 1G+"},
@@ -332,9 +335,9 @@ func getRedisInfo() softwareItem {
 		status = "未运行"
 	}
 	return softwareItem{
-		Name:    "Redis",
-		Version: strings.TrimSpace(ver),
-		Status:  status,
+		Name:       "Redis",
+		Version:    strings.TrimSpace(ver),
+		Status:     status,
 		ConfigPath: "/etc/redis/redis.conf",
 		Configs: []softwareConfig{
 			{Key: "maxmemory", Label: "maxmemory — 最大内存", Hint: "Redis 对象缓存上限。WordPress 单站 128mb，多站或高流量 256mb+"},

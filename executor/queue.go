@@ -198,7 +198,7 @@ func buildSiteName(domain string) string {
 			name += "_"
 		} else if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
 			name += string(c)
-		} else if (c >= 'A' && c <= 'Z') {
+		} else if c >= 'A' && c <= 'Z' {
 			name += string(c + 32)
 		}
 	}
@@ -241,22 +241,14 @@ func dirExists(path string) bool {
 var shellExec = func(binary string, args ...string) (string, error) {
 	result, err := Execute(binary, args...)
 	if err != nil {
-		return "", fmt.Errorf("%s %s: %s %s", binary, joinStrings(args, " "), err.Error(), result.Stderr)
+		if result != nil && result.Stderr != "" {
+			log.Printf("命令 %s stderr: %s", binary, result.Stderr)
+		}
+		return "", fmt.Errorf("命令 %s 执行失败", binary)
 	}
 	return result.Stdout, nil
 }
 
 func executeCommand(binary string, args ...string) (string, error) {
 	return shellExec(binary, args...)
-}
-
-func joinStrings(parts []string, sep string) string {
-	if len(parts) == 0 {
-		return ""
-	}
-	result := parts[0]
-	for i := 1; i < len(parts); i++ {
-		result += sep + parts[i]
-	}
-	return result
 }

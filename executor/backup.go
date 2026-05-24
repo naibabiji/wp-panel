@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -100,13 +101,16 @@ func restoreFromGz(filePath, dbName, dbPass string) TaskResult {
 	mysql.Env = append(os.Environ(), "MYSQL_PWD="+dbPass)
 	mysql.Stdin, _ = gunzip.StdoutPipe()
 	if err := mysql.Start(); err != nil {
-		return TaskResult{Success: false, Message: fmt.Sprintf("恢复失败: %v", err)}
+		log.Printf("恢复失败: %v", err)
+		return TaskResult{Success: false, Message: "恢复失败"}
 	}
 	if err := gunzip.Run(); err != nil {
-		return TaskResult{Success: false, Message: fmt.Sprintf("恢复失败: gunzip %v", err)}
+		log.Printf("恢复失败 gunzip: %v", err)
+		return TaskResult{Success: false, Message: "恢复失败"}
 	}
 	if err := mysql.Wait(); err != nil {
-		return TaskResult{Success: false, Message: fmt.Sprintf("恢复失败: mysql %v", err)}
+		log.Printf("恢复失败 mysql: %v", err)
+		return TaskResult{Success: false, Message: "恢复失败"}
 	}
 	return TaskResult{Success: true, Message: "数据库恢复成功"}
 }
@@ -116,7 +120,8 @@ func restoreFromSql(filePath, dbName, dbPass string) TaskResult {
 	cmd.Env = append(os.Environ(), "MYSQL_PWD="+dbPass)
 	f, err := os.Open(filePath)
 	if err != nil {
-		return TaskResult{Success: false, Message: fmt.Sprintf("读取文件失败: %v", err)}
+		log.Printf("读取备份文件失败: %v", err)
+		return TaskResult{Success: false, Message: "读取备份文件失败"}
 	}
 	defer f.Close()
 	cmd.Stdin = f
@@ -130,7 +135,8 @@ func restoreFromSql(filePath, dbName, dbPass string) TaskResult {
 func restoreFromZip(filePath, dbName, dbPass string) TaskResult {
 	r, err := zip.OpenReader(filePath)
 	if err != nil {
-		return TaskResult{Success: false, Message: fmt.Sprintf("解压 zip 失败: %v", err)}
+		log.Printf("解压 zip 失败: %v", err)
+		return TaskResult{Success: false, Message: "解压 zip 失败"}
 	}
 	defer r.Close()
 
@@ -147,7 +153,8 @@ func restoreFromZip(filePath, dbName, dbPass string) TaskResult {
 
 	rc, err := sqlFile.Open()
 	if err != nil {
-		return TaskResult{Success: false, Message: fmt.Sprintf("读取 zip 内文件失败: %v", err)}
+		log.Printf("读取 zip 内文件失败: %v", err)
+		return TaskResult{Success: false, Message: "读取 zip 内文件失败"}
 	}
 	defer rc.Close()
 
@@ -215,7 +222,7 @@ func executeAutoBackups() {
 		db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, auto) VALUES (?, ?, ?, ?, 1)`,
 			siteID, filename, size, dbName)
 
-			go SyncBackupToRemote(filePath)
+		go SyncBackupToRemote(filePath)
 		cleanupOldBackups(siteID, domain, keepCount)
 	}
 }

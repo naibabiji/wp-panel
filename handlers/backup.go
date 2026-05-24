@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -124,19 +125,19 @@ func (h *BackupHandler) Restore(c *gin.Context) {
 		return
 	}
 
-		// 检查本地文件是否存在
-		backupDir := filepath.Join("/www/server/panel/backups", site.Domain, "db")
-		filePath := filepath.Join(backupDir, filename)
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			var remoteEnabled int
-			database.GetDB().QueryRow("SELECT enabled FROM remote_backup_settings WHERE id = 1").Scan(&remoteEnabled)
-			if remoteEnabled == 1 {
-				c.JSON(http.StatusNotFound, models.ErrorResponse("该备份已同步至远程服务器，本地文件已按设置删除。请从远程服务器下载后上传恢复。"))
-			} else {
-				c.JSON(http.StatusNotFound, models.ErrorResponse("备份文件不存在，可能已被清理"))
-			}
-			return
+	// 检查本地文件是否存在
+	backupDir := filepath.Join("/www/server/panel/backups", site.Domain, "db")
+	filePath := filepath.Join(backupDir, filename)
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		var remoteEnabled int
+		database.GetDB().QueryRow("SELECT enabled FROM remote_backup_settings WHERE id = 1").Scan(&remoteEnabled)
+		if remoteEnabled == 1 {
+			c.JSON(http.StatusNotFound, models.ErrorResponse("该备份已同步至远程服务器，本地文件已按设置删除。请从远程服务器下载后上传恢复。"))
+		} else {
+			c.JSON(http.StatusNotFound, models.ErrorResponse("备份文件不存在，可能已被清理"))
 		}
+		return
+	}
 
 	payload := &executor.RestoreBackupPayload{Site: site, Filename: filename}
 	task := executor.GlobalQueue.Enqueue(executor.TaskRestoreBackup, payload)
@@ -240,7 +241,8 @@ func (h *BackupHandler) ClearDatabase(c *gin.Context) {
 	cmd.Env = append(os.Environ(), "MYSQL_PWD="+dbPass)
 	dropSQL, err := cmd.CombinedOutput()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(fmt.Sprintf("获取表列表失败: %s", string(dropSQL))))
+		log.Printf("获取表列表失败 site=%s: %s", site.DBName, string(dropSQL))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("获取表列表失败"))
 		return
 	}
 
@@ -253,7 +255,8 @@ func (h *BackupHandler) ClearDatabase(c *gin.Context) {
 	fmt.Fprintf(stdin, "SET FOREIGN_KEY_CHECKS = 0;\n%s\nSET FOREIGN_KEY_CHECKS = 1;\n", string(dropSQL))
 	stdin.Close()
 	if err := mysqlCmd.Wait(); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(fmt.Sprintf("清空数据库失败: %s", stderr.String())))
+		log.Printf("清空数据库失败 site=%s: %s", site.DBName, stderr.String())
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("清空数据库失败"))
 		return
 	}
 

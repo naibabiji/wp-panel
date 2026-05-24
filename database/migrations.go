@@ -265,8 +265,8 @@ var migrations = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_alert_log_type ON alert_log(alert_type, created_at)`,
 
-		// 远程备份设置
-		`CREATE TABLE IF NOT EXISTS remote_backup_settings (
+	// 远程备份设置
+	`CREATE TABLE IF NOT EXISTS remote_backup_settings (
 			id          INTEGER PRIMARY KEY AUTOINCREMENT,
 			enabled     INTEGER NOT NULL DEFAULT 0,
 			host        TEXT    NOT NULL DEFAULT '',
@@ -280,5 +280,5 @@ var migrations = []string{
 			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`INSERT OR IGNORE INTO remote_backup_settings (id) VALUES (1)`,
+	`INSERT OR IGNORE INTO remote_backup_settings (id) VALUES (1)`,
 }

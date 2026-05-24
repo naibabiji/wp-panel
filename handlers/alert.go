@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 
@@ -71,7 +72,8 @@ func (h *AlertHandler) TestSMTP(c *gin.Context) {
 		return
 	}
 	if err := executor.TestSMTP(req.Email); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("发送失败: "+err.Error()))
+		log.Printf("SMTP 测试发送失败: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("发送失败"))
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "测试邮件已发送至 " + req.Email}))
@@ -88,7 +90,8 @@ func (h *AlertHandler) TestWebhook(c *gin.Context) {
 		return
 	}
 	if err := executor.TestWebhook(req.Channel, req.URL); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("发送失败: "+err.Error()))
+		log.Printf("Webhook 测试发送失败: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("发送失败"))
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "测试消息已发送"}))

@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,7 +68,8 @@ func executeCreateSite(task *Task) TaskResult {
 	// Step 1: Create system user
 	if _, err := executeCommand("useradd", "-r", "-s", "/usr/sbin/nologin", "-M", "-d", "/nonexistent", systemUser); err != nil {
 		if !strings.Contains(err.Error(), "already exists") {
-			return TaskResult{Success: false, Message: "创建系统用户失败: " + err.Error()}
+			log.Printf("创建系统用户失败: %v", err)
+			return TaskResult{Success: false, Message: "创建系统用户失败"}
 		}
 	}
 	rollbacks = append(rollbacks, rollbackStep{"删除系统用户 " + systemUser, func() error {
@@ -79,7 +81,8 @@ func executeCreateSite(task *Task) TaskResult {
 	for _, dir := range []string{webRoot, logDir} {
 		if _, err := executeCommand("mkdir", "-p", dir); err != nil {
 			rollback()
-			return TaskResult{Success: false, Message: "创建目录失败: " + err.Error()}
+			log.Printf("创建目录失败: %v", err)
+			return TaskResult{Success: false, Message: "创建目录失败"}
 		}
 	}
 	rollbacks = append(rollbacks, rollbackStep{"删除网站目录 " + webRoot, func() error {
@@ -97,20 +100,23 @@ func executeCreateSite(task *Task) TaskResult {
 		tmpDir := "/tmp/wp_deploy_" + siteName + "_" + generatePassword(8)
 		if err := deployWordPress(wpPackagePath, webRoot, tmpDir); err != nil {
 			rollback()
-			return TaskResult{Success: false, Message: "WordPress 部署失败: " + err.Error()}
+			log.Printf("WordPress 部署失败: %v", err)
+			return TaskResult{Success: false, Message: "WordPress 部署失败"}
 		}
 	}
 
 	// Step 4: Chown
 	if _, err := executeCommand("chown", "-R", systemUser+":www-data", webRoot); err != nil {
 		rollback()
-		return TaskResult{Success: false, Message: "设置目录权限失败: " + err.Error()}
+		log.Printf("设置目录权限失败: %v", err)
+		return TaskResult{Success: false, Message: "设置目录权限失败"}
 	}
 
 	// Step 5: Create database
 	if err := createMariaDBDatabase(dbName, dbUser, dbPassword, cfg); err != nil {
 		rollback()
-		return TaskResult{Success: false, Message: "创建数据库失败: " + err.Error()}
+		log.Printf("创建数据库失败: %v", err)
+		return TaskResult{Success: false, Message: "创建数据库失败"}
 	}
 	rollbacks = append(rollbacks, rollbackStep{"删除数据库 " + dbName, func() error {
 		return dropMariaDBDatabase(dbName, dbUser, cfg)
@@ -120,7 +126,8 @@ func executeCreateSite(task *Task) TaskResult {
 	if payload.SiteType != "php" {
 		if err := generateWPConfig(webRoot, dbName, dbUser, dbPassword); err != nil {
 			rollback()
-			return TaskResult{Success: false, Message: "生成 wp-config.php 失败: " + err.Error()}
+			log.Printf("生成 wp-config.php 失败: %v", err)
+			return TaskResult{Success: false, Message: "生成 wp-config.php 失败"}
 		}
 	}
 
@@ -138,11 +145,13 @@ func executeCreateSite(task *Task) TaskResult {
 	phpConfig, err := engine.RenderPHPFPMPool(phpData)
 	if err != nil {
 		rollback()
-		return TaskResult{Success: false, Message: "渲染 PHP-FPM 配置失败: " + err.Error()}
+		log.Printf("渲染 PHP-FPM 配置失败: %v", err)
+		return TaskResult{Success: false, Message: "渲染 PHP-FPM 配置失败"}
 	}
 	if err := engine.ApplyPHPFPMPool(phpConfig, phpPoolPath, logDir); err != nil {
 		rollback()
-		return TaskResult{Success: false, Message: "应用 PHP-FPM 配置失败: " + err.Error()}
+		log.Printf("应用 PHP-FPM 配置失败: %v", err)
+		return TaskResult{Success: false, Message: "应用 PHP-FPM 配置失败"}
 	}
 	rollbacks = append(rollbacks, rollbackStep{"删除PHP-FPM配置 " + phpPoolPath, func() error {
 		os.Remove(phpPoolPath)
@@ -166,12 +175,14 @@ func executeCreateSite(task *Task) TaskResult {
 	nginxConfig, err := engine.RenderNginxConfig(nginxData)
 	if err != nil {
 		rollback()
-		return TaskResult{Success: false, Message: "渲染 Nginx 配置失败: " + err.Error()}
+		log.Printf("渲染 Nginx 配置失败: %v", err)
+		return TaskResult{Success: false, Message: "渲染 Nginx 配置失败"}
 	}
 
 	if err := engine.ApplyNginxConfig(nginxConfig, nginxConfPath, nginxEnabledPath); err != nil {
 		rollback()
-		return TaskResult{Success: false, Message: "应用 Nginx 配置失败: " + err.Error()}
+		log.Printf("应用 Nginx 配置失败: %v", err)
+		return TaskResult{Success: false, Message: "应用 Nginx 配置失败"}
 	}
 	rollbacks = append(rollbacks, rollbackStep{"删除Nginx配置 " + nginxConfPath, func() error {
 		os.Remove(nginxEnabledPath)
@@ -191,16 +202,18 @@ func executeCreateSite(task *Task) TaskResult {
 	if payload.SSLEnabled {
 		if sslErr := os.MkdirAll(certDir, 0700); sslErr != nil {
 			rollback()
-			return TaskResult{Success: false, Message: "创建SSL证书目录失败: " + sslErr.Error()}
+			log.Printf("创建SSL证书目录失败: %v", sslErr)
+			return TaskResult{Success: false, Message: "创建SSL证书目录失败"}
 		}
-			rollbacks = append(rollbacks, rollbackStep{"删除SSL证书目录 " + certDir, func() error {
-				os.RemoveAll(certDir)
-				return nil
-			}})
+		rollbacks = append(rollbacks, rollbackStep{"删除SSL证书目录 " + certDir, func() error {
+			os.RemoveAll(certDir)
+			return nil
+		}})
 		expiry, sslErr := obtainLegoCert(domain, strings.Join(payload.Aliases, "\n"), webRoot, certDir)
 		if sslErr != nil {
 			rollback()
-			return TaskResult{Success: false, Message: "申请 Let's Encrypt 证书失败: " + sslErr.Error()}
+			log.Printf("申请 Let's Encrypt 证书失败: %v", sslErr)
+			return TaskResult{Success: false, Message: "申请 Let's Encrypt 证书失败"}
 		}
 
 		sslData := &NginxSiteData{
@@ -221,12 +234,14 @@ func executeCreateSite(task *Task) TaskResult {
 		httpsConfig, sslErr := engine.RenderNginxConfig(sslData)
 		if sslErr != nil {
 			rollback()
-			return TaskResult{Success: false, Message: "渲染 HTTPS 配置失败: " + sslErr.Error()}
+			log.Printf("渲染 HTTPS 配置失败: %v", sslErr)
+			return TaskResult{Success: false, Message: "渲染 HTTPS 配置失败"}
 		}
 
 		if sslErr := engine.ApplyNginxConfig(httpsConfig, nginxConfPath, nginxEnabledPath); sslErr != nil {
 			rollback()
-			return TaskResult{Success: false, Message: "应用 HTTPS 配置失败: " + sslErr.Error()}
+			log.Printf("应用 HTTPS 配置失败: %v", sslErr)
+			return TaskResult{Success: false, Message: "应用 HTTPS 配置失败"}
 		}
 
 		sslEnabled = 1
@@ -244,7 +259,8 @@ func executeCreateSite(task *Task) TaskResult {
 	)
 	if err != nil {
 		rollback()
-		return TaskResult{Success: false, Message: "写入数据库失败: " + err.Error()}
+		log.Printf("写入数据库失败: %v", err)
+		return TaskResult{Success: false, Message: "写入数据库失败"}
 	}
 
 	sslMsg := ""
@@ -256,13 +272,13 @@ func executeCreateSite(task *Task) TaskResult {
 		Success: true,
 		Message: fmt.Sprintf("网站 %s 创建成功%s", domain, sslMsg),
 		Data: map[string]interface{}{
-			"domain":       domain,
-			"db_name":      dbName,
-			"db_user":      dbUser,
-			"db_password":  maskedPassword,
-			"web_root":     webRoot,
-			"system_user":  systemUser,
-			"ssl_enabled":  sslEnabled == 1,
+			"domain":      domain,
+			"db_name":     dbName,
+			"db_user":     dbUser,
+			"db_password": maskedPassword,
+			"web_root":    webRoot,
+			"system_user": systemUser,
+			"ssl_enabled": sslEnabled == 1,
 		},
 	}
 }
@@ -335,7 +351,8 @@ func executeEnableSite(task *Task) TaskResult {
 	enabledPath := filepath.Join(cfg.Paths.NginxSitesEnabled, site.Domain+".conf")
 	os.Remove(enabledPath)
 	if err := os.Symlink(site.NginxConfPath, enabledPath); err != nil {
-		return TaskResult{Success: false, Message: "创建软链接失败: " + err.Error()}
+		log.Printf("创建软链接失败: %v", err)
+		return TaskResult{Success: false, Message: "创建软链接失败"}
 	}
 
 	if out, err := exec.Command("nginx", "-s", "reload").CombinedOutput(); err != nil {
@@ -407,7 +424,8 @@ func executeUpdateDomains(task *Task) TaskResult {
 
 		if err := os.Rename(oldNginxConf, newNginxConf); err != nil {
 			nginxReload()
-			return TaskResult{Success: false, Message: "重命名 Nginx 配置文件失败: " + err.Error()}
+			log.Printf("重命名 Nginx 配置文件失败: %v", err)
+			return TaskResult{Success: false, Message: "重命名 Nginx 配置文件失败"}
 		}
 		nginxRB := rollbackStep{"恢复Nginx配置", func() error {
 			os.Rename(newNginxConf, oldNginxConf)
@@ -427,22 +445,25 @@ func executeUpdateDomains(task *Task) TaskResult {
 		phpConfig, err := engine.RenderPHPFPMPool(phpData)
 		if err != nil {
 			rollback()
-			return TaskResult{Success: false, Message: "渲染 PHP-FPM 配置失败: " + err.Error()}
+			log.Printf("渲染 PHP-FPM 配置失败: %v", err)
+			return TaskResult{Success: false, Message: "渲染 PHP-FPM 配置失败"}
 		}
 		if err := engine.ApplyPHPFPMPool(phpConfig, newPHPPool, newLogDir); err != nil {
 			rollback()
-			return TaskResult{Success: false, Message: "应用 PHP-FPM 配置失败: " + err.Error()}
+			log.Printf("应用 PHP-FPM 配置失败: %v", err)
+			return TaskResult{Success: false, Message: "应用 PHP-FPM 配置失败"}
 		}
 		phpRB := rollbackStep{"恢复PHP-FPM Pool " + oldPHPPool, func() error {
 			os.Remove(newPHPPool)
 			exec.Command("systemctl", "reload", "php8.3-fpm").Run()
 			return nil
-	}}
+		}}
 		rollbacks = append(rollbacks, phpRB)
 
 		if err := os.Rename(oldWebRoot, newWebRoot); err != nil {
 			rollback()
-			return TaskResult{Success: false, Message: "重命名网站目录失败: " + err.Error()}
+			log.Printf("重命名网站目录失败: %v", err)
+			return TaskResult{Success: false, Message: "重命名网站目录失败"}
 		}
 		rollbacks = append(rollbacks, rollbackStep{"恢复网站目录 " + oldWebRoot, func() error {
 			return os.Rename(newWebRoot, oldWebRoot)
@@ -450,7 +471,8 @@ func executeUpdateDomains(task *Task) TaskResult {
 
 		if err := os.Rename(oldLogDir, newLogDir); err != nil {
 			rollback()
-			return TaskResult{Success: false, Message: "重命名日志目录失败: " + err.Error()}
+			log.Printf("重命名日志目录失败: %v", err)
+			return TaskResult{Success: false, Message: "重命名日志目录失败"}
 		}
 		rollbacks = append(rollbacks, rollbackStep{"恢复日志目录 " + oldLogDir, func() error {
 			return os.Rename(newLogDir, oldLogDir)
@@ -459,11 +481,12 @@ func executeUpdateDomains(task *Task) TaskResult {
 		if _, err := os.Stat(oldCertDir); err == nil {
 			if err := os.Rename(oldCertDir, newCertDir); err != nil {
 				rollback()
-				return TaskResult{Success: false, Message: "重命名SSL证书目录失败: " + err.Error()}
+				log.Printf("重命名SSL证书目录失败: %v", err)
+				return TaskResult{Success: false, Message: "重命名SSL证书目录失败"}
 			}
 			certRB := rollbackStep{"恢复SSL证书目录", func() error {
 				return os.Rename(newCertDir, oldCertDir)
-}}
+			}}
 			rollbacks = append(rollbacks, certRB)
 		}
 
@@ -504,12 +527,14 @@ func executeUpdateDomains(task *Task) TaskResult {
 		nginxConfig, err := engine.RenderNginxConfig(nginxData)
 		if err != nil {
 			rollback()
-			return TaskResult{Success: false, Message: "渲染 Nginx 配置失败: " + err.Error()}
+			log.Printf("渲染 Nginx 配置失败: %v", err)
+			return TaskResult{Success: false, Message: "渲染 Nginx 配置失败"}
 		}
 
 		if err := engine.ApplyNginxConfig(nginxConfig, newNginxConf, newEnabledLink); err != nil {
 			rollback()
-			return TaskResult{Success: false, Message: "应用 Nginx 配置失败: " + err.Error()}
+			log.Printf("应用 Nginx 配置失败: %v", err)
+			return TaskResult{Success: false, Message: "应用 Nginx 配置失败"}
 		}
 
 		db := database.GetDB()
@@ -520,7 +545,8 @@ func executeUpdateDomains(task *Task) TaskResult {
 			newNginxConf, newPHPPool, site.SSLCertPath, site.SSLKeyPath, site.ID)
 		if err != nil {
 			rollback()
-			return TaskResult{Success: false, Message: "更新数据库失败: " + err.Error()}
+			log.Printf("更新数据库失败: %v", err)
+			return TaskResult{Success: false, Message: "更新数据库失败"}
 		}
 
 		msg := fmt.Sprintf("主域名已从 %s 更换为 %s", oldDomain, newDomain)
@@ -552,18 +578,21 @@ func executeUpdateDomains(task *Task) TaskResult {
 
 	nginxConfig, err := engine.RenderNginxConfig(nginxData)
 	if err != nil {
-		return TaskResult{Success: false, Message: "渲染 Nginx 配置失败: " + err.Error()}
+		log.Printf("渲染 Nginx 配置失败: %v", err)
+		return TaskResult{Success: false, Message: "渲染 Nginx 配置失败"}
 	}
 
 	if err := engine.ApplyNginxConfig(nginxConfig, site.NginxConfPath,
 		filepath.Join(cfg.Paths.NginxSitesEnabled, newDomain+".conf")); err != nil {
-		return TaskResult{Success: false, Message: "应用 Nginx 配置失败: " + err.Error()}
+		log.Printf("应用 Nginx 配置失败: %v", err)
+		return TaskResult{Success: false, Message: "应用 Nginx 配置失败"}
 	}
 
 	db := database.GetDB()
 	_, err = db.Exec(`UPDATE websites SET aliases = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, aliasStr, site.ID)
 	if err != nil {
-		return TaskResult{Success: false, Message: "更新数据库失败: " + err.Error()}
+		log.Printf("更新数据库失败: %v", err)
+		return TaskResult{Success: false, Message: "更新数据库失败"}
 	}
 
 	msg := "别名已更新"

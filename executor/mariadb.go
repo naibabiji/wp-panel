@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -72,7 +73,8 @@ func executeChangeDBPassword(task *Task) TaskResult {
 	}
 
 	if err := changeMariaDBPassword(site.DBUser, newPassword, cfg); err != nil {
-		return TaskResult{Success: false, Message: err.Error()}
+		log.Printf("MariaDB 操作失败: %v", err)
+		return TaskResult{Success: false, Message: "MariaDB 操作失败"}
 	}
 
 	if site.SiteType == "php" {
@@ -89,7 +91,8 @@ func executeChangeDBPassword(task *Task) TaskResult {
 	configPath := filepath.Join(site.WebRoot, "wp-config.php")
 	content, err := os.ReadFile(configPath)
 	if err != nil {
-		return TaskResult{Success: false, Message: "读取 wp-config.php 失败: " + err.Error()}
+		log.Printf("读取 wp-config.php 失败: %v", err)
+		return TaskResult{Success: false, Message: "读取 wp-config.php 失败"}
 	}
 
 	re := regexp.MustCompile(`define\(\s*'DB_PASSWORD'\s*,\s*'[^']*'\s*\)`)
@@ -101,7 +104,8 @@ func executeChangeDBPassword(task *Task) TaskResult {
 	}
 
 	if err := os.WriteFile(configPath, []byte(newContent), 0644); err != nil {
-		return TaskResult{Success: false, Message: "更新 wp-config.php 失败: " + err.Error()}
+		log.Printf("更新 wp-config.php 失败: %v", err)
+		return TaskResult{Success: false, Message: "更新 wp-config.php 失败"}
 	}
 
 	masked := maskPassword(newPassword)

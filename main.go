@@ -29,7 +29,6 @@ var (
 	BuildTime = "unknown"
 )
 
-
 func main() {
 	configPath := flag.String("config", "/www/server/panel/config.json", "配置文件路径")
 	resetPass := flag.String("passwd", "", "重置管理员密码（8位以上）")

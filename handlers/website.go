@@ -91,17 +91,17 @@ func (h *WebsiteHandler) List(c *gin.Context) {
 
 	type siteRow struct {
 		models.Website
-		AccessLogEnabled bool `json:"access_log_enabled"`
+		AccessLogEnabled bool   `json:"access_log_enabled"`
 		AccessLogMode    string `json:"access_log_mode"`
-		FCacheEnabled    bool `json:"fastcgi_cache_enabled"`
-		BackupEnabled    bool `json:"backup_enabled"`
+		FCacheEnabled    bool   `json:"fastcgi_cache_enabled"`
+		BackupEnabled    bool   `json:"backup_enabled"`
 	}
 	result := make([]siteRow, len(websites))
 	for i, w := range websites {
 		result[i] = siteRow{
-			Website:         w,
-			AccessLogMode:   w.AccessLogMode,
-			FCacheEnabled:   w.FCacheEnabled,
+			Website:          w,
+			AccessLogMode:    w.AccessLogMode,
+			FCacheEnabled:    w.FCacheEnabled,
 			AccessLogEnabled: w.AccessLogMode != "off",
 		}
 		var be int
@@ -133,7 +133,7 @@ func (h *WebsiteHandler) Get(c *gin.Context) {
 func (h *WebsiteHandler) Create(c *gin.Context) {
 	var req models.CreateWebsiteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误: "+err.Error()))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
 
@@ -197,7 +197,7 @@ func (h *WebsiteHandler) ToggleStatus(c *gin.Context) {
 
 	var req models.UpdateWebsiteStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误: "+err.Error()))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
 
@@ -253,7 +253,7 @@ func (h *WebsiteHandler) EnableSSL(c *gin.Context) {
 		PrivateKey  string `json:"private_key"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误: "+err.Error()))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
 
@@ -318,7 +318,7 @@ func (h *WebsiteHandler) UpdateDomains(c *gin.Context) {
 		Aliases   []string `json:"aliases"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误: "+err.Error()))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
 
@@ -470,7 +470,8 @@ func (h *WebsiteHandler) ClearLogs(c *gin.Context) {
 	}
 
 	if err := os.WriteFile(cleanPath, []byte{}, 0644); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("清空日志失败: "+err.Error()))
+		log.Printf("清空日志失败 path=%s: %v", cleanPath, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("清空日志失败"))
 		return
 	}
 
@@ -535,7 +536,7 @@ func (h *WebsiteHandler) SaveNginxCustom(c *gin.Context) {
 		Content    string `json:"content"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误: "+err.Error()))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
 
@@ -567,7 +568,7 @@ func (h *WebsiteHandler) SetAccessLogMode(c *gin.Context) {
 		Mode string `json:"mode"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误: "+err.Error()))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
 	if req.Mode != "off" && req.Mode != "error_only" && req.Mode != "full" {
@@ -835,7 +836,8 @@ func (h *WebsiteHandler) ReinstallWordPress(c *gin.Context) {
 
 	cfg := config.AppConfig
 	if err := executor.ReinstallWordPress(cfg.Paths.WordPressPackage, webRoot, dbName, dbUser, systemUser, cfg); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("WordPress 重装失败: "+err.Error()))
+		log.Printf("WordPress 重装失败 site=%d: %v", id, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("WordPress 重装失败"))
 		return
 	}
 
@@ -951,12 +953,12 @@ func (h *CacheHelperHandler) FindByDomain(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"site_id":                siteID,
-		"domain":                 domain,
-		"fastcgi_cache_enabled":  fcacheEnabled == 1,
-		"fastcgi_cache_ttl":      fcacheTTL,
-		"disable_wp_updates":     disableUpdates == 1,
-		"disable_file_editing":   disableEditing == 1,
+		"site_id":               siteID,
+		"domain":                domain,
+		"fastcgi_cache_enabled": fcacheEnabled == 1,
+		"fastcgi_cache_ttl":     fcacheTTL,
+		"disable_wp_updates":    disableUpdates == 1,
+		"disable_file_editing":  disableEditing == 1,
 	}))
 }
 

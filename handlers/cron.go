@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -54,7 +55,7 @@ func (h *CronHandler) List(c *gin.Context) {
 func (h *CronHandler) Create(c *gin.Context) {
 	var req models.CreateCronRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误: "+err.Error()))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
 
@@ -79,7 +80,8 @@ func (h *CronHandler) Create(c *gin.Context) {
 		req.Name, req.CronExpression, req.Command, taskType, req.BackupMode, notifyFail, siteID, req.RunAsUser, enabled,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建失败: "+err.Error()))
+		log.Printf("创建Cron失败: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建失败"))
 		return
 	}
 

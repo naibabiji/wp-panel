@@ -33,9 +33,9 @@ type githubRelease struct {
 }
 
 const (
-	repoOwner  = "naibabiji"
-	repoName   = "wp-panel"
-	binaryName = "wp-panel"
+	repoOwner   = "naibabiji"
+	repoName    = "wp-panel"
+	binaryName  = "wp-panel"
 	installPath = "/usr/local/bin/wp-panel"
 )
 
@@ -46,7 +46,7 @@ func (h *UpdateHandler) Check(c *gin.Context) {
 			"current_version": h.CurrentVersion,
 			"latest_version":  "",
 			"has_update":      false,
-			"error":           err.Error(),
+			"error":           "获取版本信息失败",
 		}))
 		return
 	}
@@ -77,7 +77,7 @@ func (h *UpdateHandler) Update(c *gin.Context) {
 
 	latest, err := fetchLatestRelease()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("获取版本信息失败: "+err.Error()))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("获取版本信息失败"))
 		return
 	}
 
@@ -108,7 +108,7 @@ func (h *UpdateHandler) Update(c *gin.Context) {
 
 	newBinary := filepath.Join(tmpDir, binaryName)
 	if err := downloadFile(downloadURL, newBinary); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("下载失败: "+err.Error()))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("下载失败"))
 		return
 	}
 	os.Chmod(newBinary, 0755)
@@ -118,7 +118,7 @@ func (h *UpdateHandler) Update(c *gin.Context) {
 		shaFile := filepath.Join(tmpDir, binaryName+".sha256")
 		if err := downloadFile(sha256URL, shaFile); err == nil {
 			if err := verifySHA256(newBinary, shaFile); err != nil {
-				c.JSON(http.StatusInternalServerError, models.ErrorResponse("校验失败: "+err.Error()))
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse("校验失败"))
 				return
 			}
 		}

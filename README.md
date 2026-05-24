@@ -81,6 +81,14 @@ apt-get update && apt-get install -y wget ca-certificates && wget -qO- https://r
 - 无 Web Shell、无在线代码编辑功能
 - 密码 bcrypt 12 轮哈希存储，不留明文
 
+## 安全测试
+
+欢迎白帽和安全研究人员对本项目进行安全测试。如果你发现安全漏洞，请通过以下方式反馈：
+
+- **公开反馈**：提交 [GitHub Issue](https://github.com/naibabiji/wp-panel/issues)，在标题标注 `[安全]`
+- **私下反馈**：通过 GitHub Security 标签页提交 Private Vulnerability Report
+- 有效漏洞会在修复后于 Release Notes 中向报告者致谢
+
 ## 系统要求
 
 | 项目 | 要求 |

@@ -5,10 +5,10 @@ import "time"
 type BanLevel int
 
 const (
-	BanLevelNone      BanLevel = 0
-	BanLevelRateLimit BanLevel = 1
-	BanLevelTemp10m   BanLevel = 2
-	BanLevelTemp24h   BanLevel = 3
+	BanLevelNone          BanLevel = 0
+	BanLevelRateLimit     BanLevel = 1
+	BanLevelTemp10m       BanLevel = 2
+	BanLevelTemp24h       BanLevel = 3
 	BanLevelPermCandidate BanLevel = 4
 )
 

@@ -47,7 +47,8 @@ func executeEnableSSL(task *Task) TaskResult {
 
 	os.RemoveAll(certDir)
 	if err := os.MkdirAll(certDir, 0700); err != nil {
-		return TaskResult{Success: false, Message: "创建证书目录失败: " + err.Error()}
+		log.Printf("创建证书目录失败: %v", err)
+		return TaskResult{Success: false, Message: "创建证书目录失败"}
 	}
 
 	var expiry time.Time
@@ -58,28 +59,33 @@ func executeEnableSSL(task *Task) TaskResult {
 			return TaskResult{Success: false, Message: "证书内容和私钥不能为空"}
 		}
 		if err := os.WriteFile(certPath, []byte(payload.Certificate), 0644); err != nil {
-			return TaskResult{Success: false, Message: "写入证书文件失败: " + err.Error()}
+			log.Printf("写入证书文件失败: %v", err)
+			return TaskResult{Success: false, Message: "写入证书文件失败"}
 		}
 		if err := os.WriteFile(keyPath, []byte(payload.PrivateKey), 0600); err != nil {
 			os.Remove(certPath)
-			return TaskResult{Success: false, Message: "写入私钥文件失败: " + err.Error()}
+			log.Printf("写入私钥文件失败: %v", err)
+			return TaskResult{Success: false, Message: "写入私钥文件失败"}
 		}
 		expiry, applyErr = validateCertificate(certPath, site.Domain)
 		if applyErr != nil {
 			os.Remove(certPath)
 			os.Remove(keyPath)
-			return TaskResult{Success: false, Message: "证书验证失败: " + applyErr.Error()}
+			log.Printf("证书验证失败: %v", applyErr)
+			return TaskResult{Success: false, Message: "证书验证失败"}
 		}
 	} else {
 		expiry, applyErr = obtainLegoCert(site.Domain, site.Aliases, site.WebRoot, certDir)
 		if applyErr != nil {
-			return TaskResult{Success: false, Message: "申请 Let's Encrypt 证书失败: " + applyErr.Error()}
+			log.Printf("申请 Let's Encrypt 证书失败: %v", applyErr)
+			return TaskResult{Success: false, Message: "申请 Let's Encrypt 证书失败"}
 		}
 	}
 
 	if applyErr = applySSLToSite(site, certPath, keyPath, expiry); applyErr != nil {
 		os.RemoveAll(certDir)
-		return TaskResult{Success: false, Message: "应用SSL配置失败: " + applyErr.Error()}
+		log.Printf("应用SSL配置失败: %v", applyErr)
+		return TaskResult{Success: false, Message: "应用SSL配置失败"}
 	}
 
 	return TaskResult{
@@ -122,7 +128,7 @@ func executeRemoveSSL(task *Task) TaskResult {
 		LogDir:      site.LogDir,
 		SystemUser:  site.SystemUser,
 		UseSSL:      false,
-		SiteType:     site.SiteType,
+		SiteType:    site.SiteType,
 		SSLCertPath: "",
 		SSLKeyPath:  "",
 		PHPProxy:    "unix:" + phpSockPath,
@@ -131,12 +137,14 @@ func executeRemoveSSL(task *Task) TaskResult {
 
 	nginxConfig, err := engine.RenderNginxConfig(nginxData)
 	if err != nil {
-		return TaskResult{Success: false, Message: "渲染 HTTP 配置失败: " + err.Error()}
+		log.Printf("渲染 HTTP 配置失败: %v", err)
+		return TaskResult{Success: false, Message: "渲染 HTTP 配置失败"}
 	}
 
 	if err := engine.ApplyNginxConfig(nginxConfig, site.NginxConfPath,
 		filepath.Join(cfg.Paths.NginxSitesEnabled, site.Domain+".conf")); err != nil {
-		return TaskResult{Success: false, Message: "应用 HTTP 配置失败: " + err.Error()}
+		log.Printf("应用 HTTP 配置失败: %v", err)
+		return TaskResult{Success: false, Message: "应用 HTTP 配置失败"}
 	}
 
 	db := database.GetDB()
@@ -290,7 +298,7 @@ func applySSLToSite(site *models.Website, certPath, keyPath string, expiry time.
 		LogDir:      site.LogDir,
 		SystemUser:  site.SystemUser,
 		UseSSL:      true,
-		SiteType:     site.SiteType,
+		SiteType:    site.SiteType,
 		SSLCertPath: certPath,
 		SSLKeyPath:  keyPath,
 		PHPProxy:    "unix:" + phpSockPath,
@@ -388,7 +396,8 @@ func executeRenewSSL(task *Task) TaskResult {
 		 FROM websites WHERE ssl_enabled = 1 AND ssl_cert_path != ''`,
 	)
 	if err != nil {
-		return TaskResult{Success: false, Message: "查询SSL站点失败: " + err.Error()}
+		log.Printf("查询SSL站点失败: %v", err)
+		return TaskResult{Success: false, Message: "查询SSL站点失败"}
 	}
 	defer rows.Close()
 
@@ -419,7 +428,8 @@ func executeRenewSSL(task *Task) TaskResult {
 
 		expiry, certErr := validateCertificate(w.SSLCertPath, w.Domain)
 		if certErr != nil {
-			failed = append(failed, w.Domain+"(证书异常: "+certErr.Error()+")")
+			log.Printf("SSL证书异常 domain=%s: %v", w.Domain, certErr)
+			failed = append(failed, w.Domain+"(证书异常)")
 			continue
 		}
 
@@ -435,7 +445,8 @@ func executeRenewSSL(task *Task) TaskResult {
 		newExpiry, renewErr := obtainLegoCert(w.Domain, w.Aliases, w.WebRoot,
 			filepath.Join(cfg.Paths.Certificates, w.Domain))
 		if renewErr != nil {
-			failed = append(failed, w.Domain+"(续期失败: "+renewErr.Error()+")")
+			log.Printf("SSL续期失败 domain=%s: %v", w.Domain, renewErr)
+			failed = append(failed, w.Domain+"(续期失败)")
 			continue
 		}
 

@@ -25,6 +25,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	r.Use(middleware.SecurityHeaders())
 
 	db := database.GetDB()
+	r.Use(middleware.ScanDefense(db, cfg.Panel.RandomSuffix))
 
 	attemptTracker := middleware.NewLoginAttemptTracker(
 		db,
@@ -83,8 +84,6 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 		authHandler.Login(c)
 	})
 
-
-
 	cacheHelper := &handlers.CacheHelperHandler{}
 
 	pluginGroup := r.Group(prefix)
@@ -119,27 +118,27 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/websites/:id/logs", websiteHandler.ViewLogs)
 	protected.DELETE("/api/websites/:id/logs", websiteHandler.ClearLogs)
 	protected.PUT("/api/websites/:id/domains", websiteHandler.UpdateDomains)
-		protected.PUT("/api/websites/:id/cache", websiteHandler.UpdateCache)
-		protected.DELETE("/api/websites/:id/cache", websiteHandler.ClearCache)
-		protected.PUT("/api/websites/:id/wp-optimizations", websiteHandler.SaveWPOptimizations)
-		protected.PUT("/api/websites/:id/monitoring", websiteHandler.SaveMonitoring)
-		protected.POST("/api/websites/:id/install-plugin", websiteHandler.InstallPlugin)
-		protected.GET("/api/websites/:id/install-plugin/status", websiteHandler.InstallPluginStatus)
-		protected.POST("/api/websites/:id/reinstall-wp", websiteHandler.ReinstallWordPress)
+	protected.PUT("/api/websites/:id/cache", websiteHandler.UpdateCache)
+	protected.DELETE("/api/websites/:id/cache", websiteHandler.ClearCache)
+	protected.PUT("/api/websites/:id/wp-optimizations", websiteHandler.SaveWPOptimizations)
+	protected.PUT("/api/websites/:id/monitoring", websiteHandler.SaveMonitoring)
+	protected.POST("/api/websites/:id/install-plugin", websiteHandler.InstallPlugin)
+	protected.GET("/api/websites/:id/install-plugin/status", websiteHandler.InstallPluginStatus)
+	protected.POST("/api/websites/:id/reinstall-wp", websiteHandler.ReinstallWordPress)
 	protected.GET("/api/websites/:id/nginx-custom", websiteHandler.GetNginxCustom)
 	protected.PUT("/api/websites/:id/nginx-custom", websiteHandler.SaveNginxCustom)
 	protected.PUT("/api/websites/:id/access-log", websiteHandler.SetAccessLogMode)
-		protected.PUT("/api/websites/:id/log-retention", websiteHandler.SetLogRetention)
-			backupHandler := &handlers.BackupHandler{}
-		protected.GET("/api/websites/:id/backups", backupHandler.List)
-		protected.POST("/api/websites/:id/backups", backupHandler.Create)
-		protected.DELETE("/api/websites/:id/backups/:bid", backupHandler.Delete)
-		protected.GET("/api/websites/:id/backups/:bid/download", backupHandler.Download)
-		protected.POST("/api/websites/:id/backups/:bid/restore", backupHandler.Restore)
-		protected.POST("/api/websites/:id/backups/upload-restore", backupHandler.UploadRestore)
-		protected.GET("/api/websites/:id/backups/settings", backupHandler.GetSettings)
-		protected.PUT("/api/websites/:id/backups/settings", backupHandler.UpdateSettings)
-		protected.POST("/api/websites/:id/backups/clear-database", backupHandler.ClearDatabase)
+	protected.PUT("/api/websites/:id/log-retention", websiteHandler.SetLogRetention)
+	backupHandler := &handlers.BackupHandler{}
+	protected.GET("/api/websites/:id/backups", backupHandler.List)
+	protected.POST("/api/websites/:id/backups", backupHandler.Create)
+	protected.DELETE("/api/websites/:id/backups/:bid", backupHandler.Delete)
+	protected.GET("/api/websites/:id/backups/:bid/download", backupHandler.Download)
+	protected.POST("/api/websites/:id/backups/:bid/restore", backupHandler.Restore)
+	protected.POST("/api/websites/:id/backups/upload-restore", backupHandler.UploadRestore)
+	protected.GET("/api/websites/:id/backups/settings", backupHandler.GetSettings)
+	protected.PUT("/api/websites/:id/backups/settings", backupHandler.UpdateSettings)
+	protected.POST("/api/websites/:id/backups/clear-database", backupHandler.ClearDatabase)
 
 	dashboardHandler := &handlers.DashboardHandler{}
 	protected.GET("/api/dashboard/stats", dashboardHandler.GetStats)
@@ -169,7 +168,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.PUT("/api/cron/:id", cronHandler.Update)
 	protected.DELETE("/api/cron/:id", cronHandler.Delete)
 	protected.POST("/api/cron/:id/run", cronHandler.Run)
-		protected.GET("/api/cron/system", cronHandler.SystemList)
+	protected.GET("/api/cron/system", cronHandler.SystemList)
 	protected.GET("/api/cron/logs", cronHandler.ViewLogs)
 
 	fileHandler := &handlers.FileHandler{}
@@ -179,13 +178,13 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.DELETE("/api/files/delete", fileHandler.Delete)
 	protected.PUT("/api/files/rename", fileHandler.Rename)
 	protected.GET("/api/files/permissions", fileHandler.Permissions)
-		protected.POST("/api/files/batch-zip", fileHandler.BatchCompress)
-		protected.POST("/api/files/move", fileHandler.Move)
-		protected.POST("/api/files/copy", fileHandler.Copy)
-		protected.POST("/api/files/zip", fileHandler.Compress)
-		protected.POST("/api/files/unzip", fileHandler.Decompress)
-		protected.POST("/api/files/mkdir", fileHandler.CreateDir)
-		protected.POST("/api/files/fix-permissions", fileHandler.FixPermissions)
+	protected.POST("/api/files/batch-zip", fileHandler.BatchCompress)
+	protected.POST("/api/files/move", fileHandler.Move)
+	protected.POST("/api/files/copy", fileHandler.Copy)
+	protected.POST("/api/files/zip", fileHandler.Compress)
+	protected.POST("/api/files/unzip", fileHandler.Decompress)
+	protected.POST("/api/files/mkdir", fileHandler.CreateDir)
+	protected.POST("/api/files/fix-permissions", fileHandler.FixPermissions)
 
 	settingsHandler := &handlers.SettingsHandler{}
 	protected.GET("/api/settings", settingsHandler.GetSettings)
@@ -231,14 +230,14 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 		c.HTML(http.StatusOK, "software.html", pageData(suffix, "software", "software_content", c))
 	})
 	protected.GET("/api/software", softwareHandler.List)
-		protected.GET("/api/software/guard", softwareHandler.GetGuardStatus)
-		protected.POST("/api/software/guard/action", softwareHandler.GuardAction)
+	protected.GET("/api/software/guard", softwareHandler.GetGuardStatus)
+	protected.POST("/api/software/guard/action", softwareHandler.GuardAction)
 	protected.PUT("/api/software/config", softwareHandler.SaveConfig)
 	protected.GET("/api/software/log", softwareHandler.ViewLog)
-		protected.DELETE("/api/software/log", softwareHandler.ClearLog)
-		updateHandler := &handlers.UpdateHandler{CurrentVersion: version}
-		protected.GET("/api/update/check", updateHandler.Check)
-		protected.POST("/api/update/do", updateHandler.Update)
+	protected.DELETE("/api/software/log", softwareHandler.ClearLog)
+	updateHandler := &handlers.UpdateHandler{CurrentVersion: version}
+	protected.GET("/api/update/check", updateHandler.Check)
+	protected.POST("/api/update/do", updateHandler.Update)
 
 	tmpl := template.Must(template.New("").ParseFS(tmplFS, "templates/*.html"))
 	r.SetHTMLTemplate(tmpl)
@@ -264,7 +263,7 @@ func pageData(suffix string, active string, contentTpl string, c *gin.Context) g
 	return gin.H{
 		"Title":           title,
 		"PanelTitle":      handlers.GetPanelTitle(),
-			"PanelVersion":    panelVersion,
+		"PanelVersion":    panelVersion,
 		"ContentTemplate": contentTpl,
 		"RandomSuffix":    suffix,
 		"Active":          active,

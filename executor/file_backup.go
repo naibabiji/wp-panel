@@ -24,7 +24,7 @@ func ExecuteFileBackup(siteID int, mode string) (string, error) {
 
 	ts := time.Now().Format("20060102_150405")
 	var tarName string
-		var fullPath string
+	var fullPath string
 	var isFull bool
 
 	if mode == "full" {
@@ -68,10 +68,10 @@ func ExecuteFileBackup(siteID int, mode string) (string, error) {
 	// Clean old backups, keep 7
 	cleanOldBackups(backupDir, 7)
 
-		go SyncBackupToRemote(fullPath)
-		logMsg := fmt.Sprintf("%s 文件备份成功: %s (%s)", domain, tarName, map[bool]string{true: "全量", false: "增量"}[isFull])
-		appendCronLog(logMsg)
-		return logMsg, nil
+	go SyncBackupToRemote(fullPath)
+	logMsg := fmt.Sprintf("%s 文件备份成功: %s (%s)", domain, tarName, map[bool]string{true: "全量", false: "增量"}[isFull])
+	appendCronLog(logMsg)
+	return logMsg, nil
 }
 
 func cleanOldBackups(dir string, keep int) {

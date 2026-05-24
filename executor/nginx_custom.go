@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,7 +23,8 @@ func executeSaveNginxCustom(task *Task) TaskResult {
 	domain := site.Domain
 
 	if err := os.MkdirAll(nginxCustomDir, 0755); err != nil {
-		return TaskResult{Success: false, Message: "创建配置目录失败: " + err.Error()}
+		log.Printf("创建配置目录失败: %v", err)
+		return TaskResult{Success: false, Message: "创建配置目录失败"}
 	}
 
 	prePath := filepath.Join(nginxCustomDir, domain+".pre.conf")
@@ -32,11 +34,13 @@ func executeSaveNginxCustom(task *Task) TaskResult {
 	oldMain, _ := os.ReadFile(mainPath)
 
 	if err := os.WriteFile(prePath, []byte(payload.PreContent), 0644); err != nil {
-		return TaskResult{Success: false, Message: "写入 pre.conf 失败: " + err.Error()}
+		log.Printf("写入 pre.conf 失败: %v", err)
+		return TaskResult{Success: false, Message: "写入 pre.conf 失败"}
 	}
 	if err := os.WriteFile(mainPath, []byte(payload.Content), 0644); err != nil {
 		os.WriteFile(prePath, oldPre, 0644)
-		return TaskResult{Success: false, Message: "写入 conf 失败: " + err.Error()}
+		log.Printf("写入 conf 失败: %v", err)
+		return TaskResult{Success: false, Message: "写入 conf 失败"}
 	}
 
 	ngxTest := exec.Command("nginx", "-t")
@@ -83,7 +87,7 @@ func executeSetAccessLogMode(task *Task) TaskResult {
 		LogDir:        site.LogDir,
 		SystemUser:    site.SystemUser,
 		UseSSL:        site.SSLEnabled,
-		SiteType:     site.SiteType,
+		SiteType:      site.SiteType,
 		SSLCertPath:   site.SSLCertPath,
 		SSLKeyPath:    site.SSLKeyPath,
 		PHPProxy:      "unix:" + phpSockPath,
@@ -93,12 +97,14 @@ func executeSetAccessLogMode(task *Task) TaskResult {
 
 	nginxConfig, err := engine.RenderNginxConfig(nginxData)
 	if err != nil {
-		return TaskResult{Success: false, Message: "渲染 Nginx 配置失败: " + err.Error()}
+		log.Printf("渲染 Nginx 配置失败: %v", err)
+		return TaskResult{Success: false, Message: "渲染 Nginx 配置失败"}
 	}
 
 	if err := engine.ApplyNginxConfig(nginxConfig, site.NginxConfPath,
 		filepath.Join(cfg.Paths.NginxSitesEnabled, site.Domain+".conf")); err != nil {
-		return TaskResult{Success: false, Message: "应用 Nginx 配置失败: " + err.Error()}
+		log.Printf("应用 Nginx 配置失败: %v", err)
+		return TaskResult{Success: false, Message: "应用 Nginx 配置失败"}
 	}
 
 	// Update database

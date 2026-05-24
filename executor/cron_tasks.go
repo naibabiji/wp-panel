@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -22,7 +23,8 @@ func executeRenderCron(task *Task) TaskResult {
 		 FROM cron_jobs WHERE enabled = 1`,
 	)
 	if err != nil {
-		return TaskResult{Success: false, Message: "查询Cron任务失败: " + err.Error()}
+		log.Printf("查询Cron任务失败: %v", err)
+		return TaskResult{Success: false, Message: "查询Cron任务失败"}
 	}
 	defer rows.Close()
 
@@ -80,7 +82,8 @@ exit $RC
 	cronContent := strings.Join(cronLines, "\n") + "\n"
 
 	if err := os.WriteFile(cfg.Paths.CronFile, []byte(cronContent), 0644); err != nil {
-		return TaskResult{Success: false, Message: "写入Cron文件失败: " + err.Error()}
+		log.Printf("写入Cron文件失败: %v", err)
+		return TaskResult{Success: false, Message: "写入Cron文件失败"}
 	}
 
 	_, _ = executeCommand("systemctl", "restart", "cron")
@@ -106,7 +109,8 @@ func executeRunCron(task *Task) TaskResult {
 		siteID = *siteIDNull
 	}
 	if err != nil {
-		return TaskResult{Success: false, Message: "查询任务失败: " + err.Error()}
+		log.Printf("查询任务失败: %v", err)
+		return TaskResult{Success: false, Message: "查询任务失败"}
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
@@ -130,9 +134,10 @@ func executeRunCron(task *Task) TaskResult {
 	if execErr != nil {
 		status = "failed"
 		if out == "" {
-			out = execErr.Error()
+			log.Printf("Cron任务执行失败: %v", execErr)
+			out = "任务执行失败"
 		} else {
-			out += "\n" + execErr.Error()
+			out += "\n任务执行失败"
 		}
 	}
 

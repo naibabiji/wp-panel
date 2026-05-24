@@ -4,41 +4,42 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os/exec"
 	"strings"
 	"time"
 )
 
 var allowedCommands = map[string][]string{
-	"systemctl":        {"start", "stop", "reload", "restart", "enable", "disable", "daemon-reload", "status"},
-	"nginx":            {"-t", "-s", "-c"},
-	"nft":              {"add", "delete", "list", "flush", "create", "insert", "set"},
-	"fail2ban-client":  {"set", "unban", "reload", "status", "banip", "start", "stop", "add", "get"},
-	"useradd":          {"-r", "-s", "-d", "-m", "-g", "-M"},
-	"userdel":          {"-r", "-f"},
-	"usermod":          {"-a", "-G", "-g"},
-	"chown":            {"-R"},
-	"chmod":            {"-R"},
-	"mkdir":            {"-p"},
-	"rm":               {"-rf", "-r", "-f"},
-	"ln":               {"-s", "-sf", "-snf"},
-	"unlink":           {},
-	"cp":               {"-r", "-a", "-f"},
-	"mv":               {},
-	"unzip":            {"-o", "-q", "-d"},
-	"wget":             {"-q", "-O", "-T", "-t"},
-	"curl":             {"-s", "-o", "-f", "-L", "-X", "-H", "-d"},
-	"runuser":          {"-u", "-g", "--"},
-	"mysql":            {"-u", "-p", "-e", "-h", "-P", "--execute", "--host", "--password", "--user"},
-	"mysqladmin":       {"-u", "-p", "password", "create", "drop", "status"},
-	"test":             {"-f", "-d", "-e", "-r", "-w", "-x", "-n", "-z"},
-	"cat":              {},
-	"openssl":          {"rand", "-base64", "x509", "-in", "-out", "-days"},
-	"tee":              {},
-	"bash":             {"-c"},
-	"head":             {"-c"},
-	"sha256sum":        {},
-	"base64":           {},
+	"systemctl":       {"start", "stop", "reload", "restart", "enable", "disable", "daemon-reload", "status"},
+	"nginx":           {"-t", "-s", "-c"},
+	"nft":             {"add", "delete", "list", "flush", "create", "insert", "set"},
+	"fail2ban-client": {"set", "unban", "reload", "status", "banip", "start", "stop", "add", "get"},
+	"useradd":         {"-r", "-s", "-d", "-m", "-g", "-M"},
+	"userdel":         {"-r", "-f"},
+	"usermod":         {"-a", "-G", "-g"},
+	"chown":           {"-R"},
+	"chmod":           {"-R"},
+	"mkdir":           {"-p"},
+	"rm":              {"-rf", "-r", "-f"},
+	"ln":              {"-s", "-sf", "-snf"},
+	"unlink":          {},
+	"cp":              {"-r", "-a", "-f"},
+	"mv":              {},
+	"unzip":           {"-o", "-q", "-d"},
+	"wget":            {"-q", "-O", "-T", "-t"},
+	"curl":            {"-s", "-o", "-f", "-L", "-X", "-H", "-d"},
+	"runuser":         {"-u", "-g", "--"},
+	"mysql":           {"-u", "-p", "-e", "-h", "-P", "--execute", "--host", "--password", "--user"},
+	"mysqladmin":      {"-u", "-p", "password", "create", "drop", "status"},
+	"test":            {"-f", "-d", "-e", "-r", "-w", "-x", "-n", "-z"},
+	"cat":             {},
+	"openssl":         {"rand", "-base64", "x509", "-in", "-out", "-days"},
+	"tee":             {},
+	"bash":            {"-c"},
+	"head":            {"-c"},
+	"sha256sum":       {},
+	"base64":          {},
 }
 
 func IsCommandAllowed(binary string, args []string) bool {
@@ -101,9 +102,9 @@ func Execute(binary string, args ...string) (*ExecResult, error) {
 			result.ExitCode = exitErr.ExitCode()
 		}
 		if result.Stderr != "" {
-			return result, fmt.Errorf("%s", result.Stderr)
+			log.Printf("命令 %s stderr: %s", binary, result.Stderr)
 		}
-		return result, err
+		return result, fmt.Errorf("命令 %s 执行失败", binary)
 	}
 
 	return result, nil
@@ -135,9 +136,9 @@ func ExecuteWithInput(binary string, input string, args ...string) (*ExecResult,
 			return nil, fmt.Errorf("命令 %s 执行超时(30秒)", binary)
 		}
 		if result.Stderr != "" {
-			return result, fmt.Errorf("%s", result.Stderr)
+			log.Printf("命令 %s stderr: %s", binary, result.Stderr)
 		}
-		return result, err
+		return result, fmt.Errorf("命令 %s 执行失败", binary)
 	}
 
 	return result, nil
