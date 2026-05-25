@@ -142,7 +142,7 @@ func executeRunCron(task *Task) TaskResult {
 	}
 
 	_, _ = db.Exec(
-		`UPDATE cron_jobs SET last_run_at = ?, last_status = ?, last_output = ? WHERE id = ?`,
+		`UPDATE cron_jobs SET last_run_at = ?, last_status = ?, last_output = ?, running = 0 WHERE id = ?`,
 		now, status, out, payload.JobID,
 	)
 

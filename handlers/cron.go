@@ -21,7 +21,7 @@ func (h *CronHandler) List(c *gin.Context) {
 	db := database.GetDB()
 	rows, err := db.Query(
 		`SELECT id, name, cron_expression, command, task_type, backup_mode, notify_fail,
-		        site_id, run_as_user, enabled,
+		        site_id, run_as_user, enabled, running,
 		        last_run_at, last_status, last_output, created_at, updated_at
 		 FROM cron_jobs ORDER BY created_at DESC`,
 	)
@@ -34,15 +34,16 @@ func (h *CronHandler) List(c *gin.Context) {
 	var jobs []models.CronJob
 	for rows.Next() {
 		var j models.CronJob
-		var enabled, notifyFail int
+		var enabled, notifyFail, running int
 		if err := rows.Scan(&j.ID, &j.Name, &j.CronExpression, &j.Command,
 			&j.TaskType, &j.BackupMode, &notifyFail,
-			&j.SiteID, &j.RunAsUser, &enabled, &j.LastRunAt, &j.LastStatus,
+			&j.SiteID, &j.RunAsUser, &enabled, &running, &j.LastRunAt, &j.LastStatus,
 			&j.LastOutput, &j.CreatedAt, &j.UpdatedAt); err != nil {
 			continue
 		}
 		j.Enabled = enabled == 1
 		j.NotifyFail = notifyFail == 1
+		j.Running = running == 1
 		jobs = append(jobs, j)
 	}
 	if jobs == nil {
@@ -204,6 +205,16 @@ func (h *CronHandler) Run(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的任务ID"))
 		return
 	}
+
+	db := database.GetDB()
+	var running int
+	db.QueryRow("SELECT running FROM cron_jobs WHERE id = ?", id).Scan(&running)
+	if running == 1 {
+		c.JSON(http.StatusConflict, models.ErrorResponse("任务正在执行中，请稍后再试"))
+		return
+	}
+
+	db.Exec("UPDATE cron_jobs SET running = 1 WHERE id = ?", id)
 
 	payload := &executor.RunCronPayload{JobID: id}
 	task := executor.GlobalQueue.Enqueue(executor.TaskRunCron, payload)

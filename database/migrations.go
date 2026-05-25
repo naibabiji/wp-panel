@@ -65,6 +65,7 @@ var migrations = []string{
 		backup_mode     TEXT    NOT NULL DEFAULT 'incremental',
 		notify_fail     INTEGER NOT NULL DEFAULT 0,
 		enabled         INTEGER NOT NULL DEFAULT 1,
+		running         INTEGER NOT NULL DEFAULT 0,
 		last_run_at     DATETIME,
 		last_status     TEXT    DEFAULT '',
 		last_output     TEXT    DEFAULT '',
@@ -73,6 +74,7 @@ var migrations = []string{
 		FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE SET NULL
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_cron_jobs_enabled ON cron_jobs(enabled)`,
+	`ALTER TABLE cron_jobs ADD COLUMN running INTEGER NOT NULL DEFAULT 0`,
 
 	// ============================================================
 	// monitoring_metrics

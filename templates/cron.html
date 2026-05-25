@@ -37,7 +37,7 @@
                             <td class="table-cell text-xs text-gray-400" x-text="job.last_run_at || '--'"></td>
                             <td class="table-cell">
                                 <div class="flex space-x-2">
-                                    <button @click="runJob(job)" class="btn-success text-xs py-1 px-2">执行</button>
+                                    <button @click="runJob(job)" :disabled="job.running" class="btn-success text-xs py-1 px-2" :class="job.running ? 'opacity-50 cursor-not-allowed' : ''" x-text="job.running ? '执行中...' : '执行'"></button>
                                     <button @click="openEdit(job)" class="text-xs py-1 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">编辑</button>
                                     <button @click="deleteJob(job)" class="btn-danger text-xs py-1 px-2">删除</button>
                                 </div>

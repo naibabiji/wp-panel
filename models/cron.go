@@ -13,6 +13,7 @@ type CronJob struct {
 	SiteID         *int       `json:"site_id"`
 	RunAsUser      string     `json:"run_as_user"`
 	Enabled        bool       `json:"enabled"`
+	Running        bool       `json:"running"`
 	LastRunAt      *time.Time `json:"last_run_at"`
 	LastStatus     string     `json:"last_status"`
 	LastOutput     string     `json:"last_output"`
