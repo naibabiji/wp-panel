@@ -32,6 +32,9 @@ func executeCreateBackup(task *Task) TaskResult {
 	filePath := filepath.Join(backupDir, filename)
 
 	dbPass := readMariaDBPassword()
+	if dbPass == "" {
+		return TaskResult{Success: false, Message: "无法读取 MariaDB root 密码"}
+	}
 
 	cmd := exec.Command("bash", "-c",
 		fmt.Sprintf("mysqldump -u root %s | gzip > %s", site.DBName, filePath))
@@ -99,7 +102,11 @@ func restoreFromGz(filePath, dbName, dbPass string) TaskResult {
 	gunzip := exec.Command("gunzip", "-c", filePath)
 	mysql := exec.Command("mysql", "-u", "root", dbName)
 	mysql.Env = append(os.Environ(), "MYSQL_PWD="+dbPass)
-	mysql.Stdin, _ = gunzip.StdoutPipe()
+	var pipeErr error
+	mysql.Stdin, pipeErr = gunzip.StdoutPipe()
+	if pipeErr != nil {
+		return TaskResult{Success: false, Message: fmt.Sprintf("创建管道失败: %v", pipeErr)}
+	}
 	if err := mysql.Start(); err != nil {
 		log.Printf("恢复失败: %v", err)
 		return TaskResult{Success: false, Message: "恢复失败"}

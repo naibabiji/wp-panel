@@ -37,7 +37,10 @@ func SyncBackupToRemote(localFile string) {
 			syncLog("SSH 密钥不存在: " + keyPath)
 			return
 		}
-		os.Chmod(keyPath, 0600)
+		if err := os.Chmod(keyPath, 0600); err != nil {
+				syncLog(fmt.Sprintf("SSH 密钥权限设置失败: %v", err))
+				return
+			}
 		cmd = exec.Command("rsync", "-avzR",
 			"-e", fmt.Sprintf("ssh -i %s %s", keyPath, sshOpts),
 			src, dest)
@@ -54,10 +57,10 @@ func SyncBackupToRemote(localFile string) {
 	out, err := cmd.CombinedOutput()
 	relPath := strings.TrimPrefix(localFile, backupsRoot+"/")
 	if err != nil {
-		syncLog(fmt.Sprintf("远程同步完成(rsync 警告): %s — %s", relPath, strings.TrimSpace(string(out))))
-	} else {
-		syncLog(fmt.Sprintf("远程同步成功: %s", relPath))
+		syncLog(fmt.Sprintf("远程同步失败: %s — %s", relPath, strings.TrimSpace(string(out))))
+		return
 	}
+	syncLog(fmt.Sprintf("远程同步成功: %s", relPath))
 
 	if keepLocal == 0 {
 		os.Remove(localFile)

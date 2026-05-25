@@ -104,6 +104,7 @@ func TestRemoteBackup(c *gin.Context) {
 	} else {
 		cmd = exec.Command("sshpass", "-e", "ssh", "-o", "StrictHostKeyChecking=accept-new",
 			"-p", fmt.Sprintf("%d", port), username+"@"+host, "echo WP_PANEL_OK")
+		cmd.Env = append(os.Environ(), "SSHPASS="+password)
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -117,7 +118,10 @@ func TestRemoteBackup(c *gin.Context) {
 
 	// 测试 rsync 到远程备份目录
 	testFile := "/tmp/wp-panel-rsync-test.txt"
-	os.WriteFile(testFile, []byte("WP Panel rsync test"), 0644)
+	if err := os.WriteFile(testFile, []byte("WP Panel rsync test"), 0644); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建测试文件失败"))
+		return
+	}
 	defer os.Remove(testFile)
 
 	var testCmd *exec.Cmd
@@ -129,6 +133,7 @@ func TestRemoteBackup(c *gin.Context) {
 		testCmd = exec.Command("sshpass", "-e", "rsync", "-avz", "-e",
 			fmt.Sprintf("ssh -o StrictHostKeyChecking=accept-new -p %d", port),
 			testFile, username+"@"+host+":"+remotePath+"/.wp-panel-rsync-test.txt")
+		testCmd.Env = append(os.Environ(), "SSHPASS="+password)
 	}
 	testOut, testErr := testCmd.CombinedOutput()
 	if testErr != nil {
