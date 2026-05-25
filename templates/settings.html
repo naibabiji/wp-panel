@@ -470,19 +470,29 @@ function remoteBackup() {
             const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
             let pw = '';
             for (let i = 0; i < 20; i++) pw += chars[Math.floor(Math.random() * chars.length)];
-            this.helperPass = pw;
+            if (this.cfg.auth_type === 'password') {
+                this.cfg.password = pw;
+            } else {
+                this.helperPass = pw;
+            }
         },
         genCmd() {
             var u = this.cfg.username || 'wpbackup';
             var dir = this.cfg.remote_path || '/home/' + u + '/backup';
 
+            var authType = this.cfg.auth_type || 'key';
+
             if (this.helperMode === 'delete') {
                 return 'userdel -r ' + u + ' && rm -rf ' + dir;
             }
 
-            if (!this.helperPass) this.genPassword();
-            var p = this.helperPass;
-            var authType = this.cfg.auth_type || 'key';
+            var p;
+            if (authType === 'password') {
+                p = this.cfg.password;
+            } else {
+                if (!this.helperPass) this.genPassword();
+                p = this.helperPass;
+            }
 
             var lines = [
                 'useradd -m -s /bin/bash ' + u,
