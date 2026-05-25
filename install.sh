@@ -234,6 +234,7 @@ apt-get install -y -qq \
     redis-server \
     fail2ban \
     nftables \
+    rsyslog \
     cron \
     php8.3-fpm \
     php8.3-mysql \
