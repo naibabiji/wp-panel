@@ -80,10 +80,13 @@ func SaveRemoteBackup(c *gin.Context) {
 
 func TestRemoteBackup(c *gin.Context) {
 	db := database.GetDB()
-	var host, username, authType, password, sshKey string
+	var host, username, authType, password, sshKey, remotePath string
 	var port int
-	db.QueryRow(`SELECT host, port, username, auth_type, password, ssh_key FROM remote_backup_settings WHERE id = 1`).Scan(
-		&host, &port, &username, &authType, &password, &sshKey)
+	db.QueryRow(`SELECT host, port, username, auth_type, password, ssh_key, remote_path FROM remote_backup_settings WHERE id = 1`).Scan(
+		&host, &port, &username, &authType, &password, &sshKey, &remotePath)
+	if remotePath == "" {
+		remotePath = "/home/" + username + "/backup"
+	}
 	if host == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("请先填写远程服务器地址"))
 		return
@@ -112,7 +115,7 @@ func TestRemoteBackup(c *gin.Context) {
 		return
 	}
 
-	// 创建临时测试文件并测试 rsync
+	// 测试 rsync 到远程备份目录
 	testFile := "/tmp/wp-panel-rsync-test.txt"
 	os.WriteFile(testFile, []byte("WP Panel rsync test"), 0644)
 	defer os.Remove(testFile)
@@ -121,11 +124,11 @@ func TestRemoteBackup(c *gin.Context) {
 	if authType == "key" {
 		testCmd = exec.Command("rsync", "-avz", "-e",
 			fmt.Sprintf("ssh -i /www/server/panel/remote_backup_key -o StrictHostKeyChecking=accept-new -p %d", port),
-			testFile, username+"@"+host+":/tmp/wp-panel-rsync-test.txt")
+			testFile, username+"@"+host+":"+remotePath+"/.wp-panel-rsync-test.txt")
 	} else {
 		testCmd = exec.Command("sshpass", "-e", "rsync", "-avz", "-e",
 			fmt.Sprintf("ssh -o StrictHostKeyChecking=accept-new -p %d", port),
-			testFile, username+"@"+host+":/tmp/wp-panel-rsync-test.txt")
+			testFile, username+"@"+host+":"+remotePath+"/.wp-panel-rsync-test.txt")
 	}
 	testOut, testErr := testCmd.CombinedOutput()
 	if testErr != nil {
