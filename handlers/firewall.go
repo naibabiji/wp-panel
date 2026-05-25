@@ -58,8 +58,8 @@ func (h *FirewallHandler) Unban(c *gin.Context) {
 	}
 
 	db := database.GetDB()
-	var ip string
-	err = db.QueryRow("SELECT ip_address FROM firewall_bans WHERE id = ? AND unbanned_at IS NULL", id).Scan(&ip)
+	var ip, jail string
+	err = db.QueryRow("SELECT ip_address, source_jail FROM firewall_bans WHERE id = ? AND unbanned_at IS NULL", id).Scan(&ip, &jail)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("封禁记录不存在或已解封"))
 		return
@@ -71,7 +71,10 @@ func (h *FirewallHandler) Unban(c *gin.Context) {
 	}
 
 	go func() {
-		executor.Execute("fail2ban-client", "set", "wppanel", "unbanip", ip)
+		switch jail {
+		case "wppanel", "wppanel-404", "wppanel-sshd":
+			executor.Execute("fail2ban-client", "set", jail, "unbanip", ip)
+		}
 		executor.RemovePersistBan(ip)
 	}()
 
