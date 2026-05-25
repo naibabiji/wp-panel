@@ -540,13 +540,12 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 	defer r.Close()
 
 	destDir := filepath.Dir(fullPath)
-	cleanRoot := filepath.Clean(basePath)
 	overwrite := c.Query("overwrite") == "1"
 	var conflicts []string
 	for _, f := range r.File {
 		target := filepath.Join(destDir, filepath.FromSlash(f.Name))
 		target = filepath.Clean(target)
-		if !strings.HasPrefix(target, cleanRoot) || !strings.HasPrefix(target, destDir) {
+		if !isPathWithin(basePath, target) {
 			c.JSON(http.StatusForbidden, models.ErrorResponse("压缩包包含非法路径: "+f.Name))
 			return
 		}
@@ -564,7 +563,7 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 	for _, f := range r.File {
 		target := filepath.Join(destDir, filepath.FromSlash(f.Name))
 		target = filepath.Clean(target)
-		if !strings.HasPrefix(target, cleanRoot) || !strings.HasPrefix(target, destDir) {
+		if !isPathWithin(basePath, target) {
 			c.JSON(http.StatusForbidden, models.ErrorResponse("压缩包包含非法路径: "+f.Name))
 			return
 		}
@@ -614,9 +613,8 @@ func (h *FileHandler) Move(c *gin.Context) {
 	destDir := filepath.Join(basePath, req.DestPath)
 	srcDir = filepath.Clean(srcDir)
 	destDir = filepath.Clean(destDir)
-	cleanRoot := filepath.Clean(basePath)
 
-	if !strings.HasPrefix(srcDir, cleanRoot) || !strings.HasPrefix(destDir, cleanRoot) {
+	if !isPathWithin(basePath, srcDir) || !isPathWithin(basePath, destDir) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
 		return
 	}
@@ -624,7 +622,7 @@ func (h *FileHandler) Move(c *gin.Context) {
 	for _, name := range req.Names {
 		src := filepath.Join(srcDir, filepath.Clean(name))
 		dest := filepath.Join(destDir, filepath.Clean(name))
-		if !strings.HasPrefix(src, cleanRoot) || !strings.HasPrefix(dest, cleanRoot) {
+		if !isPathWithin(basePath, src) || !isPathWithin(basePath, dest) {
 			continue
 		}
 		os.Rename(src, dest)
@@ -655,9 +653,8 @@ func (h *FileHandler) Copy(c *gin.Context) {
 	destDir := filepath.Join(basePath, req.DestPath)
 	srcDir = filepath.Clean(srcDir)
 	destDir = filepath.Clean(destDir)
-	cleanRoot := filepath.Clean(basePath)
 
-	if !strings.HasPrefix(srcDir, cleanRoot) || !strings.HasPrefix(destDir, cleanRoot) {
+	if !isPathWithin(basePath, srcDir) || !isPathWithin(basePath, destDir) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
 		return
 	}
@@ -665,7 +662,7 @@ func (h *FileHandler) Copy(c *gin.Context) {
 	for _, name := range req.Names {
 		src := filepath.Join(srcDir, filepath.Clean(name))
 		dest := filepath.Join(destDir, filepath.Clean(name))
-		if !strings.HasPrefix(src, cleanRoot) || !strings.HasPrefix(dest, cleanRoot) {
+		if !isPathWithin(basePath, src) || !isPathWithin(basePath, dest) {
 			continue
 		}
 		copyFileOrDir(src, dest)

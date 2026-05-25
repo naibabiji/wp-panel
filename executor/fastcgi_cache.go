@@ -41,6 +41,12 @@ func NewCacheKey() string {
 	return hex.EncodeToString(b)
 }
 
+func NewAPIKey() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
 func ClearSiteCache(siteID int) {
 	db := database.GetDB()
 	key := NewCacheKey()

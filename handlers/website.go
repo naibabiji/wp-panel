@@ -623,7 +623,7 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 	}
 	os.WriteFile(dst, srcData, 0644)
 
-	apiKey := executor.NewCacheKey()
+	apiKey := executor.NewAPIKey()
 	database.GetDB().Exec("UPDATE websites SET plugin_api_key = ? WHERE id = ?", apiKey, id)
 
 	cfg := config.AppConfig
