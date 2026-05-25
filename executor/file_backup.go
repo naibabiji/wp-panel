@@ -51,6 +51,9 @@ func ExecuteFileBackup(siteID int, mode string) (string, error) {
 				"-C", filepath.Dir(webRoot), filepath.Base(webRoot))
 		out, err := cmd.CombinedOutput()
 		if err != nil {
+				if len(out) == 0 {
+					return "", fmt.Errorf("全量备份失败: %v", err)
+				}
 			return "", fmt.Errorf("全量备份失败: %s", string(out))
 		}
 	} else {
@@ -62,11 +65,14 @@ func ExecuteFileBackup(siteID int, mode string) (string, error) {
 		}
 		// find files newer than stamp, pipe to tar
 		script := fmt.Sprintf(
-			`find %s -newer %s -type f | tar -czf %s -T - 2>/dev/null`,
+			`find %s -newer %s -type f | tar -czf %s -T - `,
 			uploadsDir, stampFile, fullPath,
 		)
 		out, err := exec.Command("bash", "-c", script).CombinedOutput()
 		if err != nil {
+				if len(out) == 0 {
+					return "", fmt.Errorf("增量备份失败: %v", err)
+				}
 			return "", fmt.Errorf("增量备份失败: %s", string(out))
 		}
 	}
