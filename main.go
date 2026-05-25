@@ -102,10 +102,17 @@ func main() {
 	}
 
 	if *fileBackup != "" {
-		parts := strings.SplitN(*fileBackup, ":", 2)
-		if len(parts) == 2 {
+		parts := strings.SplitN(*fileBackup, ":", 3)
+		if len(parts) >= 2 {
 			siteID, _ := strconv.Atoi(parts[0])
-			msg, err := executor.ExecuteFileBackup(siteID, parts[1], 3)
+				keepCount := 3
+				if len(parts) >= 3 {
+					keepCount, _ = strconv.Atoi(parts[2])
+				}
+				if keepCount <= 0 {
+					keepCount = 3
+				}
+			msg, err := executor.ExecuteFileBackup(siteID, parts[1], keepCount)
 			if err != nil {
 				log.Printf("文件备份失败: %v", err)
 				os.Exit(1)

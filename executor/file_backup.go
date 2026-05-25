@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/naibabiji/wp-panel/database"
@@ -92,18 +93,27 @@ func cleanOldBackups(dir string, keep int) {
 	if err != nil {
 		return
 	}
-	var tars []os.DirEntry
+	type tarEntry struct {
+		name    string
+		modTime time.Time
+	}
+	var tars []tarEntry
 	for _, e := range entries {
 		if !e.IsDir() && filepath.Ext(e.Name()) == ".gz" {
-			tars = append(tars, e)
+			info, _ := e.Info()
+			mt := time.Time{}
+			if info != nil {
+				mt = info.ModTime()
+			}
+			tars = append(tars, tarEntry{name: e.Name(), modTime: mt})
 		}
 	}
 	if len(tars) <= keep {
 		return
 	}
-	// Sort by name (which includes timestamp), delete oldest
+	sort.Slice(tars, func(i, j int) bool { return tars[i].modTime.Before(tars[j].modTime) })
 	for i := 0; i < len(tars)-keep; i++ {
-		os.Remove(filepath.Join(dir, tars[i].Name()))
+		os.Remove(filepath.Join(dir, tars[i].name))
 	}
 }
 

@@ -19,7 +19,7 @@ func executeRenderCron(task *Task) TaskResult {
 
 	db := database.GetDB()
 	rows, err := db.Query(
-		`SELECT name, cron_expression, command, run_as_user, task_type, backup_mode, site_id
+		`SELECT name, cron_expression, command, run_as_user, task_type, backup_mode, keep_count, site_id
 		 FROM cron_jobs WHERE enabled = 1`,
 	)
 	if err != nil {
@@ -50,16 +50,16 @@ exit $RC
 
 	for rows.Next() {
 		var name, cronExpr, command, runAsUser, taskType, backupMode string
-		var siteID int
-		if err := rows.Scan(&name, &cronExpr, &command, &runAsUser, &taskType, &backupMode, &siteID); err != nil {
+		var siteID, keepCount int
+		if err := rows.Scan(&name, &cronExpr, &command, &runAsUser, &taskType, &backupMode, &keepCount, &siteID); err != nil {
 			continue
 		}
 
 		var line string
 		switch taskType {
 		case "file_backup":
-			line = fmt.Sprintf(`%s root %s "%s" "%s" /usr/local/bin/wp-panel --file-backup=%d:%s --config=/www/server/panel/config.json # %s`,
-				cronExpr, wrapperScript, name, logFile, siteID, backupMode, name)
+			line = fmt.Sprintf(`%s root %s "%s" "%s" /usr/local/bin/wp-panel --file-backup=%d:%s:%d --config=/www/server/panel/config.json # %s`,
+				cronExpr, wrapperScript, name, logFile, siteID, backupMode, keepCount, name)
 		case "wp_cron":
 			line = fmt.Sprintf(`%s root %s "%s" "%s" curl -k -s -o /dev/null "https://%s/wp-cron.php?doing_wp_cron" # %s`,
 				cronExpr, wrapperScript, name, logFile, command, name)
@@ -105,12 +105,12 @@ func executeRunCron(task *Task) TaskResult {
 		`SELECT name, cron_expression, command, run_as_user, task_type, backup_mode, keep_count, site_id FROM cron_jobs WHERE id = ?`,
 		payload.JobID,
 	).Scan(&name, &cronExpr, &command, &runAsUser, &taskType, &backupMode, &keepCount, &siteIDNull)
-	if siteIDNull != nil {
-		siteID = *siteIDNull
-	}
 	if err != nil {
 		log.Printf("查询任务失败: %v", err)
 		return TaskResult{Success: false, Message: "查询任务失败"}
+	}
+	if siteIDNull != nil {
+		siteID = *siteIDNull
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
