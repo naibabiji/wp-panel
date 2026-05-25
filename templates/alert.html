@@ -103,6 +103,10 @@
                     <span>数据库备份失败</span>
                 </label>
                 <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer mb-3">
+                    <input type="checkbox" x-model="rules.alert_remote_backup" @change="save">
+                    <span>远程备份失败</span>
+                </label>
+                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer mb-3">
                     <input type="checkbox" x-model="rules.alert_website_expiry" @change="save">
                     <span>网站即将到期（14天内）</span>
                 </label>
@@ -238,7 +242,7 @@ function alertManager() {
             } catch(e) {}
         },
         typeLabel(t) {
-            const m = { alert_cpu: 'CPU高负载', alert_memory: '内存过高', alert_disk: '磁盘不足', alert_service: '服务异常', alert_ssl: 'SSL到期', alert_backup: '备份失败', alert_website_expiry: '网站到期', alert_site: '网站不可用' };
+            const m = { alert_cpu: 'CPU高负载', alert_memory: '内存过高', alert_disk: '磁盘不足', alert_service: '服务异常', alert_ssl: 'SSL到期', alert_backup: '备份失败', alert_remote_backup: '远程备份失败', alert_website_expiry: '网站到期', alert_site: '网站不可用' };
             return m[t] || t;
         }
     }

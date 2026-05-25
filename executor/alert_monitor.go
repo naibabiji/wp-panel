@@ -35,6 +35,7 @@ func StartAlertMonitor() {
 		{key: "alert_ssl", checkFn: checkSSL},
 		{key: "alert_backup", checkFn: checkBackup},
 		{key: "alert_website_expiry", checkFn: checkWebsiteExpiry},
+		{key: "alert_remote_backup", checkFn: checkRemoteBackup},
 		{key: "alert_site", checkFn: checkSites},
 	}
 	go alertMgr.loop()
@@ -134,6 +135,8 @@ func alertLabel(key string) string {
 		return "数据库备份失败"
 	case "alert_website_expiry":
 		return "网站即将到期"
+	case "alert_remote_backup":
+		return "远程备份失败"
 	case "alert_site":
 		return "网站不可用"
 	}
@@ -290,6 +293,25 @@ func checkWebsiteExpiry() (bool, string) {
 	}
 	if len(msgs) > 0 {
 		return true, strings.Join(msgs, "；")
+	}
+	return false, ""
+}
+
+func checkRemoteBackup() (bool, string) {
+	db := database.GetDB()
+	var enabled int
+	db.QueryRow("SELECT enabled FROM remote_backup_settings WHERE id = 1").Scan(&enabled)
+	if enabled == 0 {
+		return false, ""
+	}
+
+	// 检查最近1小时的同步日志是否有失败记录
+	var failCount int
+	db.QueryRow(`SELECT COUNT(*) FROM operation_logs
+		WHERE operation = '远程备份' AND message LIKE '远程同步失败%'
+		AND created_at > datetime('now', '-1 hour')`).Scan(&failCount)
+	if failCount > 0 {
+		return true, fmt.Sprintf("近1小时内有 %d 次远程备份同步失败", failCount)
 	}
 	return false, ""
 }

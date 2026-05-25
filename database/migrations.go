@@ -202,7 +202,8 @@ var migrations = []string{
 		('alert_service',            'true',     '服务进程异常重启告警'),
 		('alert_ssl',                'true',     'SSL 证书到期告警'),
 		('alert_backup',             'true',     '数据库备份失败告警'),
-		('alert_website_expiry',     'true',     '网站到期告警')`,
+		('alert_website_expiry',     'true',     '网站到期告警'),
+		('alert_remote_backup',      'false',    '远程备份失败告警（需先启用远程备份）')`,
 
 	// ============================================================
 	// seed: template_versions
