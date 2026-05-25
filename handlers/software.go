@@ -31,6 +31,8 @@ var versionCmds = map[string]string{
 	"php8.3-fpm":   "php -v 2>/dev/null | head -1 | awk '{print $2}'",
 	"mariadb":      "mariadb --version 2>/dev/null | awk '{print $3}' | cut -d, -f1",
 	"redis-server": "redis-server --version 2>/dev/null | awk '{print $3}' | cut -d= -f2",
+	"nftables":     "nft --version 2>/dev/null | awk '{print $2}' | cut -dv -f2",
+	"fail2ban":     "fail2ban-client --version 2>/dev/null | awk '{print $2}'",
 }
 
 type softwareItem struct {

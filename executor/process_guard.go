@@ -39,6 +39,8 @@ func init() {
 			{Name: "PHP-FPM", ServiceName: "php8.3-fpm"},
 			{Name: "MariaDB", ServiceName: "mariadb"},
 			{Name: "Redis", ServiceName: "redis-server"},
+			{Name: "nftables", ServiceName: "nftables"},
+			{Name: "Fail2ban", ServiceName: "fail2ban"},
 		},
 		stopCh:     make(chan struct{}),
 		firstRun:   true,
