@@ -36,7 +36,6 @@ var allowedCommands = map[string][]string{
 	"cat":             {},
 	"openssl":         {"rand", "-base64", "x509", "-in", "-out", "-days"},
 	"tee":             {},
-	"bash":            {"-c"},
 	"head":            {"-c"},
 	"sha256sum":       {},
 	"base64":          {},

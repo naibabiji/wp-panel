@@ -33,6 +33,9 @@ func GetRemoteBackup(c *gin.Context) {
 			s.SSHKey = string(keyData)
 		}
 	}
+	if s.Password != "" {
+		s.Password = "已设置"
+	}
 	c.JSON(http.StatusOK, models.SuccessResponse(s))
 }
 
@@ -72,8 +75,13 @@ func SaveRemoteBackup(c *gin.Context) {
 	}
 
 	db := database.GetDB()
-	db.Exec(`UPDATE remote_backup_settings SET enabled=?, host=?, port=?, username=?, auth_type=?, password=?, remote_path=?, keep_local=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`,
-		enabledVal, req.Host, req.Port, req.Username, req.AuthType, req.Password, req.RemotePath, keepLocalVal)
+	if req.Password == "已设置" {
+		db.Exec(`UPDATE remote_backup_settings SET enabled=?, host=?, port=?, username=?, auth_type=?, remote_path=?, keep_local=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`,
+			enabledVal, req.Host, req.Port, req.Username, req.AuthType, req.RemotePath, keepLocalVal)
+	} else {
+		db.Exec(`UPDATE remote_backup_settings SET enabled=?, host=?, port=?, username=?, auth_type=?, password=?, remote_path=?, keep_local=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`,
+			enabledVal, req.Host, req.Port, req.Username, req.AuthType, req.Password, req.RemotePath, keepLocalVal)
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "设置已保存"}))
 }

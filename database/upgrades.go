@@ -8,11 +8,11 @@
 //
 // 日常开发流程：
 //
-//   1. 新功能需要数据库变更时（新表、新字段、新种子行等），在 upgrades.go 末尾追加一条 Upgrade。
-//   2. 同时在 migrations.go 的对应位置添加等价的 CREATE / INSERT 语句——全新安装走 migrations，
-//      升级安装走 upgrades，两条路径都要覆盖。
-//   3. 发布正式版本后，upgrades.go 中属于该版本的条目可以删除；但 migrations.go 中的对应语句
-//      需要永久保留（它们是新装数据库的起点）。
+//   1. 新功能需要数据库变更时（新表、新字段、新种子行等），在 migrations.go 对应位置
+//      添加等价的 CREATE / INSERT 语句。
+//   2. 同时在 upgrades.go 末尾追加一条 Upgrade 条目。
+//   3. 发布正式版本后，upgrades.go 中属于该版本的条目可以删除；但 migrations.go 中的
+//      对应语句需要永久保留（它们是新装数据库的起点）。
 //
 // 运行时逻辑（main.go 启动 → database.Open → RunMigrations → RunUpgrades）：
 //
@@ -22,7 +22,7 @@
 //
 // 版本号约定：
 //   使用语义化版本号（如 "1.0.0"），与 Git tag 保持一致。LatestVersion() 返回 upgrades 列表中
-//   最后一条的版本号，即当前代码所代表的数据库版本。
+//   最后一条的版本号（列表为空时返回 "1.0.0"），即当前代码所代表的数据库版本。
 
 package database
 
@@ -40,63 +40,8 @@ type Upgrade struct {
 	SQL         []string // 要执行的 SQL 语句
 }
 
-// upgrades 按版本顺序排列（旧→新）。每次正式发布后，可删除对应条目（但 migrations.go 中的等价语句需保留）。
-var upgrades = []Upgrade{
-	{
-		Version:     "1.0.0",
-		Description: "新增 Webhook 推送配置项",
-		SQL: []string{
-			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('webhook_enabled', 'false', '是否启用 Webhook 推送')`,
-			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('webhook_channel', 'wecom', '推送渠道')`,
-			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('webhook_url', '', 'Webhook 推送地址')`,
-		},
-	},
-	{
-		Version:     "1.0.1",
-		Description: "WordPress 优化字段：禁止自动更新、禁止文件编辑",
-		SQL: []string{
-			`ALTER TABLE websites ADD COLUMN disable_wp_updates INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE websites ADD COLUMN disable_file_editing INTEGER NOT NULL DEFAULT 0`,
-		},
-	},
-	{
-		Version:     "1.0.2",
-		Description: "网站日志保留天数",
-		SQL: []string{
-			`ALTER TABLE websites ADD COLUMN log_retention_days INTEGER NOT NULL DEFAULT 7`,
-		},
-	},
-	{
-		Version:     "1.1.0-beta4",
-		Description: "计划任务执行锁 + 远程备份失败告警",
-		SQL: []string{
-			`ALTER TABLE cron_jobs ADD COLUMN running INTEGER NOT NULL DEFAULT 0`,
-			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('alert_remote_backup', 'false', '远程备份失败告警（需先启用远程备份）')`,
-		},
-	},
-	{
-		Version:     "1.1.0-beta5",
-		Description: "计划任务失败告警 + 网站不可用告警种子",
-		SQL: []string{
-			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('alert_cron_fail', 'true', '计划任务执行失败告警')`,
-			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('alert_site', 'true', '网站不可用告警')`,
-		},
-	},
-	{
-		Version:     "1.1.0-beta6",
-		Description: "计划任务文件备份保留份数",
-		SQL: []string{
-			`ALTER TABLE cron_jobs ADD COLUMN keep_count INTEGER NOT NULL DEFAULT 3`,
-		},
-	},
-	{
-		Version:     "1.1.0-beta7",
-		Description: "补充计划任务keep_count列（修正beta6遗漏）",
-		SQL: []string{
-			`ALTER TABLE cron_jobs ADD COLUMN keep_count INTEGER NOT NULL DEFAULT 3`,
-		},
-	},
-}
+// upgrades 按版本顺序排列（旧→新）。v1.0.0 正式版清空历史，后续新版本在此追加。
+var upgrades = []Upgrade{}
 
 // LatestVersion 返回 upgrades 列表中的最新版本号。
 func LatestVersion() string {
@@ -127,6 +72,10 @@ func newInstallColumn() string {
 		}
 	}
 	return ""
+}
+
+func isBetaVersion(v string) bool {
+	return strings.Contains(strings.ToLower(v), "beta")
 }
 
 // RunUpgrades 执行所有尚未应用的版本升级。新装数据库已是最新版本，跳过所有升级。
@@ -161,9 +110,30 @@ func RunUpgrades() error {
 		}
 	}
 
-	// currentVersion 为空且非新装 → 旧版本数据库（无版本记录），从第一个升级开始执行。
-	// currentVersion 非空 → 已记录版本，从下一条升级开始执行。
-	applied := currentVersion == ""
+	// Beta 版本归一化到 1.0.0 正式基线
+	if currentVersion != "" && isBetaVersion(currentVersion) {
+		log.Printf("[升级] beta 版本 %s 归一化到 1.0.0", currentVersion)
+		DB.Exec("DELETE FROM schema_version")
+		DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.0')")
+		currentVersion = "1.0.0"
+	}
+
+	// 验证当前版本合法性：必须在 upgrades 列表中，或者是基线 1.0.0，或者是空（新装）
+	if currentVersion != "" && currentVersion != "1.0.0" && currentVersion != LatestVersion() {
+		found := false
+		for _, u := range upgrades {
+			if u.Version == currentVersion {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("未知数据库版本 %s，请先手动迁移到 1.0.0", currentVersion)
+		}
+	}
+
+	// 基线 1.0.0 视为已应用所有旧升级，从 upgrades 第一条开始执行
+	applied := currentVersion == "" || currentVersion == "1.0.0"
 
 	for _, u := range upgrades {
 		if !applied {

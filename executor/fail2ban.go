@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -345,11 +346,11 @@ func countLevel3(ip string) int {
 }
 
 func EnsurePersistNftables() {
-	executeCommand("bash", "-c",
+	exec.Command("bash", "-c",
 		`nft add table ip wppanel_persist 2>/dev/null
 nft add chain ip wppanel_persist input { type filter hook input priority -1\; } 2>/dev/null
 nft add set ip wppanel_persist banned_ips { type ipv4_addr\; } 2>/dev/null
-nft list chain ip wppanel_persist input 2>/dev/null | grep -q "saddr @banned_ips drop" || nft add rule ip wppanel_persist input ip saddr @banned_ips drop`)
+nft list chain ip wppanel_persist input 2>/dev/null | grep -q "saddr @banned_ips drop" || nft add rule ip wppanel_persist input ip saddr @banned_ips drop`).Run()
 }
 
 func AddPersistBan(ip string) {
@@ -361,7 +362,7 @@ func AddPersistBan(ip string) {
 		return
 	}
 	EnsurePersistNftables()
-	executeCommand("bash", "-c", fmt.Sprintf("nft add element ip wppanel_persist banned_ips { %s } 2>/dev/null; true", ip))
+	exec.Command("bash", "-c", fmt.Sprintf("nft add element ip wppanel_persist banned_ips { %s } 2>/dev/null; true", ip)).Run()
 }
 
 func RemovePersistBan(ip string) {
@@ -372,12 +373,13 @@ func RemovePersistBan(ip string) {
 	if parsed := net.ParseIP(ip); parsed == nil {
 		return
 	}
-	executeCommand("bash", "-c", fmt.Sprintf("nft delete element ip wppanel_persist banned_ips { %s } 2>/dev/null; true", ip))
+	exec.Command("bash", "-c", fmt.Sprintf("nft delete element ip wppanel_persist banned_ips { %s } 2>/dev/null; true", ip)).Run()
 }
 
 func getNftablesPersistIPs() map[string]bool {
-	out, err := executeCommand("bash", "-c",
-		`nft list set ip wppanel_persist banned_ips 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}'`)
+	outBytes, err := exec.Command("bash", "-c",
+		`nft list set ip wppanel_persist banned_ips 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}'`).CombinedOutput()
+	out := strings.TrimSpace(string(outBytes))
 	if err != nil || out == "" {
 		return nil
 	}
@@ -587,7 +589,7 @@ func UnbanAllIPs() string {
 		unbanCount, _ = unbanned.RowsAffected()
 	}
 
-	executeCommand("bash", "-c", "nft flush set ip wppanel_persist banned_ips 2>/dev/null; true")
+	exec.Command("bash", "-c", "nft flush set ip wppanel_persist banned_ips 2>/dev/null; true").Run()
 
 	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-sshd"} {
 		out, err := executeCommand("fail2ban-client", "status", jail)

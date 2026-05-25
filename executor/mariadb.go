@@ -1,61 +1,68 @@
 package executor
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
 )
 
+func runMySQL(rootPassword string, args ...string) error {
+	cmd := exec.Command("mysql", args...)
+	cmd.Env = append(os.Environ(), "MYSQL_PWD="+rootPassword)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("mysql: %s", stderr.String())
+	}
+	return nil
+}
+
 func createMariaDBDatabase(dbName, dbUser, dbPassword string, cfg *config.Config) error {
-	cred := fmt.Sprintf("-u%s", cfg.MariaDB.RootUser)
-	passArg := fmt.Sprintf("-p%s", cfg.MariaDB.RootPassword)
+	dbUser = strings.ReplaceAll(dbUser, "'", "''")
+	dbPassword = strings.ReplaceAll(dbPassword, "'", "''")
 
-	_, _ = executeCommand("mysql", cred, passArg, "-e",
-		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", dbName))
-
-	_, err := executeCommand("mysql", cred, passArg, "-e",
-		fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'", dbUser, dbPassword))
-	if err != nil {
+	if err := runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e",
+		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", dbName)); err != nil {
 		return err
 	}
 
-	_, err = executeCommand("mysql", cred, passArg, "-e",
-		fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost'", dbName, dbUser))
-	if err != nil {
+	if err := runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e",
+		fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'", dbUser, dbPassword)); err != nil {
 		return err
 	}
 
-	_, err = executeCommand("mysql", cred, passArg, "-e", "FLUSH PRIVILEGES")
-	return err
+	if err := runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e",
+		fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost'", dbName, dbUser)); err != nil {
+		return err
+	}
+
+	return runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", "FLUSH PRIVILEGES")
 }
 
 func dropMariaDBDatabase(dbName, dbUser string, cfg *config.Config) error {
-	cred := fmt.Sprintf("-u%s", cfg.MariaDB.RootUser)
-	passArg := fmt.Sprintf("-p%s", cfg.MariaDB.RootPassword)
-
-	executeCommand("mysql", cred, passArg, "-e", fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
-	executeCommand("mysql", cred, passArg, "-e", fmt.Sprintf("DROP USER IF EXISTS '%s'@'localhost'", dbUser))
-	executeCommand("mysql", cred, passArg, "-e", "FLUSH PRIVILEGES")
+	runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
+	runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", fmt.Sprintf("DROP USER IF EXISTS '%s'@'localhost'", dbUser))
+	runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", "FLUSH PRIVILEGES")
 	return nil
 }
 
 func changeMariaDBPassword(dbUser, newPassword string, cfg *config.Config) error {
-	cred := fmt.Sprintf("-u%s", cfg.MariaDB.RootUser)
-	passArg := fmt.Sprintf("-p%s", cfg.MariaDB.RootPassword)
+	newPassword = strings.ReplaceAll(newPassword, "'", "''")
 
-	_, err := executeCommand("mysql", cred, passArg, "-e",
-		fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'", dbUser, newPassword))
-	if err != nil {
+	if err := runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e",
+		fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'", dbUser, newPassword)); err != nil {
 		return fmt.Errorf("修改数据库密码失败: %w", err)
 	}
 
-	_, err = executeCommand("mysql", cred, passArg, "-e", "FLUSH PRIVILEGES")
-	return err
+	return runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", "FLUSH PRIVILEGES")
 }
 
 func executeChangeDBPassword(task *Task) TaskResult {

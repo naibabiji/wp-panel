@@ -130,6 +130,32 @@ func (h *WebsiteHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(w))
 }
 
+func isAliasConflicting(alias string, excludeID int) (bool, string) {
+	alias = strings.ToLower(strings.TrimSpace(alias))
+	if alias == "" {
+		return false, ""
+	}
+	rows, err := database.GetDB().Query(
+		"SELECT domain, aliases FROM websites WHERE id != ?", excludeID)
+	if err != nil {
+		return false, ""
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var domain, aliases string
+		rows.Scan(&domain, &aliases)
+		if alias == strings.ToLower(domain) {
+			return true, domain
+		}
+		for _, a := range strings.Split(aliases, "\n") {
+			if alias == strings.ToLower(strings.TrimSpace(a)) {
+				return true, domain
+			}
+		}
+	}
+	return false, ""
+}
+
 func (h *WebsiteHandler) Create(c *gin.Context) {
 	var req models.CreateWebsiteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -140,6 +166,25 @@ func (h *WebsiteHandler) Create(c *gin.Context) {
 	if strings.TrimSpace(req.Domain) == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("域名不能为空"))
 		return
+	}
+	if conflict, target := isAliasConflicting(req.Domain, 0); conflict {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("域名 "+req.Domain+" 已被站点 "+target+" 使用"))
+		return
+	}
+
+	for _, alias := range req.Aliases {
+		alias = strings.TrimSpace(alias)
+		if alias == "" {
+			continue
+		}
+		if alias == req.Domain {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("别名不能与主域名相同"))
+			return
+		}
+		if conflict, target := isAliasConflicting(alias, 0); conflict {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("别名 "+alias+" 已被站点 "+target+" 使用"))
+			return
+		}
 	}
 
 	siteType := req.SiteType
@@ -332,18 +377,23 @@ func (h *WebsiteHandler) UpdateDomains(c *gin.Context) {
 	}
 
 	if targetDomain != site.Domain {
-		var existingID int
-		err := database.GetDB().QueryRow("SELECT id FROM websites WHERE domain = ? AND id != ?", targetDomain, site.ID).Scan(&existingID)
-		if err == nil {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("域名 "+targetDomain+" 已被其他网站使用"))
+		if conflict, existing := isAliasConflicting(targetDomain, site.ID); conflict {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("域名 "+targetDomain+" 已被站点 "+existing+" 使用"))
 			return
 		}
 	}
 
 	for _, alias := range req.Aliases {
 		alias = strings.TrimSpace(alias)
-		if alias != "" && alias == targetDomain {
+		if alias == "" {
+			continue
+		}
+		if alias == targetDomain {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse("别名不能与主域名相同"))
+			return
+		}
+		if conflict, target := isAliasConflicting(alias, site.ID); conflict {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("别名 "+alias+" 已被站点 "+target+" 使用"))
 			return
 		}
 	}
@@ -483,9 +533,25 @@ func (h *WebsiteHandler) ClearLogs(c *gin.Context) {
 }
 
 func tailFile(path string, n int) string {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return ""
+	}
+	defer f.Close()
+
+	const bufSize = 4096
+	info, _ := f.Stat()
+	pos := info.Size()
+	var data []byte
+	for pos > 0 && len(data) < n*bufSize {
+		readSize := int64(bufSize)
+		if pos < readSize {
+			readSize = pos
+		}
+		pos -= readSize
+		b := make([]byte, readSize)
+		f.ReadAt(b, pos)
+		data = append(b, data...)
 	}
 	lines := strings.Split(string(data), "\n")
 	if len(lines) > n {

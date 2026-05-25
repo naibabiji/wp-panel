@@ -116,11 +116,13 @@ func (h *UpdateHandler) Update(c *gin.Context) {
 	// Verify SHA256
 	if sha256URL != "" {
 		shaFile := filepath.Join(tmpDir, binaryName+".sha256")
-		if err := downloadFile(sha256URL, shaFile); err == nil {
-			if err := verifySHA256(newBinary, shaFile); err != nil {
-				c.JSON(http.StatusInternalServerError, models.ErrorResponse("校验失败"))
-				return
-			}
+		if err := downloadFile(sha256URL, shaFile); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("SHA256 校验文件下载失败"))
+			return
+		}
+		if err := verifySHA256(newBinary, shaFile); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("校验失败"))
+			return
 		}
 	}
 

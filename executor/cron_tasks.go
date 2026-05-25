@@ -1,9 +1,12 @@
 package executor
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -50,7 +53,8 @@ exit $RC
 
 	for rows.Next() {
 		var name, cronExpr, command, runAsUser, taskType, backupMode string
-		var siteID, keepCount int
+		var keepCount int
+		var siteID sql.NullInt64
 		if err := rows.Scan(&name, &cronExpr, &command, &runAsUser, &taskType, &backupMode, &keepCount, &siteID); err != nil {
 			continue
 		}
@@ -59,7 +63,7 @@ exit $RC
 		switch taskType {
 		case "file_backup":
 			line = fmt.Sprintf(`%s root %s "%s" "%s" /usr/local/bin/wp-panel --file-backup=%d:%s:%d --config=/www/server/panel/config.json # %s`,
-				cronExpr, wrapperScript, name, logFile, siteID, backupMode, keepCount, name)
+				cronExpr, wrapperScript, name, logFile, siteID.Int64, backupMode, keepCount, name)
 		case "wp_cron":
 			line = fmt.Sprintf(`%s root %s "%s" "%s" curl -k -s -o /dev/null "https://%s/wp-cron.php?doing_wp_cron" # %s`,
 				cronExpr, wrapperScript, name, logFile, command, name)
@@ -117,6 +121,8 @@ func executeRunCron(task *Task) TaskResult {
 
 	var out string
 	var execErr error
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 
 	if taskType == "file_backup" {
 		var msg string
@@ -127,9 +133,9 @@ func executeRunCron(task *Task) TaskResult {
 			out = msg
 		}
 	} else if runAsUser != "" {
-		out, execErr = executeCommand("runuser", "-u", runAsUser, "--", "bash", "-c", command)
+			var outBytes []byte; outBytes, execErr = exec.CommandContext(ctx, "runuser", "-u", runAsUser, "--", "bash", "-c", command).CombinedOutput(); out = string(outBytes)
 	} else {
-		out, execErr = executeCommand("bash", "-c", command)
+			var outBytes []byte; outBytes, execErr = exec.CommandContext(ctx, "bash", "-c", command).CombinedOutput(); out = string(outBytes)
 	}
 
 	status := "success"

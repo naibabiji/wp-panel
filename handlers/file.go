@@ -325,7 +325,11 @@ func (h *FileHandler) BatchCompress(c *gin.Context) {
 		archiveName += ".zip"
 	}
 
-	zipPath := filepath.Join(basePath, archiveName)
+	zipPath := filepath.Join(workPath, archiveName)
+	if !isPathWithin(basePath, zipPath) {
+		c.JSON(http.StatusForbidden, models.ErrorResponse("压缩文件名非法"))
+		return
+	}
 	zipFile, err := os.Create(zipPath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建压缩文件失败"))
@@ -341,7 +345,7 @@ func (h *FileHandler) BatchCompress(c *gin.Context) {
 		if name == "" {
 			continue
 		}
-		fullPath := filepath.Join(basePath, filepath.Clean(name))
+		fullPath := filepath.Join(workPath, filepath.Clean(name))
 		if !isPathWithin(basePath, fullPath) {
 			continue
 		}
