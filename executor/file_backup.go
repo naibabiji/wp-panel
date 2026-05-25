@@ -54,6 +54,13 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 		"--exclude=*.bak",
 		"--exclude=*.backup",
 		"--exclude=*.swp",
+		"--exclude=wp-content/updraft",
+		"--exclude=wp-content/ai1wm-backups",
+		"--exclude=wp-content/backups-dup-lite",
+		"--exclude=wp-content/backups-dup-pro",
+		"--exclude=wp-content/wpvivid_backups",
+		"--exclude=wp-content/backups",
+		"--exclude=wp-content/backup-db",
 	}
 
 	if isFull {
