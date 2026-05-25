@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/naibabiji/wp-panel/database"
@@ -26,6 +28,11 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 	os.MkdirAll(backupDir, 0755)
 	stampFile := filepath.Join(backupDir, ".last_backup.stamp")
 
+	// Check disk space: need at least 1GB free after backup
+	if !checkDiskSpace(backupDir, 1024*1024*1024) {
+		return "", fmt.Errorf("磁盘空间不足，备份取消")
+	}
+
 	ts := time.Now().Format("20060102_150405")
 	var tarName string
 	var fullPath string
@@ -34,25 +41,33 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 	if mode == "full" {
 		isFull = true
 	} else {
-		// Check if stamp exists — if not, do full backup
 		if _, err := os.Stat(stampFile); os.IsNotExist(err) {
 			isFull = true
 		}
 	}
 
+	tarExcludes := []string{
+		"--exclude=wp-content/cache",
+		"--exclude=wp-content/upgrade",
+		"--exclude=wp-content/debug.log",
+		"--exclude=*.tmp",
+		"--exclude=*.bak",
+		"--exclude=*.backup",
+		"--exclude=*.swp",
+	}
+
 	if isFull {
 		tarName = fmt.Sprintf("file_full_%s.tar.gz", ts)
 		fullPath = filepath.Join(backupDir, tarName)
-		cmd := exec.Command("tar", "-czf", fullPath, "--warning=no-file-changed",
-				"--exclude=wp-content/cache",
-				"--exclude=wp-content/upgrade",
-				"--exclude=wp-content/debug.log",
-				"-C", filepath.Dir(webRoot), filepath.Base(webRoot))
+		args := []string{"-czf", fullPath, "--warning=no-file-changed", "--ignore-failed-read"}
+		args = append(args, tarExcludes...)
+		args = append(args, "-C", filepath.Dir(webRoot), filepath.Base(webRoot))
+		cmd := exec.Command("tar", args...)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-				if len(out) == 0 {
-					return "", fmt.Errorf("全量备份失败: %v", err)
-				}
+			if len(out) == 0 {
+				return "", fmt.Errorf("全量备份失败: %v", err)
+			}
 			return "", fmt.Errorf("全量备份失败: %s", string(out))
 		}
 	} else {
@@ -62,24 +77,28 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 		if _, err := os.Stat(uploadsDir); os.IsNotExist(err) {
 			return "", fmt.Errorf("uploads 目录不存在")
 		}
-		// find files newer than stamp, pipe to tar
+		// Check if there are new files since last backup
+		checkCmd := exec.Command("find", uploadsDir, "-newer", stampFile, "-type", "f")
+		out, _ := checkCmd.Output()
+		if len(out) == 0 {
+			os.WriteFile(stampFile, []byte(time.Now().Format(time.RFC3339)), 0644)
+			return fmt.Sprintf("%s 文件备份跳过: 无新文件", domain), nil
+		}
 		script := fmt.Sprintf(
-			`find %s -newer %s -type f | tar -czf %s -T - `,
+			`find '%s' -newer '%s' -type f | tar -czf '%s' --ignore-failed-read -T -`,
 			uploadsDir, stampFile, fullPath,
 		)
-		out, err := exec.Command("bash", "-c", script).CombinedOutput()
+		out, err = exec.Command("bash", "-c", script).CombinedOutput()
 		if err != nil {
-				if len(out) == 0 {
-					return "", fmt.Errorf("增量备份失败: %v", err)
-				}
+			if len(out) == 0 {
+				return "", fmt.Errorf("增量备份失败: %v", err)
+			}
 			return "", fmt.Errorf("增量备份失败: %s", string(out))
 		}
 	}
 
-	// Update stamp
 	os.WriteFile(stampFile, []byte(time.Now().Format(time.RFC3339)), 0644)
 
-	// Clean old backups
 	cleanOldBackups(backupDir, keepCount)
 
 	go SyncBackupToRemote(fullPath)
@@ -115,6 +134,23 @@ func cleanOldBackups(dir string, keep int) {
 	for i := 0; i < len(tars)-keep; i++ {
 		os.Remove(filepath.Join(dir, tars[i].name))
 	}
+}
+
+func checkDiskSpace(backupDir string, minFree int64) bool {
+	out, err := exec.Command("df", "-B1", backupDir).Output()
+	if err != nil {
+		return true // can't check, allow to proceed
+	}
+	lines := strings.Split(string(out), "\n")
+	if len(lines) < 2 {
+		return true
+	}
+	fields := strings.Fields(lines[1])
+	if len(fields) < 4 {
+		return true
+	}
+	free, _ := strconv.ParseInt(fields[3], 10, 64)
+	return free >= minFree
 }
 
 func appendCronLog(msg string) {
