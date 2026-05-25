@@ -76,6 +76,29 @@ func LatestVersion() string {
 	return upgrades[len(upgrades)-1].Version
 }
 
+// newInstallColumn 从 upgrades 列表中提取最后一条 ALTER TABLE ADD COLUMN 的字段名，
+// 用于判断数据库是否已包含最新 schema（新装检测的 canary 列）。
+func newInstallColumn() string {
+	for i := len(upgrades) - 1; i >= 0; i-- {
+		for _, sql := range upgrades[i].SQL {
+			upper := strings.ToUpper(strings.TrimSpace(sql))
+			if strings.HasPrefix(upper, "ALTER TABLE") && strings.Contains(upper, "ADD COLUMN") {
+				fields := strings.Fields(sql)
+				for j, f := range fields {
+					if strings.ToUpper(f) == "COLUMN" && j+1 < len(fields) {
+						col := fields[j+1]
+						if idx := strings.Index(col, "("); idx > 0 {
+							col = col[:idx]
+						}
+						return col
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // RunUpgrades 执行所有尚未应用的版本升级。新装数据库已是最新版本，跳过所有升级。
 func RunUpgrades() error {
 	if DB == nil {
@@ -94,7 +117,22 @@ func RunUpgrades() error {
 	var currentVersion string
 	DB.QueryRow("SELECT version FROM schema_version ORDER BY updated_at DESC LIMIT 1").Scan(&currentVersion)
 
-	// 新装或从未执行过升级：currentVersion 为空，从第一个升级开始执行
+	// 新装检测：currentVersion 为空时，检查数据库是否已包含最新 schema。
+	// migrations.go 已全量建表，若最新升级中的字段已存在则说明是新装，无需执行任何升级。
+	if currentVersion == "" {
+		if col := newInstallColumn(); col != "" {
+			var exists int
+			DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('websites') WHERE name=?", col).Scan(&exists)
+			if exists > 0 {
+				log.Printf("[升级] 新装数据库，跳过所有升级步骤")
+				DB.Exec("INSERT INTO schema_version (version) VALUES (?)", LatestVersion())
+				return nil
+			}
+		}
+	}
+
+	// currentVersion 为空且非新装 → 旧版本数据库（无版本记录），从第一个升级开始执行。
+	// currentVersion 非空 → 已记录版本，从下一条升级开始执行。
 	applied := currentVersion == ""
 
 	for _, u := range upgrades {
