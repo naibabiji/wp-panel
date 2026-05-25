@@ -184,7 +184,7 @@
                         <div>
                             <label class="text-gray-500">密码</label>
                             <div class="flex space-x-1">
-                                <input type="text" x-model="helperPass" class="input-field text-sm py-1 flex-1" placeholder="留空随机">
+                                <input type="text" x-model="helperPass" class="input-field text-sm py-1 flex-1" placeholder="建议使用随机密码">
                                 <button @click="genPassword()" class="text-xs py-1 px-2 rounded flex-shrink-0" style="background-color: #1e3a5f; color: #93c5fd;" title="随机生成">随机</button>
                             </div>
                         </div>
@@ -487,15 +487,12 @@ function remoteBackup() {
         },
         genCmd() {
             var u = this.helperUser || 'wpbackup';
-            var p = this.helperPass || '请填写密码';
+            if (!this.helperPass) this.genPassword();
+            var p = this.helperPass;
             var dir = this.helperDir || '/home/' + u + '/backup';
             var authType = this.cfg.auth_type || 'key';
-            var NL = '\n';
 
             var lines = [
-                '# === 远程备份账号一键设置 ===',
-                '# 在远程服务器以 root 执行以下全部命令：',
-                '',
                 'useradd -m -s /bin/bash ' + u,
                 "echo '" + u + ':' + p + "' | chpasswd",
                 'mkdir -p ' + dir
@@ -510,9 +507,8 @@ function remoteBackup() {
 
             lines.push('chown -R ' + u + ':' + u + ' ' + dir + ' /home/' + u);
             lines.push('chmod 755 ' + dir);
-            lines.push("echo '账号 " + u + " 创建完成，备份目录：" + dir + "'");
 
-            return lines.join(NL);
+            return lines.join(' && ');
         },
         async copyCmd() {
             var cmd = this.genCmd();
