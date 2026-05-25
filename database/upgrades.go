@@ -29,6 +29,7 @@ package database
 import (
 	"fmt"
 	"log"
+	"strings"
 )
 
 // Upgrade 定义一次版本升级需要执行的数据库变更。
@@ -108,6 +109,10 @@ func RunUpgrades() error {
 
 		for _, sql := range u.SQL {
 			if _, err := DB.Exec(sql); err != nil {
+				if strings.Contains(err.Error(), "duplicate column name") {
+					log.Printf("[升级] %s: 字段已存在，跳过 (%s)", u.Version, strings.TrimSpace(sql))
+					continue
+				}
 				return fmt.Errorf("升级 %s 失败: %w\nSQL: %s", u.Version, err, sql)
 			}
 		}
