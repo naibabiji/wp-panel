@@ -308,8 +308,9 @@ func countBanHistory(ip string, since time.Time) (count int, maxLevel int) {
 
 func countLevel3(ip string) int {
 	db := database.GetDB()
+	cutoff := time.Now().Add(-30 * 24 * time.Hour).Format("2006-01-02 15:04:05")
 	var c int
-	db.QueryRow("SELECT COUNT(*) FROM firewall_bans WHERE ip_address = ? AND ban_level >= 3", ip).Scan(&c)
+	db.QueryRow("SELECT COUNT(*) FROM firewall_bans WHERE ip_address = ? AND ban_level >= 3 AND banned_at > ?", ip, cutoff).Scan(&c)
 	return c
 }
 
@@ -336,6 +337,9 @@ func AddPersistBan(ip string) {
 func RemovePersistBan(ip string) {
 	ip = strings.TrimSpace(ip)
 	if ip == "" {
+		return
+	}
+	if parsed := net.ParseIP(ip); parsed == nil {
 		return
 	}
 	executeCommand("bash", "-c", fmt.Sprintf("nft delete element ip wppanel_persist banned_ips { %s } 2>/dev/null; true", ip))

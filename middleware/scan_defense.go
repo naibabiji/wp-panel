@@ -40,16 +40,6 @@ func isBrowserLike(c *gin.Context) bool {
 			return true
 		}
 	}
-
-	accept := c.GetHeader("Accept")
-	lang := c.GetHeader("Accept-Language")
-	if accept == "" && lang == "" {
-		return false
-	}
-	if !strings.Contains(accept, "text/html") {
-		return false
-	}
-
 	return false
 }
 
