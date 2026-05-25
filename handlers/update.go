@@ -270,5 +270,75 @@ func compareVersions(a, b string) int {
 	if bPre == "" {
 		return -1
 	}
-	return strings.Compare(aPre, bPre)
+	return comparePreRelease(aPre, bPre)
+}
+
+func comparePreRelease(a, b string) int {
+	aParts := splitAlphaNum(a)
+	bParts := splitAlphaNum(b)
+	n := len(aParts)
+	if len(bParts) < n {
+		n = len(bParts)
+	}
+	for i := 0; i < n; i++ {
+		aIsNum := isNumeric(aParts[i])
+		bIsNum := isNumeric(bParts[i])
+		if aIsNum && bIsNum {
+			av, bv := 0, 0
+			fmt.Sscanf(aParts[i], "%d", &av)
+			fmt.Sscanf(bParts[i], "%d", &bv)
+			if av > bv {
+				return 1
+			}
+			if av < bv {
+				return -1
+			}
+		} else {
+			if aParts[i] > bParts[i] {
+				return 1
+			}
+			if aParts[i] < bParts[i] {
+				return -1
+			}
+		}
+	}
+	if len(aParts) > len(bParts) {
+		return 1
+	}
+	if len(aParts) < len(bParts) {
+		return -1
+	}
+	return 0
+}
+
+func splitAlphaNum(s string) []string {
+	var parts []string
+	if s == "" {
+		return parts
+	}
+	current := ""
+	isDigit := -1
+	for _, ch := range s {
+		curIsDigit := 0
+		if ch >= '0' && ch <= '9' {
+			curIsDigit = 1
+		}
+		if curIsDigit != isDigit && current != "" {
+			parts = append(parts, current)
+			current = ""
+		}
+		isDigit = curIsDigit
+		current += string(ch)
+	}
+	parts = append(parts, current)
+	return parts
+}
+
+func isNumeric(s string) bool {
+	for _, ch := range s {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
 }
