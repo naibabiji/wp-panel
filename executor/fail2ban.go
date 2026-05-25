@@ -280,7 +280,7 @@ func SyncFail2banBans() {
 					continue
 				}
 				if nftablesSet != nil && !nftablesSet[ip] {
-					expiredIDs = append(expiredIDs, id)
+					AddPersistBan(ip)
 					continue
 				}
 				AddPersistBan(ip)

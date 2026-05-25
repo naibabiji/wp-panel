@@ -99,7 +99,7 @@ func TestRemoteBackup(c *gin.Context) {
 		cmd = exec.Command("ssh", "-i", keyPath, "-o", "StrictHostKeyChecking=accept-new",
 			"-p", fmt.Sprintf("%d", port), username+"@"+host, "echo WP_PANEL_OK")
 	} else {
-		cmd = exec.Command("sshpass", "-p", password, "ssh", "-o", "StrictHostKeyChecking=accept-new",
+		cmd = exec.Command("sshpass", "-e", "ssh", "-o", "StrictHostKeyChecking=accept-new",
 			"-p", fmt.Sprintf("%d", port), username+"@"+host, "echo WP_PANEL_OK")
 	}
 	out, err := cmd.CombinedOutput()
@@ -123,7 +123,7 @@ func TestRemoteBackup(c *gin.Context) {
 			fmt.Sprintf("ssh -i /www/server/panel/remote_backup_key -o StrictHostKeyChecking=accept-new -p %d", port),
 			testFile, username+"@"+host+":/tmp/wp-panel-rsync-test.txt")
 	} else {
-		testCmd = exec.Command("sshpass", "-p", password, "rsync", "-avz", "-e",
+		testCmd = exec.Command("sshpass", "-e", "rsync", "-avz", "-e",
 			fmt.Sprintf("ssh -o StrictHostKeyChecking=accept-new -p %d", port),
 			testFile, username+"@"+host+":/tmp/wp-panel-rsync-test.txt")
 	}

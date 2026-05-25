@@ -46,9 +46,10 @@ func SyncBackupToRemote(localFile string) {
 			syncLog("sshpass 未安装")
 			return
 		}
-		cmd = exec.Command("sshpass", "-p", password, "rsync", "-avzR",
+		cmd = exec.Command("sshpass", "-e", "rsync", "-avzR",
 			"-e", fmt.Sprintf("ssh %s", sshOpts),
 			src, dest)
+		cmd.Env = append(os.Environ(), "SSHPASS="+password)
 	}
 	out, err := cmd.CombinedOutput()
 	relPath := strings.TrimPrefix(localFile, backupsRoot+"/")

@@ -375,7 +375,6 @@ function websiteDetail() {
         monitoringEnabled: false,
         monitoringInterval: 5,
         monitoringSaving: false,
-        accessLogEnabled: false,
         accessLogMode: 'off',
         domainModalOpen: false,
         editDomain: '',
@@ -491,8 +490,8 @@ function websiteDetail() {
                 if (r.success) {
                     this.nginxPreContent = r.data.pre_content || '';
                     this.nginxContent = r.data.content || '';
-                    this.accessLogEnabled = r.data.access_log_enabled || false;
-                    this.accessLogMode = r.data.access_log_mode || 'off';
+                    
+this.accessLogMode = r.data.access_log_mode || 'off';
                 }
             } catch(e) { /* 静默失败 */ }
         },
@@ -525,8 +524,7 @@ function websiteDetail() {
                 const r = await api('/websites/' + this.site.id + '/access-log', { method: 'PUT', body: { mode } });
                 if (r.success) {
                     this.accessLogMode = mode;
-                    this.accessLogEnabled = mode !== 'off';
-                    if (mode === 'off') {
+                                        if (mode === 'off') {
                         this.logContent = '';
                     }
                     showToast(r.data?.message, 'success');

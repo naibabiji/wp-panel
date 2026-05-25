@@ -48,10 +48,6 @@ function api(path, options = {}) {
         });
 }
 
-function getCSRFToken() {
-    return document.querySelector('meta[name="csrf-token"]')?.content || '';
-}
-
 function formatBytes(bytes) {
     if (bytes === 0) return '0 B';
     const k = 1024;

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"text/template"
 	"time"
@@ -472,23 +471,3 @@ php_flag[log_errors] = On
 php_value[error_log] = /www/wwwlogs/{{.Domain}}/php-error.log
 `
 
-func pruneNginxBackups(dir, confBase string, keep int) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	prefix := confBase + ".bak."
-	var backups []os.DirEntry
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasPrefix(e.Name(), prefix) {
-			backups = append(backups, e)
-		}
-	}
-	if len(backups) <= keep {
-		return
-	}
-	// Sort by name (timestamp suffix), delete oldest
-	for i := 0; i < len(backups)-keep; i++ {
-		os.Remove(filepath.Join(dir, backups[i].Name()))
-	}
-}

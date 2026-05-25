@@ -232,7 +232,7 @@ function firewallManager() {
             if (!this.banIP.trim()) { showToast('请输入IP地址', 'error'); return; }
             this.banSubmitting = true;
             try {
-                const r = await api('/firewall/bans', { method: 'POST', body: JSON.stringify({ ip: this.banIP.trim(), duration: parseInt(this.banDuration) }) });
+                const r = await api('/firewall/bans', { method: 'POST', body: { ip: this.banIP.trim(), duration: parseInt(this.banDuration) } });
                 showToast(r.data?.message || '封禁成功', 'success');
                 this.banIP = '';
                 await this.fetchBans();

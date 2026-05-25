@@ -790,10 +790,4 @@ func (h *FileHandler) FixPermissions(c *gin.Context) {
 	}))
 }
 
-func isDirEmpty(path string) (bool, error) {
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return false, err
-	}
-	return len(entries) == 0, nil
-}
+

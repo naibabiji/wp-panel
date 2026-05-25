@@ -48,10 +48,6 @@ func (q *TaskQueue) Enqueue(taskType TaskType, payload interface{}) *Task {
 
 	q.queue <- task
 
-	q.mu.Lock()
-	q.taskCount--
-	q.mu.Unlock()
-
 	return task
 }
 
@@ -122,6 +118,10 @@ func (q *TaskQueue) worker() {
 
 		task.ResultCh <- result
 		close(task.ResultCh)
+
+		q.mu.Lock()
+		q.taskCount--
+		q.mu.Unlock()
 
 		q.running.Store(false)
 	}

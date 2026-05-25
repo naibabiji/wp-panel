@@ -290,7 +290,7 @@ function fileManager() {
             try {
                 await api('/files/rename', {
                     method: 'PUT',
-                    body: JSON.stringify({ site_id: parseInt(this.selectedSite), old_path: oldPath, new_name: name })
+                    body: { site_id: parseInt(this.selectedSite), old_path: oldPath, new_name: name }
                 });
                 this.showRename = false;
                 this.loadFiles();
@@ -302,7 +302,7 @@ function fileManager() {
             if (!name) return;
             try {
                 await api('/files/mkdir?site_id=' + this.selectedSite + '&path=' + encodeURIComponent(this.currentPath), {
-                    method: 'POST', body: JSON.stringify({ name })
+                    method: 'POST', body: { name }
                 });
                 this.showMkdir = false;
                 this.mkdirName = '';
@@ -341,7 +341,7 @@ function fileManager() {
             try {
                 const r = await api(apiPath, {
                     method: 'POST',
-                    body: JSON.stringify({ site_id: parseInt(cb.site_id), src_path: cb.src_path, dest_path: this.currentPath, names: cb.names })
+                    body: { site_id: parseInt(cb.site_id), src_path: cb.src_path, dest_path: this.currentPath, names: cb.names }
                 });
                 showToast(r.data?.message || '操作完成', 'success');
                 this.clipboard = null;
@@ -366,12 +366,12 @@ function fileManager() {
             try {
                 const r = await api('/files/batch-zip', {
                     method: 'POST',
-                    body: JSON.stringify({
+                    body: {
                         site_id: parseInt(this.selectedSite),
                         path: this.currentPath,
                         names: [...this.selected],
                         archive_name: archiveName.trim()
-                    })
+                    }
                 });
                 if (r.success) { this.loadFiles(); showToast(r.data?.message || '压缩完成', 'success'); }
             } catch(e) { showToast(e.message, 'error'); }

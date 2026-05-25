@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/naibabiji/wp-panel/database"
@@ -125,18 +126,22 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		updateConfigValue("basic_auth", "password_hash", string(newHash))
 	}
 
+	var tzRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_/+\\-]+(/[A-Za-z][A-Za-z0-9_/+\\-]+)*$`)
+
 	if req.Timezone != nil && *req.Timezone != "" {
 		tz := strings.TrimSpace(*req.Timezone)
-		if strings.ContainsAny(tz, ";&|`$(){}[]!<>'\"\\") {
+		if !tzRe.MatchString(tz) {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的时区"))
 			return
 		}
 		exec.Command("timedatectl", "set-timezone", tz).Run()
 	}
 
+	var hostRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$`)
+
 	if req.Hostname != nil && *req.Hostname != "" {
 		host := strings.TrimSpace(*req.Hostname)
-		if strings.ContainsAny(host, ";&|`$(){}[]!<>'\"\\/") || len(host) > 253 {
+		if !hostRe.MatchString(host) || len(host) > 253 || strings.HasPrefix(host, "-") || strings.HasSuffix(host, "-") {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的主机名"))
 			return
 		}
