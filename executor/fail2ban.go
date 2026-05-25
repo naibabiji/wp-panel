@@ -107,16 +107,16 @@ ignoreregex =
 
 func ensureLogFiles() {
 	entries, err := os.ReadDir("/www/wwwlogs")
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+	if err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			touch("/www/wwwlogs/" + e.Name() + "/access.log")
+			touch("/www/wwwlogs/" + e.Name() + "/error.log")
 		}
-		touch("/www/wwwlogs/" + e.Name() + "/access.log")
-		touch("/www/wwwlogs/" + e.Name() + "/error.log")
 	}
+	touch("/var/log/auth.log")
 }
 
 func touch(path string) {
