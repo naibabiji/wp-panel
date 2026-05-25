@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/naibabiji/wp-panel/database"
@@ -12,8 +13,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var announcementCache string
-var announcementFetchedAt time.Time
+var (
+	announcementCache     string
+	announcementFetchedAt time.Time
+	announcementMu        sync.RWMutex
+)
 
 type DashboardHandler struct{}
 
@@ -124,31 +128,48 @@ func queryMetrics(r string) ([]string, []float64, []float64, []float64) {
 }
 
 func GetAnnouncement(c *gin.Context) {
+	announcementMu.RLock()
 	if announcementCache != "" && time.Since(announcementFetchedAt) < 30*time.Minute {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"content": announcementCache}))
+		cache := announcementCache
+		announcementMu.RUnlock()
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"content": cache}))
 		return
 	}
+	announcementMu.RUnlock()
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get("https://raw.githubusercontent.com/naibabiji/wp-panel/main/ANNOUNCEMENT.md")
 	if err != nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"content": announcementCache}))
+		announcementMu.RLock()
+		cache := announcementCache
+		announcementMu.RUnlock()
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"content": cache}))
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"content": announcementCache}))
+		announcementMu.RLock()
+		cache := announcementCache
+		announcementMu.RUnlock()
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"content": cache}))
 		return
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"content": announcementCache}))
+		announcementMu.RLock()
+		cache := announcementCache
+		announcementMu.RUnlock()
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"content": cache}))
 		return
 	}
 
+	announcementMu.Lock()
 	announcementCache = strings.TrimSpace(string(body))
 	announcementFetchedAt = time.Now()
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"content": announcementCache}))
+	cache := announcementCache
+	announcementMu.Unlock()
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"content": cache}))
 }

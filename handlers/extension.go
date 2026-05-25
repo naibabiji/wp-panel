@@ -46,6 +46,9 @@ func (h *ExtensionHandler) Save(c *gin.Context) {
 
 	db := database.GetDB()
 	for _, e := range req {
+		if e.EType != "theme" && e.EType != "plugin" {
+			continue
+		}
 		enabled := 0
 		if e.Enabled {
 			enabled = 1
