@@ -34,11 +34,11 @@ func SyncBackupToRemote(localFile string) {
 	if authType == "key" {
 		keyPath := "/www/server/panel/remote_backup_key"
 		if _, err := os.Stat(keyPath); err != nil {
-			syncLog("SSH 密钥不存在: " + keyPath)
+			syncLog("SSH 密钥不存在: "+keyPath, "failed")
 			return
 		}
 		if err := os.Chmod(keyPath, 0600); err != nil {
-				syncLog(fmt.Sprintf("SSH 密钥权限设置失败: %v", err))
+				syncLog(fmt.Sprintf("SSH 密钥权限设置失败: %v", err), "failed")
 				return
 			}
 		cmd = exec.Command("rsync", "-avzR",
@@ -46,7 +46,7 @@ func SyncBackupToRemote(localFile string) {
 			src, dest)
 	} else {
 		if _, err := exec.LookPath("sshpass"); err != nil {
-			syncLog("sshpass 未安装")
+			syncLog("sshpass 未安装", "failed")
 			return
 		}
 		cmd = exec.Command("sshpass", "-e", "rsync", "-avzR",
@@ -57,20 +57,20 @@ func SyncBackupToRemote(localFile string) {
 	out, err := cmd.CombinedOutput()
 	relPath := strings.TrimPrefix(localFile, backupsRoot+"/")
 	if err != nil {
-		syncLog(fmt.Sprintf("远程同步失败: %s — %s", relPath, strings.TrimSpace(string(out))))
+		syncLog(fmt.Sprintf("远程同步失败: %s — %s", relPath, strings.TrimSpace(string(out))), "failed")
 		return
 	}
-	syncLog(fmt.Sprintf("远程同步成功: %s", relPath))
+	syncLog(fmt.Sprintf("远程同步成功: %s", relPath), "success")
 
 	if keepLocal == 0 {
 		os.Remove(localFile)
 	}
 }
 
-func syncLog(msg string) {
+func syncLog(msg string, status string) {
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	fmt.Printf("[WP-Panel] %s %s\n", timestamp, msg)
 	database.GetDB().Exec(
 		"INSERT INTO operation_logs (operation, target, status, message) VALUES (?, ?, ?, ?)",
-		"远程备份", "", "success", msg)
+		"远程备份", "", status, msg)
 }
