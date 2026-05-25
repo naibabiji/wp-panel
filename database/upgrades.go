@@ -89,6 +89,13 @@ var upgrades = []Upgrade{
 			`ALTER TABLE cron_jobs ADD COLUMN keep_count INTEGER NOT NULL DEFAULT 3`,
 		},
 	},
+	{
+		Version:     "1.1.0-beta7",
+		Description: "补充计划任务keep_count列（修正beta6遗漏）",
+		SQL: []string{
+			`ALTER TABLE cron_jobs ADD COLUMN keep_count INTEGER NOT NULL DEFAULT 3`,
+		},
+	},
 }
 
 // LatestVersion 返回 upgrades 列表中的最新版本号。
