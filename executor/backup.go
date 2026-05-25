@@ -60,6 +60,8 @@ func executeCreateBackup(task *Task) TaskResult {
 
 	go SyncBackupToRemote(filePath)
 
+	cleanupOldBackups(site.ID, site.Domain, getKeepCount(site.ID))
+
 	return TaskResult{Success: true, Message: "备份完成: " + filename}
 }
 
@@ -232,6 +234,14 @@ func executeAutoBackups() {
 		go SyncBackupToRemote(filePath)
 		cleanupOldBackups(siteID, domain, keepCount)
 	}
+}
+
+func getKeepCount(siteID int) int {
+	var kc int
+	if database.GetDB().QueryRow("SELECT keep_count FROM backup_settings WHERE site_id = ?", siteID).Scan(&kc) != nil || kc <= 0 {
+		return 7
+	}
+	return kc
 }
 
 func cleanupOldBackups(siteID int, domain string, keepCount int) {
