@@ -15,7 +15,6 @@ type DBBackup struct {
 }
 
 type BackupSettings struct {
-	Enabled        bool `json:"enabled"`
-	KeepCount      int  `json:"keep_count"`
-	FileKeepCount  int  `json:"file_keep_count"`
+	Enabled   bool `json:"enabled"`
+	KeepCount int  `json:"keep_count"`
 }

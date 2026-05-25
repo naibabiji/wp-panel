@@ -99,12 +99,12 @@ func executeRunCron(task *Task) TaskResult {
 
 	db := database.GetDB()
 	var name, cronExpr, command, runAsUser, taskType, backupMode string
-	var siteID int
+	var siteID, keepCount int
 	var siteIDNull *int
 	err := db.QueryRow(
-		`SELECT name, cron_expression, command, run_as_user, task_type, backup_mode, site_id FROM cron_jobs WHERE id = ?`,
+		`SELECT name, cron_expression, command, run_as_user, task_type, backup_mode, keep_count, site_id FROM cron_jobs WHERE id = ?`,
 		payload.JobID,
-	).Scan(&name, &cronExpr, &command, &runAsUser, &taskType, &backupMode, &siteIDNull)
+	).Scan(&name, &cronExpr, &command, &runAsUser, &taskType, &backupMode, &keepCount, &siteIDNull)
 	if siteIDNull != nil {
 		siteID = *siteIDNull
 	}
@@ -120,7 +120,7 @@ func executeRunCron(task *Task) TaskResult {
 
 	if taskType == "file_backup" {
 		var msg string
-		msg, execErr = ExecuteFileBackup(siteID, backupMode)
+		msg, execErr = ExecuteFileBackup(siteID, backupMode, keepCount)
 		if execErr != nil {
 			out = execErr.Error()
 		} else {

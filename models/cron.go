@@ -9,6 +9,7 @@ type CronJob struct {
 	Command        string     `json:"command"`
 	TaskType       string     `json:"task_type"`
 	BackupMode     string     `json:"backup_mode"`
+	KeepCount      int        `json:"keep_count"`
 	NotifyFail     bool       `json:"notify_fail"`
 	SiteID         *int       `json:"site_id"`
 	RunAsUser      string     `json:"run_as_user"`
@@ -27,6 +28,7 @@ type CreateCronRequest struct {
 	Command        string `json:"command"`
 	TaskType       string `json:"task_type"`
 	BackupMode     string `json:"backup_mode"`
+	KeepCount      int    `json:"keep_count"`
 	NotifyFail     bool   `json:"notify_fail"`
 	SiteID         *int   `json:"site_id"`
 	RunAsUser      string `json:"run_as_user"`
@@ -38,6 +40,7 @@ type UpdateCronRequest struct {
 	Command        string `json:"command"`
 	TaskType       string `json:"task_type"`
 	BackupMode     string `json:"backup_mode"`
+	KeepCount      *int   `json:"keep_count"`
 	NotifyFail     *bool  `json:"notify_fail"`
 	SiteID         *int   `json:"site_id"`
 	RunAsUser      string `json:"run_as_user"`

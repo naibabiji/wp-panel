@@ -189,13 +189,13 @@ func (h *BackupHandler) UploadRestore(c *gin.Context) {
 func (h *BackupHandler) GetSettings(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	db := database.GetDB()
-	var enabled, keepCount, fileKeepCount int
-	err := db.QueryRow("SELECT enabled, keep_count, file_keep_count FROM backup_settings WHERE site_id = ?", id).Scan(&enabled, &keepCount, &fileKeepCount)
+	var enabled, keepCount int
+	err := db.QueryRow("SELECT enabled, keep_count FROM backup_settings WHERE site_id = ?", id).Scan(&enabled, &keepCount)
 	if err != nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(models.BackupSettings{Enabled: false, KeepCount: 7, FileKeepCount: 3}))
+		c.JSON(http.StatusOK, models.SuccessResponse(models.BackupSettings{Enabled: false, KeepCount: 7}))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(models.BackupSettings{Enabled: enabled == 1, KeepCount: keepCount, FileKeepCount: fileKeepCount}))
+	c.JSON(http.StatusOK, models.SuccessResponse(models.BackupSettings{Enabled: enabled == 1, KeepCount: keepCount}))
 }
 
 func (h *BackupHandler) UpdateSettings(c *gin.Context) {
@@ -211,20 +211,14 @@ func (h *BackupHandler) UpdateSettings(c *gin.Context) {
 	if req.KeepCount > 30 {
 		req.KeepCount = 30
 	}
-	if req.FileKeepCount < 1 {
-		req.FileKeepCount = 1
-	}
-	if req.FileKeepCount > 30 {
-		req.FileKeepCount = 30
-	}
 	enabledVal := 0
 	if req.Enabled {
 		enabledVal = 1
 	}
 	db := database.GetDB()
-	db.Exec(`INSERT INTO backup_settings (site_id, enabled, keep_count, file_keep_count) VALUES (?, ?, ?, ?)
-		ON CONFLICT(site_id) DO UPDATE SET enabled = ?, keep_count = ?, file_keep_count = ?`,
-		id, enabledVal, req.KeepCount, req.FileKeepCount, enabledVal, req.KeepCount, req.FileKeepCount)
+	db.Exec(`INSERT INTO backup_settings (site_id, enabled, keep_count) VALUES (?, ?, ?)
+		ON CONFLICT(site_id) DO UPDATE SET enabled = ?, keep_count = ?`,
+		id, enabledVal, req.KeepCount, enabledVal, req.KeepCount)
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "设置已保存"}))
 }
 

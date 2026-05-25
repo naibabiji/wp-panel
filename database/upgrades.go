@@ -84,9 +84,9 @@ var upgrades = []Upgrade{
 	},
 	{
 		Version:     "1.1.0-beta6",
-		Description: "文件备份独立保留份数",
+		Description: "计划任务文件备份保留份数",
 		SQL: []string{
-			`ALTER TABLE backup_settings ADD COLUMN file_keep_count INTEGER NOT NULL DEFAULT 3`,
+			`ALTER TABLE cron_jobs ADD COLUMN keep_count INTEGER NOT NULL DEFAULT 3`,
 		},
 	},
 }

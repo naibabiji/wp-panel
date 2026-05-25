@@ -77,13 +77,8 @@
                     <span>自动备份（每天 4:00）</span>
                 </label>
                 <label class="flex items-center space-x-2 text-sm text-gray-300 ml-4">
-                    <span>数据库备份保留</span>
+                    <span>保留</span>
                     <input type="number" x-model.number="backupKeepCount" @change="saveBackupSettings()" class="input-field w-16 text-sm py-0.5 text-center" min="1" max="30">
-                    <span>份</span>
-                </label>
-                <label class="flex items-center space-x-2 text-sm text-gray-300">
-                    <span>文件备份保留</span>
-                    <input type="number" x-model.number="backupFileKeepCount" @change="saveBackupSettings()" class="input-field w-16 text-sm py-0.5 text-center" min="1" max="30">
                     <span>份</span>
                 </label>
             </div>
@@ -361,7 +356,6 @@ function websiteDetail() {
         backupSubmitting: false,
         backupEnabled: false,
         backupKeepCount: 7,
-        backupFileKeepCount: 3,
         restoringId: null,
         restoreUploading: false,
         logType: 'access',
@@ -558,7 +552,7 @@ this.accessLogMode = r.data.access_log_mode || 'off';
         async fetchBackupSettings() {
             try {
                 const r = await api("/websites/" + this.site.id + "/backups/settings");
-                if (r.success) { this.backupEnabled = r.data.enabled; this.backupKeepCount = r.data.keep_count; this.backupFileKeepCount = r.data.file_keep_count; }
+                if (r.success) { this.backupEnabled = r.data.enabled; this.backupKeepCount = r.data.keep_count; }
             } catch(e) {}
         },
         async createBackup() {
@@ -672,7 +666,7 @@ this.accessLogMode = r.data.access_log_mode || 'off';
             try {
                 await api("/websites/" + this.site.id + "/backups/settings", {
                     method: "PUT",
-                    body: { enabled: this.backupEnabled, keep_count: parseInt(this.backupKeepCount) || 7, file_keep_count: parseInt(this.backupFileKeepCount) || 3 }
+                    body: { enabled: this.backupEnabled, keep_count: parseInt(this.backupKeepCount) || 7 }
                 });
                 showToast('备份设置已保存', 'success');
             } catch(e) { showToast(e.message, "error"); }

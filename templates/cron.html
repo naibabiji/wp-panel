@@ -139,6 +139,13 @@
                         </select>
                     </div>
                     <div class="mb-2">
+                        <label class="text-sm text-gray-300 mb-1 block">保留本地备份</label>
+                        <div class="flex items-center space-x-2">
+                            <input type="number" x-model.number="form.keep_count" class="input-field w-20 text-sm py-1.5" min="1" max="30">
+                            <span class="text-xs text-gray-500">份</span>
+                        </div>
+                    </div>
+                    <div class="mb-2">
                         <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
                             <input type="checkbox" x-model="form.notify_fail">
                             <span>备份失败时邮件通知</span>
@@ -181,7 +188,7 @@ function cronManager() {
         showLog: false,
         cronLogContent: '',
         editingId: null,
-        form: { name: '', cron_expression: '', command: '', task_type: 'command', backup_mode: 'incremental', site_id: '', notify_fail: false },
+        form: { name: '', cron_expression: '', command: '', task_type: 'command', backup_mode: 'incremental', keep_count: 3, site_id: '', notify_fail: false },
         async fetchSites() {
             try { const r = await api("/websites"); if (r.success) this.sites = r.data || []; } catch(e) {}
         },
@@ -198,12 +205,12 @@ function cronManager() {
         },
         openCreate() {
             this.editingId = null;
-            this.form = { name: '', cron_expression: '', command: '', task_type: 'command', backup_mode: 'incremental', site_id: '', notify_fail: false };
+            this.form = { name: '', cron_expression: '', command: '', task_type: 'command', backup_mode: 'incremental', keep_count: 3, site_id: '', notify_fail: false };
             this.showModal = true;
         },
         openEdit(job) {
             this.editingId = job.id;
-            this.form = { name: job.name, cron_expression: job.cron_expression, command: job.command || '', task_type: job.task_type || 'command', backup_mode: job.backup_mode || 'incremental', site_id: job.site_id || '', notify_fail: !!job.notify_fail };
+            this.form = { name: job.name, cron_expression: job.cron_expression, command: job.command || '', task_type: job.task_type || 'command', backup_mode: job.backup_mode || 'incremental', keep_count: job.keep_count || 3, site_id: job.site_id || '', notify_fail: !!job.notify_fail };
             this.showModal = true;
         },
         async saveJob() {
@@ -224,7 +231,7 @@ function cronManager() {
                 }
                 if (r.success) {
                     this.showModal = false;
-                    this.form = { name: '', cron_expression: '', command: '', task_type: 'command', backup_mode: 'incremental', site_id: '', notify_fail: false };
+                    this.form = { name: '', cron_expression: '', command: '', task_type: 'command', backup_mode: 'incremental', keep_count: 3, site_id: '', notify_fail: false };
                     await this.fetchList();
                     showToast(this.editingId ? '任务已更新' : '任务创建成功', 'success');
                 }

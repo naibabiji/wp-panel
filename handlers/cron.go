@@ -20,7 +20,7 @@ type CronHandler struct{}
 func (h *CronHandler) List(c *gin.Context) {
 	db := database.GetDB()
 	rows, err := db.Query(
-		`SELECT id, name, cron_expression, command, task_type, backup_mode, notify_fail,
+		`SELECT id, name, cron_expression, command, task_type, backup_mode, keep_count, notify_fail,
 		        site_id, run_as_user, enabled, running,
 		        last_run_at, last_status, last_output, created_at, updated_at
 		 FROM cron_jobs ORDER BY created_at DESC`,
@@ -36,7 +36,7 @@ func (h *CronHandler) List(c *gin.Context) {
 		var j models.CronJob
 		var enabled, notifyFail, running int
 		if err := rows.Scan(&j.ID, &j.Name, &j.CronExpression, &j.Command,
-			&j.TaskType, &j.BackupMode, &notifyFail,
+			&j.TaskType, &j.BackupMode, &j.KeepCount, &notifyFail,
 			&j.SiteID, &j.RunAsUser, &enabled, &running, &j.LastRunAt, &j.LastStatus,
 			&j.LastOutput, &j.CreatedAt, &j.UpdatedAt); err != nil {
 			continue
@@ -75,10 +75,14 @@ func (h *CronHandler) Create(c *gin.Context) {
 	if req.NotifyFail {
 		notifyFail = 1
 	}
+	keepCount := req.KeepCount
+	if keepCount <= 0 {
+		keepCount = 3
+	}
 	_, err := db.Exec(
-		`INSERT INTO cron_jobs (name, cron_expression, command, task_type, backup_mode, notify_fail, site_id, run_as_user, enabled)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		req.Name, req.CronExpression, req.Command, taskType, req.BackupMode, notifyFail, siteID, req.RunAsUser, enabled,
+		`INSERT INTO cron_jobs (name, cron_expression, command, task_type, backup_mode, keep_count, notify_fail, site_id, run_as_user, enabled)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		req.Name, req.CronExpression, req.Command, taskType, req.BackupMode, keepCount, notifyFail, siteID, req.RunAsUser, enabled,
 	)
 	if err != nil {
 		log.Printf("创建Cron失败: %v", err)
@@ -127,12 +131,16 @@ func (h *CronHandler) Update(c *gin.Context) {
 	if req.NotifyFail != nil && *req.NotifyFail {
 		notifyFail = 1
 	}
+	keepCount := 3
+	if req.KeepCount != nil && *req.KeepCount > 0 {
+		keepCount = *req.KeepCount
+	}
 
 	_, err = db.Exec(
 		`UPDATE cron_jobs SET name = ?, cron_expression = ?, command = ?, task_type = ?,
-		 backup_mode = ?, notify_fail = ?, site_id = ?,
+		 backup_mode = ?, keep_count = ?, notify_fail = ?, site_id = ?,
 		 run_as_user = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		req.Name, req.CronExpression, req.Command, taskType, req.BackupMode, notifyFail, req.SiteID, req.RunAsUser, enabled, id,
+		req.Name, req.CronExpression, req.Command, taskType, req.BackupMode, keepCount, notifyFail, req.SiteID, req.RunAsUser, enabled, id,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新失败"))
