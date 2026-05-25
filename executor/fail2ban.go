@@ -106,6 +106,7 @@ ignoreregex =
 }
 
 func ensureLogFiles() {
+	hasLogs := false
 	entries, err := os.ReadDir("/www/wwwlogs")
 	if err == nil {
 		for _, e := range entries {
@@ -114,7 +115,13 @@ func ensureLogFiles() {
 			}
 			touch("/www/wwwlogs/" + e.Name() + "/access.log")
 			touch("/www/wwwlogs/" + e.Name() + "/error.log")
+			hasLogs = true
 		}
+	}
+	if !hasLogs {
+		os.MkdirAll("/www/wwwlogs/_panel_placeholder", 0755)
+		touch("/www/wwwlogs/_panel_placeholder/access.log")
+		touch("/www/wwwlogs/_panel_placeholder/error.log")
 	}
 	touch("/var/log/auth.log")
 }
