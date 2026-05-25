@@ -214,7 +214,7 @@ func checkService() (bool, string) {
 
 func checkSSL() (bool, string) {
 	db := database.GetDB()
-	rows, err := db.Query(`SELECT domain, ssl_expires_at FROM websites WHERE ssl_enabled = 1 AND ssl_expires_at IS NOT NULL`)
+	rows, err := db.Query(`SELECT domain, ssl_expires_at FROM websites WHERE ssl_enabled = 1 AND ssl_expires_at > datetime('now')`)
 	if err != nil {
 		return false, ""
 	}
@@ -337,6 +337,9 @@ func checkSites() (bool, string) {
 			interval = 5
 		}
 
+		if len(siteLastCheck) > 100 {
+			siteLastCheck = make(map[string]time.Time)
+		}
 		if last, ok := siteLastCheck[id]; ok && time.Since(last) < time.Duration(interval)*time.Minute {
 			continue
 		}
