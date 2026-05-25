@@ -66,6 +66,14 @@ var upgrades = []Upgrade{
 			`ALTER TABLE websites ADD COLUMN log_retention_days INTEGER NOT NULL DEFAULT 7`,
 		},
 	},
+	{
+		Version:     "1.1.0-beta4",
+		Description: "计划任务执行锁 + 远程备份失败告警",
+		SQL: []string{
+			`ALTER TABLE cron_jobs ADD COLUMN running INTEGER NOT NULL DEFAULT 0`,
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('alert_remote_backup', 'false', '远程备份失败告警（需先启用远程备份）')`,
+		},
+	},
 }
 
 // LatestVersion 返回 upgrades 列表中的最新版本号。
