@@ -386,19 +386,24 @@ class WP_Panel_Optimizer {
         $transient = get_transient('wpp_optimizer_release');
         if ($transient !== false) return $transient;
 
-        $resp = wp_remote_get('https://api.github.com/repos/naibabiji/wp-panel/releases/latest', [
+        $resp = wp_remote_get('https://raw.githubusercontent.com/naibabiji/wp-panel/main/wp-panel-optimizer/wp-panel-optimizer.php', [
             'timeout'   => 10,
             'sslverify' => true,
-            'headers'   => ['Accept' => 'application/vnd.github+json', 'User-Agent' => 'WP-Panel-Optimizer'],
+            'headers'   => ['User-Agent' => 'WP-Panel-Optimizer'],
         ]);
         if (is_wp_error($resp)) return $resp;
         $code = wp_remote_retrieve_response_code($resp);
-        if ($code !== 200) return new \WP_Error('github_error', "GitHub API 返回 HTTP $code");
+        if ($code !== 200) return new \WP_Error('github_error', "GitHub raw 返回 HTTP $code");
 
-        $data = json_decode(wp_remote_retrieve_body($resp), true);
-        if (!$data || empty($data['tag_name'])) return new \WP_Error('parse_error', '无法解析版本信息');
+        $body = wp_remote_retrieve_body($resp);
+        if (!preg_match('/Version:\s*([0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9]+)?)/', $body, $m)) {
+            return new \WP_Error('parse_error', '无法解析插件版本');
+        }
 
-        $result = ['tag_name' => $data['tag_name'], 'html_url' => $data['html_url'] ?? 'https://github.com/naibabiji/wp-panel/releases'];
+        $result = [
+            'tag_name' => 'v' . $m[1],
+            'html_url' => 'https://github.com/naibabiji/wp-panel/releases',
+        ];
         set_transient('wpp_optimizer_release', $result, HOUR_IN_SECONDS);
         return $result;
     }
