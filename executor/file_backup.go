@@ -39,7 +39,7 @@ func ExecuteFileBackup(siteID int, mode string) (string, error) {
 	if isFull {
 		tarName = fmt.Sprintf("file_full_%s.tar.gz", ts)
 		fullPath = filepath.Join(backupDir, tarName)
-		cmd := exec.Command("tar", "-czf", fullPath, "-C", filepath.Dir(webRoot), filepath.Base(webRoot))
+		cmd := exec.Command("tar", "-czf", fullPath, "--warning=no-file-changed", "-C", filepath.Dir(webRoot), filepath.Base(webRoot))
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return "", fmt.Errorf("全量备份失败: %s", string(out))
