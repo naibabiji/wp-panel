@@ -121,7 +121,9 @@ func executeRunCron(task *Task) TaskResult {
 	if taskType == "file_backup" {
 		var msg string
 		msg, execErr = ExecuteFileBackup(siteID, backupMode)
-		if msg != "" {
+		if execErr != nil {
+			out = execErr.Error()
+		} else {
 			out = msg
 		}
 	} else if runAsUser != "" {
@@ -134,10 +136,7 @@ func executeRunCron(task *Task) TaskResult {
 	if execErr != nil {
 		status = "failed"
 		if out == "" {
-			log.Printf("Cron任务执行失败: %v", execErr)
-			out = "任务执行失败"
-		} else {
-			out += "\n任务执行失败"
+			out = execErr.Error()
 		}
 	}
 
