@@ -204,12 +204,12 @@ function firewallManager() {
         banLevelText(l) { return ['','限速','临时10分钟','临时24小时','临时30天','永久封禁'][l] || '未知'; },
         banLevelClass(l) { return ['','badge-info','badge-warning','badge-danger','badge-danger','badge-danger'][l] || 'badge-info'; },
         sourceLabel(ban) {
-            if (ban.ban_level >= 5) return 'Nftables 持久';
             if (ban.source_jail === 'wppanel') return 'Web防护';
             if (ban.source_jail === 'wppanel-404') return '404防御';
             if (ban.source_jail === 'wppanel-sshd') return 'SSH防护';
             if (ban.source_jail === 'panel') return '面板';
             if (ban.source_jail === 'panel_scan') return '扫描防御';
+            if (ban.ban_level >= 5) return 'Nftables 持久';
             return ban.source_jail || '--';
         },
         sourceClass(ban) {

@@ -234,7 +234,7 @@ func SyncFail2banBans() {
 
 			l3Count := countLevel3(ip)
 			if l3Count >= 2 {
-				banLevel = 4
+				banLevel = 5
 				expiresVal = "NULL"
 				reason = "Fail2ban 自动封禁（高危：累计3次严重违规，永久封禁）"
 				if jail == "wppanel-404" {
@@ -473,7 +473,7 @@ func executeManualBan(task *Task) TaskResult {
 		banLevel = 3
 	} else if payload.Duration == 0 {
 		duration = -1
-		banLevel = 4
+		banLevel = 5
 	}
 
 	var expires interface{}
