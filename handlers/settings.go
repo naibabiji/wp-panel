@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -79,7 +80,10 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 	}
 
 	if req.BasicAuthUser != nil && *req.BasicAuthUser != "" {
-		updateConfigValue("basic_auth", "username", *req.BasicAuthUser)
+		if err := updateConfigValue("basic_auth", "username", *req.BasicAuthUser); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新BasicAuth用户名失败"))
+			return
+		}
 	}
 
 	if req.NewPassword != nil && *req.NewPassword != "" {
@@ -123,7 +127,10 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("密码加密失败"))
 			return
 		}
-		updateConfigValue("basic_auth", "password_hash", string(newHash))
+		if err := updateConfigValue("basic_auth", "password_hash", string(newHash)); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新BasicAuth密码失败"))
+			return
+		}
 	}
 
 	var tzRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_/+\\-]+(/[A-Za-z][A-Za-z0-9_/+\\-]+)*$`)
@@ -237,19 +244,27 @@ func getHostname() string {
 	return strings.TrimSpace(string(out))
 }
 
-func updateConfigValue(section, key, value string) {
+func updateConfigValue(section, key, value string) error {
 	configPath := "/www/server/panel/config.json"
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return
+		return fmt.Errorf("读取配置文件失败")
 	}
 	var cfg map[string]map[string]interface{}
-	if json.Unmarshal(data, &cfg) != nil {
-		return
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("解析配置文件失败")
 	}
-	if sec, ok := cfg[section]; ok {
-		sec[key] = value
-		newData, _ := json.MarshalIndent(cfg, "", "  ")
-		os.WriteFile(configPath, newData, 0600)
+	sec, ok := cfg[section]
+	if !ok {
+		return fmt.Errorf("配置段 %s 不存在", section)
 	}
+	sec[key] = value
+	newData, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化配置失败")
+	}
+	if err := os.WriteFile(configPath, newData, 0600); err != nil {
+		return fmt.Errorf("写入配置文件失败")
+	}
+	return nil
 }
