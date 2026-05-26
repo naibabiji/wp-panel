@@ -59,6 +59,43 @@
         </div>
         <canvas id="metricsCanvas" class="w-full" height="80"></canvas>
     </div>
+
+    <div class="card mb-6" x-data="siteResources()" x-init="initFetch()">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-white">网站资源</h3>
+            <div class="flex items-center space-x-3">
+                <span class="text-xs text-gray-500" x-show="since" x-text="since"></span>
+                <button @click="fetch()" class="btn-secondary text-xs py-1 px-3">刷新</button>
+            </div>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="border-b border-gray-700 text-gray-400">
+                    <tr>
+                        <th class="py-2 text-left">网站</th>
+                        <th class="py-2 text-right w-20">CPU</th>
+                        <th class="py-2 text-right w-20">内存</th>
+                        <th class="py-2 text-right w-20">进程</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="s in sites" :key="s.domain">
+                        <tr class="border-b border-gray-700/30" :class="s.cpu > 20 ? 'bg-red-900/20' : (s.cpu > 5 ? 'bg-yellow-900/10' : '')">
+                            <td class="py-2">
+                                <a :href="'/' + (document.body.dataset.panelPrefix || '') + '/websites/' + s.site_id" class="text-blue-400 hover:text-blue-300 hover:underline" x-text="s.domain"></a>
+                            </td>
+                            <td class="py-2 text-right font-mono" :class="s.cpu > 20 ? 'text-red-400' : (s.cpu > 5 ? 'text-yellow-400' : 'text-white')" x-text="s.cpu.toFixed(1) + '%'"></td>
+                            <td class="py-2 text-right font-mono text-gray-300" x-text="s.mem.toFixed(1) + '%'"></td>
+                            <td class="py-2 text-right font-mono text-gray-400" x-text="s.proc_count"></td>
+                        </tr>
+                    </template>
+                    <tr x-show="sites.length === 0">
+                        <td colspan="4" class="py-4 text-center text-gray-500">暂无运行中的网站进程</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -185,5 +222,25 @@ function dashboardStats() {
     // Canvas is already in DOM since script runs after template render
     initChart();
 })();
+
+function siteResources() {
+    return {
+        sites: [],
+        since: '',
+        timer: null,
+        async fetch() {
+            try {
+                const r = await api('/dashboard/site-resources');
+                if (r.success) this.sites = r.data || [];
+                const now = new Date();
+                this.since = now.toLocaleTimeString('zh-CN');
+            } catch(e) {}
+        },
+        initFetch() {
+            this.fetch();
+            this.timer = setInterval(() => this.fetch(), 30000);
+        }
+    }
+}
 </script>
 {{end}}

@@ -145,6 +145,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	dashboardHandler := &handlers.DashboardHandler{}
 	protected.GET("/api/dashboard/stats", dashboardHandler.GetStats)
 	protected.GET("/api/dashboard/metrics", dashboardHandler.GetMetrics)
+	protected.GET("/api/dashboard/site-resources", dashboardHandler.GetSiteResources)
 	protected.GET("/api/announcement", handlers.GetAnnouncement)
 
 	firewallHandler := &handlers.FirewallHandler{}

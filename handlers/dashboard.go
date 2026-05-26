@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -172,4 +174,80 @@ func GetAnnouncement(c *gin.Context) {
 	announcementMu.Unlock()
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"content": cache}))
+}
+
+func (h *DashboardHandler) GetSiteResources(c *gin.Context) {
+	out, err := exec.Command("ps", "-eo", "user:32,%cpu,%mem,comm").Output()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("获取进程信息失败"))
+		return
+	}
+
+	type siteRes struct {
+		User      string  `json:"-"`
+		SiteID    int     `json:"site_id"`
+		Domain    string  `json:"domain"`
+		CPU       float64 `json:"cpu"`
+		Mem       float64 `json:"mem"`
+		ProcCount int     `json:"proc_count"`
+	}
+
+	agg := make(map[string]*siteRes)
+
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		user := fields[0]
+		if !strings.HasPrefix(user, "wp_") && !strings.HasPrefix(user, "php_") {
+			continue
+		}
+		comm := fields[3]
+		if !strings.HasPrefix(comm, "php-fpm") {
+			continue
+		}
+		cpu, _ := parseFloat(fields[1])
+		mem, _ := parseFloat(fields[2])
+
+		if sr, ok := agg[user]; ok {
+			sr.CPU += cpu
+			sr.Mem += mem
+			sr.ProcCount++
+		} else {
+			agg[user] = &siteRes{User: user, CPU: cpu, Mem: mem, ProcCount: 1}
+		}
+	}
+
+	db := database.GetDB()
+	var result []siteRes
+	for _, sr := range agg {
+		db.QueryRow("SELECT id, domain FROM websites WHERE system_user = ?", sr.User).Scan(&sr.SiteID, &sr.Domain)
+		if sr.Domain == "" {
+			continue
+		}
+		result = append(result, *sr)
+	}
+
+	if result == nil {
+		result = []siteRes{}
+	}
+
+	// 按 CPU 降序
+	for i := 0; i < len(result); i++ {
+		for j := i + 1; j < len(result); j++ {
+			if result[j].CPU > result[i].CPU {
+				result[i], result[j] = result[j], result[i]
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(result))
+}
+
+func parseFloat(s string) (float64, error) {
+	var f float64
+	_, err := fmt.Sscanf(strings.TrimSpace(s), "%f", &f)
+	return f, err
 }
