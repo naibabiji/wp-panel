@@ -33,7 +33,8 @@ class WP_Panel_Optimizer {
     const OPTION_LOG            = 'wpp_optimizer_log';
 
     private static function load_config() {
-        $file = __DIR__ . '/wp-panel-config.json';
+        $domain = wp_parse_url(home_url(), PHP_URL_HOST);
+        $file = '/www/server/panel/site-secrets/' . $domain . '/wp-panel-config.json';
         if (!file_exists($file)) return null;
         return json_decode(file_get_contents($file), true);
     }

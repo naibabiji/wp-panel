@@ -20,6 +20,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	panelVersion = version
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	r.SetTrustedProxies(nil)
 
 	r.Use(middleware.CustomRecovery())
 	r.Use(middleware.SecurityHeaders())

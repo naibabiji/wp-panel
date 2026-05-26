@@ -34,14 +34,22 @@ import (
 
 // Upgrade 定义一次版本升级需要执行的数据库变更。
 // SQL 中的语句应使用 IF NOT EXISTS / OR IGNORE 等幂等写法，确保重复执行安全。
+// Func 为可选的 Go 代码迁移，在 SQL 之后执行，用于文件系统清理等非数据库操作。
 type Upgrade struct {
-	Version     string   // 目标版本号，如 "1.0.0"
-	Description string   // 本次升级做了什么
-	SQL         []string // 要执行的 SQL 语句
+	Version     string       // 目标版本号，如 "1.0.0"
+	Description string       // 本次升级做了什么
+	SQL         []string     // 要执行的 SQL 语句
+	Func        func() error // 可选的 Go 函数迁移
 }
 
 // upgrades 按版本顺序排列（旧→新）。v1.0.0 正式版清空历史，后续新版本在此追加。
-var upgrades = []Upgrade{}
+var upgrades = []Upgrade{
+	{
+		Version:     "1.0.1",
+		Description: "迁移 wp-panel-config.json 到 Web 目录外，轮换 API Key",
+		Func:        migratePluginConfigs,
+	},
+}
 
 // LatestVersion 返回 upgrades 列表中的最新版本号。
 func LatestVersion() string {
@@ -152,6 +160,12 @@ func RunUpgrades() error {
 					continue
 				}
 				return fmt.Errorf("升级 %s 失败: %w\nSQL: %s", u.Version, err, sql)
+			}
+		}
+
+		if u.Func != nil {
+			if err := u.Func(); err != nil {
+				return fmt.Errorf("升级 %s 函数迁移失败: %w", u.Version, err)
 			}
 		}
 

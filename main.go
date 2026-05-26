@@ -76,9 +76,15 @@ func main() {
 	if err := database.RunMigrations(); err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
+	// 先更新插件包，确保后续迁移复制的是最新版本
+	executor.EnsureCacheHelperPlugin(PluginFS)
 	if err := database.RunUpgrades(); err != nil {
 		log.Fatalf("数据库升级失败: %v", err)
 	}
+
+	// 升级后重建全部 Nginx 和 PHP-FPM 配置，确保新模板规则对旧站生效
+	go executor.RegenerateAllSitesNginx()
+	go executor.RegenerateAllSitesFPM()
 
 	if *resetAdmin {
 		resetAllAdmin(cfg)
@@ -134,7 +140,6 @@ func main() {
 	executor.ApplyFail2banSettings()
 	executor.EnsureLogMap()
 	executor.EnsureFastCGICacheConfig()
-	executor.EnsureCacheHelperPlugin(PluginFS)
 	log.Println("Nginx 日志 map 配置已就绪")
 	log.Println("FastCGI 缓存配置已就绪")
 	log.Println("Fail2ban 配置初始化完成")

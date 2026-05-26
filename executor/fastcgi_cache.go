@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,4 +116,66 @@ func RegenerateSiteNginx(siteID int) {
 		fmt.Fprintf(os.Stderr, "应用Nginx配置失败(site %d): %v\n", siteID, err)
 		return
 	}
+}
+
+// RegenerateAllSitesNginx 重建全部网站的 Nginx 配置，用于模板更新后批量刷新。
+func RegenerateAllSitesNginx() {
+	db := database.GetDB()
+	rows, err := db.Query("SELECT id FROM websites")
+	if err != nil {
+		log.Printf("[Nginx重建] 查询网站列表失败: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var siteID int
+		if err := rows.Scan(&siteID); err != nil {
+			continue
+		}
+		RegenerateSiteNginx(siteID)
+	}
+	log.Printf("[Nginx重建] 全部网站 Nginx 配置已更新")
+}
+
+// RegenerateAllSitesFPM 重建全部网站的 PHP-FPM pool 配置，
+// 用于 open_basedir 等模板变更后批量刷新旧站点。
+func RegenerateAllSitesFPM() {
+	db := database.GetDB()
+	rows, err := db.Query("SELECT id, domain, system_user, web_root, log_dir FROM websites")
+	if err != nil {
+		log.Printf("[FPM重建] 查询网站列表失败: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	cfg := config.AppConfig
+	engine := NewTemplateEngine(cfg.Panel.BackupDir)
+
+	for rows.Next() {
+		var siteID int
+		var domain, systemUser, webRoot, logDir string
+		if err := rows.Scan(&siteID, &domain, &systemUser, &webRoot, &logDir); err != nil {
+			continue
+		}
+
+		phpData := &PHPFPMPoolData{
+			Domain:     domain,
+			SystemUser: systemUser,
+			WebRoot:    webRoot,
+			SocketPath: cfg.Paths.PHPFPMSock,
+		}
+		phpConfig, err := engine.RenderPHPFPMPool(phpData)
+		if err != nil {
+			log.Printf("[FPM重建] %s: 渲染配置失败: %v", domain, err)
+			continue
+		}
+
+		poolPath := filepath.Join(cfg.Paths.PHPFPMPool, domain+".conf")
+		if err := engine.ApplyPHPFPMPool(phpConfig, poolPath, logDir); err != nil {
+			log.Printf("[FPM重建] %s: 应用配置失败: %v", domain, err)
+			continue
+		}
+	}
+	log.Printf("[FPM重建] 全部网站 PHP-FPM pool 配置已更新")
 }

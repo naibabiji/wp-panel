@@ -312,6 +312,7 @@ func executeDeleteSite(task *Task) TaskResult {
 
 	os.RemoveAll(site.WebRoot)
 	os.RemoveAll(site.LogDir)
+	os.RemoveAll(filepath.Join("/www/server/panel/site-secrets", site.Domain))
 
 	// Clean up logrotate config
 	os.Remove("/etc/logrotate.d/wppanel-" + site.Domain)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -702,9 +703,19 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 		"panel_url": panelURL,
 		"api_key":   apiKey,
 	})
-	os.WriteFile(filepath.Join(pluginDir, "wp-panel-config.json"), cfgJSON, 0644)
+	baseSecretsDir := "/www/server/panel/site-secrets"
+	secretsDir := filepath.Join(baseSecretsDir, domain)
+	os.MkdirAll(baseSecretsDir, 0711)
+	os.Chmod(baseSecretsDir, 0711)
+	os.MkdirAll(secretsDir, 0750)
+
+	// 清理旧路径下的配置文件（迁移到 Web 目录外之前的位置）
+	os.Remove(filepath.Join(pluginDir, "wp-panel-config.json"))
+
+	os.WriteFile(filepath.Join(secretsDir, "wp-panel-config.json"), cfgJSON, 0640)
 
 	exec.Command("chown", "-R", systemUser+":www-data", pluginDir).Run()
+	exec.Command("chown", "-R", systemUser+":www-data", secretsDir).Run()
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"message":   "插件已安装",
@@ -933,12 +944,19 @@ func (h *WebsiteHandler) ReinstallWordPress(c *gin.Context) {
 type CacheHelperHandler struct{}
 
 func (h *CacheHelperHandler) checkAPIKey(domain string, c *gin.Context) bool {
+	host, _, err := net.SplitHostPort(c.Request.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	if host != "127.0.0.1" && host != "::1" {
+		return false
+	}
 	key := c.GetHeader("X-WP-Panel-Key")
 	if key == "" {
 		return false
 	}
 	var storedKey string
-	err := database.GetDB().QueryRow(
+	err = database.GetDB().QueryRow(
 		"SELECT plugin_api_key FROM websites WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%')",
 		domain, domain,
 	).Scan(&storedKey)
