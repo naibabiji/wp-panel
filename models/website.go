@@ -39,6 +39,7 @@ type Website struct {
 	MonitoringInterval int           `json:"monitoring_interval"`
 	DisableWPUpdates   bool          `json:"disable_wp_updates"`
 	DisableFileEditing bool          `json:"disable_file_editing"`
+	XMLRPCEnabled      bool          `json:"xmlrpc_enabled"`
 	LogRetentionDays   int           `json:"log_retention_days"`
 	ExpiresAt          *time.Time    `json:"expires_at"`
 	CreatedAt          time.Time     `json:"created_at"`

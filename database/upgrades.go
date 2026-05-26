@@ -49,6 +49,13 @@ var upgrades = []Upgrade{
 		Description: "迁移 wp-panel-config.json 到 Web 目录外，轮换 API Key",
 		Func:        migratePluginConfigs,
 	},
+	{
+		Version:     "1.0.2",
+		Description: "新增 XML-RPC 站点开关，默认禁用",
+		SQL: []string{
+			`ALTER TABLE websites ADD COLUMN xmlrpc_enabled INTEGER NOT NULL DEFAULT 0`,
+		},
+	},
 }
 
 // LatestVersion 返回 upgrades 列表中的最新版本号。

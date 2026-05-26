@@ -28,7 +28,7 @@ const websiteCols = `id, name, domain, aliases, status, system_user, web_root, l
 	ssl_cert_path, ssl_key_path, ssl_expires_at, template_version, access_log_mode,
 	fastcgi_cache_enabled, fastcgi_cache_ttl, fastcgi_cache_key,
 	monitoring_enabled, monitoring_interval, disable_wp_updates, disable_file_editing,
-		log_retention_days, expires_at, created_at, updated_at`
+		xmlrpc_enabled, log_retention_days, expires_at, created_at, updated_at`
 
 // scanWebsite scans the canonical columns into a Website model.
 // scanner is either row.Scan (for QueryRow) or rows.Scan (for Rows).
@@ -37,7 +37,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 	var aliases, status string
 	var sslEnabled, fCacheEnabled, monitoringEnabled int
 	var monitoringInterval int
-	var disableWPUpdates, disableFileEditing int
+	var disableWPUpdates, disableFileEditing, xmlrpcEnabled int
 	var logRetentionDays int
 
 	err := scanner(
@@ -47,7 +47,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 		&w.SSLExpiresAt, &w.TemplateVersion, &w.AccessLogMode,
 		&fCacheEnabled, &w.FCacheTTL, &w.FCacheKey,
 		&monitoringEnabled, &monitoringInterval, &disableWPUpdates, &disableFileEditing,
-		&logRetentionDays, &w.ExpiresAt,
+		&xmlrpcEnabled, &logRetentionDays, &w.ExpiresAt,
 		&w.CreatedAt, &w.UpdatedAt,
 	)
 	if err != nil {
@@ -62,6 +62,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 	w.MonitoringInterval = monitoringInterval
 	w.DisableWPUpdates = disableWPUpdates == 1
 	w.DisableFileEditing = disableFileEditing == 1
+	w.XMLRPCEnabled = xmlrpcEnabled == 1
 	w.LogRetentionDays = logRetentionDays
 	return &w, nil
 }
@@ -802,6 +803,7 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 		FCacheTTL          int  `json:"fcache_ttl"`
 		DisableWPUpdates   bool `json:"disable_wp_updates"`
 		DisableFileEditing bool `json:"disable_file_editing"`
+		XMLRPCEnabled      bool `json:"xmlrpc_enabled"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
@@ -816,10 +818,10 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 
 	db := database.GetDB()
 
-	// 检查 FastCGI 配置是否变化，决定是否重载 Nginx
-	var oldFCacheEnabled, oldFCacheTTL int
-	db.QueryRow("SELECT fastcgi_cache_enabled, fastcgi_cache_ttl FROM websites WHERE id = ?", id).
-		Scan(&oldFCacheEnabled, &oldFCacheTTL)
+	// 检查 FastCGI / XML-RPC 配置是否变化，决定是否重载 Nginx
+	var oldFCacheEnabled, oldFCacheTTL, oldXMLRPCEnabled int
+	db.QueryRow("SELECT fastcgi_cache_enabled, fastcgi_cache_ttl, xmlrpc_enabled FROM websites WHERE id = ?", id).
+		Scan(&oldFCacheEnabled, &oldFCacheTTL, &oldXMLRPCEnabled)
 
 	fcEnabled := 0
 	if req.FCacheEnabled {
@@ -833,12 +835,16 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 	if req.DisableFileEditing {
 		disableEditing = 1
 	}
+	xmlrpcEnabled := 0
+	if req.XMLRPCEnabled {
+		xmlrpcEnabled = 1
+	}
 
 	db.Exec(`UPDATE websites SET
 		fastcgi_cache_enabled = ?, fastcgi_cache_ttl = ?,
-		disable_wp_updates = ?, disable_file_editing = ?
+		disable_wp_updates = ?, disable_file_editing = ?, xmlrpc_enabled = ?
 		WHERE id = ?`,
-		fcEnabled, req.FCacheTTL, disableUpdates, disableEditing, id)
+		fcEnabled, req.FCacheTTL, disableUpdates, disableEditing, xmlrpcEnabled, id)
 
 	// 更新 wp-config.php
 	var webRoot string
@@ -849,8 +855,8 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 		}
 	}
 
-	// FastCGI 配置变化时重载 Nginx
-	if oldFCacheEnabled != fcEnabled || oldFCacheTTL != req.FCacheTTL {
+	// FastCGI / XML-RPC 配置变化时重载 Nginx
+	if oldFCacheEnabled != fcEnabled || oldFCacheTTL != req.FCacheTTL || oldXMLRPCEnabled != xmlrpcEnabled {
 		go executor.RegenerateSiteNginx(id)
 	}
 

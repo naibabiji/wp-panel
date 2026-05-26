@@ -194,6 +194,13 @@
                     <span>禁止后台文件编辑</span>
                 </label>
             </div>
+            <div class="flex items-center space-x-3 mb-4" x-show="site.site_type === 'wordpress'">
+                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" x-model="xmlrpcEnabled">
+                    <span>允许 XML-RPC 接口</span>
+                </label>
+                <span class="text-xs text-gray-500">默认关闭，开启后 /xmlrpc.php 可被访问</span>
+            </div>
             <div class="flex items-center space-x-3 mb-3">
                 <button @click="saveWPOptimizations()" :disabled="optimizationSaving" class="btn-primary text-sm" x-text="optimizationSaving ? '保存中...' : '保存设置'"></button>
                 <button x-show="fcacheEnabled" @click="clearFCache()" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">清除缓存</button>
@@ -377,6 +384,7 @@ function websiteDetail() {
         fcacheTTL: 300,
         disableWPUpdates: false,
         disableFileEditing: false,
+        xmlrpcEnabled: false,
         logRetentionDays: 7,
         optimizationSaving: false,
         pluginStatus: 'not_installed',
@@ -402,6 +410,7 @@ function websiteDetail() {
                     this.fcacheTTL = r.data.fastcgi_cache_ttl || 300;
                     this.disableWPUpdates = r.data.disable_wp_updates || false;
                     this.disableFileEditing = r.data.disable_file_editing || false;
+                    this.xmlrpcEnabled = r.data.xmlrpc_enabled || false;
                     this.logRetentionDays = r.data.log_retention_days || 7;
                     this.monitoringEnabled = r.data.monitoring_enabled || false;
                     this.monitoringInterval = r.data.monitoring_interval || 5;
@@ -664,7 +673,8 @@ function websiteDetail() {
                         fcache_enabled: this.fcacheEnabled,
                         fcache_ttl: parseInt(this.fcacheTTL) || 300,
                         disable_wp_updates: this.disableWPUpdates,
-                        disable_file_editing: this.disableFileEditing
+                        disable_file_editing: this.disableFileEditing,
+                        xmlrpc_enabled: this.xmlrpcEnabled
                     }
                 });
                 showToast('保存成功', 'success');

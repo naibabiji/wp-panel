@@ -113,7 +113,14 @@ ignoreregex =
 		return fmt.Errorf("写入 404 filter 配置失败: %w", err)
 	}
 
-	_, _ = executeCommand("systemctl", "restart", "fail2ban")
+	if _, err := executeCommand("fail2ban-client", "reload"); err != nil {
+		if _, activeErr := executeCommand("systemctl", "is-active", "--quiet", "fail2ban"); activeErr == nil {
+			return fmt.Errorf("重载 fail2ban 失败: %w", err)
+		}
+		if _, startErr := executeCommand("systemctl", "start", "fail2ban"); startErr != nil {
+			return fmt.Errorf("重载 fail2ban 失败: %w", err)
+		}
+	}
 	return nil
 }
 

@@ -41,6 +41,7 @@ func nginxDataFromSite(site *models.Website) *NginxSiteData {
 		FCacheEnabled: site.FCacheEnabled,
 		FCacheTTL:     fCacheTTL,
 		FCacheKey:     site.FCacheKey,
+		XMLRPCEnabled: site.XMLRPCEnabled,
 	}
 	if data.UseSSL {
 		if data.SSLCertPath == "" {

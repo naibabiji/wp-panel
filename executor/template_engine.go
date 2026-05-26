@@ -29,6 +29,7 @@ type NginxSiteData struct {
 	SiteType         string
 	RateLimitEnabled bool
 	RateLimitBurst   int
+	XMLRPCEnabled    bool
 }
 
 type PHPFPMPoolData struct {
@@ -281,6 +282,12 @@ server {
         try_files $uri $uri/ /index.php?$args;
     }
 
+    {{if not .XMLRPCEnabled}}
+    location ~ ^/+xmlrpc\.php$ {
+        return 403;
+    }
+
+    {{end}}
     location ~ \.php$ {
         include /etc/nginx/fastcgi_params;
         fastcgi_pass {{.PHPProxy}};
@@ -333,6 +340,7 @@ server {
         fastcgi_read_timeout 300;
     }
 
+    {{if .XMLRPCEnabled}}
     location = /xmlrpc.php {
         include /etc/nginx/fastcgi_params;
         fastcgi_pass {{.PHPProxy}};
@@ -340,6 +348,7 @@ server {
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
         fastcgi_read_timeout 300;
     }
+    {{end}}
 }
 `
 
@@ -402,6 +411,12 @@ server {
         try_files $uri $uri/ /index.php?$args;
     }
 
+    {{if not .XMLRPCEnabled}}
+    location ~ ^/+xmlrpc\.php$ {
+        return 403;
+    }
+
+    {{end}}
     location ~ \.php$ {
         include /etc/nginx/fastcgi_params;
         fastcgi_pass {{.PHPProxy}};
@@ -456,6 +471,7 @@ server {
         fastcgi_read_timeout 300;
     }
 
+    {{if .XMLRPCEnabled}}
     location = /xmlrpc.php {
         include /etc/nginx/fastcgi_params;
         fastcgi_pass {{.PHPProxy}};
@@ -464,6 +480,7 @@ server {
         fastcgi_param HTTPS on;
         fastcgi_read_timeout 300;
     }
+    {{end}}
 }
 `
 
