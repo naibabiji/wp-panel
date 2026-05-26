@@ -82,10 +82,6 @@ func main() {
 		log.Fatalf("数据库升级失败: %v", err)
 	}
 
-	// 升级后重建全部 Nginx 和 PHP-FPM 配置，确保新模板规则对旧站生效
-	go executor.RegenerateAllSitesNginx()
-	go executor.RegenerateAllSitesFPM()
-
 	if *resetAdmin {
 		resetAllAdmin(cfg)
 		return
@@ -136,6 +132,10 @@ func main() {
 	log.Println("任务队列初始化完成")
 
 	collector.Start()
+
+	// 升级后重建全部 Nginx 和 PHP-FPM 配置，确保新模板规则对旧站生效
+	go executor.RegenerateAllSitesNginx()
+	go executor.RegenerateAllSitesFPM()
 
 	executor.ApplyFail2banSettings()
 	executor.EnsureLogMap()
