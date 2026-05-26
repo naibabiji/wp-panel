@@ -13,7 +13,7 @@
 <template x-if="site">
     <div>
 
-    <!-- Row 1: 基本信息 | 网站监控 -->
+    <!-- Row 1: 基本信息 | 网站监控 + 数据库 -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div class="card">
             <h3 class="text-lg font-semibold text-white mb-4">基本信息</h3>
@@ -30,7 +30,7 @@
                 <div><dt class="text-sm text-gray-400">日志目录</dt><dd class="text-white font-mono text-sm" x-text="site.log_dir"></dd></div>
                 <div>
                     <dt class="text-sm text-gray-400">到期时间</dt>
-                    <dd class="text-white" x-show="!editingExpiry" x-text="site.expires_at ? new Date(site.expires_at + 'T00:00:00').toLocaleDateString('zh-CN') : '未设置'"></dd>
+                    <dd class="text-white" x-show="!editingExpiry" x-text="site.expires_at ? new Date(site.expires_at).toLocaleDateString('zh-CN') : '未设置'"></dd>
                     <div x-show="editingExpiry" class="flex items-center space-x-2">
                         <input type="date" x-model="expiresAtInput" class="input-field text-sm py-1 w-44">
                         <button @click="saveExpiry()" :disabled="expirySaving" class="btn-primary text-xs py-1 px-2" x-text="expirySaving ? '保存中...' : '保存'"></button>
@@ -43,183 +43,184 @@
             </dl>
         </div>
 
-        <div class="card">
-            <h3 class="text-lg font-semibold text-white mb-4">网站监控</h3>
-            <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer mb-3">
-                <input type="checkbox" x-model="monitoringEnabled">
-                <span>启用网站监控</span>
-            </label>
-            <div x-show="monitoringEnabled" class="flex items-center space-x-2 mb-4">
-                <span class="text-xs text-gray-500">检测间隔</span>
-                <select x-model="monitoringInterval" class="input-field w-24 text-sm py-1">
-                    <option value="1">1 分钟</option>
-                    <option value="5">5 分钟</option>
-                    <option value="10">10 分钟</option>
-                    <option value="30">30 分钟</option>
-                </select>
-            </div>
-            <button @click="saveMonitoring()" :disabled="monitoringSaving" class="btn-primary text-sm" x-text="monitoringSaving ? '保存中...' : '保存设置'"></button>
-            <p x-show="monitoringEnabled" class="text-xs text-gray-500 mt-3">定期检测网站 HTTP 状态码，异常时通过告警通知发送邮件。需先在「告警通知」页面配置 SMTP。</p>
-            <p x-show="!monitoringEnabled" class="text-xs text-gray-600 mt-3">开启后可定期检测网站是否可访问，异常时邮件通知。</p>
-        </div>
-    </div>
-
-    <!-- Row 2: 数据库与备份 | SSL 证书管理 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mt-6">
-        <div class="card">
-            <h3 class="text-lg font-semibold text-white mb-4">数据库</h3>
-            <dl class="space-y-3 mb-4">
-                <div><dt class="text-sm text-gray-400">数据库名</dt><dd class="text-white font-mono text-sm" x-text="site.db_name"></dd></div>
-                <div><dt class="text-sm text-gray-400">用户名</dt><dd class="text-white font-mono text-sm" x-text="site.db_user"></dd></div>
-            </dl>
-            <button @click="dbPasswordModal = true" class="text-sm py-1.5 px-3 rounded" style="background-color: #1e3a5f; color: #93c5fd;">修改密码</button>
-            <button @click="clearDatabase()" :disabled="dbSubmitting" class="text-sm py-1.5 px-3 rounded ml-2" style="background-color: #7f1d1d; color: #fca5a5;" x-text="dbSubmitting ? '清空中...' : '清空数据库'"></button>
-
-            <hr class="my-4 border-gray-700">
-
-            <div class="flex items-center space-x-3 mb-3">
-                <button @click="createBackup()" :disabled="backupSubmitting" class="btn-primary text-sm" x-text="backupSubmitting ? '备份中...' : '手动备份'"></button>
-                <button @click="uploadRestore()" :disabled="restoreUploading" class="btn-secondary text-sm" x-text="restoreUploading ? '恢复中...' : '上传恢复'"></button>
-                <input type="file" id="restoreFileInput" @change="handleRestoreUpload($event)" accept=".sql,.sql.gz,.gz,.zip" class="hidden">
-            </div>
-
-            <div class="flex items-center space-x-3 mb-3 p-2 rounded" style="background-color: #0f172a;">
-                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-                    <input type="checkbox" x-model="backupEnabled" @change="saveBackupSettings()">
-                    <span>自动备份（每天 4:00）</span>
+        <div class="space-y-8">
+            <div class="card">
+                <h3 class="text-lg font-semibold text-white mb-4">网站监控</h3>
+                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer mb-3">
+                    <input type="checkbox" x-model="monitoringEnabled">
+                    <span>启用网站监控</span>
                 </label>
-                <label class="flex items-center space-x-2 text-sm text-gray-300 ml-4">
-                    <span>保留</span>
-                    <input type="number" x-model.number="backupKeepCount" @change="saveBackupSettings()" class="input-field w-16 text-sm py-0.5 text-center" min="1" max="30">
-                    <span>份</span>
-                </label>
+                <div x-show="monitoringEnabled" class="flex items-center space-x-2 mb-4">
+                    <span class="text-xs text-gray-500">检测间隔</span>
+                    <select x-model="monitoringInterval" class="input-field w-24 text-sm py-1">
+                        <option value="1">1 分钟</option>
+                        <option value="5">5 分钟</option>
+                        <option value="10">10 分钟</option>
+                        <option value="30">30 分钟</option>
+                    </select>
+                </div>
+                <button @click="saveMonitoring()" :disabled="monitoringSaving" class="btn-primary text-sm" x-text="monitoringSaving ? '保存中...' : '保存设置'"></button>
+                <p x-show="monitoringEnabled" class="text-xs text-gray-500 mt-3">定期检测网站 HTTP 状态码，异常时通过告警通知发送邮件。需先在「告警通知」页面配置 SMTP。</p>
+                <p x-show="!monitoringEnabled" class="text-xs text-gray-600 mt-3">开启后可定期检测网站是否可访问，异常时邮件通知。</p>
             </div>
 
-            <div class="overflow-x-auto">
-                <table class="w-full text-sm">
-                    <thead class="border-b border-gray-700 text-gray-400">
-                        <tr>
-                            <th class="py-2 text-left">文件名</th>
-                            <th class="py-2 text-left">大小</th>
-                            <th class="py-2 text-left">时间</th>
-                            <th class="py-2 text-left">类型</th>
-                            <th class="py-2 text-left w-36">操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <template x-for="b in backups" :key="b.id">
-                            <tr class="border-b border-gray-700/50">
-                                <td class="py-2 font-mono text-xs" x-text="b.filename"></td>
-                                <td class="py-2 text-xs" x-text="formatBytes(b.file_size)"></td>
-                                <td class="py-2 text-xs" x-text="new Date(b.created_at).toLocaleString('zh-CN')"></td>
-                                <td class="py-2"><span :class="b.auto ? 'badge-info' : 'badge-success'" class="text-xs" x-text="b.auto ? '自动' : '手动'"></span></td>
-                                <td class="py-2">
-                                    <div class="flex space-x-2">
-                                        <button @click="downloadBackup(b)" class="btn-primary text-xs py-1 px-2">下载</button>
-                                        <button @click="restoreBackup(b)" :disabled="restoringId" class="text-xs py-1 px-2 rounded" style="background-color: #7f1d1d; color: #fca5a5;" x-text="restoringId === b.id ? '恢复中...' : '恢复'"></button>
-                                        <button @click="deleteBackup(b)" :disabled="restoringId" class="btn-secondary text-xs py-1 px-2">删除</button>
-                                    </div>
-                                </td>
-                            </tr>
-                        </template>
-                        <tr x-show="backups.length === 0">
-                            <td colspan="5" class="py-4 text-center text-gray-500">暂无备份记录</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <div class="card">
-            <h3 class="text-lg font-semibold text-white mb-4">SSL 证书管理</h3>
-            <div class="mb-3">
-                <span :class="site.ssl_enabled ? 'badge-success' : 'badge-info'" class="text-sm" x-text="site.ssl_enabled ? '已启用' : '未启用'"></span>
-            </div>
-            <div x-show="site.ssl_enabled">
+            <div class="card">
+                <h3 class="text-lg font-semibold text-white mb-4">数据库</h3>
                 <dl class="space-y-3 mb-4">
-                    <div><dt class="text-sm text-gray-400">证书路径</dt><dd class="text-white font-mono text-sm" x-text="site.ssl_cert_path"></dd></div>
-                    <div><dt class="text-sm text-gray-400">私钥路径</dt><dd class="text-white font-mono text-sm" x-text="site.ssl_key_path"></dd></div>
-                    <div><dt class="text-sm text-gray-400">到期时间</dt><dd class="text-white" x-text="site.ssl_expires_at ? new Date(site.ssl_expires_at).toLocaleDateString('zh-CN') : '未知'"></dd></div>
+                    <div><dt class="text-sm text-gray-400">数据库名</dt><dd class="text-white font-mono text-sm" x-text="site.db_name"></dd></div>
+                    <div><dt class="text-sm text-gray-400">用户名</dt><dd class="text-white font-mono text-sm" x-text="site.db_user"></dd></div>
                 </dl>
-                <div class="flex space-x-3">
-                    <button @click="sslMode='auto'; sslModalOpen=true" class="text-sm py-1.5 px-3 rounded" style="background-color: #166534; color: #bbf7d0;">重新申请</button>
-                    <button @click="sslMode='manual'; sslCert=''; sslKey=''; sslModalOpen=true" class="text-sm py-1.5 px-3 rounded" style="background-color: #1e3a5f; color: #93c5fd;">替换证书</button>
-                    <button @click="removeSSL()" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">删除证书</button>
+                <button @click="dbPasswordModal = true" class="text-sm py-1.5 px-3 rounded" style="background-color: #1e3a5f; color: #93c5fd;">修改密码</button>
+                <button @click="clearDatabase()" :disabled="dbSubmitting" class="text-sm py-1.5 px-3 rounded ml-2" style="background-color: #7f1d1d; color: #fca5a5;" x-text="dbSubmitting ? '清空中...' : '清空数据库'"></button>
+
+                <hr class="my-4 border-gray-700">
+
+                <div class="flex items-center space-x-3 mb-3">
+                    <button @click="createBackup()" :disabled="backupSubmitting" class="btn-primary text-sm" x-text="backupSubmitting ? '备份中...' : '手动备份'"></button>
+                    <button @click="uploadRestore()" :disabled="restoreUploading" class="btn-secondary text-sm" x-text="restoreUploading ? '恢复中...' : '上传恢复'"></button>
+                    <input type="file" id="restoreFileInput" @change="handleRestoreUpload($event)" accept=".sql,.sql.gz,.gz,.zip" class="hidden">
+                </div>
+
+                <div class="flex items-center space-x-3 mb-3 p-2 rounded" style="background-color: #0f172a;">
+                    <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                        <input type="checkbox" x-model="backupEnabled" @change="saveBackupSettings()">
+                        <span>自动备份（每天 4:00）</span>
+                    </label>
+                    <label class="flex items-center space-x-2 text-sm text-gray-300 ml-4">
+                        <span>保留</span>
+                        <input type="number" x-model.number="backupKeepCount" @change="saveBackupSettings()" class="input-field w-16 text-sm py-0.5 text-center" min="1" max="30">
+                        <span>份</span>
+                    </label>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="border-b border-gray-700 text-gray-400">
+                            <tr>
+                                <th class="py-2 text-left">文件名</th>
+                                <th class="py-2 text-left">大小</th>
+                                <th class="py-2 text-left">时间</th>
+                                <th class="py-2 text-left">类型</th>
+                                <th class="py-2 text-left w-36">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="b in backups" :key="b.id">
+                                <tr class="border-b border-gray-700/50">
+                                    <td class="py-2 font-mono text-xs" x-text="b.filename"></td>
+                                    <td class="py-2 text-xs" x-text="formatBytes(b.file_size)"></td>
+                                    <td class="py-2 text-xs" x-text="new Date(b.created_at).toLocaleString('zh-CN')"></td>
+                                    <td class="py-2"><span :class="b.auto ? 'badge-info' : 'badge-success'" class="text-xs" x-text="b.auto ? '自动' : '手动'"></span></td>
+                                    <td class="py-2">
+                                        <div class="flex space-x-2">
+                                            <button @click="downloadBackup(b)" class="btn-primary text-xs py-1 px-2">下载</button>
+                                            <button @click="restoreBackup(b)" :disabled="restoringId" class="text-xs py-1 px-2 rounded" style="background-color: #7f1d1d; color: #fca5a5;" x-text="restoringId === b.id ? '恢复中...' : '恢复'"></button>
+                                            <button @click="deleteBackup(b)" :disabled="restoringId" class="btn-secondary text-xs py-1 px-2">删除</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr x-show="backups.length === 0">
+                                <td colspan="5" class="py-4 text-center text-gray-500">暂无备份记录</td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
-            <div x-show="!site.ssl_enabled">
-                <p class="text-gray-400 mb-4">该网站尚未启用 SSL 证书</p>
-                <button @click="sslMode='auto'; sslModalOpen=true" class="btn-primary">启用 SSL</button>
-            </div>
         </div>
     </div>
 
-    <!-- Row 3: Nginx 自定义配置 | WordPress优化 -->
+    <!-- Row 2: SSL + Nginx | WordPress优化 -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mt-6">
-        <div class="card">
-            <h3 class="text-lg font-semibold text-white mb-4">Nginx 自定义配置</h3>
-            <p class="text-gray-500 text-xs mb-3">添加 WordPress 插件所需的 Nginx 规则。面板安全规则不受影响，语法错误会自动拒绝保存。</p>
-            <div class="mb-3">
-                <label class="block text-sm text-gray-300 mb-1">Server 级配置（pre.conf — client_max_body_size 等指令）</label>
-                <textarea x-model="nginxPreContent" rows="3" class="w-full rounded p-2 text-xs font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;" placeholder="# 示例：client_max_body_size 128m;"></textarea>
+        <div class="space-y-8">
+            <div class="card">
+                <h3 class="text-lg font-semibold text-white mb-4">SSL 证书管理</h3>
+                <div class="mb-3">
+                    <span :class="site.ssl_enabled ? 'badge-success' : 'badge-info'" class="text-sm" x-text="site.ssl_enabled ? '已启用' : '未启用'"></span>
+                </div>
+                <div x-show="site.ssl_enabled">
+                    <dl class="space-y-3 mb-4">
+                        <div><dt class="text-sm text-gray-400">证书路径</dt><dd class="text-white font-mono text-sm" x-text="site.ssl_cert_path"></dd></div>
+                        <div><dt class="text-sm text-gray-400">私钥路径</dt><dd class="text-white font-mono text-sm" x-text="site.ssl_key_path"></dd></div>
+                        <div><dt class="text-sm text-gray-400">到期时间</dt><dd class="text-white" x-text="site.ssl_expires_at ? new Date(site.ssl_expires_at).toLocaleDateString('zh-CN') : '未知'"></dd></div>
+                    </dl>
+                    <div class="flex space-x-3">
+                        <button @click="sslMode='auto'; sslModalOpen=true" class="text-sm py-1.5 px-3 rounded" style="background-color: #166534; color: #bbf7d0;">重新申请</button>
+                        <button @click="sslMode='manual'; sslCert=''; sslKey=''; sslModalOpen=true" class="text-sm py-1.5 px-3 rounded" style="background-color: #1e3a5f; color: #93c5fd;">替换证书</button>
+                        <button @click="removeSSL()" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">删除证书</button>
+                    </div>
+                </div>
+                <div x-show="!site.ssl_enabled">
+                    <p class="text-gray-400 mb-4">该网站尚未启用 SSL 证书</p>
+                    <button @click="sslMode='auto'; sslModalOpen=true" class="btn-primary">启用 SSL</button>
+                </div>
             </div>
-            <div class="mb-4">
-                <label class="block text-sm text-gray-300 mb-1">Location 级配置（.conf — 插件 rewrite、缓存规则等）</label>
-                <textarea x-model="nginxContent" rows="6" class="w-full rounded p-2 text-xs font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;" placeholder="# W3 Total Cache 或 WP Rocket 的 Nginx 规则粘贴到此处"></textarea>
-            </div>
-            <div class="flex space-x-3">
-                <button @click="saveNginxCustom()" :disabled="nginxSubmitting" class="btn-primary text-sm" x-text="nginxSubmitting ? '校验中...' : '保存并生效'"></button>
-                <button @click="fetchNginxCustom()" class="text-sm py-1.5 px-3 rounded" style="background-color: #1e293b; border: 1px solid #334155; color: #e2e8f0;">刷新</button>
+
+            <div class="card">
+                <h3 class="text-lg font-semibold text-white mb-4">Nginx 自定义配置</h3>
+                <p class="text-gray-500 text-xs mb-3">添加 WordPress 插件所需的 Nginx 规则。面板安全规则不受影响，语法错误会自动拒绝保存。</p>
+                <div class="mb-3">
+                    <label class="block text-sm text-gray-300 mb-1">Server 级配置（pre.conf — client_max_body_size 等指令）</label>
+                    <textarea x-model="nginxPreContent" rows="3" class="w-full rounded p-2 text-xs font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;" placeholder="# 示例：client_max_body_size 128m;"></textarea>
+                </div>
+                <div class="mb-4">
+                    <label class="block text-sm text-gray-300 mb-1">Location 级配置（.conf — 插件 rewrite、缓存规则等）</label>
+                    <textarea x-model="nginxContent" rows="6" class="w-full rounded p-2 text-xs font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;" placeholder="# W3 Total Cache 或 WP Rocket 的 Nginx 规则粘贴到此处"></textarea>
+                </div>
+                <div class="flex space-x-3">
+                    <button @click="saveNginxCustom()" :disabled="nginxSubmitting" class="btn-primary text-sm" x-text="nginxSubmitting ? '校验中...' : '保存并生效'"></button>
+                    <button @click="fetchNginxCustom()" class="text-sm py-1.5 px-3 rounded" style="background-color: #1e293b; border: 1px solid #334155; color: #e2e8f0;">刷新</button>
+                </div>
             </div>
         </div>
 
-	        <div class="card">
-	            <h3 class="text-lg font-semibold text-white mb-4">WordPress优化</h3>
-	            <div class="flex items-center space-x-3 mb-3">
-	                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-	                    <input type="checkbox" x-model="fcacheEnabled">
-	                    <span>开启 FastCGI 缓存</span>
-	                </label>
-	            </div>
-	            <div x-show="fcacheEnabled" class="mb-3 ml-6">
-	                <label class="text-sm text-gray-300 mb-1 block">缓存有效期（秒）</label>
-	                <input type="number" x-model="fcacheTTL" class="input-field w-32 text-sm py-1" min="10" max="86400">
-	            </div>
-	            <div class="flex items-center space-x-3 mb-3">
-	                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-	                    <input type="checkbox" x-model="disableWPUpdates">
-	                    <span>禁止检测更新（核心/插件/主题）</span>
-	                </label>
-	            </div>
-	            <div class="flex items-center space-x-3 mb-4">
-	                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-	                    <input type="checkbox" x-model="disableFileEditing">
-	                    <span>禁止后台文件编辑</span>
-	                </label>
-	            </div>
-	            <div class="flex items-center space-x-3 mb-3">
-	                <button @click="saveWPOptimizations()" :disabled="optimizationSaving" class="btn-primary text-sm" x-text="optimizationSaving ? '保存中...' : '保存设置'"></button>
-	                <button x-show="fcacheEnabled" @click="clearFCache()" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">清除缓存</button>
-	            </div>
-	            <div x-show="(fcacheEnabled || disableWPUpdates || disableFileEditing) && site.site_type === 'wordpress'" class="flex items-center space-x-3 mb-3">
-	                <button x-show="pluginStatus === 'not_installed'" @click="installPlugin()" :disabled="pluginInstalling" class="btn-primary text-sm py-1.5" x-text="pluginInstalling ? '安装中...' : '安装配套插件'"></button>
-	                <button x-show="pluginStatus === 'update_available'" @click="installPlugin()" :disabled="pluginInstalling" class="text-sm py-1.5 px-3 rounded" style="background-color: #166534; color: #bbf7d0;" x-text="pluginInstalling ? '更新中...' : '更新配套插件'"></button>
-	                <span x-show="pluginStatus === 'installed'" class="text-xs text-green-400">✓ 插件已安装</span>
-	            </div>
-	            <div class="mt-3 p-3 rounded text-xs" style="background-color: #0f172a;">
-	                <p class="text-gray-300 font-medium mb-2">FastCGI 缓存工作原理</p>
-	                <ul class="text-gray-400 space-y-1 list-disc list-inside">
-	                    <li>Nginx 将 PHP 页面输出为静态 HTML 缓存在磁盘，访客直接拿到 HTML 无需经过 PHP/MariaDB</li>
-	                    <li>每站点独立缓存版本密钥，点击「清除缓存」更换密钥，旧缓存文件 60 分钟后自动删除</li>
-	                    <li x-show="site.site_type === 'wordpress'">已登录用户、POST 请求、wp-admin 后台自动跳过缓存</li>
-	                    <li x-show="site.site_type === 'php'">POST 请求和带查询参数的请求自动跳过缓存</li>
-	                </ul>
-	                <p class="text-gray-500 mt-2" x-show="site.site_type === 'wordpress'">配套插件（WP Panel Optimizer）安装到网站后，网站管理员可在 WordPress 后台管理缓存、禁止检测更新和文件编辑等优化项，与面板设置实时同步。不要安装第三方缓存插件（WP Rocket / W3 Total Cache 等的 Nginx 模式），会与本卡片冲突。</p>
-	            </div>
-	        </div>
+        <div class="card">
+            <h3 class="text-lg font-semibold text-white mb-4">WordPress优化</h3>
+            <div class="flex items-center space-x-3 mb-3">
+                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" x-model="fcacheEnabled">
+                    <span>开启 FastCGI 缓存</span>
+                </label>
+            </div>
+            <div x-show="fcacheEnabled" class="mb-3 ml-6">
+                <label class="text-sm text-gray-300 mb-1 block">缓存有效期（秒）</label>
+                <input type="number" x-model="fcacheTTL" class="input-field w-32 text-sm py-1" min="10" max="86400">
+            </div>
+            <div class="flex items-center space-x-3 mb-3">
+                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" x-model="disableWPUpdates">
+                    <span>禁止检测更新（核心/插件/主题）</span>
+                </label>
+            </div>
+            <div class="flex items-center space-x-3 mb-4">
+                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" x-model="disableFileEditing">
+                    <span>禁止后台文件编辑</span>
+                </label>
+            </div>
+            <div class="flex items-center space-x-3 mb-3">
+                <button @click="saveWPOptimizations()" :disabled="optimizationSaving" class="btn-primary text-sm" x-text="optimizationSaving ? '保存中...' : '保存设置'"></button>
+                <button x-show="fcacheEnabled" @click="clearFCache()" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">清除缓存</button>
+            </div>
+            <div x-show="(fcacheEnabled || disableWPUpdates || disableFileEditing) && site.site_type === 'wordpress'" class="flex items-center space-x-3 mb-3">
+                <button x-show="pluginStatus === 'not_installed'" @click="installPlugin()" :disabled="pluginInstalling" class="btn-primary text-sm py-1.5" x-text="pluginInstalling ? '安装中...' : '安装配套插件'"></button>
+                <button x-show="pluginStatus === 'update_available'" @click="installPlugin()" :disabled="pluginInstalling" class="text-sm py-1.5 px-3 rounded" style="background-color: #166534; color: #bbf7d0;" x-text="pluginInstalling ? '更新中...' : '更新配套插件'"></button>
+                <span x-show="pluginStatus === 'installed'" class="text-xs text-green-400">✓ 插件已安装</span>
+            </div>
+            <div class="mt-3 p-3 rounded text-xs" style="background-color: #0f172a;">
+                <p class="text-gray-300 font-medium mb-2">FastCGI 缓存工作原理</p>
+                <ul class="text-gray-400 space-y-1 list-disc list-inside">
+                    <li>Nginx 将 PHP 页面输出为静态 HTML 缓存在磁盘，访客直接拿到 HTML 无需经过 PHP/MariaDB</li>
+                    <li>每站点独立缓存版本密钥，点击「清除缓存」更换密钥，旧缓存文件 60 分钟后自动删除</li>
+                    <li x-show="site.site_type === 'wordpress'">已登录用户、POST 请求、wp-admin 后台自动跳过缓存</li>
+                    <li x-show="site.site_type === 'php'">POST 请求和带查询参数的请求自动跳过缓存</li>
+                </ul>
+                <p class="text-gray-500 mt-2" x-show="site.site_type === 'wordpress'">配套插件（WP Panel Optimizer）安装到网站后，网站管理员可在 WordPress 后台管理缓存、禁止检测更新和文件编辑等优化项，与面板设置实时同步。不要安装第三方缓存插件（WP Rocket / W3 Total Cache 等的 Nginx 模式），会与本卡片冲突。</p>
+            </div>
+        </div>
     </div>
 
-    <!-- Row 4: 网站日志 -->
+    <!-- Row 3: 网站日志 -->
     <div class="mt-6">
         <div class="card">
             <h3 class="text-lg font-semibold text-white mb-4">网站日志</h3>
@@ -505,8 +506,7 @@ function websiteDetail() {
                 if (r.success) {
                     this.nginxPreContent = r.data.pre_content || '';
                     this.nginxContent = r.data.content || '';
-                    
-this.accessLogMode = r.data.access_log_mode || 'off';
+                    this.accessLogMode = r.data.access_log_mode || 'off';
                 }
             } catch(e) { /* 静默失败 */ }
         },
@@ -539,7 +539,7 @@ this.accessLogMode = r.data.access_log_mode || 'off';
                 const r = await api('/websites/' + this.site.id + '/access-log', { method: 'PUT', body: { mode } });
                 if (r.success) {
                     this.accessLogMode = mode;
-                                        if (mode === 'off') {
+                    if (mode === 'off') {
                         this.logContent = '';
                     }
                     showToast(r.data?.message, 'success');
