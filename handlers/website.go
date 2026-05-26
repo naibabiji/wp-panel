@@ -1185,14 +1185,19 @@ func (h *WebsiteHandler) UpdateExpiry(c *gin.Context) {
 
 	db := database.GetDB()
 	req.ExpiresAt = strings.TrimSpace(req.ExpiresAt)
+	var dbErr error
 	if req.ExpiresAt == "" {
-		db.Exec("UPDATE websites SET expires_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+		_, dbErr = db.Exec("UPDATE websites SET expires_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?", id)
 	} else {
 		if _, err := time.Parse("2006-01-02", req.ExpiresAt); err != nil {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse("日期格式不正确，请使用 YYYY-MM-DD"))
 			return
 		}
-		db.Exec("UPDATE websites SET expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", req.ExpiresAt, id)
+		_, dbErr = db.Exec("UPDATE websites SET expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", req.ExpiresAt, id)
+	}
+	if dbErr != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败"))
+		return
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))

@@ -57,19 +57,24 @@ func ClearSiteCache(siteID int) {
 
 func RegenerateSiteNginx(siteID int) {
 	db := database.GetDB()
-	var domain, aliases, siteType, systemUser, webRoot, logDir, accessLogMode, cacheKey string
+	var domain, aliases, siteType, systemUser, webRoot, logDir, accessLogMode, cacheKey, templateVer string
 	var sslEnabled, fCacheEnabled int
 	var fCacheTTL int
+	var sslCertPath, sslKeyPath string
 
 	err := db.QueryRow(
 		`SELECT domain, aliases, site_type, system_user, web_root, log_dir, ssl_enabled,
-		        access_log_mode, fastcgi_cache_enabled, fastcgi_cache_ttl, fastcgi_cache_key
+		        access_log_mode, fastcgi_cache_enabled, fastcgi_cache_ttl, fastcgi_cache_key,
+		        ssl_cert_path, ssl_key_path, template_version
 		 FROM websites WHERE id = ?`, siteID,
-	).Scan(&domain, &aliases, &siteType, &systemUser, &webRoot, &logDir, &sslEnabled, &accessLogMode, &fCacheEnabled, &fCacheTTL, &cacheKey)
+	).Scan(&domain, &aliases, &siteType, &systemUser, &webRoot, &logDir, &sslEnabled, &accessLogMode, &fCacheEnabled, &fCacheTTL, &cacheKey, &sslCertPath, &sslKeyPath, &templateVer)
 	if err != nil || domain == "" {
 		return
 	}
 
+	if templateVer == "" {
+		templateVer = "v1.0"
+	}
 	if cacheKey == "" {
 		cacheKey = NewCacheKey()
 		db.Exec("UPDATE websites SET fastcgi_cache_key = ? WHERE id = ?", cacheKey, siteID)
@@ -92,7 +97,7 @@ func RegenerateSiteNginx(siteID int) {
 		SystemUser:    systemUser,
 		SiteType:      siteType,
 		PHPProxy:      "unix:" + filepath.Join(cfg.Paths.PHPFPMSock, domain+".sock"),
-		TemplateVer:   "v1.0",
+		TemplateVer:   templateVer,
 		AccessLogMode: accessLogMode,
 		UseSSL:        sslEnabled == 1,
 		FCacheEnabled: fCacheEnabled == 1,
@@ -100,8 +105,8 @@ func RegenerateSiteNginx(siteID int) {
 		FCacheKey:     cacheKey,
 	}
 	if data.UseSSL {
-		data.SSLCertPath = "/www/server/certificates/" + domain + "/fullchain.pem"
-		data.SSLKeyPath = "/www/server/certificates/" + domain + "/privkey.pem"
+		data.SSLCertPath = sslCertPath
+		data.SSLKeyPath = sslKeyPath
 	}
 
 	config, err := engine.RenderNginxConfig(data)

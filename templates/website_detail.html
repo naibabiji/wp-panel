@@ -38,7 +38,7 @@
                     </div>
                 </div>
                 <div class="pt-1" x-show="!editingExpiry">
-                    <button @click="editingExpiry = true; expiresAtInput = site.expires_at || ''" class="text-xs py-1 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">编辑到期时间</button>
+                    <button @click="editingExpiry = true; expiresAtInput = site.expires_at ? site.expires_at.substring(0, 10) : ''" class="text-xs py-1 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">编辑到期时间</button>
                 </div>
             </dl>
         </div>

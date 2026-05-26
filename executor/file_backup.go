@@ -23,7 +23,7 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 	myPID := fmt.Sprintf("%d", os.Getpid())
 	acquired := false
 	for i := 0; i < 1440; i++ { // 最多等2小时（每5秒检查一次）
-		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL, 0644)
+		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
 		if err == nil {
 			f.WriteString(myPID)
 			f.Close()
