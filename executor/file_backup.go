@@ -136,7 +136,7 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 
 	cleanOldBackups(backupDir, keepCount)
 
-	go SyncBackupToRemote(fullPath)
+	SyncBackupToRemote(fullPath)
 	logMsg := fmt.Sprintf("%s 文件备份成功: %s (%s)", domain, tarName, map[bool]string{true: "全量", false: "增量"}[isFull])
 	appendCronLog(logMsg)
 	return logMsg, nil

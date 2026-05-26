@@ -58,7 +58,7 @@ func executeCreateBackup(task *Task) TaskResult {
 	db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, auto) VALUES (?, ?, ?, ?, ?)`,
 		site.ID, filename, size, site.DBName, autoVal)
 
-	go SyncBackupToRemote(filePath)
+	SyncBackupToRemote(filePath)
 
 	cleanupOldBackups(site.ID, site.Domain, getKeepCount(site.ID))
 
@@ -231,7 +231,7 @@ func executeAutoBackups() {
 		db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, auto) VALUES (?, ?, ?, ?, 1)`,
 			siteID, filename, size, dbName)
 
-		go SyncBackupToRemote(filePath)
+		SyncBackupToRemote(filePath)
 		cleanupOldBackups(siteID, domain, keepCount)
 	}
 }

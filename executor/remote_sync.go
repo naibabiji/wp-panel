@@ -21,8 +21,19 @@ func SyncBackupToRemote(localFile string) {
 	err := db.QueryRow(`SELECT enabled, host, port, username, auth_type, password, remote_path, keep_local
 		FROM remote_backup_settings WHERE id = 1`).Scan(
 		&enabled, &host, &port, &username, &authType, &password, &remotePath, &keepLocal)
-	if err != nil || enabled == 0 || host == "" || remotePath == "" {
+	if err != nil {
+		syncLog(fmt.Sprintf("读取远程备份设置失败: %v", err), "failed")
 		return
+	}
+	if enabled == 0 {
+		return
+	}
+	if host == "" {
+		syncLog("远程备份已启用但未填写服务器地址", "failed")
+		return
+	}
+	if remotePath == "" {
+		remotePath = "/home/" + username + "/backup"
 	}
 
 	// 用 /. 标记分离备份根目录和相对路径，rsync -R 保留 ./ 之后的结构
