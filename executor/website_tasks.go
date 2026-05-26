@@ -213,7 +213,7 @@ func executeCreateSite(task *Task) TaskResult {
 		if sslErr != nil {
 			rollback()
 			log.Printf("申请 Let's Encrypt 证书失败: %v", sslErr)
-			return TaskResult{Success: false, Message: "申请 Let's Encrypt 证书失败"}
+			return TaskResult{Success: false, Message: "申请 Let's Encrypt 证书失败: " + sslErr.Error()}
 		}
 
 		sslData := &NginxSiteData{

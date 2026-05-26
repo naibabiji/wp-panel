@@ -79,7 +79,7 @@ func executeEnableSSL(task *Task) TaskResult {
 		expiry, applyErr = obtainLegoCert(site.Domain, site.Aliases, site.WebRoot, certDir)
 		if applyErr != nil {
 			log.Printf("申请 Let's Encrypt 证书失败: %v", applyErr)
-			return TaskResult{Success: false, Message: "申请 Let's Encrypt 证书失败"}
+			return TaskResult{Success: false, Message: "申请 Let's Encrypt 证书失败: " + applyErr.Error()}
 		}
 	}
 
