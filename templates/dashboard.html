@@ -82,7 +82,7 @@
                     <template x-for="s in sites" :key="s.domain">
                         <tr class="border-b border-gray-700/30" :class="s.cpu > 20 ? 'bg-red-900/20' : (s.cpu > 5 ? 'bg-yellow-900/10' : '')">
                             <td class="py-2">
-                                <a :href="'/' + (document.body.dataset.panelPrefix || '') + '/websites/' + s.site_id" class="text-blue-400 hover:text-blue-300 hover:underline" x-text="s.domain"></a>
+                                <a :href="'/{{$.RandomSuffix}}/websites/' + s.site_id" class="text-blue-400 hover:text-blue-300 hover:underline" x-text="s.domain"></a>
                             </td>
                             <td class="py-2 text-right font-mono" :class="s.cpu > 20 ? 'text-red-400' : (s.cpu > 5 ? 'text-yellow-400' : 'text-white')" x-text="s.cpu.toFixed(1) + '%'"></td>
                             <td class="py-2 text-right font-mono text-gray-300" x-text="s.mem.toFixed(1) + '%'"></td>
