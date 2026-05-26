@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
@@ -1157,6 +1158,42 @@ func (h *WebsiteHandler) SetLogRetention(c *gin.Context) {
 	db.Exec("UPDATE websites SET log_retention_days = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", req.RetentionDays, id)
 
 	writeLogrotateConfig(site.Domain, site.LogDir, req.RetentionDays)
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
+}
+
+func (h *WebsiteHandler) UpdateExpiry(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
+		return
+	}
+
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+
+	var req struct {
+		ExpiresAt string `json:"expires_at"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		return
+	}
+
+	db := database.GetDB()
+	req.ExpiresAt = strings.TrimSpace(req.ExpiresAt)
+	if req.ExpiresAt == "" {
+		db.Exec("UPDATE websites SET expires_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+	} else {
+		if _, err := time.Parse("2006-01-02", req.ExpiresAt); err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("日期格式不正确，请使用 YYYY-MM-DD"))
+			return
+		}
+		db.Exec("UPDATE websites SET expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", req.ExpiresAt, id)
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
 }

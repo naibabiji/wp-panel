@@ -28,6 +28,18 @@
                 <div><dt class="text-sm text-gray-400">系统用户</dt><dd class="text-white font-mono" x-text="site.system_user"></dd></div>
                 <div><dt class="text-sm text-gray-400">网站根目录</dt><dd class="text-white font-mono text-sm" x-text="site.web_root"></dd></div>
                 <div><dt class="text-sm text-gray-400">日志目录</dt><dd class="text-white font-mono text-sm" x-text="site.log_dir"></dd></div>
+                <div>
+                    <dt class="text-sm text-gray-400">到期时间</dt>
+                    <dd class="text-white" x-show="!editingExpiry" x-text="site.expires_at ? new Date(site.expires_at + 'T00:00:00').toLocaleDateString('zh-CN') : '未设置'"></dd>
+                    <div x-show="editingExpiry" class="flex items-center space-x-2">
+                        <input type="date" x-model="expiresAtInput" class="input-field text-sm py-1 w-44">
+                        <button @click="saveExpiry()" :disabled="expirySaving" class="btn-primary text-xs py-1 px-2" x-text="expirySaving ? '保存中...' : '保存'"></button>
+                        <button @click="editingExpiry = false" class="text-gray-400 hover:text-white text-xs">取消</button>
+                    </div>
+                </div>
+                <div class="pt-1" x-show="!editingExpiry">
+                    <button @click="editingExpiry = true; expiresAtInput = site.expires_at || ''" class="text-xs py-1 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">编辑到期时间</button>
+                </div>
             </dl>
         </div>
 
@@ -376,6 +388,9 @@ function websiteDetail() {
         monitoringInterval: 5,
         monitoringSaving: false,
         accessLogMode: 'off',
+        expiresAtInput: '',
+        editingExpiry: false,
+        expirySaving: false,
         domainModalOpen: false,
         editDomain: '',
         editAliasesStr: '',
@@ -630,6 +645,19 @@ this.accessLogMode = r.data.access_log_mode || 'off';
                 showToast('监控设置已保存', 'success');
             } catch(e) { showToast('保存失败: ' + e.message, 'error'); }
             this.monitoringSaving = false;
+        },
+        async saveExpiry() {
+            this.expirySaving = true;
+            try {
+                await api('/websites/' + this.site.id + '/expiry', {
+                    method: 'PUT',
+                    body: { expires_at: this.expiresAtInput }
+                });
+                this.site.expires_at = this.expiresAtInput || null;
+                this.editingExpiry = false;
+                showToast('到期时间已保存', 'success');
+            } catch(e) { showToast('保存失败: ' + e.message, 'error'); }
+            this.expirySaving = false;
         },
         async saveWPOptimizations() {
             this.optimizationSaving = true;
