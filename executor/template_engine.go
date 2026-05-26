@@ -11,22 +11,24 @@ import (
 )
 
 type NginxSiteData struct {
-	Domain        string
-	Aliases       []string
-	ServerNames   string
-	WebRoot       string
-	LogDir        string
-	SystemUser    string
-	UseSSL        bool
-	SSLCertPath   string
-	SSLKeyPath    string
-	PHPProxy      string
-	TemplateVer   string
-	AccessLogMode string
-	FCacheEnabled bool
-	FCacheTTL     int
-	FCacheKey     string
-	SiteType      string
+	Domain           string
+	Aliases          []string
+	ServerNames      string
+	WebRoot          string
+	LogDir           string
+	SystemUser       string
+	UseSSL           bool
+	SSLCertPath      string
+	SSLKeyPath       string
+	PHPProxy         string
+	TemplateVer      string
+	AccessLogMode    string
+	FCacheEnabled    bool
+	FCacheTTL        int
+	FCacheKey        string
+	SiteType         string
+	RateLimitEnabled bool
+	RateLimitBurst   int
 }
 
 type PHPFPMPoolData struct {
@@ -65,6 +67,7 @@ func NewTemplateEngine(backupDir string) *TemplateEngine {
 }
 
 func (e *TemplateEngine) RenderNginxConfig(data *NginxSiteData) (string, error) {
+	data.RateLimitEnabled, _, data.RateLimitBurst = GetRateLimitSettings()
 	tmplName := "nginx_http"
 	if data.UseSSL {
 		tmplName = "nginx_https"
@@ -252,8 +255,10 @@ server {
 
     server_name {{.ServerNames}};
 
-    limit_req zone=wp_req_limit burst=300 nodelay;
+    {{if .RateLimitEnabled}}
+    limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
     limit_req_status 429;
+    {{end}}
 
     set $wp_cache_ver "{{.FCacheKey}}";
 
@@ -345,8 +350,10 @@ server {
     listen [::]:80;
     server_name {{.ServerNames}};
 
-    limit_req zone=wp_req_limit burst=300 nodelay;
+    {{if .RateLimitEnabled}}
+    limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
     limit_req_status 429;
+    {{end}}
 
     set $wp_cache_ver "{{.FCacheKey}}";
 
@@ -359,8 +366,10 @@ server {
 
     server_name {{.ServerNames}};
 
-    limit_req zone=wp_req_limit burst=300 nodelay;
+    {{if .RateLimitEnabled}}
+    limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
     limit_req_status 429;
+    {{end}}
 
     set $wp_cache_ver "{{.FCacheKey}}";
 

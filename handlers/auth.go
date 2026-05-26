@@ -3,8 +3,8 @@ package handlers
 import (
 	"database/sql"
 	"net/http"
-	"os/exec"
 
+	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/middleware"
 	"github.com/naibabiji/wp-panel/models"
 
@@ -122,7 +122,7 @@ func recordWebLoginAttempt(ip string, db *sql.DB) {
 			 VALUES (?, 3, 'panel_web_login: 连续5次登录失败', 'panel', datetime('now', '+24 hours'), 1)`,
 			ip,
 		)
-		exec.Command("bash", "-c", "nft add element ip wppanel_persist banned_ips { "+ip+" } 2>/dev/null; true").Run()
+		executor.AddPersistBan(ip)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"os/exec"
 	"strings"
 	"time"
@@ -21,7 +22,6 @@ var allowedCommands = map[string][]string{
 	"chown":           {"-R"},
 	"chmod":           {"-R"},
 	"mkdir":           {"-p"},
-	"rm":              {"-rf", "-r", "-f"},
 	"ln":              {"-s", "-sf", "-snf"},
 	"unlink":          {},
 	"cp":              {"-r", "-a", "-f"},
@@ -46,6 +46,9 @@ func IsCommandAllowed(binary string, args []string) bool {
 	if !ok {
 		return false
 	}
+	if hasUnsafeArgs(binary, args) {
+		return false
+	}
 	if len(allowedArgs) == 0 {
 		return len(args) == 0 || binary == "cat" || binary == "tee" || binary == "head" || binary == "sha256sum" || binary == "base64"
 	}
@@ -53,7 +56,7 @@ func IsCommandAllowed(binary string, args []string) bool {
 		if strings.HasPrefix(arg, "-") {
 			allowed := false
 			for _, allowedArg := range allowedArgs {
-				if strings.HasPrefix(arg, allowedArg) {
+				if arg == allowedArg || strings.HasPrefix(arg, allowedArg+"=") {
 					allowed = true
 					break
 				}
@@ -64,6 +67,35 @@ func IsCommandAllowed(binary string, args []string) bool {
 		}
 	}
 	return true
+}
+
+func hasUnsafeArgs(binary string, args []string) bool {
+	for _, arg := range args {
+		if arg == "" || strings.ContainsAny(arg, "\x00\r\n") {
+			return true
+		}
+		if strings.ContainsAny(arg, ";|&`$<>") {
+			return true
+		}
+		if (binary == "wget" || binary == "curl") && strings.HasPrefix(arg, "http") && !isAllowedDownloadURL(arg) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAllowedDownloadURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.User != nil {
+		return false
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "wordpress.org", "downloads.wordpress.org", "api.wordpress.org",
+		"www.cloudflare.com", "developers.google.com", "www.bing.com":
+		return true
+	default:
+		return false
+	}
 }
 
 type ExecResult struct {

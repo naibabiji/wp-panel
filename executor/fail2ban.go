@@ -25,9 +25,20 @@ func deployFail2ban(whitelistIPs string, maxRetry, findTime, banTime int) error 
 	if whitelistIPs != "" {
 		for _, ip := range strings.Split(whitelistIPs, "\n") {
 			ip = strings.TrimSpace(ip)
-			if ip != "" {
-				ignoreIPs += " " + ip
+			if ip == "" {
+				continue
 			}
+			if strings.ContainsAny(ip, " \t\r") {
+				return fmt.Errorf("白名单 IP 格式不正确: %s", ip)
+			}
+			if strings.Contains(ip, "/") {
+				if _, _, err := net.ParseCIDR(ip); err != nil {
+					return fmt.Errorf("白名单 IP 格式不正确: %s", ip)
+				}
+			} else if net.ParseIP(ip) == nil {
+				return fmt.Errorf("白名单 IP 格式不正确: %s", ip)
+			}
+			ignoreIPs += " " + ip
 		}
 	}
 
@@ -162,7 +173,9 @@ func executeRefreshWhitelist(task *Task) TaskResult {
 		strings.Join(allIPs, "\n"))
 	db.Exec(`UPDATE security_settings SET svalue = datetime('now'), updated_at = CURRENT_TIMESTAMP WHERE skey = 'last_whitelist_update'`)
 
-	ApplyFail2banSettings()
+	if err := ApplyFail2banSettings(); err != nil {
+		return TaskResult{Success: false, Message: err.Error()}
+	}
 
 	return TaskResult{
 		Success: true,
@@ -170,7 +183,7 @@ func executeRefreshWhitelist(task *Task) TaskResult {
 	}
 }
 
-func ApplyFail2banSettings() {
+func ApplyFail2banSettings() error {
 	db := database.GetDB()
 
 	var officialIPs, customIPs string
@@ -193,7 +206,9 @@ func ApplyFail2banSettings() {
 	ft := parseIntOr(findTime, 60)
 	bt := parseIntOr(banTime, 600)
 
-	_ = deployFail2ban(mergedIPs, mr, ft, bt)
+	if err := deployFail2ban(mergedIPs, mr, ft, bt); err != nil {
+		return err
+	}
 
 	var autoEnabled string
 	db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'auto_whitelist_enabled'`).Scan(&autoEnabled)
@@ -203,6 +218,7 @@ func ApplyFail2banSettings() {
 	} else {
 		DeployWhitelistTimer()
 	}
+	return nil
 }
 
 func SyncFail2banBans() {
@@ -362,7 +378,7 @@ func AddPersistBan(ip string) {
 		return
 	}
 	EnsurePersistNftables()
-	exec.Command("bash", "-c", fmt.Sprintf("nft add element ip wppanel_persist banned_ips { %s } 2>/dev/null; true", ip)).Run()
+	exec.Command("nft", "add", "element", "ip", "wppanel_persist", "banned_ips", "{", ip, "}").Run()
 }
 
 func RemovePersistBan(ip string) {
@@ -373,7 +389,7 @@ func RemovePersistBan(ip string) {
 	if parsed := net.ParseIP(ip); parsed == nil {
 		return
 	}
-	exec.Command("bash", "-c", fmt.Sprintf("nft delete element ip wppanel_persist banned_ips { %s } 2>/dev/null; true", ip)).Run()
+	exec.Command("nft", "delete", "element", "ip", "wppanel_persist", "banned_ips", "{", ip, "}").Run()
 }
 
 func getNftablesPersistIPs() map[string]bool {
@@ -491,6 +507,10 @@ func executeManualBan(task *Task) TaskResult {
 	ip := strings.TrimSpace(payload.IP)
 	if ip == "" {
 		return TaskResult{Success: false, Message: "IP 地址不能为空"}
+	}
+
+	if net.ParseIP(ip) == nil {
+		return TaskResult{Success: false, Message: "IP 地址格式不正确"}
 	}
 
 	out, err := executeCommand("fail2ban-client", "set", "wppanel", "banip", ip)

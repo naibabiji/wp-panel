@@ -2,12 +2,13 @@ package middleware
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
 	"net/http"
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/naibabiji/wp-panel/executor"
 
 	"github.com/gin-gonic/gin"
 )
@@ -61,11 +62,7 @@ func banScanIP(db *sql.DB, ip string, reason string, hours int) {
 		return
 	}
 
-	ensureNftables()
-	cmd := fmt.Sprintf("nft add element ip wppanel_persist banned_ips { %s } 2>/dev/null; true", ip)
-	if err := exec.Command("bash", "-c", cmd).Run(); err != nil {
-		log.Printf("nftables 封禁失败 ip=%s: %v", ip, err)
-	}
+	executor.AddPersistBan(ip)
 
 	log.Printf("[扫描防御] 已封禁 IP %s (理由: %s, 时长: %d小时)", ip, reason, hours)
 }

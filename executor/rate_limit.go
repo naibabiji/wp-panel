@@ -14,10 +14,12 @@ import (
 const rateLimitConfPath = "/etc/nginx/conf.d/wppanel-ratelimit.conf"
 
 func EnsureRateLimit(enabled bool, rpm, burst int) error {
+	backups := backupRateLimitFiles()
+
 	if !enabled {
+		stripRateLimitFromSites()
 		os.Remove(rateLimitConfPath)
-		exec.Command("nginx", "-s", "reload").Run()
-		return nil
+		return testAndReloadNginx(backups)
 	}
 
 	content := fmt.Sprintf(`# WP Panel — 请求频率限制
@@ -35,7 +37,60 @@ limit_req_zone $wp_rate_limit_key zone=wp_req_limit:10m rate=%dr/m;
 	}
 
 	injectRateLimitToSites(burst)
-	exec.Command("nginx", "-s", "reload").Run()
+	return testAndReloadNginx(backups)
+}
+
+type rateLimitBackup struct {
+	path    string
+	exists  bool
+	content []byte
+}
+
+func backupRateLimitFiles() []rateLimitBackup {
+	paths := []string{rateLimitConfPath}
+	entries, err := os.ReadDir("/etc/nginx/sites-available")
+	if err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				paths = append(paths, filepath.Join("/etc/nginx/sites-available", entry.Name()))
+			}
+		}
+	}
+
+	backups := make([]rateLimitBackup, 0, len(paths))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		backups = append(backups, rateLimitBackup{
+			path:    path,
+			exists:  err == nil,
+			content: data,
+		})
+	}
+	return backups
+}
+
+func restoreRateLimitFiles(backups []rateLimitBackup) {
+	for _, backup := range backups {
+		if backup.exists {
+			os.MkdirAll(filepath.Dir(backup.path), 0755)
+			os.WriteFile(backup.path, backup.content, 0644)
+		} else {
+			os.Remove(backup.path)
+		}
+	}
+}
+
+func testAndReloadNginx(backups []rateLimitBackup) error {
+	if out, err := exec.Command("nginx", "-t").CombinedOutput(); err != nil {
+		restoreRateLimitFiles(backups)
+		exec.Command("nginx", "-s", "reload").Run()
+		return fmt.Errorf("nginx -t 失败，已回滚: %s", strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("nginx", "-s", "reload").CombinedOutput(); err != nil {
+		restoreRateLimitFiles(backups)
+		exec.Command("nginx", "-s", "reload").Run()
+		return fmt.Errorf("nginx reload 失败，已回滚: %s", strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 
@@ -87,6 +142,34 @@ func injectRateLimitToSites(burst int) {
 			}
 		}
 		os.WriteFile(configPath, []byte(strings.Join(result, "\n")), 0644)
+	}
+}
+
+func stripRateLimitFromSites() {
+	sitesDir := "/etc/nginx/sites-available"
+	entries, err := os.ReadDir(sitesDir)
+	if err != nil {
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		configPath := filepath.Join(sitesDir, entry.Name())
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(data), "\n")
+		var cleaned []string
+		for _, line := range lines {
+			if !strings.Contains(line, "limit_req zone=wp_req_limit") &&
+				!strings.Contains(line, "limit_req_status 429") {
+				cleaned = append(cleaned, line)
+			}
+		}
+		os.WriteFile(configPath, []byte(strings.Join(cleaned, "\n")), 0644)
 	}
 }
 

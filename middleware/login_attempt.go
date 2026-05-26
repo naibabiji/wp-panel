@@ -3,9 +3,10 @@ package middleware
 import (
 	"database/sql"
 	"fmt"
-	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/naibabiji/wp-panel/executor"
 )
 
 type LoginAttemptTracker struct {
@@ -79,8 +80,7 @@ func (t *LoginAttemptTracker) banIP(ip string, attemptType string) {
 		ip, reason, expiresAt,
 	)
 
-	exec.Command("bash", "-c",
-		fmt.Sprintf("nft add element ip wppanel_persist banned_ips { %s } 2>/dev/null; true", ip)).Run()
+	executor.AddPersistBan(ip)
 }
 
 func (t *LoginAttemptTracker) CleanupOldAttempts() {

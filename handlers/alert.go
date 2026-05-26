@@ -1,9 +1,13 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
+	"net/mail"
+	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/executor"
@@ -42,18 +46,102 @@ func (h *AlertHandler) SaveSettings(c *gin.Context) {
 
 	db := database.GetDB()
 	for key, val := range raw {
-		var strVal string
-		switch v := val.(type) {
-		case string:
-			strVal = v
-		case bool:
-			strVal = strconv.FormatBool(v)
-		default:
+		strVal, ok, err := normalizeAlertSetting(key, val)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+			return
+		}
+		if !ok {
 			continue
 		}
-		db.Exec("INSERT INTO security_settings (skey, svalue, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(skey) DO UPDATE SET svalue = excluded.svalue, updated_at = excluded.updated_at", key, strVal)
+		if _, err := db.Exec("INSERT INTO security_settings (skey, svalue, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(skey) DO UPDATE SET svalue = excluded.svalue, updated_at = excluded.updated_at", key, strVal); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("告警设置保存失败"))
+			return
+		}
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
+}
+
+func normalizeAlertSetting(key string, val interface{}) (string, bool, error) {
+	switch key {
+	case "smtp_host", "smtp_user", "smtp_pass":
+		v, err := normalizePlainString(val, 300, key)
+		return v, true, err
+	case "smtp_port":
+		v, err := normalizePlainString(val, 10, key)
+		if err != nil {
+			return "", false, err
+		}
+		port, err := strconv.Atoi(v)
+		if err != nil || port < 1 || port > 65535 {
+			return "", false, fmt.Errorf("SMTP 端口不正确")
+		}
+		return v, true, nil
+	case "smtp_encryption":
+		v, err := normalizePlainString(val, 20, key)
+		if err != nil {
+			return "", false, err
+		}
+		if v != "starttls" && v != "ssl" && v != "none" {
+			return "", false, fmt.Errorf("SMTP 加密方式不正确")
+		}
+		return v, true, nil
+	case "admin_email":
+		v, err := normalizePlainString(val, 300, key)
+		if err != nil {
+			return "", false, err
+		}
+		if v != "" {
+			if _, err := mail.ParseAddress(v); err != nil {
+				return "", false, fmt.Errorf("管理员邮箱格式不正确")
+			}
+		}
+		return v, true, nil
+	case "webhook_enabled":
+		v, err := normalizeBool(val)
+		return v, true, err
+	case "webhook_channel":
+		v, err := normalizePlainString(val, 30, key)
+		if err != nil {
+			return "", false, err
+		}
+		switch v {
+		case "wecom", "dingtalk", "feishu", "serverchan", "bark", "custom":
+			return v, true, nil
+		default:
+			return "", false, fmt.Errorf("Webhook 渠道不正确")
+		}
+	case "webhook_url":
+		v, err := normalizePlainString(val, 1000, key)
+		if err != nil {
+			return "", false, err
+		}
+		if v != "" {
+			u, err := url.Parse(v)
+			if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+				return "", false, fmt.Errorf("Webhook URL 格式不正确")
+			}
+		}
+		return v, true, nil
+	case "alert_cpu", "alert_memory", "alert_disk", "alert_service", "alert_ssl",
+		"alert_backup", "alert_website_expiry", "alert_remote_backup", "alert_cron_fail", "alert_site":
+		v, err := normalizeBool(val)
+		return v, true, err
+	default:
+		return "", false, nil
+	}
+}
+
+func normalizePlainString(val interface{}, maxLen int, field string) (string, error) {
+	v, ok := val.(string)
+	if !ok {
+		return "", fmt.Errorf("%s 格式不正确", field)
+	}
+	v = strings.TrimSpace(v)
+	if len(v) > maxLen || strings.ContainsAny(v, "\x00\r\n") {
+		return "", fmt.Errorf("%s 格式不正确", field)
+	}
+	return v, nil
 }
 
 func (h *AlertHandler) TestSMTP(c *gin.Context) {
