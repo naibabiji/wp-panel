@@ -61,11 +61,21 @@ func resolvePathForAccess(path string) (string, error) {
 	if resolved, err := filepath.EvalSymlinks(cleanPath); err == nil {
 		return resolved, nil
 	}
-	parent, err := filepath.EvalSymlinks(filepath.Dir(cleanPath))
-	if err != nil {
-		return "", err
+	// 向上逐级查找第一个存在的目录
+	for p := filepath.Dir(cleanPath); ; p = filepath.Dir(p) {
+		resolved, err := filepath.EvalSymlinks(p)
+		if err == nil {
+			rel, relErr := filepath.Rel(p, cleanPath)
+			if relErr != nil {
+				return "", relErr
+			}
+			return filepath.Join(resolved, rel), nil
+		}
+		if p == "/" || p == "." {
+			// 根目录不存在则无法验证，退回到 Clean 结果
+			return cleanPath, nil
+		}
 	}
-	return filepath.Join(parent, filepath.Base(cleanPath)), nil
 }
 
 func (h *FileHandler) List(c *gin.Context) {
