@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/models"
 
@@ -84,6 +85,7 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新BasicAuth用户名失败"))
 			return
 		}
+		config.AppConfig.BasicAuth.Username = *req.BasicAuthUser
 	}
 
 	if req.NewPassword != nil && *req.NewPassword != "" {
@@ -131,6 +133,7 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新BasicAuth密码失败"))
 			return
 		}
+		config.AppConfig.BasicAuth.PasswordHash = string(newHash)
 	}
 
 	var tzRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_/+\\-]+(/[A-Za-z][A-Za-z0-9_/+\\-]+)*$`)
