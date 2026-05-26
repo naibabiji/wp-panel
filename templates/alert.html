@@ -223,9 +223,10 @@ function alertManager() {
                 if (r.success) {
                     const d = r.data || {};
                     for (const k of Object.keys(d)) {
-                        if (k.startsWith('alert_')) d[k] = d[k] !== 'false';
+                        if (k.startsWith('alert_')) {
+                            this.rules[k] = d[k] !== 'false';
+                        }
                     }
-                    this.rules = d;
                 }
             } catch(e) {}
             this.fetchLog();
