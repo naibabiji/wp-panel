@@ -223,10 +223,14 @@ func resetAllAdmin(cfg *config.Config) {
 	var count int
 	db.QueryRow("SELECT COUNT(*) FROM admin_users").Scan(&count)
 	if count == 0 {
-		db.Exec("INSERT INTO admin_users (username, password_hash) VALUES (?, ?)", username, string(webHash))
+		_, err = db.Exec("INSERT INTO admin_users (username, password_hash) VALUES (?, ?)", username, string(webHash))
 	} else {
-		db.Exec("UPDATE admin_users SET username = ?, password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1",
+		_, err = db.Exec("UPDATE admin_users SET username = ?, password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1",
 			username, string(webHash))
+	}
+	if err != nil {
+		fmt.Printf("错误: 更新数据库失败: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Update config.json (BasicAuth)
