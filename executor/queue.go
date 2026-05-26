@@ -208,30 +208,7 @@ func buildSiteName(domain string) string {
 			name += string(c + 32)
 		}
 	}
-	parts := splitString(name, "_")
-	if len(parts) > 0 {
-		return parts[0]
-	}
 	return name
-}
-
-func splitString(s string, sep string) []string {
-	var result []string
-	current := ""
-	for _, c := range s {
-		if string(c) == sep {
-			if current != "" {
-				result = append(result, current)
-				current = ""
-			}
-		} else {
-			current += string(c)
-		}
-	}
-	if current != "" {
-		result = append(result, current)
-	}
-	return result
 }
 
 func fileExists(path string) bool {
