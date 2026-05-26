@@ -81,7 +81,7 @@ function showToast(message, type = 'info') {
         info: 'background:#1e3a5f;border-color:#2563eb;color:#bfdbfe;',
     };
     const toast = document.createElement('div');
-    toast.style.cssText = 'position:fixed;top:16px;right:16px;z-index:9999;padding:12px 16px;border-radius:8px;border:1px solid;box-shadow:0 4px 12px rgba(0,0,0,0.3);' + (colors[type] || colors.info);
+    toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;padding:12px 24px;border-radius:8px;border:1px solid;box-shadow:0 4px 12px rgba(0,0,0,0.3);transition:opacity 0.3s;' + (colors[type] || colors.info);
     toast.textContent = message;
     document.body.appendChild(toast);
     setTimeout(() => {
