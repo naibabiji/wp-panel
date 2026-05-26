@@ -223,7 +223,6 @@ class WP_Panel_Optimizer {
                                 XML-RPC 是 WordPress 远程通信接口。关闭后 Nginx 直接返回 403，请求不到 PHP-FPM，可彻底防御 xmlrpc.php 暴力攻击。<br>
                                 影响：<strong>无法使用 Jetpack、WordPress 手机 App、pingback/trackback、第三方通过 XML-RPC 发布文章</strong>。绝大多数站点不需要此功能。<br>
                                 如需开启或关闭，请在 WP Panel 面板中打开网站详情页 → WordPress 优化 →「允许 XML-RPC 接口」开关。<br>
-                                <?php if ($panelUrl): ?><a href="<?php echo esc_url($panelUrl); ?>" target="_blank">打开 WP Panel 面板 →</a><?php endif; ?>
                             </p>
                         </td>
                     </tr>
