@@ -20,7 +20,7 @@ func migratePluginConfigs() error {
 	}
 	defer rows.Close()
 
-	baseSecretsDir := "/www/server/panel/site-secrets"
+	baseSecretsDir := "/var/wp-panel/site-secrets"
 	os.MkdirAll(baseSecretsDir, 0711)
 	os.Chmod(baseSecretsDir, 0711)
 

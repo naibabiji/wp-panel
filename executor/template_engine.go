@@ -453,7 +453,7 @@ pm.max_spare_servers = 5
 pm.process_idle_timeout = 10s
 pm.max_requests = 500
 
-php_admin_value[open_basedir] = {{.WebRoot}}:/tmp:/usr/share/php:/www/server/panel/site-secrets/{{.Domain}}
+php_admin_value[open_basedir] = {{.WebRoot}}:/tmp:/usr/share/php:/var/wp-panel/site-secrets/{{.Domain}}
 php_admin_value[upload_max_filesize] = 64M
 php_admin_value[post_max_size] = 64M
 php_admin_value[max_execution_time] = 300

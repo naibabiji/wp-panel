@@ -34,7 +34,7 @@ class WP_Panel_Optimizer {
 
     private static function load_config() {
         $domain = wp_parse_url(home_url(), PHP_URL_HOST);
-        $file = '/www/server/panel/site-secrets/' . $domain . '/wp-panel-config.json';
+        $file = '/var/wp-panel/site-secrets/' . $domain . '/wp-panel-config.json';
         if (!file_exists($file)) return null;
         return json_decode(file_get_contents($file), true);
     }

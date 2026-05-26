@@ -703,7 +703,7 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 		"panel_url": panelURL,
 		"api_key":   apiKey,
 	})
-	baseSecretsDir := "/www/server/panel/site-secrets"
+	baseSecretsDir := "/var/wp-panel/site-secrets"
 	secretsDir := filepath.Join(baseSecretsDir, domain)
 	os.MkdirAll(baseSecretsDir, 0711)
 	os.Chmod(baseSecretsDir, 0711)
