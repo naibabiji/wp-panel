@@ -19,6 +19,7 @@ function wpp_optimizer_uninstall() {
     delete_option('wpp_optimizer_no_file_edit');
     delete_option('wpp_optimizer_verified');
     delete_option('wpp_optimizer_log');
+    delete_option('wpp_optimizer_xmlrpc_enabled');
 }
 
 class WP_Panel_Optimizer {
@@ -31,6 +32,7 @@ class WP_Panel_Optimizer {
     const OPTION_NO_FILE_EDIT   = 'wpp_optimizer_no_file_edit';
     const OPTION_VERIFIED       = 'wpp_optimizer_verified';
     const OPTION_LOG            = 'wpp_optimizer_log';
+    const OPTION_XMLRPC_ENABLED = 'wpp_optimizer_xmlrpc_enabled';
 
     private static function load_config() {
         $domain = wp_parse_url(home_url(), PHP_URL_HOST);
@@ -134,6 +136,7 @@ class WP_Panel_Optimizer {
             update_option(self::OPTION_FCACHE_TTL, intval($panelState['fastcgi_cache_ttl'] ?? 300));
             update_option(self::OPTION_NO_UPDATES, !empty($panelState['disable_wp_updates']) ? '1' : '0');
             update_option(self::OPTION_NO_FILE_EDIT, !empty($panelState['disable_file_editing']) ? '1' : '0');
+            update_option(self::OPTION_XMLRPC_ENABLED, !empty($panelState['xmlrpc_enabled']) ? '1' : '0');
         }
 
         $notice = '';
@@ -213,6 +216,19 @@ class WP_Panel_Optimizer {
                         <td>
                             <label><input id="wpp-no-file-edit" name="no_file_edit" type="checkbox" value="1" <?php checked($noFileEdit); ?>> 禁止在 WordPress 后台编辑主题和插件文件</label>
                             <p class="description">面板将写入 <code>DISALLOW_FILE_EDIT</code> 常量到 wp-config.php。</p>
+                        </td>
+                    </tr>
+                    <?php $xmlrpcEnabled = get_option('wpp_optimizer_xmlrpc_enabled', '0') === '1'; ?>
+                    <tr>
+                        <th>XML-RPC 接口</th>
+                        <td>
+                            <span style="font-weight:bold;color:<?php echo $xmlrpcEnabled ? '#00a32a' : '#d63638'; ?>"><?php echo $xmlrpcEnabled ? '已开启' : '已关闭'; ?></span>
+                            <p class="description">
+                                XML-RPC 是 WordPress 远程通信接口。关闭后 Nginx 直接返回 403，请求不到 PHP-FPM，可彻底防御 xmlrpc.php 暴力攻击。<br>
+                                影响：<strong>无法使用 Jetpack、WordPress 手机 App、pingback/trackback、第三方通过 XML-RPC 发布文章</strong>。绝大多数站点不需要此功能。<br>
+                                如需开启或关闭，请在 WP Panel 面板中打开网站详情页 → WordPress 优化 →「允许 XML-RPC 接口」开关。<br>
+                                <?php if ($panelUrl): ?><a href="<?php echo esc_url($panelUrl); ?>" target="_blank">打开 WP Panel 面板 →</a><?php endif; ?>
+                            </p>
                         </td>
                     </tr>
                 </table>
