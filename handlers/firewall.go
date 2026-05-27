@@ -75,6 +75,9 @@ func (h *FirewallHandler) Unban(c *gin.Context) {
 		case "wppanel", "wppanel-404", "wppanel-sshd":
 			executor.Execute("fail2ban-client", "set", jail, "unbanip", ip)
 		}
+		if jail == "wppanel" || jail == "wppanel-404" {
+			executor.RemoveNginxBan(ip)
+		}
 		executor.RemovePersistBan(ip)
 	}()
 
@@ -110,8 +113,8 @@ func (h *FirewallHandler) PermanentBan(c *gin.Context) {
 	}
 
 	db := database.GetDB()
-	var ip string
-	err = db.QueryRow("SELECT ip_address FROM firewall_bans WHERE id = ?", id).Scan(&ip)
+	var ip, jail string
+	err = db.QueryRow("SELECT ip_address, source_jail FROM firewall_bans WHERE id = ?", id).Scan(&ip, &jail)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("封禁记录不存在"))
 		return
@@ -125,6 +128,9 @@ func (h *FirewallHandler) PermanentBan(c *gin.Context) {
 	}
 
 	go executor.AddPersistBan(ip)
+	if jail == "wppanel" || jail == "wppanel-404" {
+		go executor.AddNginxBan(ip)
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "IP " + ip + " 已加入永久黑名单"}))
 }

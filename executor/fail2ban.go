@@ -16,10 +16,13 @@ import (
 func deployFail2ban(whitelistIPs string, maxRetry, findTime, banTime int) error {
 	jailDir := "/etc/fail2ban/jail.d"
 	filterDir := "/etc/fail2ban/filter.d"
+	actionDir := "/etc/fail2ban/action.d"
 	os.MkdirAll(jailDir, 0755)
 	os.MkdirAll(filterDir, 0755)
+	os.MkdirAll(actionDir, 0755)
 
 	ensureLogFiles()
+	_ = EnsureNginxBannedIPsConfig()
 
 	ignoreIPs := "127.0.0.1/8"
 	if whitelistIPs != "" {
@@ -57,6 +60,7 @@ func deployFail2ban(whitelistIPs string, maxRetry, findTime, banTime int) error 
 enabled = true
 filter = wppanel
 action = nftables-multiport[name=wppanel, port="http,https"]
+         wppanel-nginx
 logpath = /www/wwwlogs/*/access.log
           /www/wwwlogs/*/error.log
 maxretry = %d
@@ -68,6 +72,7 @@ ignoreip = %s
 enabled = true
 filter = wppanel-404
 action = nftables-multiport[name=wppanel-404, port="http,https"]
+         wppanel-nginx
 logpath = /www/wwwlogs/*/access.log
 maxretry = 30
 findtime = 60
@@ -87,6 +92,16 @@ ignoreip = %s
 
 	if err := os.WriteFile(jailDir+"/wppanel.conf", []byte(jailConfig), 0644); err != nil {
 		return fmt.Errorf("写入 jail 配置失败: %w", err)
+	}
+
+	actionConfig := `# WP Panel Generated - DO NOT EDIT MANUALLY
+[Definition]
+actionban = /usr/local/bin/wp-panel --banip-nginx <ip>
+actionunban = /usr/local/bin/wp-panel --unbanip-nginx <ip>
+`
+
+	if err := os.WriteFile(actionDir+"/wppanel-nginx.conf", []byte(actionConfig), 0644); err != nil {
+		return fmt.Errorf("写入 nginx action 配置失败: %w", err)
 	}
 
 	filterConfig := `# WP Panel Generated — DO NOT EDIT MANUALLY
@@ -159,6 +174,11 @@ func executeRefreshWhitelist(task *Task) TaskResult {
 	if cfIPs, err := fetchCloudflareIPs(); err == nil {
 		allIPs = append(allIPs, cfIPs...)
 		details = append(details, fmt.Sprintf("Cloudflare: %d 条", len(cfIPs)))
+		if err := DeployCloudflareRealIPConfig(cfIPs); err != nil {
+			details = append(details, "Cloudflare Real IP: 配置失败")
+		} else {
+			details = append(details, "Cloudflare Real IP: 已更新")
+		}
 	} else {
 		details = append(details, "Cloudflare: 获取失败")
 	}
@@ -230,21 +250,26 @@ func ApplyFail2banSettings() error {
 
 func SyncFail2banBans() {
 	ipJails := make(map[string]string)
+	webBannedSet := make(map[string]bool)
+	webJailStatusRead := false
 
 	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-sshd"} {
 		out, err := executeCommand("fail2ban-client", "status", jail)
 		if err != nil || out == "" {
 			continue
 		}
+		isWebJail := jail == "wppanel" || jail == "wppanel-404"
+		if isWebJail {
+			webJailStatusRead = true
+		}
 		for _, ip := range parseBannedIPs(out) {
 			if _, exists := ipJails[ip]; !exists {
 				ipJails[ip] = jail
 			}
+			if isWebJail {
+				webBannedSet[ip] = true
+			}
 		}
-	}
-
-	if len(ipJails) == 0 {
-		return
 	}
 
 	bannedSet := make(map[string]bool, len(ipJails))
@@ -311,7 +336,7 @@ func SyncFail2banBans() {
 		}
 	}
 
-	rows, err := db.Query("SELECT id, ip_address, ban_level, expires_at, is_manual FROM firewall_bans WHERE unbanned_at IS NULL")
+	rows, err := db.Query("SELECT id, ip_address, ban_level, expires_at, is_manual, source_jail FROM firewall_bans WHERE unbanned_at IS NULL")
 	if err != nil {
 		return
 	}
@@ -320,24 +345,36 @@ func SyncFail2banBans() {
 	var expiredIDs []int
 	for rows.Next() {
 		var id, level, isManual int
-		var ip string
+		var ip, jail string
 		var expiresAt *time.Time
-		if rows.Scan(&id, &ip, &level, &expiresAt, &isManual) != nil {
+		if rows.Scan(&id, &ip, &level, &expiresAt, &isManual, &jail) != nil {
 			continue
 		}
 		if bannedSet[ip] {
+			if jail == "wppanel" || jail == "wppanel-404" {
+				webBannedSet[ip] = true
+			}
 			continue
 		}
 		if level >= 3 {
 			if expiresAt == nil || expiresAt.After(now) {
 				if nftablesSet != nil && nftablesSet[ip] {
+					if jail == "wppanel" || jail == "wppanel-404" {
+						webBannedSet[ip] = true
+					}
 					continue
 				}
 				if nftablesSet != nil && !nftablesSet[ip] {
 					AddPersistBan(ip)
+					if jail == "wppanel" || jail == "wppanel-404" {
+						webBannedSet[ip] = true
+					}
 					continue
 				}
 				AddPersistBan(ip)
+				if jail == "wppanel" || jail == "wppanel-404" {
+					webBannedSet[ip] = true
+				}
 				continue
 			}
 			RemovePersistBan(ip)
@@ -347,6 +384,9 @@ func SyncFail2banBans() {
 
 	for _, id := range expiredIDs {
 		db.Exec("UPDATE firewall_bans SET unbanned_at = datetime('now') WHERE id = ?", id)
+	}
+	if webJailStatusRead || len(webBannedSet) > 0 {
+		_ = ReplaceNginxBannedIPs(webBannedSet)
 	}
 }
 
@@ -520,7 +560,8 @@ func executeManualBan(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "IP 地址格式不正确"}
 	}
 
-	out, err := executeCommand("fail2ban-client", "set", "wppanel", "banip", ip)
+	jail := "wppanel"
+	out, err := executeCommand("fail2ban-client", "set", jail, "banip", ip)
 	if err != nil {
 		return TaskResult{Success: false, Message: "封禁失败: " + out}
 	}
@@ -548,12 +589,15 @@ func executeManualBan(task *Task) TaskResult {
 
 	db.Exec(
 		`INSERT INTO firewall_bans (ip_address, ban_level, reason, source_jail, is_manual, ban_count, expires_at)
-		 VALUES (?, ?, '管理员手动封禁', 'wppanel', 1, 1, ?)`,
-		ip, banLevel, expires,
+		 VALUES (?, ?, '管理员手动封禁', ?, 1, 1, ?)`,
+		ip, banLevel, jail, expires,
 	)
 
 	if banLevel >= 3 {
 		AddPersistBan(ip)
+	}
+	if jail == "wppanel" || jail == "wppanel-404" {
+		_ = AddNginxBan(ip)
 	}
 
 	msg := fmt.Sprintf("IP %s 已封禁", ip)
@@ -617,6 +661,7 @@ func UnbanAllIPs() string {
 	}
 
 	exec.Command("bash", "-c", "nft flush set ip wppanel_persist banned_ips 2>/dev/null; true").Run()
+	_ = ReplaceNginxBannedIPs(map[string]bool{})
 
 	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-sshd"} {
 		out, err := executeCommand("fail2ban-client", "status", jail)
@@ -651,6 +696,9 @@ func CleanExpiredBans() {
 
 		if jail == "panel_scan" || jail == "panel" {
 			RemovePersistBan(ip)
+		}
+		if jail == "wppanel" || jail == "wppanel-404" {
+			_ = RemoveNginxBan(ip)
 		}
 	}
 }

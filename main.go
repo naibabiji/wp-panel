@@ -35,9 +35,24 @@ func main() {
 	resetAdmin := flag.Bool("reset-admin", false, "一键重置管理员账号密码")
 	refreshWhitelist := flag.Bool("refresh-whitelist", false, "手动触发白名单刷新")
 	unbanAll := flag.Bool("unban-all", false, "一键清空所有IP封禁记录")
+	banIPNginx := flag.String("banip-nginx", "", "将指定 IP 加入 Nginx 黑名单")
+	unbanIPNginx := flag.String("unbanip-nginx", "", "从 Nginx 黑名单移除指定 IP")
 	fileBackup := flag.String("file-backup", "", "执行文件备份: siteID:mode")
 	showInfo := flag.Bool("info", false, "查看面板信息")
 	flag.Parse()
+
+	if *banIPNginx != "" {
+		if err := executor.AddNginxBan(*banIPNginx); err != nil {
+			log.Fatalf("Nginx 封禁失败: %v", err)
+		}
+		return
+	}
+	if *unbanIPNginx != "" {
+		if err := executor.RemoveNginxBan(*unbanIPNginx); err != nil {
+			log.Fatalf("Nginx 解封失败: %v", err)
+		}
+		return
+	}
 
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
@@ -107,13 +122,13 @@ func main() {
 		parts := strings.SplitN(*fileBackup, ":", 3)
 		if len(parts) >= 2 {
 			siteID, _ := strconv.Atoi(parts[0])
-				keepCount := 3
-				if len(parts) >= 3 {
-					keepCount, _ = strconv.Atoi(parts[2])
-				}
-				if keepCount <= 0 {
-					keepCount = 3
-				}
+			keepCount := 3
+			if len(parts) >= 3 {
+				keepCount, _ = strconv.Atoi(parts[2])
+			}
+			if keepCount <= 0 {
+				keepCount = 3
+			}
 			msg, err := executor.ExecuteFileBackup(siteID, parts[1], keepCount)
 			if err != nil {
 				log.Printf("文件备份失败: %v", err)
@@ -133,13 +148,18 @@ func main() {
 
 	collector.Start()
 
+	executor.ApplyFail2banSettings()
+	executor.EnsureLogMap()
+	if err := executor.EnsureNginxBannedIPsConfig(); err != nil {
+		log.Printf("Nginx 黑名单初始化失败: %v", err)
+	}
+	if err := executor.EnsureCloudflareRealIPConfig(); err != nil {
+		log.Printf("Cloudflare Real IP 配置跳过: %v", err)
+	}
+	executor.EnsureFastCGICacheConfig()
 	// 升级后重建全部 Nginx 和 PHP-FPM 配置，确保新模板规则对旧站生效
 	go executor.RegenerateAllSitesNginx()
 	go executor.RegenerateAllSitesFPM()
-
-	executor.ApplyFail2banSettings()
-	executor.EnsureLogMap()
-	executor.EnsureFastCGICacheConfig()
 	log.Println("Nginx 日志 map 配置已就绪")
 	log.Println("FastCGI 缓存配置已就绪")
 	log.Println("Fail2ban 配置初始化完成")

@@ -8,6 +8,8 @@ server {
 
     server_name {{.ServerNames}};
 
+    if ($wppanel_banned_ip) { return 444; }
+
     {{if .RateLimitEnabled}}
     limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
     limit_req_status 429;
@@ -85,6 +87,8 @@ server {
     listen [::]:80;
     server_name {{.ServerNames}};
 
+    if ($wppanel_banned_ip) { return 444; }
+
     {{if .RateLimitEnabled}}
     limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
     limit_req_status 429;
@@ -100,6 +104,8 @@ server {
     listen [::]:443 ssl http2;
 
     server_name {{.ServerNames}};
+
+    if ($wppanel_banned_ip) { return 444; }
 
     {{if .RateLimitEnabled}}
     limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
