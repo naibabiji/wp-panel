@@ -43,9 +43,9 @@
                     <ul class="space-y-1 ml-2">
                         <li><span class="text-blue-400">Fail2ban</span> — 管理网站防护封禁（jail: <code class="text-gray-300">wppanel</code>、<code class="text-gray-300">wppanel-404</code>）和 SSH 防护封禁（jail: <code class="text-gray-300">wppanel-sshd</code>），到期自动释放</li>
                         <li><span class="text-purple-400">Nftables 持久</span> — 管理永久封禁、扫描防御封禁（来源: <code class="text-gray-300">panel_scan</code>）和面板认证封禁（来源: <code class="text-gray-300">panel</code>），独立于 Fail2ban，到期自动解除</li>
-                        <li><span class="text-green-400">Nginx 黑名单</span> — 与 Fail2ban 联动，Web 防护 jail 封禁时同步写入 Nginx geo 黑名单，被禁 IP 直接返回 <code class="text-gray-300">444</code>（关闭连接），确保 Cloudflare 等 CDN 代理场景下也能有效拦截</li>
+                        <li><span class="text-green-400">Nginx 黑名单</span> — 与 Fail2ban 联动，Web 防护 jail 封禁时同步写入 Nginx geo 黑名单，被禁 IP 直接返回 <code class="text-gray-300">444</code>（关闭连接），确保 Cloudflare 代理场景下也能有效拦截</li>
                     </ul>
-                    <p class="text-gray-500 mt-1">三条通道同时生效：Nftables 拦截直连源站的请求，Nginx 拦截经 CDN 转发的请求，Fail2ban 到期自动释放。</p>
+                    <p class="text-gray-500 mt-1">三条通道同时生效：Nftables 拦截直连源站的请求，Nginx 拦截经 Cloudflare 转发的请求，Fail2ban 到期自动释放。</p>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">Cloudflare 场景说明</p>
