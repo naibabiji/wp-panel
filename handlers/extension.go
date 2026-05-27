@@ -84,6 +84,7 @@ func (h *ExtensionHandler) Reset(c *gin.Context) {
 		('plugin', 'wordpress-seo',     'Yoast SEO',        1),
 		('plugin', 'seo-by-rank-math',  'Rank Math SEO',    1),
 		('plugin', 'woocommerce',       'WooCommerce',      1),
-		('plugin', 'naibabiji-b2b-product-showcase', 'B2B Product Catalog', 1)`)
+		('plugin', 'naibabiji-b2b-product-showcase', 'B2B Product Catalog', 1),
+		('plugin', 'redis-cache',          'Redis Cache',      1)`)
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已恢复默认配置"}))
 }
