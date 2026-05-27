@@ -56,6 +56,14 @@ var upgrades = []Upgrade{
 			`ALTER TABLE websites ADD COLUMN xmlrpc_enabled INTEGER NOT NULL DEFAULT 0`,
 		},
 	},
+	{
+		Version:     "1.0.3",
+		Description: "cron_jobs 补充 running 列 + 默认插件新增 Redis Cache",
+		SQL: []string{
+			`ALTER TABLE cron_jobs ADD COLUMN running INTEGER NOT NULL DEFAULT 0`,
+			`INSERT OR IGNORE INTO wp_extension_config (etype, slug, name, enabled) VALUES ('plugin', 'redis-cache', 'Redis Cache', 1)`,
+		},
+	},
 }
 
 // LatestVersion 返回 upgrades 列表中的最新版本号。

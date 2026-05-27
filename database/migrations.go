@@ -76,7 +76,6 @@ var migrations = []string{
 		FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE SET NULL
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_cron_jobs_enabled ON cron_jobs(enabled)`,
-	`ALTER TABLE cron_jobs ADD COLUMN running INTEGER NOT NULL DEFAULT 0`,
 
 	// ============================================================
 	// monitoring_metrics
@@ -292,7 +291,8 @@ var migrations = []string{
 		('plugin', 'wordpress-seo',     'Yoast SEO',        1),
 		('plugin', 'seo-by-rank-math',  'Rank Math SEO',    1),
 		('plugin', 'woocommerce',       'WooCommerce',      1),
-		('plugin', 'naibabiji-b2b-product-showcase', 'B2B Product Catalog', 1)`,
+		('plugin', 'naibabiji-b2b-product-showcase', 'B2B Product Catalog', 1),
+		('plugin', 'redis-cache',          'Redis Cache',      1)`,
 
 	// 远程备份设置
 	`CREATE TABLE IF NOT EXISTS remote_backup_settings (
