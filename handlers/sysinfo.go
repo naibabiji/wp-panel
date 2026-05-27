@@ -4,13 +4,57 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
+var (
+	prevCPUIdle  float64
+	prevCPUTotal float64
+	cpuMu        sync.Mutex
+)
+
 func readCPUPercent() (float64, error) {
-	data, err := os.ReadFile("/proc/stat")
+	idle, total, err := readCPUTicks()
 	if err != nil {
 		return 0, err
+	}
+	if total == 0 {
+		return 0, nil
+	}
+
+	cpuMu.Lock()
+	if prevCPUTotal == 0 {
+		prevCPUTotal, prevCPUIdle = total, idle
+		cpuMu.Unlock()
+		time.Sleep(200 * time.Millisecond)
+		idle, total, err = readCPUTicks()
+		if err != nil {
+			return 0, err
+		}
+		cpuMu.Lock()
+	}
+	deltaTotal := total - prevCPUTotal
+	deltaIdle := idle - prevCPUIdle
+	prevCPUTotal, prevCPUIdle = total, idle
+	cpuMu.Unlock()
+	if deltaTotal <= 0 {
+		return 0, nil
+	}
+	pct := (1 - deltaIdle/deltaTotal) * 100
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	return pct, nil
+}
+
+func readCPUTicks() (float64, float64, error) {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return 0, 0, err
 	}
 
 	lines := strings.Split(string(data), "\n")
@@ -28,12 +72,10 @@ func readCPUPercent() (float64, error) {
 					idle = v
 				}
 			}
-			if total > 0 {
-				return (1 - idle/total) * 100, nil
-			}
+			return idle, total, nil
 		}
 	}
-	return 0, nil
+	return 0, 0, nil
 }
 
 func readMemoryStats() (int64, int64, float64) {
@@ -110,8 +152,4 @@ func readUptime() int64 {
 
 func readDiskIO() (int64, int64) {
 	return 0, 0
-}
-
-func init() {
-	time.Local = time.FixedZone("CST", 8*3600)
 }

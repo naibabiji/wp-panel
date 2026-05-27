@@ -12,10 +12,12 @@ import (
 )
 
 type alertRule struct {
-	key       string
-	checkFn   func() (firing bool, msg string)
-	lastFired time.Time
-	firing    bool
+	key               string
+	checkFn           func() (firing bool, msg string)
+	thresholdDuration time.Duration
+	pendingSince      time.Time
+	lastFired         time.Time
+	firing            bool
 }
 
 type alertManager struct {
@@ -28,8 +30,8 @@ var alertMgr = &alertManager{stopCh: make(chan struct{})}
 
 func StartAlertMonitor() {
 	alertMgr.rules = []*alertRule{
-		{key: "alert_cpu", checkFn: checkCPU},
-		{key: "alert_memory", checkFn: checkMemory},
+		{key: "alert_cpu", checkFn: checkCPU, thresholdDuration: 5 * time.Minute},
+		{key: "alert_memory", checkFn: checkMemory, thresholdDuration: 5 * time.Minute},
 		{key: "alert_disk", checkFn: checkDisk},
 		{key: "alert_service", checkFn: checkService},
 		{key: "alert_ssl", checkFn: checkSSL},
@@ -72,14 +74,17 @@ func (m *alertManager) runChecks() {
 	for _, r := range m.rules {
 		if !isRuleEnabled(r.key) {
 			r.firing = false
+			r.pendingSince = time.Time{}
 			continue
 		}
 
-		firing, msg := r.checkFn()
+		instantFiring, msg := r.checkFn()
+		now := time.Now()
+		firing := r.sustainedFiring(instantFiring, now)
 		if firing && !r.firing {
 			// Transition: normal → alert
 			r.firing = true
-			r.lastFired = time.Now()
+			r.lastFired = now
 			logAlert(r.key, "critical", msg)
 			if hasSMTP {
 				go SendMail("", getPanelTitle()+" 告警 — "+alertLabel(r.key), msg)
@@ -112,6 +117,24 @@ func (m *alertManager) runChecks() {
 			}
 		}
 	}
+}
+
+func (r *alertRule) sustainedFiring(instantFiring bool, now time.Time) bool {
+	if r.thresholdDuration <= 0 {
+		if !instantFiring {
+			r.pendingSince = time.Time{}
+		}
+		return instantFiring
+	}
+	if !instantFiring {
+		r.pendingSince = time.Time{}
+		return false
+	}
+	if r.pendingSince.IsZero() {
+		r.pendingSince = now
+		return false
+	}
+	return now.Sub(r.pendingSince) >= r.thresholdDuration
 }
 
 func isRuleEnabled(key string) bool {
