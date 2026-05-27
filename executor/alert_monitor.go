@@ -204,11 +204,17 @@ func checkMemory() (bool, string) {
 }
 
 func toLocalTime(dbTime string) string {
-	t, err := time.Parse("2006-01-02 15:04:05", dbTime)
-	if err != nil {
-		return dbTime
+	layouts := []string{
+		"2006-01-02 15:04:05",
+		time.RFC3339,
 	}
-	return t.Local().Format("2006-01-02 15:04:05")
+	for _, layout := range layouts {
+		t, err := time.Parse(layout, dbTime)
+		if err == nil {
+			return t.Local().Format("2006-01-02 15:04:05")
+		}
+	}
+	return dbTime
 }
 
 func checkDisk() (bool, string) {
