@@ -122,7 +122,8 @@ function createWebsite() {
                 const resp = await api('/extensions');
                 if (resp.success) {
                     this.extensions = resp.data;
-                    this.installPlugins = ['redis-cache'];
+                    const redisPlugin = resp.data.find(e => e.etype === 'plugin' && e.slug === 'redis-cache' && e.enabled);
+                    if (redisPlugin) this.installPlugins = ['redis-cache'];
                 }
             } catch(e) {}
         },

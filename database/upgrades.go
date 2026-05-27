@@ -74,27 +74,33 @@ func LatestVersion() string {
 	return upgrades[len(upgrades)-1].Version
 }
 
-// newInstallColumn 从 upgrades 列表中提取最后一条 ALTER TABLE ADD COLUMN 的字段名，
+// newInstallCanary 从 upgrades 列表中提取最后一条 ALTER TABLE ADD COLUMN 的表名和字段名，
 // 用于判断数据库是否已包含最新 schema（新装检测的 canary 列）。
-func newInstallColumn() string {
+func newInstallCanary() (table, column string) {
 	for i := len(upgrades) - 1; i >= 0; i-- {
 		for _, sql := range upgrades[i].SQL {
 			upper := strings.ToUpper(strings.TrimSpace(sql))
 			if strings.HasPrefix(upper, "ALTER TABLE") && strings.Contains(upper, "ADD COLUMN") {
 				fields := strings.Fields(sql)
+				// ALTER TABLE <table> ADD COLUMN <column> ...
 				for j, f := range fields {
-					if strings.ToUpper(f) == "COLUMN" && j+1 < len(fields) {
-						col := fields[j+1]
-						if idx := strings.Index(col, "("); idx > 0 {
-							col = col[:idx]
-						}
-						return col
+					if strings.ToUpper(f) == "TABLE" && j+1 < len(fields) {
+						table = fields[j+1]
 					}
+					if strings.ToUpper(f) == "COLUMN" && j+1 < len(fields) {
+						column = fields[j+1]
+						if idx := strings.Index(column, "("); idx > 0 {
+							column = column[:idx]
+						}
+					}
+				}
+				if table != "" && column != "" {
+					return
 				}
 			}
 		}
 	}
-	return ""
+	return "", ""
 }
 
 func isBetaVersion(v string) bool {
@@ -122,9 +128,9 @@ func RunUpgrades() error {
 	// 新装检测：currentVersion 为空时，检查数据库是否已包含最新 schema。
 	// migrations.go 已全量建表，若最新升级中的字段已存在则说明是新装，无需执行任何升级。
 	if currentVersion == "" {
-		if col := newInstallColumn(); col != "" {
+		if table, col := newInstallCanary(); col != "" {
 			var exists int
-			DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('websites') WHERE name=?", col).Scan(&exists)
+			DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?", table, col).Scan(&exists)
 			if exists > 0 {
 				log.Printf("[升级] 新装数据库，跳过所有升级步骤")
 				DB.Exec("INSERT INTO schema_version (version) VALUES (?)", LatestVersion())
