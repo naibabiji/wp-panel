@@ -194,12 +194,19 @@ func executeAutoBackups() {
 	rows, err := db.Query(`SELECT bs.site_id, bs.keep_count, w.domain, w.db_name FROM backup_settings bs
 		JOIN websites w ON w.id = bs.site_id WHERE bs.enabled = 1`)
 	if err != nil {
+		log.Printf("自动备份: 查询 backup_settings 失败: %v", err)
 		return
 	}
 	defer rows.Close()
 
 	dbPass := readMariaDBPassword()
+	if dbPass == "" {
+		log.Printf("自动备份: 无法读取 MariaDB root 密码，跳过")
+		return
+	}
 
+	count := 0
+	failCount := 0
 	for rows.Next() {
 		var siteID, keepCount int
 		var domain, dbName string
@@ -219,9 +226,10 @@ func executeAutoBackups() {
 		cmd.Env = append(os.Environ(), "MYSQL_PWD="+dbPass)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
+			log.Printf("自动备份失败 [%s]: %s", domain, string(out))
+			failCount++
 			continue
 		}
-		_ = out
 
 		info, _ := os.Stat(filePath)
 		size := int64(0)
@@ -233,7 +241,9 @@ func executeAutoBackups() {
 
 		SyncBackupToRemote(filePath)
 		cleanupOldBackups(siteID, domain, keepCount)
+		count++
 	}
+	log.Printf("自动备份完成: 成功 %d, 失败 %d", count, failCount)
 }
 
 func getKeepCount(siteID int) int {
@@ -277,7 +287,11 @@ func StartAutoBackupScheduler() {
 	go func() {
 		for {
 			now := time.Now()
-			next := time.Date(now.Year(), now.Month(), now.Day()+1, 4, 0, 0, 0, now.Location())
+			next := time.Date(now.Year(), now.Month(), now.Day(), 4, 0, 0, 0, now.Location())
+			if now.After(next) {
+				next = next.Add(24 * time.Hour)
+			}
+			log.Printf("自动备份调度: 下次执行时间 %s", next.Format("2006-01-02 15:04:05"))
 			time.Sleep(next.Sub(now))
 			executeAutoBackups()
 		}
