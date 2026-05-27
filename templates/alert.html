@@ -156,16 +156,37 @@
 <script>
 function smtpConfig() {
     return {
-        cfg: {},
+        cfg: { smtp_host: '', smtp_port: '587', smtp_encryption: 'starttls', smtp_user: '', smtp_pass: '', admin_email: '' },
         saving: false,
         testing: false,
         async fetch() {
-            try { const r = await api('/alert/settings'); if (r.success) this.cfg = r.data || {}; } catch(e) {}
+            try {
+                const r = await api('/alert/settings');
+                if (r.success) {
+                    const d = r.data || {};
+                    this.cfg = {
+                        smtp_host: d.smtp_host || '',
+                        smtp_port: d.smtp_port || '587',
+                        smtp_encryption: d.smtp_encryption || 'starttls',
+                        smtp_user: d.smtp_user || '',
+                        smtp_pass: d.smtp_pass || '',
+                        admin_email: d.admin_email || ''
+                    };
+                }
+            } catch(e) {}
         },
         async save() {
             this.saving = true;
             try {
-                await api('/alert/settings', { method: 'PUT', body: this.cfg });
+                const body = {
+                    smtp_host: this.cfg.smtp_host || '',
+                    smtp_port: this.cfg.smtp_port || '587',
+                    smtp_encryption: this.cfg.smtp_encryption || 'starttls',
+                    smtp_user: this.cfg.smtp_user || '',
+                    smtp_pass: this.cfg.smtp_pass || '',
+                    admin_email: this.cfg.admin_email || ''
+                };
+                await api('/alert/settings', { method: 'PUT', body });
                 showToast('SMTP 配置已保存', 'success');
             } catch(e) { showToast(e.message, 'error'); }
             this.saving = false;

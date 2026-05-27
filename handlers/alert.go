@@ -64,7 +64,16 @@ func (h *AlertHandler) SaveSettings(c *gin.Context) {
 
 func normalizeAlertSetting(key string, val interface{}) (string, bool, error) {
 	switch key {
-	case "smtp_host", "smtp_user", "smtp_pass":
+	case "smtp_host":
+		v, err := normalizePlainString(val, 300, key)
+		if err != nil {
+			return "", false, err
+		}
+		if strings.EqualFold(v, "true") || strings.EqualFold(v, "false") {
+			return "", false, fmt.Errorf("SMTP 服务器地址不正确")
+		}
+		return v, true, nil
+	case "smtp_user", "smtp_pass":
 		v, err := normalizePlainString(val, 300, key)
 		return v, true, err
 	case "smtp_port":
