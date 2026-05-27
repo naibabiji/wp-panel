@@ -122,6 +122,8 @@ function createWebsite() {
                 const resp = await api('/extensions');
                 if (resp.success) {
                     this.extensions = resp.data;
+                    this.installThemes = resp.data.filter(e => e.etype === 'theme' && e.enabled).map(e => e.slug);
+                    this.installPlugins = resp.data.filter(e => e.etype === 'plugin' && e.enabled).map(e => e.slug);
                 }
             } catch(e) {}
         },
