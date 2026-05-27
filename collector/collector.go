@@ -59,6 +59,8 @@ func collect() {
 	}
 }
 
+var prevCPUIdle, prevCPUTotal float64
+
 func readCPUPercent() (float64, error) {
 	data, err := os.ReadFile("/proc/stat")
 	if err != nil {
@@ -79,9 +81,23 @@ func readCPUPercent() (float64, error) {
 					idle = v
 				}
 			}
-			if total > 0 {
-				return (1 - idle/total) * 100, nil
+			if total == 0 {
+				return 0, nil
 			}
+			deltaTotal := total - prevCPUTotal
+			deltaIdle := idle - prevCPUIdle
+			prevCPUTotal, prevCPUIdle = total, idle
+			if deltaTotal <= 0 {
+				return 0, nil
+			}
+			pct := (1 - deltaIdle/deltaTotal) * 100
+			if pct < 0 {
+				pct = 0
+			}
+			if pct > 100 {
+				pct = 100
+			}
+			return pct, nil
 		}
 	}
 	return 0, nil
