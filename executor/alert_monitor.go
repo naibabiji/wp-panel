@@ -97,10 +97,12 @@ func (m *alertManager) runChecks() {
 			r.firing = false
 			recoveryMsg := alertLabel(r.key) + " 已恢复正常"
 			logAlert(r.key, "info", recoveryMsg)
-			if hasSMTP && time.Since(r.lastFired) > 5*time.Minute {
+			// 即时告警（无阈值）直接发送恢复通知，有阈值的等 5 分钟防抖
+			sendRecovery := time.Since(r.lastFired) > 5*time.Minute || r.thresholdDuration <= 0
+			if hasSMTP && sendRecovery {
 				go SendMail("", getPanelTitle()+" 恢复通知", recoveryMsg)
 			}
-			if hasWebhook && time.Since(r.lastFired) > 5*time.Minute {
+			if hasWebhook && sendRecovery {
 				go SendWebhook(getPanelTitle()+" 恢复通知", recoveryMsg)
 			}
 		} else if firing && r.firing {
