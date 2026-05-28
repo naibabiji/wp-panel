@@ -109,6 +109,7 @@ func (m *alertManager) runChecks() {
 				go SendWebhook(getPanelTitle()+" 恢复通知", recoveryDetail)
 			}
 		} else if firing && r.firing {
+			r.lastAlertMsg = msg
 			// Continuous alert — re-send every 30 min
 			if time.Since(r.lastFired) > 30*time.Minute {
 				r.lastFired = time.Now()
@@ -381,31 +382,33 @@ func checkSSL() (bool, string) {
 
 func checkBackup() (bool, string) {
 	db := database.GetDB()
-	var totalCount int
-	db.QueryRow("SELECT COUNT(*) FROM db_backups WHERE auto = 1").Scan(&totalCount)
-	if totalCount == 0 {
+	rows, err := db.Query(`SELECT w.domain FROM backup_settings bs
+		JOIN websites w ON w.id = bs.site_id
+		WHERE bs.enabled = 1
+		AND EXISTS (
+			SELECT 1 FROM db_backups b
+			WHERE b.site_id = bs.site_id AND b.auto = 1
+		)
+		AND NOT EXISTS (
+			SELECT 1 FROM db_backups b
+			WHERE b.site_id = bs.site_id AND b.auto = 1
+			AND b.created_at > datetime('now', '-1 day')
+		)
+		ORDER BY w.domain`)
+	if err != nil {
 		return false, ""
 	}
-	var recentCount int
-	db.QueryRow("SELECT COUNT(*) FROM db_backups WHERE auto = 1 AND created_at > datetime('now', '-1 day')").Scan(&recentCount)
-	if recentCount == 0 {
-		rows, err := db.Query(`SELECT w.domain FROM backup_settings bs
-			JOIN websites w ON w.id = bs.site_id
-			WHERE bs.enabled = 1`)
-		if err != nil {
-			return false, ""
+	defer rows.Close()
+
+	var domains []string
+	for rows.Next() {
+		var d string
+		if rows.Scan(&d) == nil {
+			domains = append(domains, d)
 		}
-		defer rows.Close()
-		var domains []string
-		for rows.Next() {
-			var d string
-			if rows.Scan(&d) == nil {
-				domains = append(domains, d)
-			}
-		}
-		if len(domains) > 0 {
-			return true, strings.Join(domains, "、") + " 最近 24 小时内没有成功的自动备份"
-		}
+	}
+	if len(domains) > 0 {
+		return true, strings.Join(domains, "、") + " 最近 24 小时内没有成功的自动备份"
 	}
 	return false, ""
 }
@@ -491,6 +494,7 @@ func checkCronFail() (bool, string) {
 }
 
 var siteLastCheck = make(map[string]time.Time)
+var siteFailureMessages = make(map[string]string)
 
 func checkSites() (bool, string) {
 	db := database.GetDB()
@@ -501,20 +505,22 @@ func checkSites() (bool, string) {
 	defer rows.Close()
 
 	var msgs []string
+	seen := make(map[string]bool)
 	for rows.Next() {
 		var id, domain string
 		var ssl, interval int
 		if rows.Scan(&id, &domain, &ssl, &interval) != nil {
 			continue
 		}
+		seen[id] = true
 		if interval <= 0 {
 			interval = 5
 		}
 
-		if len(siteLastCheck) > 100 {
-			siteLastCheck = make(map[string]time.Time)
-		}
 		if last, ok := siteLastCheck[id]; ok && time.Since(last) < time.Duration(interval)*time.Minute {
+			if msg, ok := siteFailureMessages[id]; ok {
+				msgs = append(msgs, msg)
+			}
 			continue
 		}
 		siteLastCheck[id] = time.Now()
@@ -526,12 +532,30 @@ func checkSites() (bool, string) {
 		url := proto + "://" + domain + "/?wp_hc=" + strconv.FormatInt(time.Now().Unix(), 10)
 		out, err := exec.Command("curl", "-k", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10", "-A", "WP-Panel-HealthCheck/1.0", url).Output()
 		if err != nil {
-			msgs = append(msgs, fmt.Sprintf("%s 无法访问 (%v)", domain, err))
+			msg := fmt.Sprintf("%s 无法访问 (%v)", domain, err)
+			siteFailureMessages[id] = msg
+			msgs = append(msgs, msg)
 			continue
 		}
 		code, _ := strconv.Atoi(strings.TrimSpace(string(out)))
 		if code < 200 || code >= 400 {
-			msgs = append(msgs, fmt.Sprintf("%s 返回 %d", domain, code))
+			msg := fmt.Sprintf("%s 返回 %d", domain, code)
+			siteFailureMessages[id] = msg
+			msgs = append(msgs, msg)
+		} else {
+			delete(siteFailureMessages, id)
+		}
+	}
+	for id := range siteFailureMessages {
+		if !seen[id] {
+			delete(siteFailureMessages, id)
+		}
+	}
+	if len(siteLastCheck) > 100 {
+		for id := range siteLastCheck {
+			if !seen[id] {
+				delete(siteLastCheck, id)
+			}
 		}
 	}
 	if len(msgs) > 0 {

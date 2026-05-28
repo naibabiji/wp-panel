@@ -103,7 +103,7 @@ apt-get update && apt-get install -y wget ca-certificates && wget -qO- https://r
 | 内存 | 1 GB 及以上（低于自动创建 Swap） |
 | 架构 | x86_64 |
 
-> 面板基于 Debian 13 开发与测试。Debian 12 经判断应可正常运行，但未经全面测试。各云厂商魔改镜像可能导致未知问题。安装遇到困难时，建议使用 `bin456789/reinstall` 重装为纯净 Debian 后重试。
+> 面板基于 Debian 13 开发与测试。Debian 12 经判断应可正常运行，但未经全面测试。各云厂商魔改镜像可能导致未知问题。安装遇到困难时，建议使用 [bin456789/reinstall](https://github.com/bin456789/reinstall) 重装为纯净 Debian 后重试。
 
 ## 为什么选择这些技术方案
 
