@@ -3,6 +3,7 @@ package executor
 import (
 	"crypto/tls"
 	"fmt"
+	"html"
 	"net"
 	"net/smtp"
 
@@ -132,10 +133,19 @@ func authAndSend(client *smtp.Client, cfg *SMTPConfig, to, msg string) error {
 }
 
 func buildMessage(from, to, subject, body string) string {
-	return fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
+	return fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s",
 		from, to, subject, body)
 }
 
 func TestSMTP(to string) error {
-	return SendMail(to, getPanelTitle()+" — 测试邮件", "如果您收到这封邮件，说明 SMTP 配置正确。\n\n来自 "+getPanelTitle()+" 面板。")
+	panelTitle := html.EscapeString(getPanelTitle())
+	body := fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px; color: #333;">
+<p style="font-size: 15px;">如果您收到这封邮件，说明 SMTP 配置正确。</p>
+<p style="font-size: 12px; color: #aaa; margin-top: 20px;">— 来自 %s 面板</p>
+</body>
+</html>`, panelTitle)
+	return SendMail(to, getPanelTitle()+" — 测试邮件", body)
 }

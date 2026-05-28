@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"html"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ type alertRule struct {
 	pendingSince      time.Time
 	lastFired         time.Time
 	firing            bool
+	lastAlertMsg      string
 }
 
 type alertManager struct {
@@ -85,9 +87,10 @@ func (m *alertManager) runChecks() {
 			// Transition: normal → alert
 			r.firing = true
 			r.lastFired = now
+			r.lastAlertMsg = msg
 			logAlert(r.key, "critical", msg)
 			if hasSMTP {
-				go SendMail("", getPanelTitle()+" 告警 — "+alertLabel(r.key), msg)
+				go SendMail("", getPanelTitle()+" 告警 — "+alertLabel(r.key), formatEmailHTML(alertLabel(r.key), msg, getEmailTip(r.key, false), true))
 			}
 			if hasWebhook {
 				go SendWebhook(getPanelTitle()+" 告警 — "+alertLabel(r.key), msg)
@@ -95,15 +98,15 @@ func (m *alertManager) runChecks() {
 		} else if !firing && r.firing {
 			// Transition: alert → normal
 			r.firing = false
-			recoveryMsg := alertLabel(r.key) + " 已恢复正常"
-			logAlert(r.key, "info", recoveryMsg)
+			recoveryDetail := buildRecoveryDetail(r)
+			logAlert(r.key, "info", recoveryDetail)
 			// 即时告警（无阈值）直接发送恢复通知，有阈值的等 5 分钟防抖
 			sendRecovery := time.Since(r.lastFired) > 5*time.Minute || r.thresholdDuration <= 0
 			if hasSMTP && sendRecovery {
-				go SendMail("", getPanelTitle()+" 恢复通知", recoveryMsg)
+				go SendMail("", getPanelTitle()+" 恢复通知", formatEmailHTML(alertLabel(r.key)+" 已恢复正常", recoveryDetail, getEmailTip(r.key, true), false))
 			}
 			if hasWebhook && sendRecovery {
-				go SendWebhook(getPanelTitle()+" 恢复通知", recoveryMsg)
+				go SendWebhook(getPanelTitle()+" 恢复通知", recoveryDetail)
 			}
 		} else if firing && r.firing {
 			// Continuous alert — re-send every 30 min
@@ -111,7 +114,7 @@ func (m *alertManager) runChecks() {
 				r.lastFired = time.Now()
 				logAlert(r.key, "critical", msg)
 				if hasSMTP {
-					go SendMail("", getPanelTitle()+" 告警 — "+alertLabel(r.key)+"（持续中）", msg)
+					go SendMail("", getPanelTitle()+" 告警 — "+alertLabel(r.key)+"（持续中）", formatEmailHTML(alertLabel(r.key)+"（持续中）", msg, getEmailTip(r.key, false), true))
 				}
 				if hasWebhook {
 					go SendWebhook(getPanelTitle()+" 告警 — "+alertLabel(r.key)+"（持续中）", msg)
@@ -179,6 +182,101 @@ func logAlert(alertType, level, message string) {
 	db.Exec("INSERT INTO alert_log (alert_type, level, message) VALUES (?, ?, ?)", alertType, level, message)
 	// Keep last 30
 	db.Exec("DELETE FROM alert_log WHERE id NOT IN (SELECT id FROM alert_log ORDER BY id DESC LIMIT 30)")
+}
+
+func getEmailTip(key string, isRecovery bool) string {
+	switch key {
+	case "alert_cpu":
+		return "小提示：CPU 持续高负载可能是流量增长或被攻击的信号，建议登录面板查看实时趋势图。"
+	case "alert_memory":
+		return "小提示：内存不足可能是 PHP 进程或 Redis 占用过高，也可能是恶意爬虫大量请求所致，建议登录面板查看访问日志，排查异常流量。"
+	case "alert_disk":
+		return "小提示：优先清理旧备份文件和日志通常能快速释放大量空间，比升级硬盘更实际。"
+	case "alert_service":
+		if isRecovery {
+			return "小提示：问题解决后建议回顾日志，了解根因有助于预防再次发生。"
+		}
+		return "小提示：服务会自动尝试重启，若反复告警请登录面板查看对应日志排查根因。"
+	case "alert_ssl":
+		if isRecovery {
+			return "小提示：建议在日历中标注下次到期日，提前 30 天续签更从容。"
+		}
+		return "小提示：证书过期会导致浏览器「不安全」警告，影响访客信任和 SEO，建议尽快续签。"
+	case "alert_backup":
+		return "小提示：养成定期备份网站的好习惯，数据安全有备无患。"
+	case "alert_website_expiry":
+		if isRecovery {
+			return "小提示：养成定期备份网站的好习惯，数据安全有备无患。"
+		}
+		return "小提示：请及时提醒网站用户续费或备份数据，到期后网站将无法访问。"
+	case "alert_remote_backup":
+		return "小提示：养成定期备份网站的好习惯，数据安全有备无患。"
+	case "alert_cron_fail":
+		if isRecovery {
+			return "小提示：问题解决后建议回顾日志，了解根因有助于预防再次发生。"
+		}
+		return "小提示：计划任务失败可能是脚本错误或资源不足，建议查看执行日志定位原因。"
+	case "alert_site":
+		if isRecovery {
+			return "小提示：建议确认网站已可正常访问，并将此次故障情况同步给网站用户。"
+		}
+		return "小提示：请尽快排查服务器状态、域名解析和网站程序是否正常，避免长时间离线影响用户业务。"
+	}
+	return ""
+}
+
+func extractDomains(msg string) string {
+	parts := strings.Split(msg, "；")
+	var domains []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if idx := strings.Index(p, " "); idx > 0 {
+			domains = append(domains, p[:idx])
+		}
+	}
+	return strings.Join(domains, "、")
+}
+
+func buildRecoveryDetail(r *alertRule) string {
+	if r.key == "alert_site" && r.lastAlertMsg != "" {
+		domains := extractDomains(r.lastAlertMsg)
+		if domains != "" {
+			return domains + " 已恢复正常"
+		}
+	}
+	return alertLabel(r.key) + " 已恢复正常"
+}
+
+func formatEmailHTML(title, detail, tip string, isAlert bool) string {
+	icon := "ℹ️"
+	titleColor := "#1976d2"
+	if isAlert {
+		icon = "⚠️"
+		titleColor = "#d32f2f"
+	}
+	panelTitle := html.EscapeString(getPanelTitle())
+	detail = html.EscapeString(detail)
+	tip = html.EscapeString(tip)
+
+	var b strings.Builder
+	b.WriteString(`<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #333;">
+`)
+	fmt.Fprintf(&b, `<h2 style="color: %s; margin: 0 0 16px 0; font-size: 18px;">%s %s</h2>`+"\n", titleColor, icon, title)
+	fmt.Fprintf(&b, `<p style="font-size: 15px; line-height: 1.7; margin: 0 0 24px 0; color: #444;">%s</p>`+"\n", detail)
+	if tip != "" {
+		b.WriteString(`<hr style="border: none; border-top: 1px solid #e0e0e0; margin: 24px 0;">` + "\n")
+		fmt.Fprintf(&b, `<p style="font-size: 13px; line-height: 1.6; color: #888; margin: 0;">%s</p>`+"\n", tip)
+	}
+	fmt.Fprintf(&b, `<p style="font-size: 12px; color: #aaa; margin: 20px 0 0 0;">— 来自 %s 面板</p>`+"\n", panelTitle)
+	b.WriteString(`</body>
+</html>`)
+	return b.String()
 }
 
 // --- Checkers ---
