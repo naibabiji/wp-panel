@@ -86,6 +86,7 @@ func TestCheckSitesKeepsCachedFailureWhenCheckIsSkipped(t *testing.T) {
 		VALUES (1, 'down.example', 'active', 1, 1, 5)`)
 
 	siteLastCheck["1"] = time.Now()
+	siteFailureCounts["1"] = siteFailureAlertThreshold
 	siteFailureMessages["1"] = "down.example 返回 500"
 
 	firing, msg := checkSites()
@@ -97,12 +98,40 @@ func TestCheckSitesKeepsCachedFailureWhenCheckIsSkipped(t *testing.T) {
 	}
 }
 
+func TestCheckSitesDoesNotAlertOnUnconfirmedCachedFailure(t *testing.T) {
+	db := openAlertTestDB(t)
+	mustExec(t, db, `CREATE TABLE websites (
+		id INTEGER PRIMARY KEY,
+		domain TEXT,
+		status TEXT,
+		ssl_enabled INTEGER,
+		monitoring_enabled INTEGER,
+		monitoring_interval INTEGER
+	)`)
+	mustExec(t, db, `INSERT INTO websites
+		(id, domain, status, ssl_enabled, monitoring_enabled, monitoring_interval)
+		VALUES (1, 'slow.example', 'active', 1, 1, 5)`)
+
+	siteLastCheck["1"] = time.Now()
+	siteFailureMessages["1"] = "slow.example timeout"
+	siteFailureCounts["1"] = siteFailureAlertThreshold - 1
+
+	firing, msg := checkSites()
+	if firing {
+		t.Fatalf("unconfirmed cached failure should not alert, got %q", msg)
+	}
+	if msg != "" {
+		t.Fatalf("unconfirmed cached failure should have empty message, got %q", msg)
+	}
+}
+
 func openAlertTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
 	prevDB := database.DB
 	prevSiteLastCheck := siteLastCheck
 	prevSiteFailureMessages := siteFailureMessages
+	prevSiteFailureCounts := siteFailureCounts
 
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -111,12 +140,14 @@ func openAlertTestDB(t *testing.T) *sql.DB {
 	database.DB = db
 	siteLastCheck = make(map[string]time.Time)
 	siteFailureMessages = make(map[string]string)
+	siteFailureCounts = make(map[string]int)
 
 	t.Cleanup(func() {
 		db.Close()
 		database.DB = prevDB
 		siteLastCheck = prevSiteLastCheck
 		siteFailureMessages = prevSiteFailureMessages
+		siteFailureCounts = prevSiteFailureCounts
 	})
 
 	return db

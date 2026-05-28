@@ -493,8 +493,11 @@ func checkCronFail() (bool, string) {
 	return false, ""
 }
 
+const siteFailureAlertThreshold = 2
+
 var siteLastCheck = make(map[string]time.Time)
 var siteFailureMessages = make(map[string]string)
+var siteFailureCounts = make(map[string]int)
 
 func checkSites() (bool, string) {
 	db := database.GetDB()
@@ -518,7 +521,7 @@ func checkSites() (bool, string) {
 		}
 
 		if last, ok := siteLastCheck[id]; ok && time.Since(last) < time.Duration(interval)*time.Minute {
-			if msg, ok := siteFailureMessages[id]; ok {
+			if msg, ok := siteFailureMessages[id]; ok && siteFailureCounts[id] >= siteFailureAlertThreshold {
 				msgs = append(msgs, msg)
 			}
 			continue
@@ -534,21 +537,29 @@ func checkSites() (bool, string) {
 		if err != nil {
 			msg := fmt.Sprintf("%s 无法访问 (%v)", domain, err)
 			siteFailureMessages[id] = msg
-			msgs = append(msgs, msg)
+			siteFailureCounts[id]++
+			if siteFailureCounts[id] >= siteFailureAlertThreshold {
+				msgs = append(msgs, msg)
+			}
 			continue
 		}
 		code, _ := strconv.Atoi(strings.TrimSpace(string(out)))
 		if code < 200 || code >= 400 {
 			msg := fmt.Sprintf("%s 返回 %d", domain, code)
 			siteFailureMessages[id] = msg
-			msgs = append(msgs, msg)
+			siteFailureCounts[id]++
+			if siteFailureCounts[id] >= siteFailureAlertThreshold {
+				msgs = append(msgs, msg)
+			}
 		} else {
 			delete(siteFailureMessages, id)
+			delete(siteFailureCounts, id)
 		}
 	}
 	for id := range siteFailureMessages {
 		if !seen[id] {
 			delete(siteFailureMessages, id)
+			delete(siteFailureCounts, id)
 		}
 	}
 	if len(siteLastCheck) > 100 {
