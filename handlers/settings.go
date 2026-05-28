@@ -3,11 +3,13 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
@@ -44,6 +46,7 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 		"hostname":        hostname,
 		"ntp_synced":      ntpSynced,
 		"ntp_server":      ntpServer,
+		"server_time":     time.Now().UnixMilli(),
 	}))
 }
 
@@ -144,7 +147,9 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的时区"))
 			return
 		}
-		exec.Command("timedatectl", "set-timezone", tz).Run()
+		if err := exec.Command("timedatectl", "set-timezone", tz).Run(); err != nil {
+			log.Printf("设置时区失败 (%s): %v", tz, err)
+		}
 	}
 
 	var hostRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$`)

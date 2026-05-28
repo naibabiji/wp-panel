@@ -288,6 +288,8 @@ function panelSettings() {
         timezone: '',
         hostname: '',
         serverTime: '',
+        serverTimeBase: 0,
+        serverTimeFetchedAt: 0,
         ntpSynced: false,
         accountSaving: false,
         accountSaved: false,
@@ -302,16 +304,22 @@ function panelSettings() {
                     this.timezone = r.data.timezone || '';
                     this.hostname = r.data.hostname || '';
                     this.ntpSynced = r.data.ntp_synced || false;
+                    if (r.data.server_time) {
+                        this.serverTimeBase = r.data.server_time;
+                        this.serverTimeFetchedAt = Date.now();
+                    }
                 }
             } catch(e) {}
             this.tickTime();
             setInterval(() => this.tickTime(), 1000);
         },
         tickTime() {
-            const tz = this.timezone || 'UTC';
-            const d = new Date();
-            const opts = { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-            this.serverTime = d.toLocaleString('zh-CN', opts);
+            if (this.serverTimeBase) {
+                const elapsed = Date.now() - this.serverTimeFetchedAt;
+                const d = new Date(this.serverTimeBase + elapsed);
+                const opts = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+                this.serverTime = d.toLocaleString('zh-CN', opts);
+            }
         },
         async saveAccount() {
             const body = {};
