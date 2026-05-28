@@ -381,7 +381,6 @@ func checkSSL() (bool, string) {
 
 func checkBackup() (bool, string) {
 	db := database.GetDB()
-	// Only alert if auto-backups previously ran but recently stopped
 	var totalCount int
 	db.QueryRow("SELECT COUNT(*) FROM db_backups WHERE auto = 1").Scan(&totalCount)
 	if totalCount == 0 {
@@ -390,10 +389,22 @@ func checkBackup() (bool, string) {
 	var recentCount int
 	db.QueryRow("SELECT COUNT(*) FROM db_backups WHERE auto = 1 AND created_at > datetime('now', '-1 day')").Scan(&recentCount)
 	if recentCount == 0 {
-		var enabled int
-		db.QueryRow("SELECT COUNT(*) FROM backup_settings WHERE enabled = 1").Scan(&enabled)
-		if enabled > 0 {
-			return true, "最近 24 小时内没有成功执行的数据库自动备份"
+		rows, err := db.Query(`SELECT w.domain FROM backup_settings bs
+			JOIN websites w ON w.id = bs.site_id
+			WHERE bs.enabled = 1`)
+		if err != nil {
+			return false, ""
+		}
+		defer rows.Close()
+		var domains []string
+		for rows.Next() {
+			var d string
+			if rows.Scan(&d) == nil {
+				domains = append(domains, d)
+			}
+		}
+		if len(domains) > 0 {
+			return true, strings.Join(domains, "、") + " 最近 24 小时内没有成功的自动备份"
 		}
 	}
 	return false, ""
