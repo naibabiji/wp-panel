@@ -458,12 +458,23 @@ func checkRemoteBackup() (bool, string) {
 
 func checkCronFail() (bool, string) {
 	db := database.GetDB()
-	var failCount int
-	db.QueryRow(`SELECT COUNT(*) FROM cron_jobs
+	rows, err := db.Query(`SELECT name FROM cron_jobs
 		WHERE enabled = 1 AND notify_fail = 1 AND running = 0
-		AND last_status = 'failed' AND last_run_at > datetime('now', '-1 hour')`).Scan(&failCount)
-	if failCount > 0 {
-		return true, fmt.Sprintf("近1小时内有 %d 个计划任务执行失败", failCount)
+		AND last_status = 'failed' AND last_run_at > datetime('now', '-1 hour')`)
+	if err != nil {
+		return false, ""
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if rows.Scan(&name) == nil {
+			names = append(names, "「"+name+"」")
+		}
+	}
+	if len(names) > 0 {
+		return true, "计划任务 " + strings.Join(names, "、") + " 执行失败"
 	}
 	return false, ""
 }
