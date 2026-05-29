@@ -12,11 +12,13 @@
         <button @click="selected = []" class="text-sm text-gray-400 hover:text-white py-1">取消选择</button>
     </div>
 
-    <div x-show="clipboard" class="flex items-center space-x-3 mb-3 p-3 bg-green-900/30 rounded border border-green-800">
+    <template x-if="clipboard">
+    <div class="flex items-center space-x-3 mb-3 p-3 bg-green-900/30 rounded border border-green-800">
         <span class="text-sm text-gray-300" x-text="'剪贴板: ' + clipboard.names.length + ' 个项目 (' + (clipboard.action === 'cut' ? '剪切' : '复制') + ')'"></span>
         <button @click="pasteItems()" class="btn-primary text-sm py-1">粘贴</button>
         <button @click="clipboard = null" class="text-sm text-gray-400 hover:text-white py-1">清空</button>
     </div>
+    </template>
 
     <div class="card mb-4">
         <div class="flex items-center space-x-4 mb-4">

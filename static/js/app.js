@@ -30,7 +30,9 @@ function api(path, options = {}) {
             const data = await resp.json();
             if (!resp.ok) {
                 console.error('API error:', resp.status, data);
-                throw new Error(data.message || 'Request failed (' + resp.status + ')');
+                const err = new Error(data.message || 'Request failed (' + resp.status + ')');
+                if (data.conflicts) err.conflicts = data.conflicts;
+                throw err;
             }
             if (!data.success) {
                 const err = new Error(data.message || '操作失败');
