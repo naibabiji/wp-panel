@@ -30,7 +30,7 @@
                     <input type="password" x-model="password" name="password" class="input-field" placeholder="请输入密码" autocomplete="current-password">
                 </div>
 
-                <div x-show="error" class="mb-4 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm"
+                <div x-cloak x-show="error" class="mb-4 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm"
                      x-text="error"></div>
 
                 <button type="submit" class="btn-primary w-full" :disabled="!username || !password">
@@ -38,7 +38,7 @@
                 </button>
             </form>
 
-            <div x-show="loading && !success" class="text-center py-4">
+            <div x-cloak x-show="loading && !success" class="text-center py-4">
                 <div class="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto"></div>
                 <p class="text-gray-400 mt-2">正在验证...</p>
             </div>
