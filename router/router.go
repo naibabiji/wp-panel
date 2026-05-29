@@ -251,6 +251,9 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	updateHandler := &handlers.UpdateHandler{CurrentVersion: version}
 	protected.GET("/api/update/check", updateHandler.Check)
 	protected.POST("/api/update/do", updateHandler.Update)
+		sysUpdateHandler := &handlers.SystemUpdateHandler{}
+		protected.GET("/api/system/updates", sysUpdateHandler.Check)
+		protected.POST("/api/system/updates/do", sysUpdateHandler.Update)
 
 	tmpl := template.Must(template.New("").ParseFS(tmplFS, "templates/*.html"))
 	r.SetHTMLTemplate(tmpl)

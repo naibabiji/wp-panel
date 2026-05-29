@@ -102,6 +102,37 @@
                 </div>
                 <p x-show="updateError" class="text-xs text-red-400 mt-2" x-text="updateError"></p>
             </div>
+
+            <hr class="my-4 border-gray-700">
+
+            <div x-data="systemUpdate()" x-init="check()">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-sm text-gray-400">系统更新</span>
+                    <span class="text-sm text-white font-mono" x-show="count > 0" x-text="count + ' 个可用'"></span>
+                    <span class="text-xs text-gray-500" x-show="count === 0">已是最新</span>
+                </div>
+                <div x-show="count > 0" class="mb-3 space-y-2">
+                    <template x-for="pkg in packages" :key="pkg.name">
+                        <div class="flex items-center justify-between p-2 rounded" style="background-color: #0f172a; border: 1px solid #1e293b;">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-sm text-white font-mono" x-text="pkg.name"></span>
+                                <span class="text-xs" :class="pkg.repo.includes('security') ? 'text-red-400' : 'text-gray-500'" x-text="pkg.repo"></span>
+                            </div>
+                            <div class="flex items-center space-x-3">
+                                <span class="text-xs text-gray-400" x-text="pkg.version"></span>
+                                <a :href="'https://packages.debian.org/trixie/' + pkg.name" target="_blank" class="text-xs text-blue-400 hover:text-blue-300" title="在 packages.debian.org 查看包详情">查询</a>
+                            </div>
+                        </div>
+                    </template>
+                    <p class="text-xs text-gray-500 mt-2">不了解某个包的作用？点击「查询」链接可查看 Debian 官方包说明，或复制包名通过搜索引擎/AI 工具了解详情。</p>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <button @click="check()" :disabled="checking" class="btn-secondary text-xs" x-text="checking ? '检查中...' : '刷新'"></button>
+                    <button @click="doUpdate()" x-show="count > 0" :disabled="updating" class="btn-primary text-xs" x-text="updating ? '更新中...' : '一键更新'"></button>
+                </div>
+                <pre x-show="output" class="text-xs text-gray-400 mt-3 p-3 rounded max-h-48 overflow-y-auto" style="background-color: #020617;" x-text="output"></pre>
+                <p x-show="msg" class="text-sm mt-2" :class="ok ? 'text-green-400' : 'text-red-400'" x-text="msg"></p>
+            </div>
         </div>
     </div>
 
@@ -535,6 +566,43 @@ function remoteBackup() {
                 document.body.removeChild(ta);
                 showToast('命令已复制', 'success');
             }
+        }
+    }
+}
+function systemUpdate() {
+    return {
+        packages: [],
+        count: 0,
+        checking: false,
+        updating: false,
+        msg: '',
+        ok: false,
+        output: '',
+        async check() {
+            this.checking = true;
+            this.msg = '';
+            try {
+                const r = await api('/system/updates');
+                if (r.success) {
+                    this.packages = r.data.packages || [];
+                    this.count = r.data.count || 0;
+                }
+            } catch(e) { showToast(e.message, 'error'); }
+            this.checking = false;
+        },
+        async doUpdate() {
+            if (!await confirmModal('确认执行系统更新？更新期间服务不受影响，但建议在低峰期操作。')) return;
+            this.updating = true;
+            this.msg = '';
+            this.output = '';
+            try {
+                const r = await api('/system/updates/do', { method: 'POST', timeout: 120000 });
+                this.ok = r.success;
+                this.msg = r.data?.message || (r.success ? '更新完成' : '更新失败');
+                this.output = r.data?.output || '';
+                if (r.success) { this.packages = []; this.count = 0; }
+            } catch(e) { this.ok = false; this.msg = e.message; }
+            this.updating = false;
         }
     }
 }

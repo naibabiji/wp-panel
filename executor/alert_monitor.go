@@ -42,6 +42,7 @@ func StartAlertMonitor() {
 		{key: "alert_remote_backup", checkFn: checkRemoteBackup},
 		{key: "alert_cron_fail", checkFn: checkCronFail},
 		{key: "alert_site", checkFn: checkSites},
+		{key: "alert_system_update", checkFn: checkSystemUpdate},
 	}
 	go alertMgr.loop()
 }
@@ -171,6 +172,8 @@ func alertLabel(key string) string {
 		return "计划任务执行失败"
 	case "alert_site":
 		return "网站不可用"
+	case "alert_system_update":
+		return "系统有可用更新"
 	}
 	return key
 }
@@ -222,6 +225,11 @@ func getEmailTip(key string, isRecovery bool) string {
 			return "小提示：建议确认网站已可正常访问，并将此次故障情况同步给网站用户。"
 		}
 		return "小提示：请尽快排查服务器状态、域名解析和网站程序是否正常，避免长时间离线影响用户业务。"
+	case "alert_system_update":
+		if isRecovery {
+			return "小提示：建议定期保持系统更新，这是维护服务器安全最简单有效的方式。"
+		}
+		return "小提示：建议尽快登录面板设置页执行系统更新。安全更新通常修复已知漏洞，延迟更新会增加被攻击风险。"
 	}
 	return ""
 }
@@ -571,6 +579,52 @@ func checkSites() (bool, string) {
 	}
 	if len(msgs) > 0 {
 		return true, strings.Join(msgs, "；")
+	}
+	return false, ""
+}
+
+var sysUpdateCache struct {
+	mu      sync.Mutex
+	lastAt  time.Time
+	names   []string
+}
+
+func checkSystemUpdate() (bool, string) {
+	sysUpdateCache.mu.Lock()
+	if time.Since(sysUpdateCache.lastAt) < 24*time.Hour {
+		names := sysUpdateCache.names
+		sysUpdateCache.mu.Unlock()
+		if len(names) > 0 {
+			return true, fmt.Sprintf("系统有 %d 个可用更新：%s", len(names), strings.Join(names, "、"))
+		}
+		return false, ""
+	}
+	sysUpdateCache.mu.Unlock()
+
+	out, err := exec.Command("bash", "-c", "apt list --upgradable 2>/dev/null").Output()
+	if err != nil {
+		return false, ""
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var names []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "Listing...") {
+			continue
+		}
+		parts := strings.SplitN(line, "/", 2)
+		if len(parts) > 0 {
+			names = append(names, parts[0])
+		}
+	}
+
+	sysUpdateCache.mu.Lock()
+	sysUpdateCache.lastAt = time.Now()
+	sysUpdateCache.names = names
+	sysUpdateCache.mu.Unlock()
+
+	if len(names) > 0 {
+		return true, fmt.Sprintf("系统有 %d 个可用更新：%s", len(names), strings.Join(names, "、"))
 	}
 	return false, ""
 }
