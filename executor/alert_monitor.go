@@ -263,6 +263,9 @@ func buildRecoveryDetail(r *alertRule) string {
 			return domains + " 已恢复正常"
 		}
 	}
+	if r.key == "alert_system_update" {
+		return "系统所有软件包已更新完毕，当前为最新版本"
+	}
 	return alertLabel(r.key) + " 已恢复正常"
 }
 
