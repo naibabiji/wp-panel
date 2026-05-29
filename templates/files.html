@@ -213,52 +213,87 @@ function fileManager() {
         fileSelected(e) { this.uploadTarget = e.target.files[0]; },
         async uploadFile() {
             if (!this.uploadTarget) return;
-            const name = this.uploadTarget.name;
+            const file = this.uploadTarget;
+            const name = file.name;
             const exists = this.files.some(f => !f.is_dir && f.name === name);
             if (exists && !await confirmModal(name + ' 已存在，确认覆盖？')) return;
 
-            return new Promise((resolve) => {
-                const prefix = document.body.dataset.panelPrefix || '';
-                const url = prefix + '/api/files/upload?site_id=' + this.selectedSite + '&path=' + encodeURIComponent(this.currentPath);
-                const fd = new FormData();
-                fd.append('file', this.uploadTarget);
+            const prefix = document.body.dataset.panelPrefix || '';
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+            const CHUNK_SIZE = 5 * 1024 * 1024;
+            const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
-                const xhr = new XMLHttpRequest();
-                this.uploading = true;
-                this.uploadProgress = 0;
+            this.uploading = true;
+            this.uploadProgress = 0;
 
-                xhr.upload.addEventListener('progress', (e) => {
-                    if (e.lengthComputable) {
-                        this.uploadProgress = Math.round(e.loaded / e.total * 100);
+            try {
+                const initRes = await fetch(prefix + '/api/files/upload/init', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                    body: JSON.stringify({ filename: name, file_size: file.size, total_chunks: totalChunks })
+                });
+                const initData = await initRes.json();
+                if (!initData.success) { showToast(initData.data?.message || '初始化上传失败', 'error'); this.uploading = false; return; }
+
+                const uploadID = initData.data.upload_id;
+                const completedChunks = new Set(initData.data.completed_chunks || []);
+
+                for (let i = 0; i < totalChunks; i++) {
+                    if (completedChunks.has(i)) {
+                        this.uploadProgress = Math.round((i + 1) / totalChunks * 100);
+                        continue;
                     }
-                });
 
-                xhr.addEventListener('load', () => {
-                    this.uploading = false;
-                    try {
-                        const r = JSON.parse(xhr.responseText);
-                        if (r.success) {
-                            this.uploadTarget = null;
-                            document.querySelector('input[type="file"]').value = '';
-                            this.loadFiles();
-                            showToast('上传成功', 'success');
-                        } else {
-                            showToast(r.data?.message || '上传失败', 'error');
+                    const start = i * CHUNK_SIZE;
+                    const end = Math.min(start + CHUNK_SIZE, file.size);
+                    const blob = file.slice(start, end);
+
+                    const fd = new FormData();
+                    fd.append('upload_id', uploadID);
+                    fd.append('chunk_index', String(i));
+                    fd.append('chunk', blob, 'chunk-' + i);
+
+                    let success = false;
+                    for (let retry = 0; retry < 3; retry++) {
+                        try {
+                            const chunkRes = await fetch(prefix + '/api/files/upload/chunk', {
+                                method: 'POST',
+                                headers: { 'X-CSRF-Token': csrfToken },
+                                body: fd
+                            });
+                            const chunkData = await chunkRes.json();
+                            if (chunkData.success) { success = true; break; }
+                            if (retry < 2) await new Promise(r => setTimeout(r, 1000 * (retry + 1)));
+                        } catch(e) {
+                            if (retry < 2) await new Promise(r => setTimeout(r, 1000 * (retry + 1)));
                         }
-                    } catch(e) { showToast('上传失败', 'error'); }
-                    resolve();
-                });
+                    }
+                    if (!success) {
+                        showToast('分片 ' + (i + 1) + '/' + totalChunks + ' 上传失败', 'error');
+                        this.uploading = false;
+                        return;
+                    }
+                    this.uploadProgress = Math.round((i + 1) / totalChunks * 100);
+                }
 
-                xhr.addEventListener('error', () => {
-                    this.uploading = false;
-                    showToast('上传失败', 'error');
-                    resolve();
+                const completeRes = await fetch(prefix + '/api/files/upload/complete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                    body: JSON.stringify({ upload_id: uploadID, site_id: parseInt(this.selectedSite), path: this.currentPath })
                 });
-
-                xhr.open('POST', url);
-                xhr.setRequestHeader('X-CSRF-Token', document.querySelector('meta[name="csrf-token"]')?.content || '');
-                xhr.send(fd);
-            });
+                const completeData = await completeRes.json();
+                if (completeData.success) {
+                    this.uploadTarget = null;
+                    document.querySelector('input[type="file"]').value = '';
+                    this.loadFiles();
+                    showToast('上传完成', 'success');
+                } else {
+                    showToast(completeData.data?.message || '合并文件失败', 'error');
+                }
+            } catch(e) {
+                showToast('上传失败: ' + e.message, 'error');
+            }
+            this.uploading = false;
         },
         async fixPermissions() {
             if (!await confirmModal('确认修复 ' + (this.sites.find(s => s.id == this.selectedSite)?.domain || '') + ' 的文件权限？\n\n目录将设为 755，文件将设为 644，敏感文件将收紧权限，所有者为站点用户:站点用户')) return;

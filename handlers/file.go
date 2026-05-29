@@ -20,11 +20,7 @@ import (
 
 type FileHandler struct{}
 
-const (
-	maxZipEntries        = 10000
-	maxZipSingleFileSize = int64(512 * 1024 * 1024)
-	maxZipTotalSize      = int64(2 * 1024 * 1024 * 1024)
-)
+const maxZipEntries = 100000
 
 type fileEntry struct {
 	Name    string `json:"name"`
@@ -175,6 +171,142 @@ func (h *FileHandler) Upload(c *gin.Context) {
 	os.Chmod(destPath, 0644)
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "文件上传成功"}))
+}
+
+func (h *FileHandler) UploadInit(c *gin.Context) {
+	var req struct {
+		Filename    string `json:"filename"`
+		FileSize    int64  `json:"file_size"`
+		TotalChunks int    `json:"total_chunks"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Filename == "" || req.TotalChunks <= 0 || req.TotalChunks > 20000 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数无效"))
+		return
+	}
+
+	uploadID := fmt.Sprintf("%d_%s", time.Now().UnixNano(), filepath.Base(req.Filename))
+	dir := filepath.Join(os.TempDir(), "wppanel-upload-"+uploadID)
+	os.MkdirAll(dir, 0700)
+
+	var completed []int
+	for i := 0; i < req.TotalChunks; i++ {
+		if _, err := os.Stat(filepath.Join(dir, fmt.Sprintf("chunk-%d", i))); err == nil {
+			completed = append(completed, i)
+		}
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"upload_id":        uploadID,
+		"completed_chunks": completed,
+	}))
+}
+
+func (h *FileHandler) UploadChunk(c *gin.Context) {
+	uploadID := c.PostForm("upload_id")
+	chunkIdxStr := c.PostForm("chunk_index")
+	if uploadID == "" || chunkIdxStr == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数无效"))
+		return
+	}
+
+	chunkIdx, err := strconv.Atoi(chunkIdxStr)
+	if err != nil || chunkIdx < 0 || chunkIdx > 20000 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("分片索引无效"))
+		return
+	}
+
+	uploadID = filepath.Base(uploadID)
+	dir := filepath.Join(os.TempDir(), "wppanel-upload-"+uploadID)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("上传会话不存在"))
+		return
+	}
+
+	file, err := c.FormFile("chunk")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("请选择文件"))
+		return
+	}
+
+	chunkPath := filepath.Join(dir, fmt.Sprintf("chunk-%d", chunkIdx))
+	if err := c.SaveUploadedFile(file, chunkPath); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存分片失败"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"chunk_index": chunkIdx}))
+}
+
+func (h *FileHandler) UploadComplete(c *gin.Context) {
+	var req struct {
+		UploadID string `json:"upload_id"`
+		SiteID   int    `json:"site_id"`
+		Path     string `json:"path"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.UploadID == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数无效"))
+		return
+	}
+
+	uploadID := filepath.Base(req.UploadID)
+	dir := filepath.Join(os.TempDir(), "wppanel-upload-"+uploadID)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("上传会话不存在"))
+		return
+	}
+	defer os.RemoveAll(dir)
+
+	basePath, err := fileBasePath(req.SiteID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+
+	parts := strings.SplitN(uploadID, "_", 2)
+	filename := parts[0]
+	if len(parts) > 1 {
+		filename = parts[1]
+	}
+
+	destPath := filepath.Join(basePath, req.Path, filename)
+	destPath = filepath.Clean(destPath)
+	if !isPathWithin(basePath, destPath) {
+		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
+		return
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("无分片数据"))
+		return
+	}
+
+	dst, err := os.Create(destPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建文件失败"))
+		return
+	}
+	defer dst.Close()
+
+	for i := 0; i < len(entries); i++ {
+		chunkPath := filepath.Join(dir, fmt.Sprintf("chunk-%d", i))
+		src, err := os.Open(chunkPath)
+		if err != nil {
+			os.Remove(destPath)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(fmt.Sprintf("分片 %d 缺失，请重新上传", i)))
+			return
+		}
+		if _, err := io.Copy(dst, src); err != nil {
+			src.Close()
+			os.Remove(destPath)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("合并分片失败"))
+			return
+		}
+		src.Close()
+	}
+
+	os.Chmod(destPath, 0644)
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "上传完成"}))
 }
 
 func (h *FileHandler) Download(c *gin.Context) {
@@ -592,8 +724,6 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("压缩包文件数量过多"))
 		return
 	}
-	var declaredTotal uint64
-	var actualTotal int64
 	for _, f := range r.File {
 		target := filepath.Join(destDir, filepath.FromSlash(f.Name))
 		target = filepath.Clean(target)
@@ -601,20 +731,9 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 			c.JSON(http.StatusForbidden, models.ErrorResponse("压缩包包含非法路径: "+f.Name))
 			return
 		}
-		if !f.FileInfo().IsDir() {
-			if f.UncompressedSize64 > uint64(maxZipSingleFileSize) {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("压缩包内单个文件过大: "+f.Name))
-				return
-			}
-			if declaredTotal > uint64(maxZipTotalSize)-f.UncompressedSize64 {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("压缩包解压后总体积过大"))
-				return
-			}
-			declaredTotal += f.UncompressedSize64
-			if !overwrite {
-				if _, err := os.Stat(target); err == nil {
-					conflicts = append(conflicts, f.Name)
-				}
+		if !f.FileInfo().IsDir() && !overwrite {
+			if _, err := os.Stat(target); err == nil {
+				conflicts = append(conflicts, f.Name)
 			}
 		}
 	}
@@ -654,7 +773,7 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建文件失败: "+f.Name))
 			return
 		}
-		written, copyErr := io.Copy(dst, io.LimitReader(src, maxZipSingleFileSize+1))
+		_, copyErr := io.Copy(dst, src)
 		src.Close()
 		closeErr := dst.Close()
 		if copyErr != nil {
@@ -665,17 +784,6 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 		if closeErr != nil {
 			os.Remove(target)
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存文件失败: "+f.Name))
-			return
-		}
-		if written > maxZipSingleFileSize {
-			os.Remove(target)
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("压缩包内单个文件过大: "+f.Name))
-			return
-		}
-		actualTotal += written
-		if actualTotal > maxZipTotalSize {
-			os.Remove(target)
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("压缩包解压后总体积过大"))
 			return
 		}
 	}
