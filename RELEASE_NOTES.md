@@ -1,4 +1,4 @@
-## v1.2.0-rc2
+## v1.2.0-rc3
 
 ### 安全防护
 - **Cloudflare 代理站 Nginx 层封禁**：Cloudflare real_ip 还原真实访客 IP + Nginx geo 黑名单 + fail2ban wppanel-nginx action 双通道联动。被禁 IP 在 Cloudflare 代理下也能有效拦截（444 关闭连接），弥补 nftables 在 CDN 场景下失效的问题。
@@ -47,3 +47,4 @@
 - **修复安全防御页面历史封禁记录偶发读取失败**：页面两个组件同时请求封禁列表，均触发 fail2ban 同步操作，SQLite 连接池耗尽导致查询超时。历史查询跳过同步直接查库，SyncFail2banBans 加互斥锁防并发。
 - **每站点独立 Unix 用户组隔离**：建站用户组从 systemUser:www-data 改为 systemUser:systemUser 独立组，PHP-FPM pool group 同改为站点独立组。wp-config.php 权限 644→600，密钥目录 750→700。已有站点通过数据库升级自动加固。
 - **安装插件权限范围修复**：安装面板插件时不再 chown 全站文件，仅处理插件目录和密钥目录，且权限错误不阻断安装。
+- **配套插件 v1.0.1 修复**：FastCGI 缓存清除不再对菜单保存、区块编辑等内部操作触发，仅对前台公开文章类型生效；增加 5 秒防抖避免批量操作重复清除；评论触发日志正确标注为「评论变更」。

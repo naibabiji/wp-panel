@@ -3,7 +3,7 @@
  * Plugin Name: WP Panel Optimizer
  * Plugin URI:  https://github.com/naibabiji/wp-panel
  * Description: 与 WP Panel 面板配合，管理 FastCGI 缓存、禁止检测更新、文件编辑等优化项。发布/更新文章自动清除缓存。
- * Version:     1.0.0
+ * Version:     1.0.1
  * Author:      WP Panel
  * Author URI:  https://blog.naibabiji.com
  * License:     GPL-2.0+
@@ -24,7 +24,7 @@ function wpp_optimizer_uninstall() {
 
 class WP_Panel_Optimizer {
 
-    const VERSION = '1.0.0';
+    const VERSION = '1.0.1';
 
     const OPTION_FCACHE_ENABLED = 'wpp_optimizer_fcache_enabled';
     const OPTION_FCACHE_TTL     = 'wpp_optimizer_fcache_ttl';
