@@ -28,9 +28,13 @@ type alertManager struct {
 	stopCh chan struct{}
 }
 
-var alertMgr = &alertManager{stopCh: make(chan struct{})}
+var (
+	alertMgr            = &alertManager{stopCh: make(chan struct{})}
+	panelCurrentVersion string
+)
 
-func StartAlertMonitor() {
+func StartAlertMonitor(currentVersion string) {
+	panelCurrentVersion = currentVersion
 	alertMgr.rules = []*alertRule{
 		{key: "alert_cpu", checkFn: checkCPU, thresholdDuration: 5 * time.Minute},
 		{key: "alert_memory", checkFn: checkMemory, thresholdDuration: 5 * time.Minute},
@@ -43,6 +47,7 @@ func StartAlertMonitor() {
 		{key: "alert_cron_fail", checkFn: checkCronFail},
 		{key: "alert_site", checkFn: checkSites},
 		{key: "alert_system_update", checkFn: checkSystemUpdate},
+		{key: "alert_panel_update", checkFn: checkPanelUpdate},
 	}
 	go alertMgr.loop()
 }
@@ -145,7 +150,7 @@ func (r *alertRule) sustainedFiring(instantFiring bool, now time.Time) bool {
 }
 
 func alertResendInterval(key string) time.Duration {
-	if key == "alert_system_update" {
+	if key == "alert_system_update" || key == "alert_panel_update" {
 		return 24 * time.Hour
 	}
 	return 30 * time.Minute
@@ -181,6 +186,8 @@ func alertLabel(key string) string {
 		return "网站不可用"
 	case "alert_system_update":
 		return "系统有可用更新"
+	case "alert_panel_update":
+		return "面板有新版本"
 	}
 	return key
 }
@@ -237,6 +244,11 @@ func getEmailTip(key string, isRecovery bool) string {
 			return "小提示：建议定期保持系统更新，这是维护服务器安全最简单有效的方式。"
 		}
 		return "小提示：建议尽快登录面板设置页执行系统更新。安全更新通常修复已知漏洞，延迟更新会增加被攻击风险。"
+	case "alert_panel_update":
+		if isRecovery {
+			return "小提示：面板已更新后，建议简单检查网站列表、备份、计划任务等关键页面是否正常。"
+		}
+		return "小提示：建议及时更新面板，避免跨多个版本升级时累积变更过多，增加升级风险。"
 	}
 	return ""
 }
@@ -265,6 +277,9 @@ func buildRecoveryDetail(r *alertRule) string {
 	}
 	if r.key == "alert_system_update" {
 		return "系统所有软件包已更新完毕，当前为最新版本"
+	}
+	if r.key == "alert_panel_update" {
+		return "面板已更新到最新版本"
 	}
 	return alertLabel(r.key) + " 已恢复正常"
 }
@@ -599,11 +614,26 @@ var sysUpdateCache struct {
 	names  []string
 }
 
+var panelUpdateCache struct {
+	mu      sync.Mutex
+	lastAt  time.Time
+	latest  string
+	message string
+}
+
 func ClearSystemUpdateAlertCache() {
 	sysUpdateCache.mu.Lock()
 	sysUpdateCache.lastAt = time.Time{}
 	sysUpdateCache.names = nil
 	sysUpdateCache.mu.Unlock()
+}
+
+func ClearPanelUpdateAlertCache() {
+	panelUpdateCache.mu.Lock()
+	panelUpdateCache.lastAt = time.Time{}
+	panelUpdateCache.latest = ""
+	panelUpdateCache.message = ""
+	panelUpdateCache.mu.Unlock()
 }
 
 func checkSystemUpdate() (bool, string) {
@@ -644,6 +674,38 @@ func checkSystemUpdate() (bool, string) {
 		return true, fmt.Sprintf("系统有 %d 个可用更新：%s", len(names), strings.Join(names, "、"))
 	}
 	return false, ""
+}
+
+func checkPanelUpdate() (bool, string) {
+	if panelCurrentVersion == "" || panelCurrentVersion == "dev" {
+		return false, ""
+	}
+
+	panelUpdateCache.mu.Lock()
+	if time.Since(panelUpdateCache.lastAt) < 24*time.Hour {
+		msg := panelUpdateCache.message
+		panelUpdateCache.mu.Unlock()
+		return msg != "", msg
+	}
+	panelUpdateCache.mu.Unlock()
+
+	latest, err := FetchLatestPanelRelease()
+	if err != nil || latest == nil || latest.TagName == "" {
+		return false, ""
+	}
+
+	msg := ""
+	if CompareVersions(latest.TagName, panelCurrentVersion) > 0 {
+		msg = fmt.Sprintf("面板有新版本 %s 可用，当前版本 %s。建议尽快到面板设置页更新，避免跨多个版本升级。", latest.TagName, panelCurrentVersion)
+	}
+
+	panelUpdateCache.mu.Lock()
+	panelUpdateCache.lastAt = time.Now()
+	panelUpdateCache.latest = latest.TagName
+	panelUpdateCache.message = msg
+	panelUpdateCache.mu.Unlock()
+
+	return msg != "", msg
 }
 
 func getPanelTitle() string {

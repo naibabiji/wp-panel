@@ -118,6 +118,10 @@
                     <input type="checkbox" x-model="rules.alert_system_update" @change="save">
                     <span>系统有可用更新</span>
                 </label>
+                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer mb-3">
+                    <input type="checkbox" x-model="rules.alert_panel_update" @change="save">
+                    <span>面板有新版本</span>
+                </label>
             </div>
         </div>
         <p class="text-xs text-gray-500 mt-2">报警每 30 分钟最多发送一次。异常恢复后将发送恢复通知。</p>
@@ -272,7 +276,7 @@ function alertManager() {
             } catch(e) {}
         },
         typeLabel(t) {
-            const m = { alert_cpu: 'CPU高负载', alert_memory: '可用内存不足', alert_disk: '磁盘不足', alert_service: '服务异常', alert_ssl: 'SSL到期', alert_backup: '备份失败', alert_remote_backup: '远程备份失败', alert_cron_fail: '计划任务失败', alert_website_expiry: '网站到期', alert_site: '网站不可用', alert_system_update: '系统可用更新' };
+            const m = { alert_cpu: 'CPU高负载', alert_memory: '可用内存不足', alert_disk: '磁盘不足', alert_service: '服务异常', alert_ssl: 'SSL到期', alert_backup: '备份失败', alert_remote_backup: '远程备份失败', alert_cron_fail: '计划任务失败', alert_website_expiry: '网站到期', alert_site: '网站不可用', alert_system_update: '系统可用更新', alert_panel_update: '面板新版本' };
             return m[t] || t;
         }
     }

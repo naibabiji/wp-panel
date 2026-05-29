@@ -167,7 +167,7 @@ func main() {
 	executor.EnsureWordPressBaseline()
 	executor.EnsureWPCommand()
 	executor.StartProcessGuard()
-	executor.StartAlertMonitor()
+	executor.StartAlertMonitor(Version)
 	log.Println("WordPress config baseline ensured")
 	log.Println("进程守护已启动")
 	log.Println("告警监控已启动")

@@ -83,6 +83,13 @@ var upgrades = []Upgrade{
 			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('alert_system_update', 'true', '系统可用更新告警')`,
 		},
 	},
+	{
+		Version:     "1.0.6",
+		Description: "新增面板新版本告警开关",
+		SQL: []string{
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('alert_panel_update', 'true', '面板新版本告警')`,
+		},
+	},
 }
 
 // LatestVersion 返回 upgrades 列表中的最新版本号。

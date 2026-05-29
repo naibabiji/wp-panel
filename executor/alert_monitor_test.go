@@ -40,9 +40,12 @@ func TestAlertRuleSustainedFiringResets(t *testing.T) {
 	}
 }
 
-func TestAlertResendIntervalForSystemUpdate(t *testing.T) {
+func TestAlertResendIntervalForUpdateAlerts(t *testing.T) {
 	if got := alertResendInterval("alert_system_update"); got != 24*time.Hour {
 		t.Fatalf("system update alert should resend daily, got %v", got)
+	}
+	if got := alertResendInterval("alert_panel_update"); got != 24*time.Hour {
+		t.Fatalf("panel update alert should resend daily, got %v", got)
 	}
 	if got := alertResendInterval("alert_disk"); got != 30*time.Minute {
 		t.Fatalf("regular alerts should keep 30 minute resend interval, got %v", got)
@@ -72,6 +75,67 @@ func TestClearSystemUpdateAlertCache(t *testing.T) {
 	}
 	if sysUpdateCache.names != nil {
 		t.Fatalf("names should be cleared, got %v", sysUpdateCache.names)
+	}
+}
+
+func TestClearPanelUpdateAlertCache(t *testing.T) {
+	panelUpdateCache.mu.Lock()
+	prevLastAt := panelUpdateCache.lastAt
+	prevLatest := panelUpdateCache.latest
+	prevMessage := panelUpdateCache.message
+	panelUpdateCache.lastAt = time.Now()
+	panelUpdateCache.latest = "v1.2.3"
+	panelUpdateCache.message = "panel update available"
+	panelUpdateCache.mu.Unlock()
+	t.Cleanup(func() {
+		panelUpdateCache.mu.Lock()
+		panelUpdateCache.lastAt = prevLastAt
+		panelUpdateCache.latest = prevLatest
+		panelUpdateCache.message = prevMessage
+		panelUpdateCache.mu.Unlock()
+	})
+
+	ClearPanelUpdateAlertCache()
+
+	panelUpdateCache.mu.Lock()
+	defer panelUpdateCache.mu.Unlock()
+	if !panelUpdateCache.lastAt.IsZero() {
+		t.Fatalf("lastAt should be reset, got %v", panelUpdateCache.lastAt)
+	}
+	if panelUpdateCache.latest != "" {
+		t.Fatalf("latest should be cleared, got %q", panelUpdateCache.latest)
+	}
+	if panelUpdateCache.message != "" {
+		t.Fatalf("message should be cleared, got %q", panelUpdateCache.message)
+	}
+}
+
+func TestCheckPanelUpdateUsesCachedMessage(t *testing.T) {
+	panelUpdateCache.mu.Lock()
+	prevLastAt := panelUpdateCache.lastAt
+	prevLatest := panelUpdateCache.latest
+	prevMessage := panelUpdateCache.message
+	panelUpdateCache.lastAt = time.Now()
+	panelUpdateCache.latest = "v1.2.3"
+	panelUpdateCache.message = "面板有新版本 v1.2.3 可用，当前版本 v1.2.2。"
+	panelUpdateCache.mu.Unlock()
+	prevCurrent := panelCurrentVersion
+	panelCurrentVersion = "v1.2.2"
+	t.Cleanup(func() {
+		panelUpdateCache.mu.Lock()
+		panelUpdateCache.lastAt = prevLastAt
+		panelUpdateCache.latest = prevLatest
+		panelUpdateCache.message = prevMessage
+		panelUpdateCache.mu.Unlock()
+		panelCurrentVersion = prevCurrent
+	})
+
+	firing, msg := checkPanelUpdate()
+	if !firing {
+		t.Fatal("cached panel update message should keep alert firing")
+	}
+	if !strings.Contains(msg, "v1.2.3") {
+		t.Fatalf("message should include cached latest version, got %q", msg)
 	}
 }
 

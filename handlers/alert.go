@@ -133,7 +133,7 @@ func normalizeAlertSetting(key string, val interface{}) (string, bool, error) {
 		}
 		return v, true, nil
 	case "alert_cpu", "alert_memory", "alert_disk", "alert_service", "alert_ssl",
-		"alert_backup", "alert_website_expiry", "alert_remote_backup", "alert_cron_fail", "alert_site", "alert_system_update":
+		"alert_backup", "alert_website_expiry", "alert_remote_backup", "alert_cron_fail", "alert_site", "alert_system_update", "alert_panel_update":
 		v, err := normalizeBool(val)
 		return v, true, err
 	default:
