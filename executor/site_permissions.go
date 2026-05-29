@@ -71,3 +71,31 @@ func HardenSiteSensitivePermissions(domain, webRoot, systemUser string) error {
 
 	return nil
 }
+
+// InstallPluginPermissions 安装插件时设置插件目录和密钥目录权限。
+// 与 HardenSiteSensitivePermissions 不同，此函数不 chown 整站，且所有错误静默忽略（不阻断插件安装）。
+func InstallPluginPermissions(domain, systemUser, pluginDir string) {
+	systemUser = strings.TrimSpace(systemUser)
+	if systemUser == "" {
+		return
+	}
+
+	ensureSitePrimaryGroup(systemUser)
+	owner := siteOwner(systemUser)
+
+	if pluginDir != "" {
+		executeCommand("chown", "-R", owner, pluginDir)
+	}
+
+	if domain != "" {
+		secretsDir := filepath.Join("/var/wp-panel/site-secrets", domain)
+		if _, err := os.Stat(secretsDir); err == nil {
+			os.Chmod(secretsDir, 0700)
+			cfgPath := filepath.Join(secretsDir, "wp-panel-config.json")
+			if _, err := os.Stat(cfgPath); err == nil {
+				os.Chmod(cfgPath, 0600)
+			}
+			executeCommand("chown", "-R", owner, secretsDir)
+		}
+	}
+}

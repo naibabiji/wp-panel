@@ -736,11 +736,7 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 		return
 	}
 
-	if err := executor.HardenSiteSensitivePermissions(domain, webRoot, systemUser); err != nil {
-		log.Printf("设置插件安全权限失败 site=%d: %v", id, err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("设置插件安全权限失败"))
-		return
-	}
+	executor.InstallPluginPermissions(domain, systemUser, pluginDir)
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"message":   "插件已安装",

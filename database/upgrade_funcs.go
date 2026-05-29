@@ -84,7 +84,7 @@ func migratePluginConfigs() error {
 
 		// 以上全部成功后才删除旧配置文件
 		os.Remove(oldPath)
-		chownSitePath(systemUser, secretsDir)
+		exec.Command("chown", "-R", systemUser+":"+systemUser, secretsDir).Run()
 
 		log.Printf("[迁移] %s: 配置文件已迁移到 %s", domain, secretsDir)
 	}
@@ -105,58 +105,38 @@ func hardenSiteUnixIsolation() error {
 			log.Printf("[权限加固] 读取网站数据失败: %v", err)
 			continue
 		}
-		if err := ensureSiteGroup(systemUser); err != nil {
-			log.Printf("[权限加固] %s: 创建独立用户组失败: %v", domain, err)
+		if systemUser == "" {
 			continue
 		}
-		chownSitePath(systemUser, webRoot)
+		owner := systemUser + ":" + systemUser
 
+		// 创建同名用户组并设为主组
+		if err := exec.Command("getent", "group", systemUser).Run(); err != nil {
+			exec.Command("groupadd", "-r", systemUser).Run()
+		}
+		exec.Command("usermod", "-g", systemUser, systemUser).Run()
+
+		// chown 网站根目录
+		exec.Command("chown", "-R", owner, webRoot).Run()
+
+		// 收紧 wp-config.php
 		configPath := filepath.Join(webRoot, "wp-config.php")
 		if _, err := os.Stat(configPath); err == nil {
-			if err := os.Chmod(configPath, 0600); err != nil {
-				log.Printf("[权限加固] %s: 收紧 wp-config.php 失败: %v", domain, err)
-			}
-			chownSitePath(systemUser, configPath)
+			os.Chmod(configPath, 0600)
+			exec.Command("chown", owner, configPath).Run()
 		}
 
+		// 收紧密钥目录
 		secretsDir := filepath.Join("/var/wp-panel/site-secrets", domain)
 		if _, err := os.Stat(secretsDir); err == nil {
-			if err := os.Chmod(secretsDir, 0700); err != nil {
-				log.Printf("[权限加固] %s: 收紧密钥目录失败: %v", domain, err)
-			}
+			os.Chmod(secretsDir, 0700)
 			cfgPath := filepath.Join(secretsDir, "wp-panel-config.json")
 			if _, err := os.Stat(cfgPath); err == nil {
-				if err := os.Chmod(cfgPath, 0600); err != nil {
-					log.Printf("[权限加固] %s: 收紧插件密钥失败: %v", domain, err)
-				}
+				os.Chmod(cfgPath, 0600)
 			}
-			chownSitePath(systemUser, secretsDir)
+			exec.Command("chown", "-R", owner, secretsDir).Run()
 		}
 	}
 
 	return rows.Err()
-}
-
-func ensureSiteGroup(systemUser string) error {
-	if systemUser == "" {
-		return fmt.Errorf("system_user 为空")
-	}
-	if err := exec.Command("getent", "group", systemUser).Run(); err != nil {
-		if err := exec.Command("groupadd", "-r", systemUser).Run(); err != nil {
-			if checkErr := exec.Command("getent", "group", systemUser).Run(); checkErr != nil {
-				return err
-			}
-		}
-	}
-	if err := exec.Command("usermod", "-g", systemUser, systemUser).Run(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func chownSitePath(systemUser, path string) {
-	if systemUser == "" || path == "" {
-		return
-	}
-	exec.Command("chown", "-R", systemUser+":"+systemUser, path).Run()
 }
