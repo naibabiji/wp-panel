@@ -42,6 +42,14 @@ type Upgrade struct {
 	Func        func() error // 可选的 Go 函数迁移
 }
 
+// registeredFuncs 存放外部包注册的升级函数，解决循环依赖问题（database 不能 import executor）。
+var registeredFuncs = map[string]func() error{}
+
+// RegisterUpgrade 供外部包注册升级函数，version 必须与 upgrades 列表中的 Version 匹配。
+func RegisterUpgrade(version string, fn func() error) {
+	registeredFuncs[version] = fn
+}
+
 // upgrades 按版本顺序排列（旧→新）。v1.0.0 正式版清空历史，后续新版本在此追加。
 var upgrades = []Upgrade{
 	{
@@ -67,7 +75,6 @@ var upgrades = []Upgrade{
 	{
 		Version:     "1.0.4",
 		Description: "强化每站点 Unix 用户组隔离和敏感文件权限",
-		Func:        hardenSiteUnixIsolation,
 	},
 }
 
@@ -189,8 +196,12 @@ func RunUpgrades() error {
 			}
 		}
 
-		if u.Func != nil {
-			if err := u.Func(); err != nil {
+		fn := u.Func
+		if fn == nil {
+			fn = registeredFuncs[u.Version]
+		}
+		if fn != nil {
+			if err := fn(); err != nil {
 				return fmt.Errorf("升级 %s 函数迁移失败: %w", u.Version, err)
 			}
 		}

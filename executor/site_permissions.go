@@ -2,9 +2,12 @@ package executor
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/naibabiji/wp-panel/database"
 )
 
 func siteOwner(systemUser string) string {
@@ -70,6 +73,33 @@ func HardenSiteSensitivePermissions(domain, webRoot, systemUser string) error {
 	}
 
 	return nil
+}
+
+func init() {
+	database.RegisterUpgrade("1.0.4", HardenSiteUnixIsolation)
+}
+
+// HardenSiteUnixIsolation 对所有已有站点执行 Unix 用户组隔离和敏感文件权限加固（升级迁移用）。
+func HardenSiteUnixIsolation() error {
+	db := database.GetDB()
+	rows, err := db.Query("SELECT domain, web_root, system_user FROM websites")
+	if err != nil {
+		return fmt.Errorf("查询网站列表失败: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var domain, webRoot, systemUser string
+		if err := rows.Scan(&domain, &webRoot, &systemUser); err != nil {
+			log.Printf("[权限加固] 读取网站数据失败: %v", err)
+			continue
+		}
+		if err := HardenSiteSensitivePermissions(domain, webRoot, systemUser); err != nil {
+			log.Printf("[权限加固] %s: 安全权限设置失败: %v", domain, err)
+		}
+	}
+
+	return rows.Err()
 }
 
 // InstallPluginPermissions 安装插件时设置插件目录和密钥目录权限。
