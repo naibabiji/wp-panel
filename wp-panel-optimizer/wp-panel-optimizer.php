@@ -333,6 +333,9 @@ class WP_Panel_Optimizer {
         if (!$post || in_array($post->post_status, ['draft', 'auto-draft', 'inherit'])) return;
         if (!in_array($post->post_status, ['publish', 'trash', 'future', 'private'])) return;
 
+        $pt = get_post_type_object($post->post_type);
+        if (!$pt || !$pt->public) return;
+
         $resp = self::do_clear();
         $success = !empty($resp['success']);
         self::log_clear('auto', $success);
