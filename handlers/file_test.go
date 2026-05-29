@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -64,6 +66,100 @@ func TestExpectedUploadChunksAllowsEmptyFiles(t *testing.T) {
 	for _, tt := range tests {
 		if got := expectedUploadChunks(tt.size); got != tt.want {
 			t.Fatalf("expectedUploadChunks(%d) = %d, want %d", tt.size, got, tt.want)
+		}
+	}
+}
+
+func TestArchiveFormatSupportsCommonWebsitePackages(t *testing.T) {
+	tests := map[string]string{
+		"site.zip":        "zip",
+		"site.tar":        "tar",
+		"site.tar.gz":     "tar.gz",
+		"site.tgz":        "tar.gz",
+		"site.tar.bz2":    "tar.bz2",
+		"site.tbz2":       "tar.bz2",
+		"database.sql":    "",
+		"database.sql.gz": "",
+	}
+
+	for name, want := range tests {
+		if got := archiveFormat(name); got != want {
+			t.Fatalf("archiveFormat(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestExtractTarGzArchive(t *testing.T) {
+	base := t.TempDir()
+	archivePath := filepath.Join(base, "site.tar.gz")
+	writeTarGz(t, archivePath, map[string]string{
+		"wp-content/uploads/readme.txt": "ok",
+	})
+
+	conflicts, err := checkTarArchive(archivePath, "tar.gz", base, base, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conflicts) != 0 {
+		t.Fatalf("conflicts = %v, want none", conflicts)
+	}
+
+	if err := extractTarArchive(archivePath, "tar.gz", base, base); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(base, "wp-content", "uploads", "readme.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "ok" {
+		t.Fatalf("extracted content = %q, want ok", string(data))
+	}
+
+	conflicts, err = checkTarArchive(archivePath, "tar.gz", base, base, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(conflicts, []string{"wp-content/uploads/readme.txt"}) {
+		t.Fatalf("conflicts = %v, want extracted file", conflicts)
+	}
+}
+
+func TestTarArchiveRejectsPathTraversal(t *testing.T) {
+	base := t.TempDir()
+	archivePath := filepath.Join(base, "site.tar.gz")
+	writeTarGz(t, archivePath, map[string]string{
+		"../escape.txt": "bad",
+	})
+
+	if _, err := checkTarArchive(archivePath, "tar.gz", base, base, false); err == nil {
+		t.Fatal("expected path traversal archive to be rejected")
+	}
+}
+
+func writeTarGz(t *testing.T, path string, files map[string]string) {
+	t.Helper()
+
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+
+	gz := gzip.NewWriter(file)
+	defer gz.Close()
+	tw := tar.NewWriter(gz)
+	defer tw.Close()
+
+	for name, body := range files {
+		if err := tw.WriteHeader(&tar.Header{
+			Name: name,
+			Mode: 0644,
+			Size: int64(len(body)),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

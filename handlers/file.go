@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"archive/tar"
 	"archive/zip"
+	"compress/bzip2"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,10 +27,22 @@ import (
 type FileHandler struct{}
 
 const (
-	maxZipEntries   = 100000
-	uploadChunkSize = int64(5 * 1024 * 1024)
-	maxUploadChunks = 20000
+	maxArchiveEntries = 100000
+	uploadChunkSize   = int64(5 * 1024 * 1024)
+	maxUploadChunks   = 20000
 )
+
+type multiCloser []io.Closer
+
+func (m multiCloser) Close() error {
+	var firstErr error
+	for i := len(m) - 1; i >= 0; i-- {
+		if err := m[i].Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
 
 type uploadSession struct {
 	Filename     string `json:"filename"`
@@ -845,6 +860,164 @@ func (h *FileHandler) Compress(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": fmt.Sprintf("已压缩为 %s", zipName)}))
 }
 
+func archiveFormat(path string) string {
+	lower := strings.ToLower(path)
+	switch {
+	case strings.HasSuffix(lower, ".zip"):
+		return "zip"
+	case strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"):
+		return "tar.gz"
+	case strings.HasSuffix(lower, ".tar.bz2"), strings.HasSuffix(lower, ".tbz2"):
+		return "tar.bz2"
+	case strings.HasSuffix(lower, ".tar"):
+		return "tar"
+	default:
+		return ""
+	}
+}
+
+func supportedArchiveMessage() string {
+	return "仅支持解压 .zip / .tar / .tar.gz / .tgz / .tar.bz2 / .tbz2 文件"
+}
+
+func openTarReader(path, format string) (*tar.Reader, io.Closer, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	switch format {
+	case "tar":
+		return tar.NewReader(file), multiCloser{file}, nil
+	case "tar.gz":
+		gz, err := gzip.NewReader(file)
+		if err != nil {
+			file.Close()
+			return nil, nil, err
+		}
+		return tar.NewReader(gz), multiCloser{file, gz}, nil
+	case "tar.bz2":
+		return tar.NewReader(bzip2.NewReader(file)), multiCloser{file}, nil
+	default:
+		file.Close()
+		return nil, nil, fmt.Errorf("unsupported archive format")
+	}
+}
+
+func tarTargetForHeader(basePath, destDir string, hdr *tar.Header) (string, bool, error) {
+	switch hdr.Typeflag {
+	case tar.TypeDir, tar.TypeReg, tar.TypeRegA:
+	case tar.TypeXHeader, tar.TypeXGlobalHeader, tar.TypeGNULongName, tar.TypeGNULongLink:
+		return "", true, nil
+	default:
+		return "", false, fmt.Errorf("压缩包包含不支持的条目: %s", hdr.Name)
+	}
+
+	if hdr.Name == "" {
+		return "", true, nil
+	}
+
+	target := filepath.Join(destDir, filepath.FromSlash(hdr.Name))
+	target = filepath.Clean(target)
+	if !isPathWithin(basePath, target) {
+		return "", false, fmt.Errorf("压缩包包含非法路径: %s", hdr.Name)
+	}
+	return target, false, nil
+}
+
+func checkTarArchive(archivePath, format, basePath, destDir string, overwrite bool) ([]string, error) {
+	tr, closer, err := openTarReader(archivePath, format)
+	if err != nil {
+		return nil, err
+	}
+	defer closer.Close()
+
+	var conflicts []string
+	count := 0
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		count++
+		if count > maxArchiveEntries {
+			return nil, fmt.Errorf("压缩包文件数量过多")
+		}
+
+		target, skip, err := tarTargetForHeader(basePath, destDir, hdr)
+		if err != nil {
+			return nil, err
+		}
+		if skip || hdr.Typeflag == tar.TypeDir || overwrite {
+			continue
+		}
+		if _, err := os.Stat(target); err == nil {
+			conflicts = append(conflicts, hdr.Name)
+		}
+	}
+	return conflicts, nil
+}
+
+func extractTarArchive(archivePath, format, basePath, destDir string) error {
+	tr, closer, err := openTarReader(archivePath, format)
+	if err != nil {
+		return err
+	}
+	defer closer.Close()
+
+	count := 0
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		count++
+		if count > maxArchiveEntries {
+			return fmt.Errorf("压缩包文件数量过多")
+		}
+
+		target, skip, err := tarTargetForHeader(basePath, destDir, hdr)
+		if err != nil {
+			return err
+		}
+		if skip {
+			continue
+		}
+
+		if hdr.Typeflag == tar.TypeDir {
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return fmt.Errorf("创建目录失败: %s", hdr.Name)
+			}
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return fmt.Errorf("创建目录失败: %s", hdr.Name)
+		}
+		dst, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		if err != nil {
+			return fmt.Errorf("创建文件失败: %s", hdr.Name)
+		}
+		_, copyErr := io.Copy(dst, tr)
+		closeErr := dst.Close()
+		if copyErr != nil {
+			os.Remove(target)
+			return fmt.Errorf("写入文件失败: %s", hdr.Name)
+		}
+		if closeErr != nil {
+			os.Remove(target)
+			return fmt.Errorf("保存文件失败: %s", hdr.Name)
+		}
+	}
+	return nil
+}
+
 func (h *FileHandler) Decompress(c *gin.Context) {
 	siteIDStr := c.Query("site_id")
 	relPath := c.Query("path")
@@ -868,8 +1041,30 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 		return
 	}
 
-	if !strings.HasSuffix(strings.ToLower(fullPath), ".zip") {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("仅支持解压 .zip 文件"))
+	format := archiveFormat(fullPath)
+	if format == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(supportedArchiveMessage()))
+		return
+	}
+
+	destDir := filepath.Dir(fullPath)
+	overwrite := c.Query("overwrite") == "1"
+
+	if format != "zip" {
+		conflicts, err := checkTarArchive(fullPath, format, basePath, destDir, overwrite)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+			return
+		}
+		if len(conflicts) > 0 {
+			c.JSON(http.StatusConflict, gin.H{"success": false, "message": "以下文件已存在，确认覆盖？", "conflicts": conflicts})
+			return
+		}
+		if err := extractTarArchive(fullPath, format, basePath, destDir); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(err.Error()))
+			return
+		}
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "解压完成"}))
 		return
 	}
 
@@ -880,10 +1075,8 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 	}
 	defer r.Close()
 
-	destDir := filepath.Dir(fullPath)
-	overwrite := c.Query("overwrite") == "1"
 	var conflicts []string
-	if len(r.File) > maxZipEntries {
+	if len(r.File) > maxArchiveEntries {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("压缩包文件数量过多"))
 		return
 	}

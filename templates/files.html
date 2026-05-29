@@ -98,7 +98,7 @@
                                     <button x-show="!f.is_dir" @click="downloadFile(f.name)" class="btn-primary text-xs py-1 px-2">下载</button>
                                     <button @click="startRename(f.name)" class="btn-secondary text-xs py-1 px-2">重命名</button>
                                     <button @click="compressItems([f.name])" class="btn-secondary text-xs py-1 px-2" :title="f.is_dir ? '压缩目录' : '压缩文件'">压缩</button>
-                                    <button x-show="f.name.toLowerCase().endsWith('.zip')" @click="decompressFile(f.name)" class="btn-secondary text-xs py-1 px-2">解压</button>
+                                    <button x-show="isArchive(f.name)" @click="decompressFile(f.name)" class="btn-secondary text-xs py-1 px-2">解压</button>
                                     <button @click="deleteItems([f.name])" class="btn-danger text-xs py-1 px-2">删除</button>
                                 </div>
                             </td>
@@ -353,6 +353,10 @@ function fileManager() {
             } catch(e) { showToast(e.message, 'error'); }
         },
         pathFor(name) { return this.currentPath === '/' ? '/' + name : this.currentPath + '/' + name; },
+        isArchive(name) {
+            const lower = name.toLowerCase();
+            return lower.endsWith('.zip') || lower.endsWith('.tar') || lower.endsWith('.tar.gz') || lower.endsWith('.tgz') || lower.endsWith('.tar.bz2') || lower.endsWith('.tbz2');
+        },
         async deleteItems(names) {
             const label = names.length === 1 ? names[0] : names.length + ' 个项目';
             if (!await confirmModal('确认删除 ' + label + '？')) return;
