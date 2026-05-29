@@ -4,9 +4,6 @@
 !/wp-panel-optimizer
 /bin/tailwindcss
 
-# 前端资源（由发布流程下载）
-/static/js/alpine.min.js
-/static/js/chart.min.js
 
 # Go
 
@@ -24,5 +21,4 @@ Thumbs.db
 .claude/
 CLAUDE.md
 AGENTS.md
-/static/css/main.css
 setup.sh
