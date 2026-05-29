@@ -20,6 +20,12 @@ import (
 
 type FileHandler struct{}
 
+const (
+	maxZipEntries        = 10000
+	maxZipSingleFileSize = int64(512 * 1024 * 1024)
+	maxZipTotalSize      = int64(2 * 1024 * 1024 * 1024)
+)
+
 type fileEntry struct {
 	Name    string `json:"name"`
 	IsDir   bool   `json:"is_dir"`
@@ -582,6 +588,12 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 	destDir := filepath.Dir(fullPath)
 	overwrite := c.Query("overwrite") == "1"
 	var conflicts []string
+	if len(r.File) > maxZipEntries {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("压缩包文件数量过多"))
+		return
+	}
+	var declaredTotal uint64
+	var actualTotal int64
 	for _, f := range r.File {
 		target := filepath.Join(destDir, filepath.FromSlash(f.Name))
 		target = filepath.Clean(target)
@@ -589,9 +601,20 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 			c.JSON(http.StatusForbidden, models.ErrorResponse("压缩包包含非法路径: "+f.Name))
 			return
 		}
-		if !f.FileInfo().IsDir() && !overwrite {
-			if _, err := os.Stat(target); err == nil {
-				conflicts = append(conflicts, f.Name)
+		if !f.FileInfo().IsDir() {
+			if f.UncompressedSize64 > uint64(maxZipSingleFileSize) {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("压缩包内单个文件过大: "+f.Name))
+				return
+			}
+			if declaredTotal > uint64(maxZipTotalSize)-f.UncompressedSize64 {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("压缩包解压后总体积过大"))
+				return
+			}
+			declaredTotal += f.UncompressedSize64
+			if !overwrite {
+				if _, err := os.Stat(target); err == nil {
+					conflicts = append(conflicts, f.Name)
+				}
 			}
 		}
 	}
@@ -609,23 +632,52 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 		}
 
 		if f.FileInfo().IsDir() {
-			os.MkdirAll(target, 0755)
+			if err := os.MkdirAll(target, 0755); err != nil {
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建目录失败: "+f.Name))
+				return
+			}
 			continue
 		}
 
-		os.MkdirAll(filepath.Dir(target), 0755)
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建目录失败: "+f.Name))
+			return
+		}
 		src, err := f.Open()
 		if err != nil {
-			continue
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取压缩包文件失败: "+f.Name))
+			return
 		}
 		dst, err := os.Create(target)
 		if err != nil {
 			src.Close()
-			continue
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建文件失败: "+f.Name))
+			return
 		}
-		io.Copy(dst, src)
+		written, copyErr := io.Copy(dst, io.LimitReader(src, maxZipSingleFileSize+1))
 		src.Close()
-		dst.Close()
+		closeErr := dst.Close()
+		if copyErr != nil {
+			os.Remove(target)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("写入文件失败: "+f.Name))
+			return
+		}
+		if closeErr != nil {
+			os.Remove(target)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存文件失败: "+f.Name))
+			return
+		}
+		if written > maxZipSingleFileSize {
+			os.Remove(target)
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("压缩包内单个文件过大: "+f.Name))
+			return
+		}
+		actualTotal += written
+		if actualTotal > maxZipTotalSize {
+			os.Remove(target)
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("压缩包解压后总体积过大"))
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "解压完成"}))

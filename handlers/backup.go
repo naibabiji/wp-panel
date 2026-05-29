@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 
 	"github.com/naibabiji/wp-panel/database"
@@ -19,6 +20,8 @@ import (
 )
 
 type BackupHandler struct{}
+
+var mysqlIdentifierRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
 func (h *BackupHandler) List(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
@@ -233,6 +236,12 @@ func (h *BackupHandler) ClearDatabase(c *gin.Context) {
 	dbPass := readMariaDBPassword()
 	if dbPass == "" {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("无法读取数据库密码"))
+		return
+	}
+
+	if site.DBName == "" || len(site.DBName) > 64 || !mysqlIdentifierRe.MatchString(site.DBName) {
+		log.Printf("拒绝清空异常数据库名 site=%d db=%q", id, site.DBName)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("数据库名异常，已拒绝执行"))
 		return
 	}
 
