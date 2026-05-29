@@ -70,6 +70,7 @@
                 <div><dt class="text-sm text-gray-400">用户名</dt><dd class="text-white font-mono text-sm" x-text="site.db_user"></dd></div>
             </dl>
             <button @click="dbPasswordModal = true" class="text-sm py-1.5 px-3 rounded" style="background-color: #1e3a5f; color: #93c5fd;">修改密码</button>
+            <button @click="fixWPConfig()" :disabled="dbSubmitting" class="text-sm py-1.5 px-3 rounded ml-2" style="background-color: #14532d; color: #86efac;" x-text="dbSubmitting ? '处理中...' : '填写数据库信息'"></button>
             <button @click="clearDatabase()" :disabled="dbSubmitting" class="text-sm py-1.5 px-3 rounded ml-2" style="background-color: #7f1d1d; color: #fca5a5;" x-text="dbSubmitting ? '清空中...' : '清空数据库'"></button>
 
             <hr class="my-4 border-gray-700">
@@ -489,6 +490,16 @@ function websiteDetail() {
                 } else {
                     showToast(r.data?.message || '操作失败', 'error');
                 }
+            } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
+            this.dbSubmitting = false;
+        },
+        async fixWPConfig() {
+            if (!await confirmModal('将使用当前数据库名和用户名覆盖 wp-config.php 中的 DB_NAME 和 DB_USER，确认继续？')) return;
+            this.dbSubmitting = true;
+            try {
+                const r = await api('/websites/' + this.site.id + '/fix-wp-config', { method: 'POST' });
+                if (r.success) showToast(r.data?.message || '已更新', 'success');
+                else showToast(r.data?.message || '操作失败', 'error');
             } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
             this.dbSubmitting = false;
         },

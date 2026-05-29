@@ -4,8 +4,33 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+func FixWPConfigCredentials(webRoot, dbName, dbUser string) error {
+	configPath := filepath.Join(webRoot, "wp-config.php")
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("读取 wp-config.php 失败: %w", err)
+	}
+	text := string(content)
+
+	reName := regexp.MustCompile(`define\(\s*'DB_NAME'\s*,\s*'[^']*'\s*\)`)
+	text = reName.ReplaceAllString(text, fmt.Sprintf("define('DB_NAME', '%s')", dbName))
+
+	reUser := regexp.MustCompile(`define\(\s*'DB_USER'\s*,\s*'[^']*'\s*\)`)
+	text = reUser.ReplaceAllString(text, fmt.Sprintf("define('DB_USER', '%s')", dbUser))
+
+	if text == string(content) {
+		return fmt.Errorf("未找到 DB_NAME 或 DB_USER 定义，wp-config.php 可能格式异常")
+	}
+
+	if err := os.WriteFile(configPath, []byte(text), 0644); err != nil {
+		return fmt.Errorf("写入 wp-config.php 失败: %w", err)
+	}
+	return nil
+}
 
 func generateWPConfig(webRoot, dbName, dbUser, dbPassword string) error {
 	salts, err := generateWPSalts()

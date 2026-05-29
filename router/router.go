@@ -116,6 +116,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/websites/:id/ssl", websiteHandler.EnableSSL)
 	protected.DELETE("/api/websites/:id/ssl", websiteHandler.RemoveSSL)
 	protected.PUT("/api/websites/:id/db-password", websiteHandler.ChangeDBPassword)
+	protected.POST("/api/websites/:id/fix-wp-config", websiteHandler.FixWPConfig)
 	protected.GET("/api/websites/:id/logs", websiteHandler.ViewLogs)
 	protected.DELETE("/api/websites/:id/logs", websiteHandler.ClearLogs)
 	protected.PUT("/api/websites/:id/domains", websiteHandler.UpdateDomains)

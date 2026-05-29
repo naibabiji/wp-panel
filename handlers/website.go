@@ -443,6 +443,27 @@ func (h *WebsiteHandler) ChangeDBPassword(c *gin.Context) {
 	}
 }
 
+func (h *WebsiteHandler) FixWPConfig(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
+		return
+	}
+
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+
+	if err := executor.FixWPConfigCredentials(site.WebRoot, site.DBName, site.DBUser); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "wp-config.php 数据库名和用户名已更新"}))
+}
+
 func (h *WebsiteHandler) ViewLogs(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
