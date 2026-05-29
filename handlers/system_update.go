@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/models"
 
 	"github.com/gin-gonic/gin"
@@ -70,6 +71,7 @@ func (h *SystemUpdateHandler) Update(c *gin.Context) {
 	sysPkgCache.expireAt = time.Time{}
 	sysPkgCache.pkgs = nil
 	sysPkgCache.mu.Unlock()
+	executor.ClearSystemUpdateAlertCache()
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"message": "系统更新完成",

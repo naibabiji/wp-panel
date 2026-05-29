@@ -208,7 +208,8 @@ var migrations = []string{
 		('alert_website_expiry',     'true',     '网站到期告警'),
 		('alert_remote_backup',      'false',    '远程备份失败告警（需先启用远程备份）'),
 		('alert_cron_fail',          'true',     '计划任务执行失败告警'),
-		('alert_site',               'true',     '网站不可用告警')`,
+		('alert_site',               'true',     '网站不可用告警'),
+		('alert_system_update',      'true',     '系统可用更新告警')`,
 
 	// ============================================================
 	// seed: template_versions

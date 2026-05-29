@@ -76,6 +76,13 @@ var upgrades = []Upgrade{
 		Version:     "1.0.4",
 		Description: "强化每站点 Unix 用户组隔离和敏感文件权限",
 	},
+	{
+		Version:     "1.0.5",
+		Description: "新增系统可用更新告警开关",
+		SQL: []string{
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('alert_system_update', 'true', '系统可用更新告警')`,
+		},
+	},
 }
 
 // LatestVersion 返回 upgrades 列表中的最新版本号。

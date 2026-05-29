@@ -40,6 +40,41 @@ func TestAlertRuleSustainedFiringResets(t *testing.T) {
 	}
 }
 
+func TestAlertResendIntervalForSystemUpdate(t *testing.T) {
+	if got := alertResendInterval("alert_system_update"); got != 24*time.Hour {
+		t.Fatalf("system update alert should resend daily, got %v", got)
+	}
+	if got := alertResendInterval("alert_disk"); got != 30*time.Minute {
+		t.Fatalf("regular alerts should keep 30 minute resend interval, got %v", got)
+	}
+}
+
+func TestClearSystemUpdateAlertCache(t *testing.T) {
+	sysUpdateCache.mu.Lock()
+	prevLastAt := sysUpdateCache.lastAt
+	prevNames := sysUpdateCache.names
+	sysUpdateCache.lastAt = time.Now()
+	sysUpdateCache.names = []string{"openssl"}
+	sysUpdateCache.mu.Unlock()
+	t.Cleanup(func() {
+		sysUpdateCache.mu.Lock()
+		sysUpdateCache.lastAt = prevLastAt
+		sysUpdateCache.names = prevNames
+		sysUpdateCache.mu.Unlock()
+	})
+
+	ClearSystemUpdateAlertCache()
+
+	sysUpdateCache.mu.Lock()
+	defer sysUpdateCache.mu.Unlock()
+	if !sysUpdateCache.lastAt.IsZero() {
+		t.Fatalf("lastAt should be reset, got %v", sysUpdateCache.lastAt)
+	}
+	if sysUpdateCache.names != nil {
+		t.Fatalf("names should be cleared, got %v", sysUpdateCache.names)
+	}
+}
+
 func TestCheckBackupReportsOnlyStaleEnabledSites(t *testing.T) {
 	db := openAlertTestDB(t)
 	mustExec(t, db, `CREATE TABLE websites (id INTEGER PRIMARY KEY, domain TEXT)`)

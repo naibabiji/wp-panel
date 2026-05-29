@@ -111,8 +111,8 @@ func (m *alertManager) runChecks() {
 			}
 		} else if firing && r.firing {
 			r.lastAlertMsg = msg
-			// Continuous alert — re-send every 30 min
-			if time.Since(r.lastFired) > 30*time.Minute {
+			// Continuous alert — re-send on each rule's interval.
+			if time.Since(r.lastFired) > alertResendInterval(r.key) {
 				r.lastFired = time.Now()
 				logAlert(r.key, "critical", msg)
 				if hasSMTP {
@@ -142,6 +142,13 @@ func (r *alertRule) sustainedFiring(instantFiring bool, now time.Time) bool {
 		return false
 	}
 	return now.Sub(r.pendingSince) >= r.thresholdDuration
+}
+
+func alertResendInterval(key string) time.Duration {
+	if key == "alert_system_update" {
+		return 24 * time.Hour
+	}
+	return 30 * time.Minute
 }
 
 func isRuleEnabled(key string) bool {
@@ -584,9 +591,16 @@ func checkSites() (bool, string) {
 }
 
 var sysUpdateCache struct {
-	mu      sync.Mutex
-	lastAt  time.Time
-	names   []string
+	mu     sync.Mutex
+	lastAt time.Time
+	names  []string
+}
+
+func ClearSystemUpdateAlertCache() {
+	sysUpdateCache.mu.Lock()
+	sysUpdateCache.lastAt = time.Time{}
+	sysUpdateCache.names = nil
+	sysUpdateCache.mu.Unlock()
 }
 
 func checkSystemUpdate() (bool, string) {
