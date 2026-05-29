@@ -8,10 +8,13 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/naibabiji/wp-panel/database"
 )
+
+var syncMu sync.Mutex
 
 func deployFail2ban(whitelistIPs string, maxRetry, findTime, banTime int) error {
 	jailDir := "/etc/fail2ban/jail.d"
@@ -249,6 +252,9 @@ func ApplyFail2banSettings() error {
 }
 
 func SyncFail2banBans() {
+	syncMu.Lock()
+	defer syncMu.Unlock()
+
 	ipJails := make(map[string]string)
 	webBannedSet := make(map[string]bool)
 	webJailStatusRead := false

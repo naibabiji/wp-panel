@@ -14,9 +14,11 @@ import (
 type FirewallHandler struct{}
 
 func (h *FirewallHandler) ListBans(c *gin.Context) {
-	executor.SyncFail2banBans()
-	executor.CleanExpiredBans()
 	db := database.GetDB()
+	if c.Query("history") != "1" {
+		executor.SyncFail2banBans()
+		executor.CleanExpiredBans()
+	}
 
 	query := `SELECT id, ip_address, ban_level, reason, source_jail, banned_at, expires_at, unbanned_at, ban_count, is_manual
 	 FROM firewall_bans WHERE unbanned_at IS NULL AND (expires_at IS NULL OR expires_at > datetime('now')) ORDER BY banned_at DESC`
