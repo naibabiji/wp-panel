@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"archive/zip"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -20,7 +23,21 @@ import (
 
 type FileHandler struct{}
 
-const maxZipEntries = 100000
+const (
+	maxZipEntries   = 100000
+	uploadChunkSize = int64(5 * 1024 * 1024)
+	maxUploadChunks = 20000
+)
+
+type uploadSession struct {
+	Filename     string `json:"filename"`
+	FileSize     int64  `json:"file_size"`
+	TotalChunks  int    `json:"total_chunks"`
+	SiteID       int    `json:"site_id"`
+	Path         string `json:"path"`
+	LastModified int64  `json:"last_modified"`
+	CreatedAt    int64  `json:"created_at"`
+}
 
 type fileEntry struct {
 	Name    string `json:"name"`
@@ -78,6 +95,74 @@ func resolvePathForAccess(path string) (string, error) {
 			return cleanPath, nil
 		}
 	}
+}
+
+func uploadSessionDir(uploadID string) string {
+	return filepath.Join(os.TempDir(), "wppanel-upload-"+filepath.Base(uploadID))
+}
+
+func uploadSessionMetaPath(dir string) string {
+	return filepath.Join(dir, "session.json")
+}
+
+func sanitizeUploadFilename(filename string) string {
+	name := filepath.Base(strings.ReplaceAll(filename, "\\", "/"))
+	if name == "." || name == "/" || name == "\\" {
+		return ""
+	}
+	return name
+}
+
+func expectedUploadChunks(fileSize int64) int {
+	if fileSize == 0 {
+		return 0
+	}
+	return int((fileSize + uploadChunkSize - 1) / uploadChunkSize)
+}
+
+func makeUploadID(s uploadSession) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%s\x00%s\x00%d\x00%d\x00%d",
+		s.SiteID, filepath.Clean(s.Path), s.Filename, s.FileSize, s.TotalChunks, s.LastModified,
+	)))
+	return hex.EncodeToString(sum[:16])
+}
+
+func saveUploadSession(dir string, s uploadSession) error {
+	data, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(uploadSessionMetaPath(dir), data, 0600)
+}
+
+func loadUploadSession(dir string) (uploadSession, error) {
+	var s uploadSession
+	data, err := os.ReadFile(uploadSessionMetaPath(dir))
+	if err != nil {
+		return s, err
+	}
+	err = json.Unmarshal(data, &s)
+	return s, err
+}
+
+func completedUploadChunks(dir string, totalChunks int) []int {
+	completed := make([]int, 0)
+	for i := 0; i < totalChunks; i++ {
+		if _, err := os.Stat(filepath.Join(dir, fmt.Sprintf("chunk-%d", i))); err == nil {
+			completed = append(completed, i)
+		}
+	}
+	return completed
+}
+
+func missingUploadChunks(dir string, totalChunks int) []int {
+	missing := make([]int, 0)
+	for i := 0; i < totalChunks; i++ {
+		if _, err := os.Stat(filepath.Join(dir, fmt.Sprintf("chunk-%d", i))); err != nil {
+			missing = append(missing, i)
+		}
+	}
+	return missing
 }
 
 func (h *FileHandler) List(c *gin.Context) {
@@ -175,29 +260,65 @@ func (h *FileHandler) Upload(c *gin.Context) {
 
 func (h *FileHandler) UploadInit(c *gin.Context) {
 	var req struct {
-		Filename    string `json:"filename"`
-		FileSize    int64  `json:"file_size"`
-		TotalChunks int    `json:"total_chunks"`
+		Filename     string `json:"filename"`
+		FileSize     int64  `json:"file_size"`
+		TotalChunks  int    `json:"total_chunks"`
+		SiteID       int    `json:"site_id"`
+		Path         string `json:"path"`
+		LastModified int64  `json:"last_modified"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Filename == "" || req.TotalChunks <= 0 || req.TotalChunks > 20000 {
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数无效"))
 		return
 	}
+	filename := sanitizeUploadFilename(req.Filename)
+	expectedChunks := expectedUploadChunks(req.FileSize)
+	if filename == "" || req.FileSize < 0 || req.TotalChunks != expectedChunks || req.TotalChunks > maxUploadChunks {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数无效"))
+		return
+	}
+	if req.Path == "" {
+		req.Path = "/"
+	}
 
-	uploadID := fmt.Sprintf("%d_%s", time.Now().UnixNano(), filepath.Base(req.Filename))
-	dir := filepath.Join(os.TempDir(), "wppanel-upload-"+uploadID)
-	os.MkdirAll(dir, 0700)
+	basePath, err := fileBasePath(req.SiteID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+	destPath := filepath.Join(basePath, req.Path, filename)
+	destPath = filepath.Clean(destPath)
+	if !isPathWithin(basePath, destPath) {
+		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
+		return
+	}
 
-	var completed []int
-	for i := 0; i < req.TotalChunks; i++ {
-		if _, err := os.Stat(filepath.Join(dir, fmt.Sprintf("chunk-%d", i))); err == nil {
-			completed = append(completed, i)
-		}
+	session := uploadSession{
+		Filename:     filename,
+		FileSize:     req.FileSize,
+		TotalChunks:  req.TotalChunks,
+		SiteID:       req.SiteID,
+		Path:         req.Path,
+		LastModified: req.LastModified,
+		CreatedAt:    time.Now().Unix(),
+	}
+	uploadID := makeUploadID(session)
+	dir := uploadSessionDir(uploadID)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建上传会话失败"))
+		return
+	}
+	if existing, err := loadUploadSession(dir); err == nil {
+		session.CreatedAt = existing.CreatedAt
+	}
+	if err := saveUploadSession(dir, session); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存上传会话失败"))
+		return
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"upload_id":        uploadID,
-		"completed_chunks": completed,
+		"completed_chunks": completedUploadChunks(dir, req.TotalChunks),
 	}))
 }
 
@@ -210,15 +331,23 @@ func (h *FileHandler) UploadChunk(c *gin.Context) {
 	}
 
 	chunkIdx, err := strconv.Atoi(chunkIdxStr)
-	if err != nil || chunkIdx < 0 || chunkIdx > 20000 {
+	if err != nil || chunkIdx < 0 || chunkIdx >= maxUploadChunks {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("分片索引无效"))
 		return
 	}
 
-	uploadID = filepath.Base(uploadID)
-	dir := filepath.Join(os.TempDir(), "wppanel-upload-"+uploadID)
+	dir := uploadSessionDir(uploadID)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("上传会话不存在"))
+		return
+	}
+	session, err := loadUploadSession(dir)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("上传会话无效"))
+		return
+	}
+	if chunkIdx >= session.TotalChunks {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("分片索引无效"))
 		return
 	}
 
@@ -227,9 +356,24 @@ func (h *FileHandler) UploadChunk(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("请选择文件"))
 		return
 	}
+	expectedSize := uploadChunkSize
+	if chunkIdx == session.TotalChunks-1 {
+		expectedSize = session.FileSize - int64(chunkIdx)*uploadChunkSize
+	}
+	if file.Size != expectedSize {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("分片大小无效"))
+		return
+	}
 
 	chunkPath := filepath.Join(dir, fmt.Sprintf("chunk-%d", chunkIdx))
-	if err := c.SaveUploadedFile(file, chunkPath); err != nil {
+	tmpPath := chunkPath + ".tmp"
+	if err := c.SaveUploadedFile(file, tmpPath); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存分片失败"))
+		return
+	}
+	os.Remove(chunkPath)
+	if err := os.Rename(tmpPath, chunkPath); err != nil {
+		os.Remove(tmpPath)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存分片失败"))
 		return
 	}
@@ -249,63 +393,82 @@ func (h *FileHandler) UploadComplete(c *gin.Context) {
 	}
 
 	uploadID := filepath.Base(req.UploadID)
-	dir := filepath.Join(os.TempDir(), "wppanel-upload-"+uploadID)
+	dir := uploadSessionDir(uploadID)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("上传会话不存在"))
 		return
 	}
-	defer os.RemoveAll(dir)
+	session, err := loadUploadSession(dir)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("上传会话无效"))
+		return
+	}
+	if req.SiteID != session.SiteID || filepath.Clean(req.Path) != filepath.Clean(session.Path) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("上传会话不匹配"))
+		return
+	}
 
-	basePath, err := fileBasePath(req.SiteID)
+	basePath, err := fileBasePath(session.SiteID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
 
-	parts := strings.SplitN(uploadID, "_", 2)
-	filename := parts[0]
-	if len(parts) > 1 {
-		filename = parts[1]
-	}
-
-	destPath := filepath.Join(basePath, req.Path, filename)
+	destPath := filepath.Join(basePath, session.Path, session.Filename)
 	destPath = filepath.Clean(destPath)
 	if !isPathWithin(basePath, destPath) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
 		return
 	}
 
-	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) == 0 {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("无分片数据"))
+	if missing := missingUploadChunks(dir, session.TotalChunks); len(missing) > 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("分片 %d 缺失，请重新上传", missing[0])))
 		return
 	}
 
-	dst, err := os.Create(destPath)
+	tmpDestPath := destPath + ".uploading-" + uploadID
+	dst, err := os.Create(tmpDestPath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建文件失败"))
 		return
 	}
-	defer dst.Close()
+	copyOK := false
+	defer func() {
+		dst.Close()
+		if !copyOK {
+			os.Remove(tmpDestPath)
+		}
+	}()
 
-	for i := 0; i < len(entries); i++ {
+	for i := 0; i < session.TotalChunks; i++ {
 		chunkPath := filepath.Join(dir, fmt.Sprintf("chunk-%d", i))
 		src, err := os.Open(chunkPath)
 		if err != nil {
-			os.Remove(destPath)
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse(fmt.Sprintf("分片 %d 缺失，请重新上传", i)))
 			return
 		}
 		if _, err := io.Copy(dst, src); err != nil {
 			src.Close()
-			os.Remove(destPath)
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("合并分片失败"))
 			return
 		}
 		src.Close()
 	}
+	if err := dst.Close(); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存文件失败"))
+		return
+	}
 
-	os.Chmod(destPath, 0644)
+	if err := os.Chmod(tmpDestPath, 0644); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("设置文件权限失败"))
+		return
+	}
+	if err := os.Rename(tmpDestPath, destPath); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存文件失败"))
+		return
+	}
+	copyOK = true
+	os.RemoveAll(dir)
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "上传完成"}))
 }
 

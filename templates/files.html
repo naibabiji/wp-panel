@@ -230,7 +230,14 @@ function fileManager() {
                 const initRes = await fetch(prefix + '/api/files/upload/init', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-                    body: JSON.stringify({ filename: name, file_size: file.size, total_chunks: totalChunks })
+                    body: JSON.stringify({
+                        filename: name,
+                        file_size: file.size,
+                        total_chunks: totalChunks,
+                        site_id: parseInt(this.selectedSite),
+                        path: this.currentPath,
+                        last_modified: file.lastModified || 0
+                    })
                 });
                 const initData = await initRes.json();
                 if (!initData.success) { showToast(initData.data?.message || '初始化上传失败', 'error'); this.uploading = false; return; }
