@@ -124,16 +124,18 @@ func (h *UpdateHandler) Update(c *gin.Context) {
 		}
 
 		// Verify Ed25519 signature of checksum file
-		if sigURL != "" {
-			sigFile := filepath.Join(tmpDir, binaryName+".sha256.sig")
-			if err := downloadFile(sigURL, sigFile); err != nil {
-				c.JSON(http.StatusInternalServerError, models.ErrorResponse("签名文件下载失败"))
-				return
-			}
-			if err := verifyEd25519(shaFile, sigFile); err != nil {
-				c.JSON(http.StatusInternalServerError, models.ErrorResponse("签名校验失败"))
-				return
-			}
+		if sigURL == "" {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("未找到 Ed25519 签名文件，无法验证更新来源"))
+			return
+		}
+		sigFile := filepath.Join(tmpDir, binaryName+".sha256.sig")
+		if err := downloadFile(sigURL, sigFile); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("签名文件下载失败"))
+			return
+		}
+		if err := verifyEd25519(shaFile, sigFile); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("签名校验失败"))
+			return
 		}
 	}
 

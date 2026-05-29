@@ -20,7 +20,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 KEY_FILE="/e/SynologyDrive/ai/wp-panel-release-key.pem"
 SHA256_FILE="/tmp/wp-panel-${TAG}.sha256"
-SIG_FILE="/tmp/wp-panel-${TAG}.sha256.sig"
+SIG_FILE="/tmp/wp-panel.sha256.sig"
 
 if [ ! -f "$KEY_FILE" ]; then
     echo "错误: 找不到私钥文件 $KEY_FILE"
