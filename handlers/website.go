@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -687,17 +686,26 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 	src := "/www/server/panel/packages/wp-panel-optimizer.php"
 	pluginDir := filepath.Join(webRoot, "wp-content", "plugins", "wp-panel-optimizer")
 	dst := filepath.Join(pluginDir, "wp-panel-optimizer.php")
-	os.MkdirAll(pluginDir, 0755)
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建插件目录失败"))
+		return
+	}
 
 	srcData, err := os.ReadFile(src)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("插件源文件不存在，请先升级面板"))
 		return
 	}
-	os.WriteFile(dst, srcData, 0644)
+	if err := os.WriteFile(dst, srcData, 0644); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("写入插件文件失败"))
+		return
+	}
 
 	apiKey := executor.NewAPIKey()
-	database.GetDB().Exec("UPDATE websites SET plugin_api_key = ? WHERE id = ?", apiKey, id)
+	if _, err := database.GetDB().Exec("UPDATE websites SET plugin_api_key = ? WHERE id = ?", apiKey, id); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存插件密钥失败"))
+		return
+	}
 
 	cfg := config.AppConfig
 	panelURL := fmt.Sprintf("https://127.0.0.1:%d/%s", cfg.Panel.TLSPort, cfg.Panel.RandomSuffix)
@@ -707,17 +715,32 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 	})
 	baseSecretsDir := "/var/wp-panel/site-secrets"
 	secretsDir := filepath.Join(baseSecretsDir, domain)
-	os.MkdirAll(baseSecretsDir, 0711)
-	os.Chmod(baseSecretsDir, 0711)
-	os.MkdirAll(secretsDir, 0750)
+	if err := os.MkdirAll(baseSecretsDir, 0711); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建密钥目录失败"))
+		return
+	}
+	if err := os.Chmod(baseSecretsDir, 0711); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("设置密钥目录权限失败"))
+		return
+	}
+	if err := os.MkdirAll(secretsDir, 0700); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建站点密钥目录失败"))
+		return
+	}
 
 	// 清理旧路径下的配置文件（迁移到 Web 目录外之前的位置）
 	os.Remove(filepath.Join(pluginDir, "wp-panel-config.json"))
 
-	os.WriteFile(filepath.Join(secretsDir, "wp-panel-config.json"), cfgJSON, 0640)
+	if err := os.WriteFile(filepath.Join(secretsDir, "wp-panel-config.json"), cfgJSON, 0600); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("写入插件密钥失败"))
+		return
+	}
 
-	exec.Command("chown", "-R", systemUser+":www-data", pluginDir).Run()
-	exec.Command("chown", "-R", systemUser+":www-data", secretsDir).Run()
+	if err := executor.HardenSiteSensitivePermissions(domain, webRoot, systemUser); err != nil {
+		log.Printf("设置插件安全权限失败 site=%d: %v", id, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("设置插件安全权限失败"))
+		return
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"message":   "插件已安装",

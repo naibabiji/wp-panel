@@ -7,12 +7,12 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/models"
 
 	"github.com/gin-gonic/gin"
@@ -827,7 +827,11 @@ func (h *FileHandler) FixPermissions(c *gin.Context) {
 		return
 	}
 
-	exec.Command("chown", "-R", site.SystemUser+":www-data", webRoot).Run()
+	if err := executor.HardenSiteSensitivePermissions(site.Domain, webRoot, site.SystemUser); err != nil {
+		log.Printf("安全权限修复失败 root=%s: %v", webRoot, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("安全权限修复失败"))
+		return
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"message":    fmt.Sprintf("权限修复完成，目录 %d 个，文件 %d 个", dirCount, fileCount),

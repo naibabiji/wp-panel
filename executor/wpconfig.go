@@ -72,7 +72,7 @@ require_once ABSPATH . 'wp-settings.php';
 `, dbName, dbUser, dbPassword, salts)
 
 	configPath := filepath.Join(webRoot, "wp-config.php")
-	return os.WriteFile(configPath, []byte(config), 0644)
+	return os.WriteFile(configPath, []byte(config), 0600)
 }
 
 func generateWPSalts() (string, error) {

@@ -130,7 +130,7 @@ func installExtensions(webRoot, systemUser string, themes, plugins []string) {
 		installZip(filepath.Join(webRoot, "wp-content", "plugins"), slug, "plugin")
 	}
 	if len(themes) > 0 || len(plugins) > 0 {
-		executeCommand("chown", "-R", systemUser+":www-data",
+		executeCommand("chown", "-R", siteOwner(systemUser),
 			filepath.Join(webRoot, "wp-content", "themes"),
 			filepath.Join(webRoot, "wp-content", "plugins"))
 	}

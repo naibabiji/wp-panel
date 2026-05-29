@@ -495,7 +495,7 @@ const phpFPMPoolTemplate = `; WP Panel Generated — v1.0
 
 [{{.Domain}}]
 user = {{.SystemUser}}
-group = www-data
+group = {{.SystemUser}}
 
 listen = {{.SocketPath}}/{{.Domain}}.sock
 listen.owner = www-data

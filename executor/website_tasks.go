@@ -66,11 +66,15 @@ func executeCreateSite(task *Task) TaskResult {
 	phpSockPath := filepath.Join(cfg.Paths.PHPFPMSock, domain+".sock")
 
 	// Step 1: Create system user
-	if _, err := executeCommand("useradd", "-r", "-s", "/usr/sbin/nologin", "-M", "-d", "/nonexistent", systemUser); err != nil {
+	if _, err := executeCommand("useradd", "-r", "-U", "-s", "/usr/sbin/nologin", "-M", "-d", "/nonexistent", systemUser); err != nil {
 		if !strings.Contains(err.Error(), "already exists") {
 			log.Printf("创建系统用户失败: %v", err)
 			return TaskResult{Success: false, Message: "创建系统用户失败"}
 		}
+	}
+	if err := ensureSitePrimaryGroup(systemUser); err != nil {
+		log.Printf("创建站点用户组失败: %v", err)
+		return TaskResult{Success: false, Message: "创建站点用户组失败"}
 	}
 	rollbacks = append(rollbacks, rollbackStep{"删除系统用户 " + systemUser, func() error {
 		_, e := executeCommand("userdel", "-r", "-f", systemUser)
@@ -106,7 +110,7 @@ func executeCreateSite(task *Task) TaskResult {
 	}
 
 	// Step 4: Chown
-	if _, err := executeCommand("chown", "-R", systemUser+":www-data", webRoot); err != nil {
+	if _, err := executeCommand("chown", "-R", siteOwner(systemUser), webRoot); err != nil {
 		rollback()
 		log.Printf("设置目录权限失败: %v", err)
 		return TaskResult{Success: false, Message: "设置目录权限失败"}
@@ -129,6 +133,11 @@ func executeCreateSite(task *Task) TaskResult {
 			log.Printf("生成 wp-config.php 失败: %v", err)
 			return TaskResult{Success: false, Message: "生成 wp-config.php 失败"}
 		}
+	}
+	if err := HardenSiteSensitivePermissions(domain, webRoot, systemUser); err != nil {
+		rollback()
+		log.Printf("设置站点安全权限失败: %v", err)
+		return TaskResult{Success: false, Message: "设置站点安全权限失败"}
 	}
 
 	// Step 7: Generate Nginx + PHP-FPM configs
@@ -627,8 +636,11 @@ func ReinstallWordPress(packagePath, webRoot, dbName, dbUser, systemUser string,
 		return fmt.Errorf("生成 wp-config.php 失败: %w", err)
 	}
 
-	if _, err := executeCommand("chown", "-R", systemUser+":www-data", webRoot); err != nil {
+	if _, err := executeCommand("chown", "-R", siteOwner(systemUser), webRoot); err != nil {
 		fmt.Fprintf(os.Stderr, "设置权限警告: %v\n", err)
+	}
+	if err := HardenSiteSensitivePermissions(filepath.Base(webRoot), webRoot, systemUser); err != nil {
+		fmt.Fprintf(os.Stderr, "设置安全权限警告: %v\n", err)
 	}
 
 	if cleanDefaults {

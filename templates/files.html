@@ -261,7 +261,7 @@ function fileManager() {
             });
         },
         async fixPermissions() {
-            if (!await confirmModal('确认修复 ' + (this.sites.find(s => s.id == this.selectedSite)?.domain || '') + ' 的文件权限？\n\n目录将设为 755，文件将设为 644，所有者为系统用户:www-data')) return;
+            if (!await confirmModal('确认修复 ' + (this.sites.find(s => s.id == this.selectedSite)?.domain || '') + ' 的文件权限？\n\n目录将设为 755，文件将设为 644，敏感文件将收紧权限，所有者为站点用户:站点用户')) return;
             this.fixingPerms = true;
             try {
                 const r = await api('/files/fix-permissions?site_id=' + this.selectedSite, { method: 'POST' });

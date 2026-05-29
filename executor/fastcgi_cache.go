@@ -164,6 +164,10 @@ func RegenerateAllSitesFPM() {
 		if err := rows.Scan(&siteID, &domain, &systemUser, &webRoot, &logDir); err != nil {
 			continue
 		}
+		if err := ensureSitePrimaryGroup(systemUser); err != nil {
+			log.Printf("[FPM重建] %s: 站点用户组检查失败: %v", domain, err)
+			continue
+		}
 
 		phpData := &PHPFPMPoolData{
 			Domain:     domain,

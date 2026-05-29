@@ -64,6 +64,11 @@ var upgrades = []Upgrade{
 			`INSERT OR IGNORE INTO wp_extension_config (etype, slug, name, enabled) VALUES ('plugin', 'redis-cache', 'Redis Cache', 1)`,
 		},
 	},
+	{
+		Version:     "1.0.4",
+		Description: "强化每站点 Unix 用户组隔离和敏感文件权限",
+		Func:        hardenSiteUnixIsolation,
+	},
 }
 
 // LatestVersion 返回 upgrades 列表中的最新版本号。

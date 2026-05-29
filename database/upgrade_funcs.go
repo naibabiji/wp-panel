@@ -51,13 +51,13 @@ func migratePluginConfigs() error {
 
 		// 写入新路径
 		secretsDir := filepath.Join(baseSecretsDir, domain)
-		os.MkdirAll(secretsDir, 0750)
+		os.MkdirAll(secretsDir, 0700)
 		newCfg, _ := json.Marshal(map[string]string{
 			"panel_url": oldCfg["panel_url"],
 			"api_key":   newKey,
 		})
 		cfgPath := filepath.Join(secretsDir, "wp-panel-config.json")
-		if err := os.WriteFile(cfgPath, newCfg, 0640); err != nil {
+		if err := os.WriteFile(cfgPath, newCfg, 0600); err != nil {
 			log.Printf("[迁移] %s: 写入新配置文件失败: %v", domain, err)
 			continue
 		}
@@ -84,10 +84,79 @@ func migratePluginConfigs() error {
 
 		// 以上全部成功后才删除旧配置文件
 		os.Remove(oldPath)
-		exec.Command("chown", "-R", systemUser+":www-data", secretsDir).Run()
+		chownSitePath(systemUser, secretsDir)
 
 		log.Printf("[迁移] %s: 配置文件已迁移到 %s", domain, secretsDir)
 	}
 
 	return nil
+}
+
+func hardenSiteUnixIsolation() error {
+	rows, err := DB.Query("SELECT domain, web_root, system_user FROM websites")
+	if err != nil {
+		return fmt.Errorf("查询网站列表失败: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var domain, webRoot, systemUser string
+		if err := rows.Scan(&domain, &webRoot, &systemUser); err != nil {
+			log.Printf("[权限加固] 读取网站数据失败: %v", err)
+			continue
+		}
+		if err := ensureSiteGroup(systemUser); err != nil {
+			log.Printf("[权限加固] %s: 创建独立用户组失败: %v", domain, err)
+			continue
+		}
+		chownSitePath(systemUser, webRoot)
+
+		configPath := filepath.Join(webRoot, "wp-config.php")
+		if _, err := os.Stat(configPath); err == nil {
+			if err := os.Chmod(configPath, 0600); err != nil {
+				log.Printf("[权限加固] %s: 收紧 wp-config.php 失败: %v", domain, err)
+			}
+			chownSitePath(systemUser, configPath)
+		}
+
+		secretsDir := filepath.Join("/var/wp-panel/site-secrets", domain)
+		if _, err := os.Stat(secretsDir); err == nil {
+			if err := os.Chmod(secretsDir, 0700); err != nil {
+				log.Printf("[权限加固] %s: 收紧密钥目录失败: %v", domain, err)
+			}
+			cfgPath := filepath.Join(secretsDir, "wp-panel-config.json")
+			if _, err := os.Stat(cfgPath); err == nil {
+				if err := os.Chmod(cfgPath, 0600); err != nil {
+					log.Printf("[权限加固] %s: 收紧插件密钥失败: %v", domain, err)
+				}
+			}
+			chownSitePath(systemUser, secretsDir)
+		}
+	}
+
+	return rows.Err()
+}
+
+func ensureSiteGroup(systemUser string) error {
+	if systemUser == "" {
+		return fmt.Errorf("system_user 为空")
+	}
+	if err := exec.Command("getent", "group", systemUser).Run(); err != nil {
+		if err := exec.Command("groupadd", "-r", systemUser).Run(); err != nil {
+			if checkErr := exec.Command("getent", "group", systemUser).Run(); checkErr != nil {
+				return err
+			}
+		}
+	}
+	if err := exec.Command("usermod", "-g", systemUser, systemUser).Run(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func chownSitePath(systemUser, path string) {
+	if systemUser == "" || path == "" {
+		return
+	}
+	exec.Command("chown", "-R", systemUser+":"+systemUser, path).Run()
 }
