@@ -55,8 +55,10 @@ func executeCreateBackup(task *Task) TaskResult {
 	if payload.Auto {
 		autoVal = 1
 	}
-	db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, auto) VALUES (?, ?, ?, ?, ?)`,
-		site.ID, filename, size, site.DBName, autoVal)
+	if _, err := db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, auto) VALUES (?, ?, ?, ?, ?)`,
+		site.ID, filename, size, site.DBName, autoVal); err != nil {
+		log.Printf("备份记录写入 db_backups 失败 [%s]: %v", site.Domain, err)
+	}
 
 	SyncBackupToRemote(filePath)
 
@@ -236,10 +238,17 @@ func executeAutoBackups() {
 		if info != nil {
 			size = info.Size()
 		}
-		db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, auto) VALUES (?, ?, ?, ?, 1)`,
-			siteID, filename, size, dbName)
+		if _, err = db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, auto) VALUES (?, ?, ?, ?, 1)`,
+			siteID, filename, size, dbName); err != nil {
+			log.Printf("自动备份: 记录写入 db_backups 失败 [%s]: %v", domain, err)
+			failCount++
+			continue
+		}
 
 		SyncBackupToRemote(filePath)
+		if keepCount <= 0 {
+			keepCount = 7
+		}
 		cleanupOldBackups(siteID, domain, keepCount)
 		count++
 	}
