@@ -98,6 +98,14 @@ func (h *UpdateHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("未找到适用于当前系统的二进制文件"))
 		return
 	}
+	if sha256URL == "" {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("未找到 SHA256 校验文件，无法验证更新完整性"))
+		return
+	}
+	if sigURL == "" {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("未找到 Ed25519 签名文件，无法验证更新来源"))
+		return
+	}
 
 	// Download new binary
 	tmpDir := "/tmp/wp-panel-update"
@@ -112,31 +120,25 @@ func (h *UpdateHandler) Update(c *gin.Context) {
 	os.Chmod(newBinary, 0755)
 
 	// Verify SHA256
-	if sha256URL != "" {
-		shaFile := filepath.Join(tmpDir, binaryName+".sha256")
-		if err := downloadFile(sha256URL, shaFile); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("SHA256 校验文件下载失败"))
-			return
-		}
-		if err := verifySHA256(newBinary, shaFile); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("校验失败"))
-			return
-		}
+	shaFile := filepath.Join(tmpDir, binaryName+".sha256")
+	if err := downloadFile(sha256URL, shaFile); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("SHA256 校验文件下载失败"))
+		return
+	}
+	if err := verifySHA256(newBinary, shaFile); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("校验失败"))
+		return
+	}
 
-		// Verify Ed25519 signature of checksum file
-		if sigURL == "" {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("未找到 Ed25519 签名文件，无法验证更新来源"))
-			return
-		}
-		sigFile := filepath.Join(tmpDir, binaryName+".sha256.sig")
-		if err := downloadFile(sigURL, sigFile); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("签名文件下载失败"))
-			return
-		}
-		if err := verifyEd25519(shaFile, sigFile); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("签名校验失败"))
-			return
-		}
+	// Verify Ed25519 signature of checksum file
+	sigFile := filepath.Join(tmpDir, binaryName+".sha256.sig")
+	if err := downloadFile(sigURL, sigFile); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("签名文件下载失败"))
+		return
+	}
+	if err := verifyEd25519(shaFile, sigFile); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("签名校验失败"))
+		return
 	}
 
 	// Backup old binary
