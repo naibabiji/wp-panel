@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +19,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// Ed25519 公钥，用于验证 Release 签名的 .sha256 文件。
+// 对应私钥离线存储，不在 GitHub / CI 上。
+const releasePubKeyHex = "ee8ec641204d785c6469b003c710666126a3156d902b78665bb73e859b6f9546"
 
 type UpdateHandler struct {
 	CurrentVersion string
@@ -88,12 +94,16 @@ func (h *UpdateHandler) Update(c *gin.Context) {
 
 	var downloadURL string
 	var sha256URL string
+	var sigURL string
 	for _, a := range latest.Assets {
 		if a.Name == binaryName {
 			downloadURL = a.BrowserDownloadURL
 		}
 		if a.Name == binaryName+".sha256" {
 			sha256URL = a.BrowserDownloadURL
+		}
+		if a.Name == binaryName+".sha256.sig" {
+			sigURL = a.BrowserDownloadURL
 		}
 	}
 	if downloadURL == "" {
@@ -123,6 +133,19 @@ func (h *UpdateHandler) Update(c *gin.Context) {
 		if err := verifySHA256(newBinary, shaFile); err != nil {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("校验失败"))
 			return
+		}
+
+		// Verify Ed25519 signature of checksum file
+		if sigURL != "" {
+			sigFile := filepath.Join(tmpDir, binaryName+".sha256.sig")
+			if err := downloadFile(sigURL, sigFile); err != nil {
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse("签名文件下载失败"))
+				return
+			}
+			if err := verifyEd25519(shaFile, sigFile); err != nil {
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse("签名校验失败"))
+				return
+			}
 		}
 	}
 
@@ -229,6 +252,28 @@ func verifySHA256(filePath, shaFile string) error {
 
 	if !strings.EqualFold(expected, actual) {
 		return fmt.Errorf("SHA256 不匹配")
+	}
+	return nil
+}
+
+func verifyEd25519(shaFile, sigFile string) error {
+	pubKey, err := hex.DecodeString(releasePubKeyHex)
+	if err != nil {
+		return fmt.Errorf("解析内置公钥失败")
+	}
+	sig, err := os.ReadFile(sigFile)
+	if err != nil {
+		return err
+	}
+	if len(sig) != ed25519.SignatureSize {
+		return fmt.Errorf("签名长度异常: %d", len(sig))
+	}
+	message, err := os.ReadFile(shaFile)
+	if err != nil {
+		return err
+	}
+	if !ed25519.Verify(pubKey, message, sig) {
+		return fmt.Errorf("Ed25519 签名不匹配")
 	}
 	return nil
 }
