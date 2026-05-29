@@ -242,7 +242,10 @@ class WP_Panel_Optimizer {
                     <?php foreach ($log as $entry): ?>
                     <tr>
                         <td><?php echo esc_html($entry['time']); ?></td>
-                        <td><?php echo $entry['type'] === 'manual' ? '手动清除' : '自动清除（发布文章）'; ?></td>
+                        <td><?php
+                            $labels = ['manual' => '手动清除', 'auto' => '自动清除（发布文章）', 'comment' => '自动清除（评论变更）'];
+                            echo esc_html($labels[$entry['type']] ?? '自动清除');
+                        ?></td>
                         <td><?php echo !empty($entry['success']) ? '<span style="color:green">成功</span>' : '<span style="color:red">失败</span>'; ?></td>
                     </tr>
                     <?php endforeach; ?>
@@ -336,15 +339,21 @@ class WP_Panel_Optimizer {
         $pt = get_post_type_object($post->post_type);
         if (!$pt || !$pt->public) return;
 
+        if (get_transient('wpp_auto_clearing')) return;
+        set_transient('wpp_auto_clearing', 1, 5);
+
         $resp = self::do_clear();
         $success = !empty($resp['success']);
         self::log_clear('auto', $success);
     }
 
     public static function auto_comment_clear($_) {
+        if (get_transient('wpp_comment_clearing')) return;
+        set_transient('wpp_comment_clearing', 1, 5);
+
         $resp = self::do_clear();
         $success = !empty($resp['success']);
-        self::log_clear('auto', $success);
+        self::log_clear('comment', $success);
     }
 
     private static function log_clear($type, $success) {
