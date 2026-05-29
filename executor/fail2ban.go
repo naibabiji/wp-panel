@@ -110,8 +110,8 @@ actionunban = /usr/local/bin/wp-panel --unbanip-nginx <ip>
 	filterConfig := `# WP Panel Generated — DO NOT EDIT MANUALLY
 [Definition]
 failregex = ^<HOST> .* "POST /wp-login\.php .*" .*$
-            ^<HOST> .* "POST /xmlrpc\.php .*" .*$
-            ^<HOST> .* "POST //xmlrpc\.php .*" .*$
+            ^<HOST> .* "POST /xmlrpc\.php .*" 403 .*$
+            ^<HOST> .* "POST //xmlrpc\.php .*" 403 .*$
             ^<HOST> .* ".*" 429 .*$
             ^<HOST> - - \[.*\] "(GET|POST) .*(\.env|\.git|config\.bak|wp-config\.php|\.sql|\.tar|\.gz|\.zip|\.old|\.swp|\.save|\.DS_Store).*" 404 .*$
 ignoreregex =

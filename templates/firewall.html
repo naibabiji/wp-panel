@@ -18,7 +18,7 @@
                     <p class="text-white font-semibold mb-1">触发条件（命中以下任一规则计为 1 次违规）</p>
                     <ul class="list-disc list-inside space-y-1 ml-2">
                         <li><code class="text-gray-300">POST /wp-login.php</code> — WordPress 登录暴力破解</li>
-                        <li><code class="text-gray-300">POST /xmlrpc.php</code> — XML-RPC 接口攻击（含 <code class="text-gray-300">//xmlrpc.php</code> 变体）</li>
+                        <li><code class="text-gray-300">POST /xmlrpc.php</code> 返回 <span class="text-gray-300">HTTP 403</span> — 禁用 XML-RPC 后仍被请求（含 <code class="text-gray-300">//xmlrpc.php</code> 变体）</li>
                         <li>返回 <span class="text-gray-300">HTTP 429</span> — 超出请求频率限制</li>
                         <li>敏感文件扫描返回 <span class="text-gray-300">404</span> — 如 <code class="text-gray-300">.env</code>、<code class="text-gray-300">.git</code>、<code class="text-gray-300">wp-config.php</code>、<code class="text-gray-300">.sql</code>、压缩包等</li>
                         <li class="text-green-400">404 泛滥检测 — 任意路径返回 404 达 <span class="text-green-300">30 次/60 秒</span> 判定为目录扫描（独立规则，固定阈值）</li>
