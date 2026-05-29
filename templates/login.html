@@ -20,7 +20,7 @@
                 <p class="text-gray-400 mt-2">请输入管理员密码完成登录</p>
             </div>
 
-            <form @submit.prevent="login" x-show="!loading">
+            <form method="POST" @submit.prevent="login" x-show="!loading">
                 <div class="mb-4">
                     <label class="label">用户名</label>
                     <input type="text" x-model="username" name="username" class="input-field" placeholder="admin" autocomplete="username">
