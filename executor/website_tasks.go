@@ -43,11 +43,11 @@ func executeCreateSite(task *Task) TaskResult {
 		dbPassword = generatePassword(24)
 	}
 
-	if !isValidDomain(domain) {
+	if !IsValidDomain(domain) {
 		return TaskResult{Success: false, Message: "域名格式不合法: " + domain}
 	}
 	for _, alias := range payload.Aliases {
-		if !isValidDomain(strings.TrimSpace(alias)) {
+		if !IsValidDomain(strings.TrimSpace(alias)) {
 			return TaskResult{Success: false, Message: "附加域名格式不合法: " + alias}
 		}
 	}
@@ -410,9 +410,16 @@ func executeUpdateDomains(task *Task) TaskResult {
 	newDomain := strings.TrimSpace(payload.NewDomain)
 	newAliases := payload.Aliases
 
+	// Validate alias domains
+	for _, alias := range newAliases {
+		if !IsValidDomain(strings.TrimSpace(alias)) {
+			return TaskResult{Success: false, Message: "别名域名格式不合法: " + alias}
+		}
+	}
+
 	if newDomain != "" && newDomain != oldDomain {
 		newDomain = strings.ToLower(newDomain)
-		if !isValidDomain(newDomain) {
+		if !IsValidDomain(newDomain) {
 			return TaskResult{Success: false, Message: "新域名格式不合法: " + newDomain}
 		}
 		domainChanged = true

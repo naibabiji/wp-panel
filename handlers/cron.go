@@ -383,10 +383,11 @@ func removeWPCronIfLast(siteID int) {
 
 var cronFieldRe = regexp.MustCompile(`^[0-9*/,\-]+$`)
 var cronUserRe = regexp.MustCompile(`^(wp|php)_[a-z0-9_]+$`)
+var domainOrIPRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9\-\.]*[a-zA-Z0-9]$`)
 
 func validateCronInput(name, expr, command, taskType, backupMode, runAsUser string, siteID *int) string {
-	if hasLineBreak(name) || strings.Contains(name, `"`) {
-		return "任务名称不能包含换行或引号"
+	if hasLineBreak(name) || strings.ContainsAny(name, "\"`$\\") {
+		return "任务名称不能包含换行或特殊字符"
 	}
 	if !validCronExpression(expr) {
 		return "Cron 表达式格式不正确"
@@ -412,6 +413,9 @@ func validateCronInput(name, expr, command, taskType, backupMode, runAsUser stri
 		}
 		if hasLineBreak(command) {
 			return "WP Cron 目标不能包含换行"
+		}
+		if !domainOrIPRe.MatchString(command) {
+			return "WP Cron 目标必须是有效域名或 IP"
 		}
 	default:
 		return "任务类型不正确"

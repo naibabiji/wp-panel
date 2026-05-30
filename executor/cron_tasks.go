@@ -59,22 +59,29 @@ exit $RC
 			continue
 		}
 
+		safeName := sanitizeCronArg(name)
+
 		var line string
 		switch taskType {
 		case "file_backup":
 			line = fmt.Sprintf(`%s root %s "%s" "%s" /usr/local/bin/wp-panel --file-backup=%d:%s:%d --config=/www/server/panel/config.json # %s`,
-				cronExpr, wrapperScript, name, logFile, siteID.Int64, backupMode, keepCount, name)
+				cronExpr, wrapperScript, safeName, logFile, siteID.Int64, backupMode, keepCount, safeName)
 		case "wp_cron":
+			if !IsValidDomain(command) {
+				// Skip invalid domains — handler should have caught this
+				continue
+			}
 			line = fmt.Sprintf(`%s root %s "%s" "%s" curl -k -s -o /dev/null "https://%s/wp-cron.php?doing_wp_cron" # %s`,
-				cronExpr, wrapperScript, name, logFile, command, name)
+				cronExpr, wrapperScript, safeName, logFile, command, safeName)
 		default:
 			if runAsUser != "" {
 				line = fmt.Sprintf(`%s root %s "%s" "%s" runuser -u %s -- bash -c '%s' # %s`,
-					cronExpr, wrapperScript, name, logFile, runAsUser,
-					strings.ReplaceAll(command, "'", "'\\''"), name)
+					cronExpr, wrapperScript, safeName, logFile, runAsUser,
+					strings.ReplaceAll(command, "'", "'\\''"), safeName)
 			} else {
-				line = fmt.Sprintf(`%s root %s "%s" "%s" %s # %s`,
-					cronExpr, wrapperScript, name, logFile, command, name)
+				line = fmt.Sprintf(`%s root %s "%s" "%s" bash -c '%s' # %s`,
+					cronExpr, wrapperScript, safeName, logFile,
+					strings.ReplaceAll(command, "'", "'\\''"), safeName)
 			}
 		}
 		if !strings.HasSuffix(line, "\n") {
@@ -190,4 +197,13 @@ func pruneCronLog(path string, keep int) {
 		return
 	}
 	os.WriteFile(path, []byte(strings.Join(lines[len(lines)-keep:], "\n")+"\n"), 0644)
+}
+
+// sanitizeCronArg escapes shell metacharacters for use inside double quotes in bash.
+func sanitizeCronArg(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "$", "\\$")
+	s = strings.ReplaceAll(s, "`", "\\`")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	return s
 }

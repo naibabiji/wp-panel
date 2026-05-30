@@ -95,6 +95,24 @@ func TestRemoteBackup(c *gin.Context) {
 		return
 	}
 
+	knownHostsFile := "/www/server/panel/remote_backup_known_hosts"
+
+	// Collect host key fingerprint for admin verification
+	fingerprint := ""
+	keyscanOut, _ := exec.Command("ssh-keyscan", "-H", "-p", fmt.Sprintf("%d", port), host).CombinedOutput()
+	if len(keyscanOut) > 0 {
+		os.WriteFile(knownHostsFile, keyscanOut, 0644)
+		fpOut, _ := exec.Command("ssh-keygen", "-lf", knownHostsFile).CombinedOutput()
+		fingerprint = strings.TrimSpace(string(fpOut))
+	}
+
+	commonArgs := []string{
+		"-o", "UserKnownHostsFile=" + knownHostsFile,
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ConnectTimeout=10",
+		"-p", fmt.Sprintf("%d", port),
+	}
+
 	var cmd *exec.Cmd
 	if authType == "key" {
 		keyPath := "/www/server/panel/remote_backup_key"
@@ -102,11 +120,13 @@ func TestRemoteBackup(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse("SSH密钥不存在，请先保存设置生成密钥"))
 			return
 		}
-		cmd = exec.Command("ssh", "-i", keyPath, "-o", "StrictHostKeyChecking=accept-new",
-			"-p", fmt.Sprintf("%d", port), username+"@"+host, "echo WP_PANEL_OK")
+		args := append([]string{"-i", keyPath}, commonArgs...)
+		args = append(args, username+"@"+host, "echo WP_PANEL_OK")
+		cmd = exec.Command("ssh", args...)
 	} else {
-		cmd = exec.Command("sshpass", "-e", "ssh", "-o", "StrictHostKeyChecking=accept-new",
-			"-p", fmt.Sprintf("%d", port), username+"@"+host, "echo WP_PANEL_OK")
+		args := append([]string{"-e", "ssh"}, commonArgs...)
+		args = append(args, username+"@"+host, "echo WP_PANEL_OK")
+		cmd = exec.Command("sshpass", args...)
 		cmd.Env = append(os.Environ(), "SSHPASS="+password)
 	}
 	out, err := cmd.CombinedOutput()
@@ -135,14 +155,15 @@ func TestRemoteBackup(c *gin.Context) {
 	tmpFile.Close()
 	defer os.Remove(testFile)
 
+	rsyncSSHOpts := fmt.Sprintf("-o UserKnownHostsFile=%s -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10", knownHostsFile)
 	var testCmd *exec.Cmd
 	if authType == "key" {
 		testCmd = exec.Command("rsync", "-avz", "-e",
-			fmt.Sprintf("ssh -i /www/server/panel/remote_backup_key -o StrictHostKeyChecking=accept-new -p %d", port),
+			fmt.Sprintf("ssh -i /www/server/panel/remote_backup_key %s -p %d", rsyncSSHOpts, port),
 			testFile, username+"@"+host+":"+remotePath+"/.wp-panel-rsync-test.txt")
 	} else {
 		testCmd = exec.Command("sshpass", "-e", "rsync", "-avz", "-e",
-			fmt.Sprintf("ssh -o StrictHostKeyChecking=accept-new -p %d", port),
+			fmt.Sprintf("ssh %s -p %d", rsyncSSHOpts, port),
 			testFile, username+"@"+host+":"+remotePath+"/.wp-panel-rsync-test.txt")
 		testCmd.Env = append(os.Environ(), "SSHPASS="+password)
 	}
@@ -152,5 +173,9 @@ func TestRemoteBackup(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "连接测试成功，rsync 可用"}))
+	resp := gin.H{"message": "连接测试成功，rsync 可用"}
+	if fingerprint != "" {
+		resp["host_key_fingerprint"] = fingerprint
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(resp))
 }

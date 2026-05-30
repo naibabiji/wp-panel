@@ -8,6 +8,12 @@ import (
 	"strings"
 )
 
+func phpSingleQuoteEscape(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "'", "\\'")
+	return s
+}
+
 func FixWPConfigCredentials(webRoot, dbName, dbUser string) error {
 	configPath := filepath.Join(webRoot, "wp-config.php")
 	content, err := os.ReadFile(configPath)
@@ -17,13 +23,13 @@ func FixWPConfigCredentials(webRoot, dbName, dbUser string) error {
 	text := string(content)
 
 	reName := regexp.MustCompile(`define\(\s*'DB_NAME'\s*,\s*'[^']*'\s*\)`)
-	nameUpdated := reName.ReplaceAllString(text, fmt.Sprintf("define('DB_NAME', '%s')", dbName))
+	nameUpdated := reName.ReplaceAllString(text, fmt.Sprintf("define('DB_NAME', '%s')", phpSingleQuoteEscape(dbName)))
 	if nameUpdated == text {
 		return fmt.Errorf("未找到 DB_NAME 定义，wp-config.php 可能格式异常")
 	}
 
 	reUser := regexp.MustCompile(`define\(\s*'DB_USER'\s*,\s*'[^']*'\s*\)`)
-	userUpdated := reUser.ReplaceAllString(nameUpdated, fmt.Sprintf("define('DB_USER', '%s')", dbUser))
+	userUpdated := reUser.ReplaceAllString(nameUpdated, fmt.Sprintf("define('DB_USER', '%s')", phpSingleQuoteEscape(dbUser)))
 	if userUpdated == nameUpdated {
 		return fmt.Errorf("未找到 DB_USER 定义，wp-config.php 可能格式异常")
 	}
@@ -96,7 +102,7 @@ if (!defined('ABSPATH')) {
 
 /** 加载 WordPress 设置和引入文件 */
 require_once ABSPATH . 'wp-settings.php';
-`, dbName, dbUser, dbPassword, salts)
+`, phpSingleQuoteEscape(dbName), phpSingleQuoteEscape(dbUser), phpSingleQuoteEscape(dbPassword), salts)
 
 	configPath := filepath.Join(webRoot, "wp-config.php")
 	return os.WriteFile(configPath, []byte(config), 0600)

@@ -352,6 +352,7 @@ class WP_Panel_Optimizer {
     }
 
     public static function admin_bar_button($bar) {
+        if (!current_user_can('manage_options')) return;
         if (!self::get_panel_url()) return;
         $bar->add_node([
             'id'    => 'wpp-clear-cache',
@@ -361,6 +362,7 @@ class WP_Panel_Optimizer {
     }
 
     public static function handle_clear() {
+        if (!current_user_can('manage_options')) return;
         check_admin_referer('wpp_cache_clear');
         $resp = self::do_clear();
         $success = !empty($resp['success']);

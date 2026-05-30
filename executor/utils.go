@@ -26,7 +26,7 @@ func generatePassword(length int) string {
 	return hex.EncodeToString(b)[:length]
 }
 
-func isValidDomain(domain string) bool {
+func IsValidDomain(domain string) bool {
 	if len(domain) < 3 || len(domain) > 253 {
 		return false
 	}
@@ -38,7 +38,7 @@ func buildServerNames(domain string, aliases []string) string {
 	names := []string{domain}
 	for _, alias := range aliases {
 		alias = strings.TrimSpace(alias)
-		if alias != "" {
+		if alias != "" && IsValidDomain(alias) {
 			names = append(names, alias)
 		}
 	}

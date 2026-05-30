@@ -176,6 +176,16 @@ func (h *SoftwareHandler) GuardAction(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": req.Service + " " + req.Action + " 成功"}))
 }
 
+var softConfigAllowed = map[string]map[string]bool{
+	"PHP": {
+		"memory_limit": true, "upload_max_filesize": true, "post_max_size": true,
+		"max_execution_time": true, "max_input_vars": true,
+	},
+	"Nginx":   {"client_max_body_size": true},
+	"MariaDB": {"innodb_buffer_pool_size": true},
+	"Redis":   {"maxmemory": true},
+}
+
 func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 	var req struct {
 		Name  string `json:"name"`
@@ -210,6 +220,21 @@ func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 		reloadCmd = "systemctl restart redis-server"
 	default:
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("未知软件"))
+		return
+	}
+
+	// Validate key against per-service allowlist
+	if allowed, ok := softConfigAllowed[req.Name]; !ok || !allowed[req.Key] {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("不支持的配置项: " + req.Key))
+		return
+	}
+	// Reject value containing newlines or directive-terminating characters
+	if hasLineBreak(req.Value) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("配置值不能包含换行"))
+		return
+	}
+	if req.Name == "Nginx" && strings.Contains(req.Value, ";") {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Nginx 配置值不能包含分号"))
 		return
 	}
 

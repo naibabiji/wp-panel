@@ -109,7 +109,7 @@ func executeChangeDBPassword(task *Task) TaskResult {
 
 	re := regexp.MustCompile(`define\(\s*'DB_PASSWORD'\s*,\s*'[^']*'\s*\)`)
 	newContent := re.ReplaceAllString(string(content),
-		fmt.Sprintf("define('DB_PASSWORD', '%s')", newPassword))
+		fmt.Sprintf("define('DB_PASSWORD', '%s')", phpSingleQuoteEscape(newPassword)))
 
 	if newContent == string(content) {
 		return TaskResult{Success: false, Message: "未找到 DB_PASSWORD 定义，wp-config.php 可能格式异常"}

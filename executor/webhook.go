@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -29,10 +30,36 @@ func GetWebhookConfig() *WebhookConfig {
 	return cfg
 }
 
+func isSafeWebhookURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return fmt.Errorf("不支持的协议: %s", u.Scheme)
+	}
+	host := u.Hostname()
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("无法解析主机名: %s", host)
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+			ip.IsPrivate() || ip.IsUnspecified() {
+			return fmt.Errorf("不允许的内网地址: %s", ip.String())
+		}
+	}
+	return nil
+}
+
 func SendWebhook(subject, body string) error {
 	cfg := GetWebhookConfig()
 	if cfg == nil || cfg.Enabled != "true" || cfg.URL == "" {
 		return fmt.Errorf("Webhook 未启用或未配置")
+	}
+
+	if err := isSafeWebhookURL(cfg.URL); err != nil {
+		return fmt.Errorf("Webhook URL 不安全: %w", err)
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -125,6 +152,10 @@ func buildPayload(channel, subject, body string) ([]byte, error) {
 }
 
 func TestWebhook(channel, url string) error {
+	if err := isSafeWebhookURL(url); err != nil {
+		return fmt.Errorf("Webhook URL 不安全: %w", err)
+	}
+
 	title := getPanelTitle() + " — 测试消息"
 	msg := "如果您收到这条消息，说明 Webhook 配置正确。"
 
