@@ -310,6 +310,12 @@ func cleanupOldBackups(siteID int, domain string, keepCount int) {
 	}
 }
 
+// RunAutoBackup 手动触发一次自动备份，用于测试验证。
+func RunAutoBackup() {
+	log.Println("手动触发自动备份...")
+	executeAutoBackups()
+}
+
 func StartAutoBackupScheduler() {
 	go func() {
 		for {

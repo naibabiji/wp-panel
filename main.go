@@ -38,6 +38,7 @@ func main() {
 	banIPNginx := flag.String("banip-nginx", "", "将指定 IP 加入 Nginx 黑名单")
 	unbanIPNginx := flag.String("unbanip-nginx", "", "从 Nginx 黑名单移除指定 IP")
 	fileBackup := flag.String("file-backup", "", "执行文件备份: siteID:mode")
+	runAutoBackup := flag.Bool("run-auto-backup", false, "手动触发自动备份（测试用）")
 	showInfo := flag.Bool("info", false, "查看面板信息")
 	flag.Parse()
 
@@ -137,6 +138,11 @@ func main() {
 			}
 			log.Println(msg)
 		}
+		return
+	}
+
+	if *runAutoBackup {
+		executor.RunAutoBackup()
 		return
 	}
 
