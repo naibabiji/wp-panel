@@ -1,33 +1,6 @@
 ## v1.2.0-rc9
 
-### 安全审计（25 项修复）
-
-**漏洞修复（12 项）**：
-- SQL LIKE `%`/`_` 通配符跨站越权：`website.go` 6 处 LIKE 查询的 domain 参数未转义
-- `/tmp` 固定路径符号链接 ×4：面板更新、备份上传、远程备份测试、重装 WordPress 临时文件
-- 上传合并临时文件缺少 `O_EXCL`：大文件分片合并可被符号链接预占
-- 压缩文件路径穿越：单项 `Compress` 缺少 `isPathWithin` 越权检查
-- 二阶 SQL 注入：`ClearDatabase` 的 `TABLE_NAME` 反引号未转义
-- SMTP 邮件头注入：`subject`/`to` 未过滤 `\r\n`
-- `wp-config.php` 权限 0644→0600 防凭据泄露
-- `configPath` 硬编码忽略 `--config` 命令行参数
-- nftables 初始化 data race→`sync.Once`
-
-**健壮性修复（12 项）**：
-- goroutine panic recover：`GoSafe` 封装统一保护 ×12 处
-- `db.Exec` 错误静默忽略 ×5 处
-- `DB.QueryRow`/`Exec` 错误忽略 ×7 处
-- 日志全量加载 OOM→`tailFile` ×2 处
-- `tailFile` O(N²)→O(N)
-- `config.json` WriteFile 错误检查
-- HTTP 内 `apt-get install sshpass`→启动阶段安装
-- `EnsureWPCommand` 写入错误记录日志
-- 网站监控串行 curl→并发 `http.Client`
-
-**UX 改进（1 项）**：
-- 系统更新页超时警告 + 勿重复点击提示
-
-### 补充安全修复 — Codex 审计（8 项）
+### 安全修复 — Codex 审计（8 项）
 
 基于外部 Codex Security 安全审计报告修复：
 
