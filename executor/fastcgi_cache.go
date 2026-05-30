@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bytes"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
@@ -33,11 +34,17 @@ func EnsureCacheHelperPlugin(pluginFS embed.FS) {
 	if err != nil {
 		return
 	}
+
+	// 仅在内容发生变更时才写入文件，避免每次启动都重写文件导致修改时间被更新
+	if existing, err := os.ReadFile(dst); err == nil && bytes.Equal(existing, data) {
+		return
+	}
+
 	os.WriteFile(dst, data, 0644)
 }
 
 // AutoDeployPluginUpdates 扫描所有已安装配套插件的 WordPress 站点，
-// 若 plugin_api_key 非空且站点上的插件版本落后于面板内置版本，则自动更新。
+// 若 plugin_api_key 非空且站点上的插件版本落后于面板内置版本（通过内容/修改时间比对判断），则自动更新。
 // 每次面板启动时调用，实现插件无感自动升级。
 func AutoDeployPluginUpdates(pluginFS embed.FS) {
 	srcData, err := pluginFS.ReadFile("wp-panel-optimizer/wp-panel-optimizer.php")
@@ -68,10 +75,14 @@ func AutoDeployPluginUpdates(pluginFS embed.FS) {
 
 		pluginDir := filepath.Join(webRoot, "wp-content", "plugins", "wp-panel-optimizer")
 		dstPath := filepath.Join(pluginDir, "wp-panel-optimizer.php")
-		dstInfo, dstErr := os.Stat(dstPath)
 
-		// 已安装且是最新版则跳过
-		if dstErr == nil && !dstInfo.ModTime().Before(srcInfo.ModTime()) {
+		// 优先对比内容，内容一致直接跳过，最安全且避免多余的系统权限调用（chown/chmod）
+		if dstData, err := os.ReadFile(dstPath); err == nil && bytes.Equal(dstData, srcData) {
+			continue
+		}
+
+		// 兜底比对修改时间（以防有其他判断逻辑依赖）
+		if dstInfo, err := os.Stat(dstPath); err == nil && !dstInfo.ModTime().Before(srcInfo.ModTime()) {
 			continue
 		}
 
