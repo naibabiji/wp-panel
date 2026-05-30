@@ -15,11 +15,15 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // 公开统计 — 允许网站前端跨域访问
+    // 公开统计 — 允许网站前端跨域访问，CDN 缓存 1 小时
     if (request.method === 'GET' && url.pathname === '/api/stats') {
       const stats = await getStats(env);
       return new Response(JSON.stringify(stats), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=3600',
+        },
       });
     }
 

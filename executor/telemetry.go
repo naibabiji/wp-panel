@@ -66,6 +66,10 @@ func sendHeartbeat() {
 		return
 	}
 	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Printf("[遥测] 上报返回非预期状态: %d", resp.StatusCode)
+		return
+	}
 	log.Println("[遥测] 匿名心跳上报成功")
 }
 
