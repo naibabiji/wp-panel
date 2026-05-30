@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"net/http"
 
-	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/middleware"
 	"github.com/naibabiji/wp-panel/models"
 
@@ -25,8 +24,9 @@ func setSessionCookie(c *gin.Context, token string, maxAge int) {
 }
 
 type AuthHandler struct {
-	DB     *sql.DB
-	Prefix string
+	DB      *sql.DB
+	Prefix  string
+	Tracker *middleware.LoginAttemptTracker
 }
 
 func (h *AuthHandler) LoginPage(c *gin.Context) {
@@ -52,13 +52,19 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	).Scan(&hash)
 
 	if err != nil {
-		recordWebLoginAttempt(c.ClientIP(), h.DB)
+		// 防止计时攻击：空跑一次校验
+		bcrypt.CompareHashAndPassword([]byte("$2a$12$vI8aWBnW3fID.ZQ4/zo1G.q1lRps.9cGLcZEiGDMVr5yUP1KUOYTa"), []byte(req.Password))
+		if h.Tracker != nil {
+			h.Tracker.RecordAttempt(c.ClientIP(), "web_login")
+		}
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("用户名或密码错误"))
 		return
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil {
-		recordWebLoginAttempt(c.ClientIP(), h.DB)
+		if h.Tracker != nil {
+			h.Tracker.RecordAttempt(c.ClientIP(), "web_login")
+		}
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("用户名或密码错误"))
 		return
 	}
@@ -102,29 +108,7 @@ func (h *AuthHandler) CSRFToken(c *gin.Context) {
 	}))
 }
 
-func recordWebLoginAttempt(ip string, db *sql.DB) {
-	_, _ = db.Exec(
-		"INSERT INTO login_attempts (ip_address, attempt_type) VALUES (?, 'web_login')",
-		ip,
-	)
 
-	var count int
-	_ = db.QueryRow(
-		`SELECT COUNT(*) FROM login_attempts
-		 WHERE ip_address = ? AND attempt_type = 'web_login'
-		 AND created_at > datetime('now', '-5 minutes')`,
-		ip,
-	).Scan(&count)
-
-	if count >= 5 {
-		_, _ = db.Exec(
-			`INSERT INTO firewall_bans (ip_address, ban_level, reason, source_jail, expires_at, ban_count)
-			 VALUES (?, 3, 'panel_web_login: 连续5次登录失败', 'panel', datetime('now', '+24 hours'), 1)`,
-			ip,
-		)
-		executor.AddPersistBan(ip)
-	}
-}
 
 func getCSRFTokenFromCookie(c *gin.Context) string {
 	token, _ := c.Cookie("csrf_token")

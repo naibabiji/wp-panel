@@ -81,7 +81,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	})
 
 	panelGroup.POST("/api/auth/login", func(c *gin.Context) {
-		authHandler := &handlers.AuthHandler{DB: db, Prefix: suffix}
+		authHandler := &handlers.AuthHandler{DB: db, Prefix: suffix, Tracker: attemptTracker}
 		authHandler.Login(c)
 	})
 
@@ -102,7 +102,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	})
 	protected.Use(middleware.CSRF())
 
-	authHandler := &handlers.AuthHandler{DB: db, Prefix: suffix}
+	authHandler := &handlers.AuthHandler{DB: db, Prefix: suffix, Tracker: attemptTracker}
 	protected.POST("/api/auth/logout", authHandler.Logout)
 	protected.GET("/api/auth/check", authHandler.Check)
 	protected.GET("/api/auth/csrf-token", authHandler.CSRFToken)

@@ -78,6 +78,17 @@ func SessionRequired() gin.HandlerFunc {
 			return
 		}
 
+		// 滑动续期客户端 Cookie
+		http.SetCookie(c.Writer, &http.Cookie{
+			Name:     "wp_session",
+			Value:    session.Token,
+			MaxAge:   1800,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+		})
+
 		c.Set("session_username", session.Username)
 		c.Next()
 	}
