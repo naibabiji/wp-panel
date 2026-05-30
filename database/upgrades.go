@@ -99,6 +99,14 @@ var upgrades = []Upgrade{
 			`ALTER TABLE websites ADD COLUMN wp_memory_limit TEXT NOT NULL DEFAULT ''`,
 		},
 	},
+	{
+		Version:     "1.0.8",
+		Description: "新增匿名安装统计开关",
+		SQL: []string{
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('telemetry_enabled', 'true', '匿名安装统计（仅上报机器标识和版本号）')`,
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('telemetry_url', '', '自定义统计上报地址（留空使用默认）')`,
+		},
+	},
 }
 
 // LatestVersion 返回 upgrades 列表中的最新版本号。

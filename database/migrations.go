@@ -213,7 +213,9 @@ var migrations = []string{
 		('alert_cron_fail',          'true',     '计划任务执行失败告警'),
 		('alert_site',               'true',     '网站不可用告警'),
 		('alert_system_update',      'true',     '系统可用更新告警'),
-		('alert_panel_update',       'true',     '面板新版本告警')`,
+		('alert_panel_update',       'true',     '面板新版本告警'),
+		('telemetry_enabled',        'true',     '匿名安装统计（仅上报机器标识和版本号）'),
+		('telemetry_url',            '',         '自定义统计上报地址（留空使用默认）')`,
 
 	// ============================================================
 	// seed: template_versions
