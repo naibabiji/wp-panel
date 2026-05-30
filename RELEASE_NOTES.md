@@ -1,3 +1,54 @@
+## v1.2.0-rc9
+
+### 安全审计（25 项修复）
+
+**漏洞修复（12 项）**：
+- SQL LIKE `%`/`_` 通配符跨站越权：`website.go` 6 处 LIKE 查询的 domain 参数未转义
+- `/tmp` 固定路径符号链接 ×4：面板更新、备份上传、远程备份测试、重装 WordPress 临时文件
+- 上传合并临时文件缺少 `O_EXCL`：大文件分片合并可被符号链接预占
+- 压缩文件路径穿越：单项 `Compress` 缺少 `isPathWithin` 越权检查
+- 二阶 SQL 注入：`ClearDatabase` 的 `TABLE_NAME` 反引号未转义
+- SMTP 邮件头注入：`subject`/`to` 未过滤 `\r\n`
+- `wp-config.php` 权限 0644→0600 防凭据泄露
+- `configPath` 硬编码忽略 `--config` 命令行参数
+- nftables 初始化 data race→`sync.Once`
+
+**健壮性修复（12 项）**：
+- goroutine panic recover：`GoSafe` 封装统一保护 ×12 处
+- `db.Exec` 错误静默忽略 ×5 处
+- `DB.QueryRow`/`Exec` 错误忽略 ×7 处
+- 日志全量加载 OOM→`tailFile` ×2 处
+- `tailFile` O(N²)→O(N)
+- `config.json` WriteFile 错误检查
+- HTTP 内 `apt-get install sshpass`→启动阶段安装
+- `EnsureWPCommand` 写入错误记录日志
+- 网站监控串行 curl→并发 `http.Client`
+
+**UX 改进（1 项）**：
+- 系统更新页超时警告 + 勿重复点击提示
+
+### 补充安全修复 — Codex 审计（8 项）
+
+基于外部 Codex Security 安全审计报告修复：
+
+- **Cron 命令注入**：名称拒绝反引号/美元符/反斜杠；WP Cron 域名格式验证；无 `runAsUser` 的命令用 `bash -c '...'` 单引号包裹；executor 层 `sanitizeCronArg` 防御深度
+- **软件配置注入**：Key 白名单（每软件仅允许 UI 展示的 key）；Value 拒绝换行；Nginx 配置拒绝分号
+- **Nginx 别名注入**：更新域名时验证别名格式；`buildServerNames` 防御性过滤无效别名；`isValidDomain` 导出统一验证
+- **DB 密码未转义**：`phpSingleQuoteEscape` 对 `\` 和 `'` 转义，`generateWPConfig`/`FixWPConfigCredentials`/`ChangeDBPassword` 三处全覆盖
+- **公告栏 XSS**：远程 ANNOUNCEMENT.md 渲染 `x-html`→`x-text`，切断"GitHub 被黑→服务器被黑"攻击链
+- **SSH 远程备份主机密钥**：专用 `known_hosts` 文件 + `ssh-keyscan` 预扫描 + 返回指纹供管理员核对 + sync 用 `StrictHostKeyChecking=yes`
+- **Webhook SSRF**：`isSafeWebhookURL` DNS 解析后拒绝回环/内网/链路本地 IP；`safeWebhookClient` 连接时二次校验防 DNS rebinding
+- **WordPress 优化器权限**：缓存清除 `admin_bar_button` + `handle_clear` 加 `current_user_can('manage_options')`
+
+### 补充修复 — GLM 交叉审核（2 项）
+
+基于 GLM AI 对以上 Commit 的交叉审核修复：
+
+- **handler/executor 域名验证不一致**：删除 `domainOrIPRe`，handler 统一使用 `executor.IsValidDomain`，避免 IP 地址 WP Cron 被静默丢弃且无错误提示
+- **Webhook DNS rebinding**：在 `http.Transport.DialContext` 中连接时再次解析并校验目标 IP，覆盖"校验通过后 DNS 修改"和"HTTP 重定向到内网"两种 SSRF 路径
+
+---
+
 ## v1.2.0-rc8
 
 ### 安全审计（25 项修复）
