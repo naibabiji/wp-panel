@@ -2,6 +2,7 @@ package executor
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -30,6 +31,11 @@ func GetWebhookConfig() *WebhookConfig {
 	return cfg
 }
 
+func isBlockedIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsPrivate() || ip.IsUnspecified()
+}
+
 func isSafeWebhookURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -44,12 +50,39 @@ func isSafeWebhookURL(rawURL string) error {
 		return fmt.Errorf("无法解析主机名: %s", host)
 	}
 	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-			ip.IsPrivate() || ip.IsUnspecified() {
+		if isBlockedIP(ip) {
 			return fmt.Errorf("不允许的内网地址: %s", ip.String())
 		}
 	}
 	return nil
+}
+
+// safeWebhookClient returns an http.Client that checks the destination IP at
+// connection time, preventing DNS rebinding attacks that could bypass the
+// pre-flight isSafeWebhookURL check.
+func safeWebhookClient() *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, _, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				ips, err := net.LookupIP(host)
+				if err != nil {
+					return nil, err
+				}
+				for _, ip := range ips {
+					if isBlockedIP(ip) {
+						return nil, fmt.Errorf("webhook: 目标 IP 被禁止: %s", ip.String())
+					}
+				}
+				return dialer.DialContext(ctx, network, addr)
+			},
+		},
+	}
 }
 
 func SendWebhook(subject, body string) error {
@@ -62,7 +95,7 @@ func SendWebhook(subject, body string) error {
 		return fmt.Errorf("Webhook URL 不安全: %w", err)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := safeWebhookClient()
 
 	if cfg.Channel == "bark" {
 		return sendBark(client, cfg.URL, subject, body)
@@ -159,7 +192,7 @@ func TestWebhook(channel, url string) error {
 	title := getPanelTitle() + " — 测试消息"
 	msg := "如果您收到这条消息，说明 Webhook 配置正确。"
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := safeWebhookClient()
 
 	if channel == "bark" {
 		return sendBark(client, url, title, msg)
