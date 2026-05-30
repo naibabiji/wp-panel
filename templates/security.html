@@ -133,6 +133,17 @@
                 <button type="submit" class="btn-primary">保存限速设置</button>
             </form>
         </div>
+
+        <div class="card">
+            <h3 class="text-lg font-semibold text-white mb-4">匿名安装统计</h3>
+            <div class="mb-4">
+                <label class="flex items-center space-x-2 cursor-pointer">
+                    <input type="checkbox" x-model="settings.telemetry_enabled" @change="saveTelemetry" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600">
+                    <span class="text-gray-300">开启匿名安装统计</span>
+                </label>
+                <p class="text-xs text-gray-500 mt-2">每天上报一次匿名心跳到 stats.wp-panel.org，内容仅包含机器匿名标识（/etc/machine-id 的 SHA256 哈希）和面板版本号。<strong>不含</strong> IP、域名、网站信息等任何敏感数据。这可以让我们知道 WP Panel 受到了多少用户的支持。</p>
+            </div>
+        </div>
     </div>
 
     <div class="card">
@@ -165,7 +176,7 @@ function securitySettings() {
                     const map = {};
                     r.data.forEach(s => {
                         let v = s.svalue;
-                        if (['auto_whitelist_enabled','rate_limit_enabled'].includes(s.skey)) v = v === 'true';
+                        if (['auto_whitelist_enabled','rate_limit_enabled','telemetry_enabled'].includes(s.skey)) v = v === 'true';
                         else if (['fail2ban_maxretry','fail2ban_findtime','fail2ban_bantime','rate_limit_rpm','rate_limit_burst'].includes(s.skey)) v = parseInt(v) || 0;
                         map[s.skey] = v;
                     });
@@ -187,6 +198,26 @@ function securitySettings() {
                     rate_limit_burst: String(this.settings.rate_limit_burst || 300),
                 } });
                 showToast('限速设置已保存', 'success');
+            } catch(e) { showToast(e.message, 'error'); }
+        },
+        async saveTelemetry() {
+            if (!this.settings.telemetry_enabled) {
+                const confirmed = await confirmModal(
+                    '关闭后将无法统计到您的服务器安装。\n\n' +
+                    '上报内容绝对不包含任何敏感信息——只有机器匿名标识（SHA256 哈希）和面板版本号。' +
+                    '这仅是让我们知道 WP Panel 受到了多少用户的支持。\n\n' +
+                    '确认关闭？'
+                );
+                if (!confirmed) {
+                    this.settings.telemetry_enabled = true;
+                    return;
+                }
+            }
+            try {
+                await api('/security/settings', { method: 'PUT', body: {
+                    telemetry_enabled: this.settings.telemetry_enabled ? 'true' : 'false',
+                } });
+                showToast(this.settings.telemetry_enabled ? '匿名统计已开启' : '匿名统计已关闭', 'success');
             } catch(e) { showToast(e.message, 'error'); }
         },
         async saveWhitelist() {
