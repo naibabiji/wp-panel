@@ -36,6 +36,61 @@ func EnsureCacheHelperPlugin(pluginFS embed.FS) {
 	os.WriteFile(dst, data, 0644)
 }
 
+// AutoDeployPluginUpdates 扫描所有已安装配套插件的 WordPress 站点，
+// 若 plugin_api_key 非空且站点上的插件版本落后于面板内置版本，则自动更新。
+// 每次面板启动时调用，实现插件无感自动升级。
+func AutoDeployPluginUpdates(pluginFS embed.FS) {
+	srcData, err := pluginFS.ReadFile("wp-panel-optimizer/wp-panel-optimizer.php")
+	if err != nil {
+		return
+	}
+	srcPath := "/www/server/panel/packages/wp-panel-optimizer.php"
+	srcInfo, srcErr := os.Stat(srcPath)
+	if srcErr != nil {
+		return
+	}
+
+	db := database.GetDB()
+	rows, err := db.Query(`SELECT id, web_root, system_user, domain FROM websites
+		WHERE site_type = 'wordpress' AND plugin_api_key != ''`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	var updated int
+	for rows.Next() {
+		var id int
+		var webRoot, systemUser, domain string
+		if err := rows.Scan(&id, &webRoot, &systemUser, &domain); err != nil {
+			continue
+		}
+
+		pluginDir := filepath.Join(webRoot, "wp-content", "plugins", "wp-panel-optimizer")
+		dstPath := filepath.Join(pluginDir, "wp-panel-optimizer.php")
+		dstInfo, dstErr := os.Stat(dstPath)
+
+		// 已安装且是最新版则跳过
+		if dstErr == nil && !dstInfo.ModTime().Before(srcInfo.ModTime()) {
+			continue
+		}
+
+		if err := os.MkdirAll(pluginDir, 0755); err != nil {
+			log.Printf("[插件自动更新] 创建目录失败 site=%d: %v", id, err)
+			continue
+		}
+		if err := os.WriteFile(dstPath, srcData, 0644); err != nil {
+			log.Printf("[插件自动更新] 写入失败 site=%d: %v", id, err)
+			continue
+		}
+		InstallPluginPermissions(domain, systemUser, pluginDir)
+		updated++
+	}
+	if updated > 0 {
+		log.Printf("[插件自动更新] 已更新 %d 个站点的配套插件", updated)
+	}
+}
+
 func NewCacheKey() string {
 	b := make([]byte, 4)
 	rand.Read(b)

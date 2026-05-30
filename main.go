@@ -93,6 +93,7 @@ func main() {
 	}
 	// 先更新插件包，确保后续迁移复制的是最新版本
 	executor.EnsureCacheHelperPlugin(PluginFS)
+	executor.AutoDeployPluginUpdates(PluginFS)
 	if err := database.RunUpgrades(); err != nil {
 		log.Fatalf("数据库升级失败: %v", err)
 	}
