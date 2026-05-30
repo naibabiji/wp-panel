@@ -22,3 +22,6 @@ Thumbs.db
 CLAUDE.md
 AGENTS.md
 setup.sh
+
+# Wrangler
+stats-worker/.wrangler/
