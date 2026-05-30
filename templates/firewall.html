@@ -177,6 +177,7 @@
                         <th class="table-header">IP 地址</th>
                         <th class="table-header">等级</th>
                         <th class="table-header">原因</th>
+                        <th class="table-header">来源</th>
                         <th class="table-header">封禁时间</th>
                         <th class="table-header">解封时间</th>
                     </tr>
@@ -189,12 +190,15 @@
                                 <span :class="['','badge-info','badge-warning','badge-danger','badge-danger','badge-danger'][h.ban_level]" x-text="['','限速','临时10分钟','临时24小时','临时30天','永久封禁'][h.ban_level]"></span>
                             </td>
                             <td class="table-cell text-sm" x-text="h.reason || '--'"></td>
+                            <td class="table-cell">
+                                <span :class="sourceClass(h)" class="text-xs" x-text="sourceLabel(h)"></span>
+                            </td>
                             <td class="table-cell text-xs" x-text="formatTime(h.banned_at)"></td>
                             <td class="table-cell text-xs" x-text="h.unbanned_at ? formatTime(h.unbanned_at) : (h.ban_level >= 5 ? '永久' : (h.expires_at ? formatTime(h.expires_at) : '--'))"></td>
                         </tr>
                     </template>
                     <tr x-show="history.length === 0">
-                        <td colspan="5" class="table-cell text-center text-gray-500 py-4">暂无历史记录</td>
+                        <td colspan="6" class="table-cell text-center text-gray-500 py-4">暂无历史记录</td>
                     </tr>
                 </tbody>
             </table>
