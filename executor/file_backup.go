@@ -134,7 +134,9 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 
 	os.WriteFile(stampFile, []byte(time.Now().Format(time.RFC3339)), 0644)
 
-	cleanOldBackups(backupDir, keepCount)
+	if isFull {
+		cleanOldBackups(backupDir, keepCount)
+	}
 
 	SyncBackupToRemote(fullPath)
 	logMsg := fmt.Sprintf("%s 文件备份成功: %s (%s)", domain, tarName, map[bool]string{true: "全量", false: "增量"}[isFull])
@@ -153,7 +155,7 @@ func cleanOldBackups(dir string, keep int) {
 	}
 	var tars []tarEntry
 	for _, e := range entries {
-		if !e.IsDir() && filepath.Ext(e.Name()) == ".gz" {
+		if !e.IsDir() && strings.HasPrefix(e.Name(), "file_full_") && filepath.Ext(e.Name()) == ".gz" {
 			info, _ := e.Info()
 			mt := time.Time{}
 			if info != nil {

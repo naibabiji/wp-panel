@@ -58,6 +58,17 @@ func (s *SessionStore) Get(token string) *Session {
 	return session
 }
 
+func (s *SessionStore) CleanExpired() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for token, session := range s.sessions {
+		if now.After(session.ExpiresAt) {
+			delete(s.sessions, token)
+		}
+	}
+}
+
 func (s *SessionStore) Delete(token string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

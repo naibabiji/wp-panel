@@ -171,7 +171,7 @@ func (h *BackupHandler) UploadRestore(c *gin.Context) {
 		return
 	}
 
-	tmpFile, err := os.CreateTemp("", "wppanel_upload_*")
+	tmpFile, err := os.CreateTemp("", "wppanel_upload_*"+ext)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建临时文件失败"))
 		return
@@ -263,10 +263,17 @@ func (h *BackupHandler) ClearDatabase(c *gin.Context) {
 
 	mysqlCmd := exec.Command("mysql", "-u", "root", site.DBName)
 	mysqlCmd.Env = append(os.Environ(), "MYSQL_PWD="+dbPass)
-	stdin, _ := mysqlCmd.StdinPipe()
+	stdin, err := mysqlCmd.StdinPipe()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("准备数据库操作失败"))
+		return
+	}
 	var stderr bytes.Buffer
 	mysqlCmd.Stderr = &stderr
-	mysqlCmd.Start()
+	if err := mysqlCmd.Start(); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("启动数据库操作失败"))
+		return
+	}
 	fmt.Fprintf(stdin, "SET FOREIGN_KEY_CHECKS = 0;\n%s\nSET FOREIGN_KEY_CHECKS = 1;\n", string(dropSQL))
 	stdin.Close()
 	if err := mysqlCmd.Wait(); err != nil {

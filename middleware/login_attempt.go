@@ -71,6 +71,12 @@ func (t *LoginAttemptTracker) countRecent(ip string) int {
 }
 
 func (t *LoginAttemptTracker) banIP(ip string, attemptType string) {
+	var existing int
+	t.DB.QueryRow(`SELECT COUNT(*) FROM firewall_bans WHERE ip_address = ? AND unbanned_at IS NULL AND (expires_at IS NULL OR expires_at > datetime('now'))`, ip).Scan(&existing)
+	if existing > 0 {
+		return
+	}
+
 	reason := fmt.Sprintf("panel_%s: 连续%d次认证失败", attemptType, t.MaxAttempts)
 	expiresAt := time.Now().UTC().Add(time.Duration(t.BanDurationHours) * time.Hour).Format("2006-01-02 15:04:05")
 
@@ -81,6 +87,10 @@ func (t *LoginAttemptTracker) banIP(ip string, attemptType string) {
 	)
 
 	executor.AddPersistBan(ip)
+}
+
+func (t *LoginAttemptTracker) ClearAttempts(ip string) {
+	t.DB.Exec("DELETE FROM login_attempts WHERE ip_address = ?", ip)
 }
 
 func (t *LoginAttemptTracker) CleanupOldAttempts() {

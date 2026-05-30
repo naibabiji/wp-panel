@@ -58,6 +58,8 @@ func executeCreateBackup(task *Task) TaskResult {
 	if _, err := db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, auto) VALUES (?, ?, ?, ?, ?)`,
 		site.ID, filename, size, site.DBName, autoVal); err != nil {
 		log.Printf("备份记录写入 db_backups 失败 [%s]: %v", site.Domain, err)
+		os.Remove(filePath)
+		return TaskResult{Success: false, Message: "备份记录保存失败: " + err.Error()}
 	}
 
 	SyncBackupToRemote(filePath)
@@ -116,8 +118,10 @@ func restoreFromGz(filePath, dbName, dbPass string) TaskResult {
 		return TaskResult{Success: false, Message: "恢复失败"}
 	}
 	if err := gunzip.Run(); err != nil {
+		mysql.Process.Kill()
+		mysql.Wait()
 		log.Printf("恢复失败 gunzip: %v", err)
-		return TaskResult{Success: false, Message: "恢复失败"}
+		return TaskResult{Success: false, Message: "恢复失败，数据库可能已被部分修改，请清空数据库后重新恢复"}
 	}
 	if err := mysql.Wait(); err != nil {
 		log.Printf("恢复失败 mysql: %v", err)
@@ -253,6 +257,7 @@ func executeAutoBackups() {
 		if _, err = db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, auto) VALUES (?, ?, ?, ?, 1)`,
 			siteID, filename, size, dbName); err != nil {
 			log.Printf("自动备份: 记录写入 db_backups 失败 [%s]: %v", domain, err)
+			os.Remove(filePath)
 			failCount++
 			continue
 		}

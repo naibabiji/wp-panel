@@ -138,13 +138,14 @@
                             <option value="full">全站备份</option>
                         </select>
                     </div>
-                    <div class="mb-2">
+                    <div x-show="form.backup_mode === 'full'" class="mb-2">
                         <label class="text-sm text-gray-300 mb-1 block">保留本地备份</label>
                         <div class="flex items-center space-x-2">
                             <input type="number" x-model.number="form.keep_count" class="input-field w-20 text-sm py-1.5" min="1" max="30">
                             <span class="text-xs text-gray-500">份</span>
                         </div>
                     </div>
+                    <p x-show="form.backup_mode === 'incremental'" class="text-xs text-gray-500 mb-2">增量备份本地始终保留最近一份完整链，不自动清理。</p>
                     <div class="mb-2">
                         <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
                             <input type="checkbox" x-model="form.notify_fail">

@@ -77,19 +77,7 @@ func SendMail(to, subject, body string) error {
 			return fmt.Errorf("SMTP 客户端创建失败: %w", err)
 		}
 		defer client.Quit()
-		if err := client.Mail(cfg.User); err != nil {
-			return err
-		}
-		if err := client.Rcpt(to); err != nil {
-			return err
-		}
-		wc, err := client.Data()
-		if err != nil {
-			return err
-		}
-		_, err = wc.Write([]byte(msg))
-		wc.Close()
-		if err != nil {
+		if err := authAndSend(client, cfg, to, msg); err != nil {
 			return err
 		}
 	default: // starttls

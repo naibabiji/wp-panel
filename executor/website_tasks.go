@@ -458,11 +458,13 @@ func executeUpdateDomains(task *Task) TaskResult {
 		}
 		nginxRB := rollbackStep{"恢复Nginx配置", func() error {
 			os.Rename(newNginxConf, oldNginxConf)
+			os.Symlink(oldNginxConf, oldEnabledLink)
 			nginxReload()
 			return nil
 		}}
 		rollbacks = append(rollbacks, nginxRB)
 
+		oldPoolContent, _ := os.ReadFile(oldPHPPool)
 		os.Remove(oldPHPPool)
 		engine := NewTemplateEngine(cfg.Panel.BackupDir)
 		phpData := &PHPFPMPoolData{
@@ -484,6 +486,7 @@ func executeUpdateDomains(task *Task) TaskResult {
 		}
 		phpRB := rollbackStep{"恢复PHP-FPM Pool " + oldPHPPool, func() error {
 			os.Remove(newPHPPool)
+			os.WriteFile(oldPHPPool, oldPoolContent, 0644)
 			exec.Command("systemctl", "reload", "php8.3-fpm").Run()
 			return nil
 		}}

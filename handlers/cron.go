@@ -124,8 +124,12 @@ func (h *CronHandler) Update(c *gin.Context) {
 
 	db := database.GetDB()
 	enabled := 1
-	if req.Enabled != nil && !*req.Enabled {
-		enabled = 0
+	if req.Enabled != nil {
+		if !*req.Enabled {
+			enabled = 0
+		}
+	} else {
+		db.QueryRow("SELECT enabled FROM cron_jobs WHERE id = ?", id).Scan(&enabled)
 	}
 
 	taskType := req.TaskType
@@ -145,6 +149,10 @@ func (h *CronHandler) Update(c *gin.Context) {
 		keepCount = *req.KeepCount
 	}
 
+	var oldTaskType string
+	var oldSiteID int
+	db.QueryRow("SELECT task_type, COALESCE(site_id, 0) FROM cron_jobs WHERE id = ?", id).Scan(&oldTaskType, &oldSiteID)
+
 	_, err = db.Exec(
 		`UPDATE cron_jobs SET name = ?, cron_expression = ?, command = ?, task_type = ?,
 		 backup_mode = ?, keep_count = ?, notify_fail = ?, site_id = ?,
@@ -154,6 +162,12 @@ func (h *CronHandler) Update(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新失败"))
 		return
+	}
+
+	if oldTaskType != "wp_cron" && taskType == "wp_cron" && req.SiteID != nil {
+		ensureWPCronDisabled(*req.SiteID)
+	} else if oldTaskType == "wp_cron" && taskType != "wp_cron" && oldSiteID > 0 {
+		removeWPCronIfLast(oldSiteID)
 	}
 
 	task := executor.GlobalQueue.Enqueue(executor.TaskRenderCron, nil)
@@ -218,15 +232,15 @@ func (h *CronHandler) Run(c *gin.Context) {
 	}
 
 	db := database.GetDB()
-	var running int
 	var name string
-	db.QueryRow("SELECT name, running FROM cron_jobs WHERE id = ?", id).Scan(&name, &running)
-	if running == 1 {
+	db.QueryRow("SELECT name FROM cron_jobs WHERE id = ?", id).Scan(&name)
+
+	dbResult, _ := db.Exec("UPDATE cron_jobs SET running = 1 WHERE id = ? AND running = 0", id)
+	n, _ := dbResult.RowsAffected()
+	if n == 0 {
 		c.JSON(http.StatusConflict, models.ErrorResponse("任务正在执行中，请稍后再试"))
 		return
 	}
-
-	db.Exec("UPDATE cron_jobs SET running = 1 WHERE id = ?", id)
 
 	payload := &executor.RunCronPayload{JobID: id, Name: name}
 	task := executor.GlobalQueue.Enqueue(executor.TaskRunCron, payload)

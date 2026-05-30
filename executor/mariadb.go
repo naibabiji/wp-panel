@@ -34,8 +34,11 @@ func createMariaDBDatabase(dbName, dbUser, dbPassword string, cfg *config.Config
 		return err
 	}
 
+	// DROP + CREATE 确保密码始终一致，避免 IF NOT EXISTS 下旧用户密码不更新的问题
+	runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e",
+		fmt.Sprintf("DROP USER IF EXISTS '%s'@'localhost'", dbUser))
 	if err := runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e",
-		fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'", dbUser, dbPassword)); err != nil {
+		fmt.Sprintf("CREATE USER '%s'@'localhost' IDENTIFIED BY '%s'", dbUser, dbPassword)); err != nil {
 		return err
 	}
 
@@ -48,10 +51,13 @@ func createMariaDBDatabase(dbName, dbUser, dbPassword string, cfg *config.Config
 }
 
 func dropMariaDBDatabase(dbName, dbUser string, cfg *config.Config) error {
-	runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
-	runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", fmt.Sprintf("DROP USER IF EXISTS '%s'@'localhost'", dbUser))
-	runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", "FLUSH PRIVILEGES")
-	return nil
+	if err := runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName)); err != nil {
+		return err
+	}
+	if err := runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", fmt.Sprintf("DROP USER IF EXISTS '%s'@'localhost'", dbUser)); err != nil {
+		return err
+	}
+	return runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", "FLUSH PRIVILEGES")
 }
 
 func changeMariaDBPassword(dbUser, newPassword string, cfg *config.Config) error {
@@ -79,12 +85,11 @@ func executeChangeDBPassword(task *Task) TaskResult {
 		newPassword = generatePassword(24)
 	}
 
-	if err := changeMariaDBPassword(site.DBUser, newPassword, cfg); err != nil {
-		log.Printf("MariaDB 操作失败: %v", err)
-		return TaskResult{Success: false, Message: "MariaDB 操作失败"}
-	}
-
 	if site.SiteType == "php" {
+		if err := changeMariaDBPassword(site.DBUser, newPassword, cfg); err != nil {
+			log.Printf("MariaDB 操作失败: %v", err)
+			return TaskResult{Success: false, Message: "MariaDB 操作失败"}
+		}
 		db := database.GetDB()
 		db.Exec("UPDATE websites SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", site.ID)
 		masked := maskPassword(newPassword)
@@ -110,9 +115,15 @@ func executeChangeDBPassword(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "未找到 DB_PASSWORD 定义，wp-config.php 可能格式异常"}
 	}
 
-	if err := os.WriteFile(configPath, []byte(newContent), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(newContent), 0600); err != nil {
 		log.Printf("更新 wp-config.php 失败: %v", err)
 		return TaskResult{Success: false, Message: "更新 wp-config.php 失败"}
+	}
+
+	if err := changeMariaDBPassword(site.DBUser, newPassword, cfg); err != nil {
+		os.WriteFile(configPath, content, 0600)
+		log.Printf("MariaDB 操作失败，已回滚 wp-config.php: %v", err)
+		return TaskResult{Success: false, Message: "MariaDB 操作失败"}
 	}
 
 	masked := maskPassword(newPassword)

@@ -69,6 +69,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	if h.Tracker != nil {
+		h.Tracker.ClearAttempts(c.ClientIP())
+	}
+
 	session := middleware.GlobalSessionStore.Create(req.Username)
 	setSessionCookie(c, session.Token, 1800)
 

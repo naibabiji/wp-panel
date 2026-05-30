@@ -19,6 +19,7 @@ import (
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/executor"
+	"github.com/naibabiji/wp-panel/middleware"
 	"github.com/naibabiji/wp-panel/router"
 
 	"golang.org/x/crypto/bcrypt"
@@ -193,6 +194,12 @@ func main() {
 	log.Println("自动备份调度器已启动")
 	executor.StartSSLRenewalScheduler()
 	log.Println("SSL 自动续期调度器已启动")
+	go func() {
+		for {
+			time.Sleep(30 * time.Minute)
+			middleware.GlobalSessionStore.CleanExpired()
+		}
+	}()
 
 	r := router.SetupRouter(cfg, TemplatesFS, StaticFS, Version)
 

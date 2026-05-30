@@ -124,6 +124,7 @@ func (m *alertManager) runChecks() {
 			r.firing = false
 			recoveryDetail := buildRecoveryDetail(r)
 			logAlert(r.key, "info", recoveryDetail)
+			database.GetDB().Exec("UPDATE alert_log SET resolved = 1 WHERE alert_type = ? AND resolved = 0", r.key)
 			// 即时告警（无阈值）直接发送恢复通知，有阈值的等 5 分钟防抖
 			sendRecovery := time.Since(r.lastFired) > 5*time.Minute || r.thresholdDuration <= 0
 			if hasSMTP && sendRecovery {
@@ -406,7 +407,8 @@ func checkService() (bool, string) {
 
 func checkSSL() (bool, string) {
 	db := database.GetDB()
-	rows, err := db.Query(`SELECT domain, ssl_expires_at FROM websites WHERE ssl_enabled = 1 AND ssl_expires_at > datetime('now')`)
+	// 包含最近 7 天内过期的证书，避免已过期证书被静默忽略
+	rows, err := db.Query(`SELECT domain, ssl_expires_at FROM websites WHERE ssl_enabled = 1 AND ssl_expires_at > datetime('now', '-7 days')`)
 	if err != nil {
 		return false, ""
 	}
@@ -421,7 +423,9 @@ func checkSSL() (bool, string) {
 			continue
 		}
 		days := int(expiresAt.Sub(now).Hours() / 24)
-		if days <= 14 {
+		if days < 0 {
+			msgs = append(msgs, fmt.Sprintf("%s 证书已过期 %d 天", domain, -days))
+		} else if days <= 14 {
 			msgs = append(msgs, fmt.Sprintf("%s 证书 %d 天后到期", domain, days))
 		}
 	}
@@ -489,7 +493,7 @@ func checkWebsiteExpiry() (bool, string) {
 		// 检查此域名今天是否已告警过
 		var alerted int
 		db.QueryRow(`SELECT COUNT(*) FROM alert_log
-			WHERE alert_type = 'website_expiry' AND message LIKE ? AND created_at > datetime('now', '-24 hours')`,
+			WHERE alert_type = 'alert_website_expiry' AND message LIKE ? AND created_at > datetime('now', '-24 hours')`,
 			domain+"%").Scan(&alerted)
 		if alerted > 0 {
 			continue

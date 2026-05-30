@@ -125,6 +125,9 @@ func executeRunCron(task *Task) TaskResult {
 	defer cancel()
 
 	if taskType == "file_backup" {
+		if siteIDNull == nil {
+			return TaskResult{Success: false, Message: "关联网站已不存在"}
+		}
 		var msg string
 		msg, execErr = ExecuteFileBackup(siteID, backupMode, keepCount)
 		if execErr != nil {
@@ -132,6 +135,11 @@ func executeRunCron(task *Task) TaskResult {
 		} else {
 			out = msg
 		}
+	} else if taskType == "wp_cron" {
+		url := "https://" + command + "/wp-cron.php?doing_wp_cron"
+		var outBytes []byte
+		outBytes, execErr = exec.CommandContext(ctx, "curl", "-k", "-s", "-o", "/dev/null", url).CombinedOutput()
+		out = string(outBytes)
 	} else if runAsUser != "" {
 			var outBytes []byte; outBytes, execErr = exec.CommandContext(ctx, "runuser", "-u", runAsUser, "--", "bash", "-c", command).CombinedOutput(); out = string(outBytes)
 	} else {
