@@ -40,7 +40,7 @@ func SyncBackupToRemote(localFile string) {
 	src := backupsRoot + "/./" + strings.TrimPrefix(localFile, backupsRoot+"/")
 	dest := fmt.Sprintf("%s@%s:%s/", username, host, strings.TrimRight(remotePath, "/"))
 
-	sshOpts := fmt.Sprintf("-o UserKnownHostsFile=/www/server/panel/remote_backup_known_hosts -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -p %d", port)
+	sshOpts := fmt.Sprintf("-o UserKnownHostsFile=/www/server/panel/remote_backup_known_hosts -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p %d", port)
 	var cmd *exec.Cmd
 	if authType == "key" {
 		keyPath := "/www/server/panel/remote_backup_key"
