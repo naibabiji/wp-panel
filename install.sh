@@ -208,20 +208,30 @@ apt-get update
 apt-get install -y curl wget unzip ca-certificates gnupg lsb-release
 
 # Ondřej Surý PHP 8.3 源（deb822 格式 + keyring 包）
-if [[ ! -f /etc/apt/sources.list.d/php.sources ]]; then
+KEYRING_FILE="/usr/share/keyrings/debsuryorg-archive-keyring.gpg"
+if [[ ! -f "$KEYRING_FILE" ]]; then
     curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb
     dpkg -i /tmp/debsuryorg-archive-keyring.deb
     rm -f /tmp/debsuryorg-archive-keyring.deb
-    cat > /etc/apt/sources.list.d/php.sources << PHPSOURCESEOF
+fi
+
+# 始终写入（防止上一次安装残留错误的源配置）
+cat > /etc/apt/sources.list.d/php.sources << PHPSOURCESEOF
 Types: deb
 URIs: https://packages.sury.org/php/
 Suites: $(lsb_release -sc)
 Components: main
-Signed-By: /usr/share/keyrings/debsuryorg-archive-keyring.gpg
+Signed-By: ${KEYRING_FILE}
 PHPSOURCESEOF
-fi
 
-apt-get update
+apt-get update 2>&1 | tee /tmp/wp-panel-apt-update.log
+if grep -q "certificate has expired" /tmp/wp-panel-apt-update.log 2>/dev/null; then
+    rm -f /tmp/wp-panel-apt-update.log
+    log_error "packages.sury.org CDN 证书异常，无法安装 PHP。
+  请改用国内优化版安装脚本：
+  wget -qO- https://raw.githubusercontent.com/naibabiji/wp-panel/main/install-cn.sh | bash"
+fi
+rm -f /tmp/wp-panel-apt-update.log
 
 # ============================================================
 # 安装基础组件

@@ -218,9 +218,9 @@ apt-get update
 apt-get install -y curl wget unzip ca-certificates gnupg lsb-release
 
 # Ondřej Surý PHP 8.3 源（使用上海交大镜像，支持 trixie）
-if [[ ! -f /etc/apt/sources.list.d/php.sources ]]; then
-    KEYRING="/usr/share/keyrings/debsuryorg-archive-keyring.gpg"
+KEYRING="/usr/share/keyrings/debsuryorg-archive-keyring.gpg"
 
+if [[ ! -f "$KEYRING" ]]; then
     log_info "下载 PHP Sury GPG 公钥..."
     KEY_OK=false
     for i in 1 2 3; do
@@ -239,15 +239,16 @@ if [[ ! -f /etc/apt/sources.list.d/php.sources ]]; then
     if ! $KEY_OK; then
         log_error "无法获取 PHP Sury GPG 公钥，请检查网络连接"
     fi
+fi
 
-    cat > /etc/apt/sources.list.d/php.sources << PHPSOURCESEOF
+# 始终写入（覆盖 install.sh 可能残留的 packages.sury.org 配置）
+cat > /etc/apt/sources.list.d/php.sources << PHPSOURCESEOF
 Types: deb
 URIs: ${MIRROR}/sury/php/
 Suites: ${DEBIAN_CODENAME}
 Components: main
 Signed-By: ${KEYRING}
 PHPSOURCESEOF
-fi
 
 apt-get update
 

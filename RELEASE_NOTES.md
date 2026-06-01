@@ -1,2 +1,4 @@
 - 修复：远程备份日志 `target` 字段为空，现在会显示对应网站域名
 - 修正：`upgrades.go` 中「发布后删除旧升级条目」的危险注释，改为「永久保留严禁删除」
+- 修复：`install.sh` 命中 Sury CDN 证书异常时提前终止，引导用户改用 install-cn.sh
+- 优化：`install.sh` / `install-cn.sh` 分离 keyring 与源配置的写入逻辑，防止重装时残留旧配置
