@@ -318,6 +318,9 @@ server {
         add_header Cache-Control "public, immutable";
     }
 
+    location ~* /wp-content/uploads/.*\.zip$ {
+    }
+
     location ~* \.(env|git|config\.bak|sql|tar|gz|zip|old|swp|save)$ {
         return 404;
     }
@@ -450,6 +453,9 @@ server {
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
         expires 30d;
         add_header Cache-Control "public, immutable";
+    }
+
+    location ~* /wp-content/uploads/.*\.zip$ {
     }
 
     location ~* \.(env|git|config\.bak|sql|tar|gz|zip|old|swp|save)$ {
