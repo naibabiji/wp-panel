@@ -15,7 +15,7 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // 公开统计 — 允许网站前端跨域访问，CDN 缓存 1 小时
+    // 公开统计 — 直接读计数器，零次 list() 调用
     if (request.method === 'GET' && url.pathname === '/api/stats') {
       const stats = await getStats(env);
       return new Response(JSON.stringify(stats), {
@@ -50,15 +50,21 @@ export default {
       }
     }
 
+    // 一次性初始化计数器（迁移后用 curl 调用一次即可删掉这个分支）
+    if (request.method === 'POST' && url.pathname === '/api/migrate') {
+      await migrateCounters(env);
+      return new Response(JSON.stringify({ migrated: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     return new Response('Not Found', { status: 404 });
   },
 };
 
-async function getStats(env) {
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-
-  // 总数：列出所有 id:* 键
+// 从已有的 id:* / daily:* 键重建 meta:total 和 meta:active 计数器
+async function migrateCounters(env) {
+  // 重建 total
   let total = 0;
   let cursor;
   do {
@@ -66,37 +72,74 @@ async function getStats(env) {
     total += result.keys.length;
     cursor = result.list_complete ? undefined : result.cursor;
   } while (cursor);
+  await env.STATS_KV.put('meta:total', String(total));
 
-  // 日活：统计今天 + 昨天的心跳键（覆盖 24~48h 窗口，去重）
-  const activeIds = new Set();
+  // 重建日活计数
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   for (const day of [today, yesterday]) {
+    let active = 0;
     cursor = undefined;
     do {
       const result = await env.STATS_KV.list({ prefix: `daily:${day}:`, cursor, limit: 1000 });
-      for (const key of result.keys) {
-        activeIds.add(key.name);
-      }
+      active += result.keys.length;
       cursor = result.list_complete ? undefined : result.cursor;
     } while (cursor);
+    if (active > 0) {
+      await env.STATS_KV.put(`meta:active:${day}`, String(active), { expirationTtl: 172800 });
+    }
   }
-
-  return { total, active: activeIds.size };
 }
 
+// 仅读取聚合计数器，每次调用 3 次 $get（零次 list）
+async function getStats(env) {
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+
+  const [total, activeToday, activeYesterday] = await Promise.all([
+    env.STATS_KV.get('meta:total'),
+    env.STATS_KV.get(`meta:active:${today}`),
+    env.STATS_KV.get(`meta:active:${yesterday}`),
+  ]);
+
+  return {
+    total: parseInt(total) || 0,
+    active: (parseInt(activeToday) || 0) + (parseInt(activeYesterday) || 0),
+  };
+}
+
+// 写入心跳时同步更新计数器
 async function saveHeartbeat(env, anonymousId, version) {
   const now = new Date().toISOString();
+  const today = now.slice(0, 10);
   const idKey = `id:${anonymousId}`;
+  const dailyKey = `daily:${today}:${anonymousId}`;
 
-  // 写入/更新单条记录（first 记录首次出现时间）
-  const existing = await env.STATS_KV.get(idKey, { type: 'json' });
-  await env.STATS_KV.put(idKey, JSON.stringify({
+  const [existing, dailyExists] = await Promise.all([
+    env.STATS_KV.get(idKey, { type: 'json' }),
+    env.STATS_KV.get(dailyKey),
+  ]);
+
+  const writes = [];
+
+  writes.push(env.STATS_KV.put(idKey, JSON.stringify({
     v: version,
     first: existing?.first || now,
     last: now,
-  }));
+  })));
 
-  // 写入日活标记，48 小时后自动过期
-  const today = now.slice(0, 10);
-  const dailyKey = `daily:${today}:${anonymousId}`;
-  await env.STATS_KV.put(dailyKey, '1', { expirationTtl: 86400 * 2 });
+  // 新安装 → 总数 +1
+  if (!existing) {
+    const total = parseInt(await env.STATS_KV.get('meta:total')) || 0;
+    writes.push(env.STATS_KV.put('meta:total', String(total + 1)));
+  }
+
+  // 今日首次心跳 → 日活 +1
+  if (!dailyExists) {
+    writes.push(env.STATS_KV.put(dailyKey, '1', { expirationTtl: 172800 }));
+    const activeToday = parseInt(await env.STATS_KV.get(`meta:active:${today}`)) || 0;
+    writes.push(env.STATS_KV.put(`meta:active:${today}`, String(activeToday + 1), { expirationTtl: 172800 }));
+  }
+
+  await Promise.all(writes);
 }

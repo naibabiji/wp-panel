@@ -9,5 +9,5 @@ compatibility_date = "2025-01-01"
 
 [[kv_namespaces]]
 binding = "STATS_KV"
-id = "YOUR_KV_NAMESPACE_ID"
-preview_id = "YOUR_KV_NAMESPACE_ID"
+id = "7a93b7ee6eca4a6e827e22351f5571cf"
+preview_id = "7a93b7ee6eca4a6e827e22351f5571cf"
