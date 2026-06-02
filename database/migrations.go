@@ -34,7 +34,7 @@ var migrations = []string{
 		ssl_key_path          TEXT    DEFAULT '',
 		ssl_expires_at        DATETIME,
 		template_version      TEXT    NOT NULL DEFAULT 'v1.0',
-		access_log_mode       TEXT    NOT NULL DEFAULT 'off',
+		access_log_mode       TEXT    NOT NULL DEFAULT 'error_only',
 		fastcgi_cache_enabled INTEGER NOT NULL DEFAULT 0,
 		fastcgi_cache_ttl     INTEGER NOT NULL DEFAULT 300,
 		fastcgi_cache_key     TEXT    NOT NULL DEFAULT '',

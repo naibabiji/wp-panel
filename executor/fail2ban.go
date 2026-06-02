@@ -396,6 +396,71 @@ func SyncFail2banBans() {
 	}
 }
 
+// RecordFail2banBan 在 Fail2ban 触发封禁时立即写入数据库记录。
+// 由 main.go 中 --banip-nginx CLI 调用，确保在管理员查看封禁列表之前记录已存在。
+func RecordFail2banBan(ip string) {
+	db := database.GetDB()
+
+	jail := detectFail2banJail(ip)
+	if jail == "" {
+		jail = "wppanel"
+	}
+
+	now := time.Now()
+	prevBans, prevMaxLevel := countBanHistory(ip, now)
+
+	banLevel := 2
+	expiresVal := "datetime('now', '+600 seconds')"
+	reason := "Fail2ban 自动封禁"
+	if jail == "wppanel-404" {
+		reason = "404 泛滥检测"
+	}
+
+	if prevMaxLevel >= 2 || prevBans > 0 {
+		banLevel = 3
+		expiresVal = "datetime('now', '+86400 seconds')"
+		reason = "Fail2ban 自动封禁（24h内重复违规，升级至24小时）"
+		if jail == "wppanel-404" {
+			reason = "404 泛滥检测（24h内重复违规，升级至24小时）"
+		}
+
+		l3Count := countLevel3(ip)
+		if l3Count >= 2 {
+			banLevel = 5
+			expiresVal = "NULL"
+			reason = "Fail2ban 自动封禁（高危：累计3次严重违规，永久封禁）"
+			if jail == "wppanel-404" {
+				reason = "404 泛滥检测（高危：累计3次严重违规，永久封禁）"
+			}
+		}
+	}
+
+	db.Exec(
+		`INSERT INTO firewall_bans (ip_address, ban_level, reason, source_jail, ban_count, expires_at)
+		 VALUES (?, ?, ?, ?, ?, `+expiresVal+`)`,
+		ip, banLevel, reason, jail, prevBans+1,
+	)
+
+	if banLevel >= 3 {
+		AddPersistBan(ip)
+	}
+}
+
+func detectFail2banJail(ip string) string {
+	for _, jail := range []string{"wppanel", "wppanel-404"} {
+		out, err := executeCommand("fail2ban-client", "status", jail)
+		if err != nil {
+			continue
+		}
+		for _, bannedIP := range parseBannedIPs(out) {
+			if bannedIP == ip {
+				return jail
+			}
+		}
+	}
+	return ""
+}
+
 func countBanHistory(ip string, since time.Time) (count int, maxLevel int) {
 	db := database.GetDB()
 	cutoff := since.Add(-24 * time.Hour).Format("2006-01-02 15:04:05")

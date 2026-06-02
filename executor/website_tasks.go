@@ -276,7 +276,7 @@ func executeCreateSite(task *Task) TaskResult {
 	_, err = db.Exec(
 		`INSERT INTO websites (name, domain, aliases, status, system_user, web_root, log_dir,
 		 db_name, db_user, php_pool_path, nginx_conf_path, site_type, ssl_enabled, ssl_cert_path, ssl_key_path, ssl_expires_at, template_version, access_log_mode, expires_at)
-		 VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v1.0', 'off', ?)`,
+		 VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v1.0', 'error_only', ?)`,
 		siteName, domain, strings.Join(payload.Aliases, "\n"), systemUser,
 		webRoot, logDir, dbName, dbUser, phpPoolPath, nginxConfPath, payload.SiteType, sslEnabled,
 		certPath, keyPath, sslExpiry, nilIfEmpty(payload.ExpiresAt),
