@@ -266,7 +266,7 @@ func applySSLToSite(site *models.Website, certPath, keyPath string, expiry time.
 	}
 
 	if err := engine.ApplyNginxConfig(nginxConfig, site.NginxConfPath,
-		filepath.Join(cfg.Paths.NginxSitesEnabled, site.Domain+".conf")); err != nil {
+		nginxEnabledPath(cfg, site.NginxConfPath, site.Domain)); err != nil {
 		return fmt.Errorf("应用 Nginx 配置失败: %w", err)
 	}
 

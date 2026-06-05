@@ -178,7 +178,7 @@ func RunUpgrades() error {
 
 	// 查询当前版本
 	var currentVersion string
-	if err := DB.QueryRow("SELECT version FROM schema_version ORDER BY updated_at DESC LIMIT 1").Scan(&currentVersion); err != nil && err != sql.ErrNoRows {
+	if err := DB.QueryRow("SELECT version FROM schema_version ORDER BY updated_at DESC, rowid DESC LIMIT 1").Scan(&currentVersion); err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("查询当前版本失败: %w", err)
 	}
 

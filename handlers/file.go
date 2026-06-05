@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -76,7 +77,13 @@ func fileBasePath(siteID int) (string, error) {
 func isPathWithin(basePath, targetPath string) bool {
 	base, err := filepath.EvalSymlinks(filepath.Clean(basePath))
 	if err != nil {
-		return false
+		if runtime.GOOS != "windows" {
+			return false
+		}
+		base, err = filepath.Abs(filepath.Clean(basePath))
+		if err != nil {
+			return false
+		}
 	}
 	target, err := resolvePathForAccess(targetPath)
 	if err != nil {
@@ -84,10 +91,15 @@ func isPathWithin(basePath, targetPath string) bool {
 	}
 	base = filepath.Clean(base)
 	target = filepath.Clean(target)
-	if target == base {
-		return true
+	if runtime.GOOS == "windows" {
+		base = strings.ToLower(base)
+		target = strings.ToLower(target)
 	}
-	return strings.HasPrefix(target, base+string(filepath.Separator))
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 func resolvePathForAccess(path string) (string, error) {
@@ -105,7 +117,8 @@ func resolvePathForAccess(path string) (string, error) {
 			}
 			return filepath.Join(resolved, rel), nil
 		}
-		if p == "/" || p == "." {
+		parent := filepath.Dir(p)
+		if p == "/" || p == "." || parent == p {
 			// 根目录不存在则无法验证，退回到 Clean 结果
 			return cleanPath, nil
 		}
