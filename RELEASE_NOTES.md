@@ -1,15 +1,9 @@
-# Release Notes
+# 更新说明
 
-## Unreleased
+## 多站点隔离加固
 
-### Security and Isolation Hardening
-
-- Added per-site WordPress object cache isolation for Redis-backed caches. New and upgraded WordPress sites now get both `WP_REDIS_PREFIX` and `WP_CACHE_KEY_SALT` in `wp-config.php`, preventing Redis object cache keys from colliding across multiple sites on the same server.
-- Added an upgrade migration to backfill missing cache prefixes for existing WordPress sites without overwriting user-defined values.
-- Changed internal site resource names to include a stable short hash, avoiding collisions between domains such as `ab.com` and `a-b.com` when generating system users, database names, and related resources.
-- Added resource availability checks before site creation so existing system users, web roots, log directories, PHP-FPM pools, Nginx configs, sockets, database names, and database users are detected before provisioning starts.
-- Randomized the WordPress database table prefix for new and reinstalled WordPress sites, replacing the fixed `wp_` prefix with a generated prefix such as `wp_a1b2c3d4_`.
-
-### Tests
-
-- Added coverage for cache prefix insertion, preserving existing cache prefix values, resource name collision avoidance, normalized domain handling, resource name length limits, and random WordPress table prefix format.
+- 修复同一台服务器多个 WordPress 站点共用 Redis 对象缓存时可能出现的串站问题。新建站点会自动写入独立的 `WP_REDIS_PREFIX` 和 `WP_CACHE_KEY_SALT`。
+- 升级后会自动为已有 WordPress 站点补齐缺失的缓存隔离配置，不会覆盖用户已手动设置的值。
+- 优化站点内部资源命名规则，避免相似域名生成相同的系统用户、数据库名等资源。
+- 创建站点前增加资源占用检查，提前发现已存在的系统用户、网站目录、日志目录、PHP-FPM 配置、Nginx 配置、Socket、数据库名和数据库用户。
+- 新建或重装 WordPress 站点时，数据库表前缀将不再固定为 `wp_`，而是自动生成随机前缀。
