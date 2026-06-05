@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,6 +78,21 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 
 type WebsiteHandler struct {
 	DB *sql.DB
+}
+
+func normalizeWPSiteURL(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("invalid URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("URL must start with http:// or https://")
+	}
+	return value, nil
 }
 
 func (h *WebsiteHandler) List(c *gin.Context) {
@@ -474,6 +490,11 @@ func (h *WebsiteHandler) FixWPConfig(c *gin.Context) {
 		TablePrefix string `json:"table_prefix"`
 	}
 	c.ShouldBindJSON(&req)
+	req.TablePrefix = strings.TrimSpace(req.TablePrefix)
+	if req.TablePrefix != "" && !executor.IsValidWPTablePrefix(req.TablePrefix) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("表前缀只能包含字母、数字和下划线，且长度不能超过 56 个字符"))
+		return
+	}
 
 	if err := executor.FixWPConfigCredentials(site.WebRoot, site.Domain, site.DBName, site.DBUser, req.TablePrefix); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(err.Error()))
@@ -583,7 +604,17 @@ func (h *WebsiteHandler) UpdateWPSiteURLs(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
-	if strings.TrimSpace(req.SiteURL) == "" && strings.TrimSpace(req.HomeURL) == "" {
+	req.SiteURL, err = normalizeWPSiteURL(req.SiteURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("siteurl 格式不正确，请使用 http:// 或 https:// 开头的完整 URL"))
+		return
+	}
+	req.HomeURL, err = normalizeWPSiteURL(req.HomeURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("home 格式不正确，请使用 http:// 或 https:// 开头的完整 URL"))
+		return
+	}
+	if req.SiteURL == "" && req.HomeURL == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("至少填写一个 URL"))
 		return
 	}
@@ -1011,9 +1042,9 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 	}
 
 	var req struct {
-		FCacheEnabled      bool `json:"fcache_enabled"`
-		FCacheTTL          int  `json:"fcache_ttl"`
-		DisableWPUpdates   bool `json:"disable_wp_updates"`
+		FCacheEnabled      bool   `json:"fcache_enabled"`
+		FCacheTTL          int    `json:"fcache_ttl"`
+		DisableWPUpdates   bool   `json:"disable_wp_updates"`
 		DisableFileEditing bool   `json:"disable_file_editing"`
 		XMLRPCEnabled      bool   `json:"xmlrpc_enabled"`
 		WPDebugEnabled     bool   `json:"wp_debug_enabled"`
@@ -1157,16 +1188,16 @@ func (h *WebsiteHandler) ReinstallWordPress(c *gin.Context) {
 
 	cfg := config.AppConfig
 
-		var req struct {
-			CleanDefaults      bool     `json:"clean_defaults"`
-			RemoveUnusedThemes bool     `json:"remove_unused_themes"`
-			InstallThemes      []string `json:"install_themes"`
-			InstallPlugins     []string `json:"install_plugins"`
-		}
-		c.ShouldBindJSON(&req)
+	var req struct {
+		CleanDefaults      bool     `json:"clean_defaults"`
+		RemoveUnusedThemes bool     `json:"remove_unused_themes"`
+		InstallThemes      []string `json:"install_themes"`
+		InstallPlugins     []string `json:"install_plugins"`
+	}
+	c.ShouldBindJSON(&req)
 
-		if err := executor.ReinstallWordPress(cfg.Paths.WordPressPackage, webRoot, dbName, dbUser, systemUser, cfg,
-			req.CleanDefaults, req.RemoveUnusedThemes, req.InstallThemes, req.InstallPlugins); err != nil {
+	if err := executor.ReinstallWordPress(cfg.Paths.WordPressPackage, webRoot, dbName, dbUser, systemUser, cfg,
+		req.CleanDefaults, req.RemoveUnusedThemes, req.InstallThemes, req.InstallPlugins); err != nil {
 		log.Printf("WordPress 重装失败 site=%d: %v", id, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("WordPress 重装失败"))
 		return
@@ -1306,9 +1337,9 @@ func (h *CacheHelperHandler) FindByDomain(c *gin.Context) {
 		"disable_wp_updates":    disableUpdates == 1,
 		"disable_file_editing":  disableEditing == 1,
 		"xmlrpc_enabled":        xmlrpcEnabled == 1,
-		"wp_debug_enabled":     wpDebugEnabled == 1,
-		"wp_post_revisions":    wpPostRevisions,
-		"wp_memory_limit":      wpMemoryLimit,
+		"wp_debug_enabled":      wpDebugEnabled == 1,
+		"wp_post_revisions":     wpPostRevisions,
+		"wp_memory_limit":       wpMemoryLimit,
 	}))
 }
 
@@ -1370,7 +1401,7 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 		fcEnabled, req.TTL, disableUpdates, disableEditing, wpDebug2, req.WPPostRevisions, req.WPMemoryLimit, req.Domain, escapeLike(req.Domain))
 	if err != nil {
 		log.Printf("UpdateOptimizerSettings DB 更新失败 (site %s): %v", req.Domain, err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败: " + err.Error()))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败: "+err.Error()))
 		return
 	}
 

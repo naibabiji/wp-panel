@@ -14,6 +14,24 @@ import (
 	"github.com/naibabiji/wp-panel/database"
 )
 
+var mysqlIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+func isValidMySQLIdentifier(name string) bool {
+	return name != "" && len(name) <= 64 && mysqlIdentifierPattern.MatchString(name)
+}
+
+func wpOptionsTableName(tablePrefix string) (string, error) {
+	tablePrefix = strings.TrimSpace(tablePrefix)
+	if !IsValidWPTablePrefix(tablePrefix) {
+		return "", fmt.Errorf("invalid WordPress table prefix")
+	}
+	tableName := tablePrefix + "options"
+	if !isValidMySQLIdentifier(tableName) {
+		return "", fmt.Errorf("invalid WordPress options table name")
+	}
+	return tableName, nil
+}
+
 func runMySQL(rootPassword string, args ...string) error {
 	cmd := exec.Command("mysql", args...)
 	cmd.Env = append(os.Environ(), "MYSQL_PWD="+rootPassword)
@@ -140,6 +158,9 @@ func executeChangeDBPassword(task *Task) TaskResult {
 
 // DetectDBTablePrefix 查询数据库中实际的 WordPress 表前缀
 func DetectDBTablePrefix(dbName string, cfg *config.Config) (string, error) {
+	if !isValidMySQLIdentifier(dbName) {
+		return "", fmt.Errorf("invalid database name")
+	}
 	cmd := exec.Command("mysql", "-u", cfg.MariaDB.RootUser, "-N", "-e",
 		fmt.Sprintf("SHOW TABLES FROM `%s` LIKE '%%options'", dbName))
 	cmd.Env = append(os.Environ(), "MYSQL_PWD="+cfg.MariaDB.RootPassword)
@@ -155,21 +176,38 @@ func DetectDBTablePrefix(dbName string, cfg *config.Config) (string, error) {
 		return "", fmt.Errorf("未找到 options 表，数据库可能为空或不是 WordPress 数据库")
 	}
 
-	// 取第一行，提取 _options 之前的前缀
-	tableName := strings.Split(output, "\n")[0]
-	tableName = strings.TrimSpace(tableName)
-	idx := strings.LastIndex(tableName, "_options")
-	if idx < 0 {
-		return "", fmt.Errorf("无法解析表前缀: %s", tableName)
+	for _, line := range strings.Split(output, "\n") {
+		tableName := strings.TrimSpace(line)
+		if prefix, ok := tablePrefixFromOptionsTable(tableName); ok {
+			return prefix, nil
+		}
 	}
-	return tableName[:idx+1], nil
+	return "", fmt.Errorf("无法解析表前缀: %s", strings.Split(output, "\n")[0])
+}
+
+func tablePrefixFromOptionsTable(tableName string) (string, bool) {
+	if !strings.HasSuffix(tableName, "options") {
+		return "", false
+	}
+	prefix := strings.TrimSuffix(tableName, "options")
+	if !IsValidWPTablePrefix(prefix) {
+		return "", false
+	}
+	return prefix, true
 }
 
 // ReadWPSiteURLs 从 wp_options 读取 siteurl 和 home
 func ReadWPSiteURLs(dbName, tablePrefix string, cfg *config.Config) (siteURL, homeURL string, err error) {
+	if !isValidMySQLIdentifier(dbName) {
+		return "", "", fmt.Errorf("invalid database name")
+	}
+	tableName, err := wpOptionsTableName(tablePrefix)
+	if err != nil {
+		return "", "", err
+	}
 	query := fmt.Sprintf(
-		"SELECT option_name, option_value FROM `%s`.`%soptions` WHERE option_name IN ('siteurl','home')",
-		dbName, tablePrefix)
+		"SELECT option_name, option_value FROM `%s`.`%s` WHERE option_name IN ('siteurl','home')",
+		dbName, tableName)
 	cmd := exec.Command("mysql", "-u", cfg.MariaDB.RootUser, "-N", "-e", query)
 	cmd.Env = append(os.Environ(), "MYSQL_PWD="+cfg.MariaDB.RootPassword)
 	var stdout, stderr bytes.Buffer
@@ -203,12 +241,19 @@ func UpdateWPSiteURLs(dbName, tablePrefix, newSiteURL, newHomeURL string, cfg *c
 	if newSiteURL == "" && newHomeURL == "" {
 		return fmt.Errorf("至少需要提供一个 URL")
 	}
+	if !isValidMySQLIdentifier(dbName) {
+		return fmt.Errorf("invalid database name")
+	}
+	tableName, err := wpOptionsTableName(tablePrefix)
+	if err != nil {
+		return err
+	}
 
 	if newSiteURL != "" {
 		escURL := strings.ReplaceAll(newSiteURL, "'", "''")
 		query := fmt.Sprintf(
-			"UPDATE `%s`.`%soptions` SET option_value = '%s' WHERE option_name = 'siteurl'",
-			dbName, tablePrefix, escURL)
+			"UPDATE `%s`.`%s` SET option_value = '%s' WHERE option_name = 'siteurl'",
+			dbName, tableName, escURL)
 		if err := runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", query); err != nil {
 			return fmt.Errorf("更新 siteurl 失败: %w", err)
 		}
@@ -217,8 +262,8 @@ func UpdateWPSiteURLs(dbName, tablePrefix, newSiteURL, newHomeURL string, cfg *c
 	if newHomeURL != "" {
 		escURL := strings.ReplaceAll(newHomeURL, "'", "''")
 		query := fmt.Sprintf(
-			"UPDATE `%s`.`%soptions` SET option_value = '%s' WHERE option_name = 'home'",
-			dbName, tablePrefix, escURL)
+			"UPDATE `%s`.`%s` SET option_value = '%s' WHERE option_name = 'home'",
+			dbName, tableName, escURL)
 		if err := runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", query); err != nil {
 			return fmt.Errorf("更新 home 失败: %w", err)
 		}

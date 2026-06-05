@@ -8,10 +8,16 @@ import (
 	"strings"
 )
 
+var wpTablePrefixPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
 func phpSingleQuoteEscape(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "'", "\\'")
 	return s
+}
+
+func IsValidWPTablePrefix(prefix string) bool {
+	return prefix != "" && len(prefix) <= 56 && wpTablePrefixPattern.MatchString(prefix)
 }
 
 func FixWPConfigCredentials(webRoot, domain, dbName, dbUser, tablePrefix string) error {
@@ -47,12 +53,14 @@ func FixWPConfigCredentials(webRoot, domain, dbName, dbUser, tablePrefix string)
 
 	// 如果提供了 tablePrefix，替换 $table_prefix
 	if tablePrefix != "" {
-		rePrefixSingle := regexp.MustCompile(`(?m)\$table_prefix\s*=\s*'[^']*'\s*;`)
-		rePrefixDouble := regexp.MustCompile(`(?m)\$table_prefix\s*=\s*"[^"]*"\s*;`)
-		if rePrefixSingle.MatchString(result) {
-			result = rePrefixSingle.ReplaceAllString(result, fmt.Sprintf("$table_prefix = '%s';", phpSingleQuoteEscape(tablePrefix)))
-		} else if rePrefixDouble.MatchString(result) {
-			result = rePrefixDouble.ReplaceAllString(result, fmt.Sprintf("$table_prefix = '%s';", phpSingleQuoteEscape(tablePrefix)))
+		tablePrefix = strings.TrimSpace(tablePrefix)
+		if !IsValidWPTablePrefix(tablePrefix) {
+			return fmt.Errorf("invalid WordPress table prefix")
+		}
+		var replaced bool
+		result, replaced = replaceWPTablePrefix(result, tablePrefix)
+		if !replaced {
+			return fmt.Errorf("未找到 table_prefix 定义")
 		}
 	}
 
@@ -136,6 +144,30 @@ require_once ABSPATH . 'wp-settings.php';
 	return os.WriteFile(configPath, []byte(config), 0600)
 }
 
+func replaceWPTablePrefix(content, tablePrefix string) (string, bool) {
+	stmt := fmt.Sprintf("$table_prefix = '%s';", phpSingleQuoteEscape(tablePrefix))
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile(`(?m)\$table_prefix\s*=\s*'[^']*'\s*;`),
+		regexp.MustCompile(`(?m)\$table_prefix\s*=\s*"[^"]*"\s*;`),
+	} {
+		if re.MatchString(content) {
+			return re.ReplaceAllLiteralString(content, stmt), true
+		}
+	}
+
+	// Repair configs damaged by regexp replacement treating "$table_prefix"
+	// as a replacement variable and leaving only " = 'prefix';".
+	if strings.Contains(content, "WordPress 数据库表前缀") ||
+		strings.Contains(content, "WordPress database table prefix") {
+		reBroken := regexp.MustCompile(`(?m)^\s*=\s*['"][^'"]*['"]\s*;`)
+		if reBroken.MatchString(content) {
+			return reBroken.ReplaceAllLiteralString(content, stmt), true
+		}
+	}
+
+	return content, false
+}
+
 func ReadWPTablePrefix(webRoot string) (string, error) {
 	configPath := filepath.Join(webRoot, "wp-config.php")
 	content, err := os.ReadFile(configPath)
@@ -145,6 +177,10 @@ func ReadWPTablePrefix(webRoot string) (string, error) {
 	prefix, ok := extractWPTablePrefix(string(content))
 	if !ok {
 		return "", fmt.Errorf("未找到 table_prefix 定义")
+	}
+	prefix = strings.TrimSpace(prefix)
+	if !IsValidWPTablePrefix(prefix) {
+		return "", fmt.Errorf("invalid WordPress table prefix")
 	}
 	return prefix, nil
 }

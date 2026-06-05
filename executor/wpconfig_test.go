@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -65,5 +67,65 @@ func TestExtractWPTablePrefix(t *testing.T) {
 	}
 	if prefix != "wp_ab12cd34_" {
 		t.Fatalf("unexpected table prefix: %q", prefix)
+	}
+}
+
+func TestExtractWPTablePrefixWithoutTrailingUnderscore(t *testing.T) {
+	prefix, ok := extractWPTablePrefix("<?php\n$table_prefix = 'wp_sadfasdfasf';\n")
+	if !ok {
+		t.Fatal("expected table prefix to be detected")
+	}
+	if prefix != "wp_sadfasdfasf" {
+		t.Fatalf("unexpected table prefix: %q", prefix)
+	}
+	if !IsValidWPTablePrefix(prefix) {
+		t.Fatalf("expected prefix %q to be valid", prefix)
+	}
+}
+
+func TestFixWPConfigCredentialsKeepsTablePrefixVariableName(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "wp-config.php")
+	content := "<?php\ndefine('DB_NAME', 'old_db');\ndefine('DB_USER', 'old_user');\n$table_prefix = 'wp_sadfasdfasf';\n/* That's all, stop editing! Happy publishing. */\n"
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := FixWPConfigCredentials(dir, "example.com", "new_db", "new_user", "wp_"); err != nil {
+		t.Fatal(err)
+	}
+
+	updatedBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := string(updatedBytes)
+	if !strings.Contains(updated, "$table_prefix = 'wp_';") {
+		t.Fatalf("table prefix variable was not preserved:\n%s", updated)
+	}
+	if strings.Contains(updated, "\n = 'wp_';") {
+		t.Fatalf("table prefix variable name was dropped:\n%s", updated)
+	}
+}
+
+func TestFixWPConfigCredentialsRepairsDroppedTablePrefixVariableName(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "wp-config.php")
+	content := "<?php\ndefine('DB_NAME', 'old_db');\ndefine('DB_USER', 'old_user');\n/**\n * WordPress database table prefix.\n */\n = 'wp_sadfasdfasf';\n/* That's all, stop editing! Happy publishing. */\n"
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := FixWPConfigCredentials(dir, "example.com", "new_db", "new_user", "wp_"); err != nil {
+		t.Fatal(err)
+	}
+
+	updatedBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := string(updatedBytes)
+	if !strings.Contains(updated, "$table_prefix = 'wp_';") {
+		t.Fatalf("damaged table prefix assignment was not repaired:\n%s", updated)
 	}
 }
