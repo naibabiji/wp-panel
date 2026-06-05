@@ -148,11 +148,11 @@
         </div>
     </div>
 
-    <div class="card mb-6" x-data="wpPackage()" x-init="fetchStatus()">
-        <h3 class="text-lg font-semibold text-white mb-4">WordPress 安装包</h3>
-        <p class="text-xs text-gray-500 mb-4">创建 WordPress 网站时优先使用本地安装包。国内服务器如果无法在线下载，可在此手动上传。</p>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-6">
+        <div class="card" x-data="wpPackage()" x-init="fetchStatus()">
+            <h3 class="text-lg font-semibold text-white mb-4">WordPress 安装包</h3>
+            <p class="text-xs text-gray-500 mb-4">创建 WordPress 网站时优先使用本地安装包。国内服务器如果无法在线下载，可在此手动上传。</p>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
                 <div class="p-3 rounded mb-4" style="background-color: #0f172a;">
                     <div class="flex items-center justify-between mb-2">
@@ -186,22 +186,10 @@
                 </div>
                 <p x-show="msg" class="text-xs mt-2" :class="msgOk ? 'text-green-400' : 'text-red-400'" x-text="msg"></p>
             </div>
-
-            <div class="p-4 rounded" style="background-color: #0f172a; border: 1px solid #1e293b;">
-                <h4 class="text-sm font-medium text-gray-300 mb-3">使用说明</h4>
-                <ul class="text-xs text-gray-400 space-y-2">
-                    <li>· 创建 WordPress 网站时<strong class="text-white">优先使用本地安装包</strong>，本地没有才在线下载</li>
-                    <li>· 国内服务器访问 wordpress.org 可能失败，建议提前上传安装包</li>
-                    <li>· 上传文件仅支持 <code class="text-gray-500">.zip</code> 格式，与 <a href="https://wordpress.org/download/" target="_blank" class="text-blue-400 hover:text-blue-300">wordpress.org</a> 下载的一致即可</li>
-                    <li>· 安装包需保持原始结构（解压后包含 <code class="text-gray-500">wordpress/</code> 目录）</li>
-                    <li>· 上传后会自动校验 ZIP 完整性，校验失败将拒绝安装</li>
-                </ul>
-            </div>
         </div>
-    </div>
 
-    <div class="card mb-6" x-data="remoteBackup()" x-init="fetchRemote()">
-        <div class="flex items-center justify-between mb-4"><h3 class="text-lg font-semibold text-white">远程备份</h3><button @click="showHelp = true" class="text-xs py-1 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">使用说明</button></div>
+        <div class="card" x-data="remoteBackup()" x-init="fetchRemote()">
+            <div class="flex items-center justify-between mb-4"><h3 class="text-lg font-semibold text-white">远程备份</h3><button @click="showHelp = true" class="text-xs py-1 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">使用说明</button></div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <!-- 左侧：备份设置 -->
@@ -342,6 +330,7 @@
                     </div>
                 </div>
             </div>
+    </div>
     </div>
 
     <div class="card" x-data="operationLogs()" x-init="fetchLogs()">
