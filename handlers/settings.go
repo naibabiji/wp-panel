@@ -423,6 +423,14 @@ func (h *SettingsHandler) DownloadWPPackage(c *gin.Context) {
 		return
 	}
 
+	// 校验 ZIP 完整性
+	if out, err := exec.Command("unzip", "-t", tmpPath).CombinedOutput(); err != nil {
+		os.Remove(tmpPath)
+		log.Printf("下载的 ZIP 校验失败: %s, %v", string(out), err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("下载的文件校验失败，请重试或手动上传"))
+		return
+	}
+
 	// 替换旧文件
 	os.Remove(pkgPath)
 	if err := os.Rename(tmpPath, pkgPath); err != nil {

@@ -109,7 +109,7 @@ func downloadWP(localPath, destPath string) error {
 	// 本地不可用，在线下载
 	if _, err := executeCommand("wget", "-q", "-T", "30", "-t", "3", "-O", destPath,
 		"https://wordpress.org/latest.zip"); err != nil {
-		return fmt.Errorf("本地安装包不可用且在线下载失败（国内服务器可在面板设置中上传安装包）")
+		return fmt.Errorf("本地安装包不可用且在线下载失败: %w", err)
 	}
 
 	return nil
