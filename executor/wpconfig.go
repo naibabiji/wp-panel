@@ -21,40 +21,39 @@ func FixWPConfigCredentials(webRoot, domain, dbName, dbUser, tablePrefix string)
 		return fmt.Errorf("读取 wp-config.php 失败 (路径: %s): %w", configPath, err)
 	}
 	text := string(content)
+	result := text
 
-	// 同时支持单引号和双引号格式
+	// 替换 DB_NAME（支持单引号和双引号格式）
 	reNameSingle := regexp.MustCompile(`define\(\s*'DB_NAME'\s*,\s*'[^']*'\s*\)`)
 	reNameDouble := regexp.MustCompile(`define\(\s*"DB_NAME"\s*,\s*"[^"]*"\s*\)`)
-	nameUpdated := reNameSingle.ReplaceAllString(text, fmt.Sprintf("define('DB_NAME', '%s')", phpSingleQuoteEscape(dbName)))
-	if nameUpdated == text {
-		nameUpdated = reNameDouble.ReplaceAllString(text, fmt.Sprintf("define('DB_NAME', '%s')", phpSingleQuoteEscape(dbName)))
-	}
-	if nameUpdated == text {
+	if reNameSingle.MatchString(result) {
+		result = reNameSingle.ReplaceAllString(result, fmt.Sprintf("define('DB_NAME', '%s')", phpSingleQuoteEscape(dbName)))
+	} else if reNameDouble.MatchString(result) {
+		result = reNameDouble.ReplaceAllString(result, fmt.Sprintf("define('DB_NAME', '%s')", phpSingleQuoteEscape(dbName)))
+	} else {
 		return fmt.Errorf("未找到 DB_NAME 定义 (路径: %s)，wp-config.php 可能格式异常或使用了非常规引号", configPath)
 	}
 
+	// 替换 DB_USER（支持单引号和双引号格式）
 	reUserSingle := regexp.MustCompile(`define\(\s*'DB_USER'\s*,\s*'[^']*'\s*\)`)
 	reUserDouble := regexp.MustCompile(`define\(\s*"DB_USER"\s*,\s*"[^"]*"\s*\)`)
-	userUpdated := reUserSingle.ReplaceAllString(nameUpdated, fmt.Sprintf("define('DB_USER', '%s')", phpSingleQuoteEscape(dbUser)))
-	if userUpdated == nameUpdated {
-		userUpdated = reUserDouble.ReplaceAllString(nameUpdated, fmt.Sprintf("define('DB_USER', '%s')", phpSingleQuoteEscape(dbUser)))
-	}
-	if userUpdated == nameUpdated {
+	if reUserSingle.MatchString(result) {
+		result = reUserSingle.ReplaceAllString(result, fmt.Sprintf("define('DB_USER', '%s')", phpSingleQuoteEscape(dbUser)))
+	} else if reUserDouble.MatchString(result) {
+		result = reUserDouble.ReplaceAllString(result, fmt.Sprintf("define('DB_USER', '%s')", phpSingleQuoteEscape(dbUser)))
+	} else {
 		return fmt.Errorf("未找到 DB_USER 定义 (路径: %s)，wp-config.php 可能格式异常或使用了非常规引号", configPath)
 	}
 
-	result := userUpdated
-
 	// 如果提供了 tablePrefix，替换 $table_prefix
 	if tablePrefix != "" {
-		rePrefix := regexp.MustCompile(`(?m)\$table_prefix\s*=\s*'[^']*'\s*;`)
-		prefixUpdated := rePrefix.ReplaceAllString(result, fmt.Sprintf("$table_prefix = '%s';", phpSingleQuoteEscape(tablePrefix)))
-		if prefixUpdated == result {
-			// 尝试双引号格式
-			rePrefix2 := regexp.MustCompile(`(?m)\$table_prefix\s*=\s*"[^"]*"\s*;`)
-			prefixUpdated = rePrefix2.ReplaceAllString(result, fmt.Sprintf("$table_prefix = '%s';", phpSingleQuoteEscape(tablePrefix)))
+		rePrefixSingle := regexp.MustCompile(`(?m)\$table_prefix\s*=\s*'[^']*'\s*;`)
+		rePrefixDouble := regexp.MustCompile(`(?m)\$table_prefix\s*=\s*"[^"]*"\s*;`)
+		if rePrefixSingle.MatchString(result) {
+			result = rePrefixSingle.ReplaceAllString(result, fmt.Sprintf("$table_prefix = '%s';", phpSingleQuoteEscape(tablePrefix)))
+		} else if rePrefixDouble.MatchString(result) {
+			result = rePrefixDouble.ReplaceAllString(result, fmt.Sprintf("$table_prefix = '%s';", phpSingleQuoteEscape(tablePrefix)))
 		}
-		result = prefixUpdated
 	}
 
 	result, _ = ensureWPConfigCachePrefixes(result, wpCacheKeySalt(domain))
