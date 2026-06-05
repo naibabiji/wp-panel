@@ -18,20 +18,29 @@ func FixWPConfigCredentials(webRoot, domain, dbName, dbUser, tablePrefix string)
 	configPath := filepath.Join(webRoot, "wp-config.php")
 	content, err := os.ReadFile(configPath)
 	if err != nil {
-		return fmt.Errorf("读取 wp-config.php 失败: %w", err)
+		return fmt.Errorf("读取 wp-config.php 失败 (路径: %s): %w", configPath, err)
 	}
 	text := string(content)
 
-	reName := regexp.MustCompile(`define\(\s*'DB_NAME'\s*,\s*'[^']*'\s*\)`)
-	nameUpdated := reName.ReplaceAllString(text, fmt.Sprintf("define('DB_NAME', '%s')", phpSingleQuoteEscape(dbName)))
+	// 同时支持单引号和双引号格式
+	reNameSingle := regexp.MustCompile(`define\(\s*'DB_NAME'\s*,\s*'[^']*'\s*\)`)
+	reNameDouble := regexp.MustCompile(`define\(\s*"DB_NAME"\s*,\s*"[^"]*"\s*\)`)
+	nameUpdated := reNameSingle.ReplaceAllString(text, fmt.Sprintf("define('DB_NAME', '%s')", phpSingleQuoteEscape(dbName)))
 	if nameUpdated == text {
-		return fmt.Errorf("未找到 DB_NAME 定义，wp-config.php 可能格式异常")
+		nameUpdated = reNameDouble.ReplaceAllString(text, fmt.Sprintf("define('DB_NAME', '%s')", phpSingleQuoteEscape(dbName)))
+	}
+	if nameUpdated == text {
+		return fmt.Errorf("未找到 DB_NAME 定义 (路径: %s)，wp-config.php 可能格式异常或使用了非常规引号", configPath)
 	}
 
-	reUser := regexp.MustCompile(`define\(\s*'DB_USER'\s*,\s*'[^']*'\s*\)`)
-	userUpdated := reUser.ReplaceAllString(nameUpdated, fmt.Sprintf("define('DB_USER', '%s')", phpSingleQuoteEscape(dbUser)))
+	reUserSingle := regexp.MustCompile(`define\(\s*'DB_USER'\s*,\s*'[^']*'\s*\)`)
+	reUserDouble := regexp.MustCompile(`define\(\s*"DB_USER"\s*,\s*"[^"]*"\s*\)`)
+	userUpdated := reUserSingle.ReplaceAllString(nameUpdated, fmt.Sprintf("define('DB_USER', '%s')", phpSingleQuoteEscape(dbUser)))
 	if userUpdated == nameUpdated {
-		return fmt.Errorf("未找到 DB_USER 定义，wp-config.php 可能格式异常")
+		userUpdated = reUserDouble.ReplaceAllString(nameUpdated, fmt.Sprintf("define('DB_USER', '%s')", phpSingleQuoteEscape(dbUser)))
+	}
+	if userUpdated == nameUpdated {
+		return fmt.Errorf("未找到 DB_USER 定义 (路径: %s)，wp-config.php 可能格式异常或使用了非常规引号", configPath)
 	}
 
 	result := userUpdated

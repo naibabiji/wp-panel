@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -602,6 +603,24 @@ func (h *WebsiteHandler) UpdateWPSiteURLs(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新失败: "+err.Error()))
 		return
 	}
+
+	// 异步清理缓存，避免旧域名缓存导致后台显示不一致
+	executor.GoSafe(func() {
+		exec.Command("find", "/var/cache/nginx/fastcgi", "-type", "f", "-delete").Run()
+	})
+	executor.GoSafe(func() {
+		redisPrefix := strings.ToLower(site.Domain) + ":"
+		keys, err := exec.Command("redis-cli", "--scan", "--pattern", redisPrefix+"*").Output()
+		if err != nil {
+			return
+		}
+		for _, k := range strings.Split(string(keys), "\n") {
+			k = strings.TrimSpace(k)
+			if k != "" {
+				exec.Command("redis-cli", "DEL", k).Run()
+			}
+		}
+	})
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "站点 URL 已更新"}))
 }
