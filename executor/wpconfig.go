@@ -48,6 +48,7 @@ func generateWPConfig(webRoot, domain, dbName, dbUser, dbPassword string) error 
 		salts = fallbackSalts()
 	}
 	cacheSalt := wpCacheKeySalt(domain)
+	tablePrefix := generateWPTablePrefix()
 
 	config := fmt.Sprintf(`<?php
 /**
@@ -82,7 +83,7 @@ define('DB_COLLATE', '');
  * 如需在一个数据库中安装多个 WordPress，可为每个站点设置不同的前缀。
  * 只允许数字、字母和下划线。
  */
-$table_prefix = 'wp_';
+$table_prefix = '%s';
 
 /**
  * 调试模式
@@ -107,7 +108,7 @@ if (!defined('ABSPATH')) {
 
 /** 加载 WordPress 设置和引入文件 */
 require_once ABSPATH . 'wp-settings.php';
-`, phpSingleQuoteEscape(dbName), phpSingleQuoteEscape(dbUser), phpSingleQuoteEscape(dbPassword), salts, phpSingleQuoteEscape(cacheSalt), phpSingleQuoteEscape(cacheSalt))
+`, phpSingleQuoteEscape(dbName), phpSingleQuoteEscape(dbUser), phpSingleQuoteEscape(dbPassword), salts, phpSingleQuoteEscape(tablePrefix), phpSingleQuoteEscape(cacheSalt), phpSingleQuoteEscape(cacheSalt))
 
 	configPath := filepath.Join(webRoot, "wp-config.php")
 	return os.WriteFile(configPath, []byte(config), 0600)
@@ -119,6 +120,10 @@ func wpCacheKeySalt(domain string) string {
 		domain = "wp-panel-site"
 	}
 	return domain + ":"
+}
+
+func generateWPTablePrefix() string {
+	return "wp_" + generatePassword(8) + "_"
 }
 
 func ensureWPConfigCachePrefixes(content, prefix string) (string, bool) {

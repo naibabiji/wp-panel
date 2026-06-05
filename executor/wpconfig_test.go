@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -41,5 +42,18 @@ func TestEnsureWPConfigCachePrefixesKeepExistingValues(t *testing.T) {
 	}
 	if got := strings.Count(updated, "WP_CACHE_KEY_SALT"); got != 1 {
 		t.Fatalf("expected one cache key salt definition, got %d:\n%s", got, updated)
+	}
+}
+
+func TestGenerateWPTablePrefix(t *testing.T) {
+	re := regexp.MustCompile(`^wp_[a-f0-9]{8}_$`)
+	first := generateWPTablePrefix()
+	second := generateWPTablePrefix()
+
+	if !re.MatchString(first) {
+		t.Fatalf("unexpected table prefix format: %q", first)
+	}
+	if first == second {
+		t.Fatalf("expected random table prefixes, got %q twice", first)
 	}
 }
