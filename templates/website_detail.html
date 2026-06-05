@@ -22,6 +22,7 @@
                 <div><dt class="text-sm text-gray-400">别名</dt><dd class="text-white" x-text="site.aliases || '无'"></dd></div>
                 <div class="pt-2">
                     <button @click="domainModalOpen = true; editDomain = site.domain; editAliasesStr = site.aliases || ''" class="text-sm py-1.5 px-3 rounded" style="background-color: #1e3a5f; color: #93c5fd;">编辑域名</button>
+                    <a :href="(document.body.dataset.panelPrefix || '') + '/files?site_id=' + site.id" class="text-sm py-1.5 px-3 rounded ml-2 inline-block" style="background-color: #1e3a5f; color: #93c5fd;">文件管理</a>
                 </div>
                 <div><dt class="text-sm text-gray-400">状态</dt><dd><span :class="site.status === 'active' ? 'badge-success' : 'badge-warning'" x-text="site.status === 'active' ? '运行中' : '已暂停'"></span></dd></div>
                 <div><dt class="text-sm text-gray-400">类型</dt><dd class="text-white" x-text="site.site_type === 'php' ? '通用 PHP 网站' : 'WordPress'"></dd></div>
@@ -79,7 +80,6 @@
             </dl>
             <button @click="dbPasswordModal = true" class="text-sm py-1.5 px-3 rounded" style="background-color: #1e3a5f; color: #93c5fd;">修改密码</button>
             <button @click="fixWPConfig()" :disabled="dbSubmitting" class="text-sm py-1.5 px-3 rounded ml-2" style="background-color: #14532d; color: #86efac;" x-text="dbSubmitting ? '处理中...' : '同步数据库信息'"></button>
-            <a :href="(document.body.dataset.panelPrefix || '') + '/files?site_id=' + site.id" class="text-sm py-1.5 px-3 rounded ml-2 inline-block" style="background-color: #1e3a5f; color: #93c5fd;">文件管理</a>
             <button @click="openSiteURLModal()" x-show="site.site_type === 'wordpress'" class="text-sm py-1.5 px-3 rounded ml-2" style="background-color: #1e3a5f; color: #93c5fd;">修改站点URL</button>
             <button @click="clearDatabase()" :disabled="dbSubmitting" class="text-sm py-1.5 px-3 rounded ml-2" style="background-color: #7f1d1d; color: #fca5a5;" x-text="dbSubmitting ? '清空中...' : '清空数据库'"></button>
 
