@@ -118,6 +118,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.PUT("/api/websites/:id/db-password", websiteHandler.ChangeDBPassword)
 	protected.POST("/api/websites/:id/fix-wp-config", websiteHandler.FixWPConfig)
 	protected.GET("/api/websites/:id/detect-table-prefix", websiteHandler.DetectDBTablePrefix)
+	protected.GET("/api/websites/:id/wp-site-urls", websiteHandler.GetWPSiteURLs)
+	protected.PUT("/api/websites/:id/wp-site-urls", websiteHandler.UpdateWPSiteURLs)
 	protected.GET("/api/websites/:id/logs", websiteHandler.ViewLogs)
 	protected.DELETE("/api/websites/:id/logs", websiteHandler.ClearLogs)
 	protected.PUT("/api/websites/:id/domains", websiteHandler.UpdateDomains)

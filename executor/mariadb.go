@@ -165,6 +165,58 @@ func DetectDBTablePrefix(dbName string, cfg *config.Config) (string, error) {
 	return tableName[:idx+1], nil
 }
 
+// ReadWPSiteURLs 从 wp_options 读取 siteurl 和 home
+func ReadWPSiteURLs(dbName, tablePrefix string, cfg *config.Config) (siteURL, homeURL string, err error) {
+	query := fmt.Sprintf(
+		"SELECT option_name, option_value FROM `%s`.`%soptions` WHERE option_name IN ('siteurl','home')",
+		dbName, tablePrefix)
+	cmd := exec.Command("mysql", "-u", cfg.MariaDB.RootUser, "-N", "-e", query)
+	cmd.Env = append(os.Environ(), "MYSQL_PWD="+cfg.MariaDB.RootPassword)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", "", fmt.Errorf("查询失败: %s", strings.TrimSpace(stderr.String()))
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		switch parts[0] {
+		case "siteurl":
+			siteURL = parts[1]
+		case "home":
+			homeURL = parts[1]
+		}
+	}
+	return siteURL, homeURL, nil
+}
+
+// UpdateWPSiteURLs 更新 wp_options 中的 siteurl 和 home
+func UpdateWPSiteURLs(dbName, tablePrefix, newSiteURL, newHomeURL string, cfg *config.Config) error {
+	// 转义 SQL 单引号
+	escSiteURL := strings.ReplaceAll(newSiteURL, "'", "''")
+	escHomeURL := strings.ReplaceAll(newHomeURL, "'", "''")
+
+	query := fmt.Sprintf(
+		"UPDATE `%s`.`%soptions` SET option_value = CASE WHEN option_name = 'siteurl' THEN '%s' WHEN option_name = 'home' THEN '%s' END WHERE option_name IN ('siteurl','home')",
+		dbName, tablePrefix, escSiteURL, escHomeURL)
+	cmd := exec.Command("mysql", "-u", cfg.MariaDB.RootUser, "-e", query)
+	cmd.Env = append(os.Environ(), "MYSQL_PWD="+cfg.MariaDB.RootPassword)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("更新失败: %s", strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
 func maskPassword(pw string) string {
 	if len(pw) < 8 {
 		return "****"

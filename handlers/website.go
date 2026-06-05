@@ -515,6 +515,97 @@ func (h *WebsiteHandler) DetectDBTablePrefix(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"prefix": prefix}))
 }
 
+func (h *WebsiteHandler) GetWPSiteURLs(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
+		return
+	}
+
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+
+	if site.SiteType != "wordpress" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("仅 WordPress 站点支持此功能"))
+		return
+	}
+
+	if site.TablePrefix == "" {
+		if prefix, err := executor.ReadWPTablePrefix(site.WebRoot); err == nil {
+			site.TablePrefix = prefix
+		}
+	}
+	if site.TablePrefix == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("未检测到表前缀，请先同步数据库信息"))
+		return
+	}
+
+	cfg := config.AppConfig
+	siteURL, homeURL, err := executor.ReadWPSiteURLs(site.DBName, site.TablePrefix, cfg)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取失败: "+err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"siteurl": siteURL,
+		"home":    homeURL,
+	}))
+}
+
+func (h *WebsiteHandler) UpdateWPSiteURLs(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
+		return
+	}
+
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+
+	if site.SiteType != "wordpress" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("仅 WordPress 站点支持此功能"))
+		return
+	}
+
+	var req struct {
+		SiteURL string `json:"siteurl"`
+		HomeURL string `json:"home"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		return
+	}
+	if strings.TrimSpace(req.SiteURL) == "" && strings.TrimSpace(req.HomeURL) == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("至少填写一个 URL"))
+		return
+	}
+
+	if site.TablePrefix == "" {
+		if prefix, err := executor.ReadWPTablePrefix(site.WebRoot); err == nil {
+			site.TablePrefix = prefix
+		}
+	}
+	if site.TablePrefix == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("未检测到表前缀，请先同步数据库信息"))
+		return
+	}
+
+	cfg := config.AppConfig
+	if err := executor.UpdateWPSiteURLs(site.DBName, site.TablePrefix, req.SiteURL, req.HomeURL, cfg); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新失败: "+err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "站点 URL 已更新"}))
+}
+
 func (h *WebsiteHandler) ViewLogs(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
