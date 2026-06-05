@@ -170,7 +170,7 @@ func (h *SoftwareHandler) GuardAction(c *gin.Context) {
 	}
 	if err := executor.SetServiceState(req.Service, req.Action); err != nil {
 		log.Printf("守护操作失败 service=%s action=%s: %v", req.Service, req.Action, err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("操作失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("操作失败: "+err.Error()))
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": req.Service + " " + req.Action + " 成功"}))
