@@ -439,6 +439,9 @@ func (h *SettingsHandler) DownloadWPPackage(c *gin.Context) {
 		return
 	}
 
+	// 更新文件时间戳为当前时间（wget 默认保留远程 Last-Modified，导致 mtime 不反映实际下载时间）
+	os.Chtimes(pkgPath, time.Now(), time.Now())
+
 	info, _ := os.Stat(pkgPath)
 	sizeText := ""
 	if info != nil {
@@ -448,6 +451,20 @@ func (h *SettingsHandler) DownloadWPPackage(c *gin.Context) {
 	log.Printf("WordPress 安装包已通过在线下载更新: %s (%s)", pkgPath, sizeText)
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"message": "安装包下载成功",
+	}))
+}
+
+func (h *SettingsHandler) DeleteWPPackage(c *gin.Context) {
+	cfg := config.AppConfig
+	pkgPath := cfg.Paths.WordPressPackage
+
+	if err := os.Remove(pkgPath); err != nil && !os.IsNotExist(err) {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("删除失败"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"message": "安装包已删除",
 	}))
 }
 
