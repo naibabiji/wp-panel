@@ -3,6 +3,7 @@ package executor
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -87,8 +88,8 @@ func SetServiceState(serviceName, action string) error {
 
 	switch action {
 	case "start":
-		if err := exec.Command("systemctl", "start", serviceName).Run(); err != nil {
-			return err
+		if out, err := exec.Command("systemctl", "start", serviceName).CombinedOutput(); err != nil {
+			return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
 		}
 		s.Paused = false
 		time.Sleep(300 * time.Millisecond)
@@ -96,14 +97,14 @@ func SetServiceState(serviceName, action string) error {
 		s.Running = strings.TrimSpace(string(out)) == "active"
 	case "stop":
 		s.Paused = true
-		if err := exec.Command("systemctl", "stop", serviceName).Run(); err != nil {
+		if out, err := exec.Command("systemctl", "stop", serviceName).CombinedOutput(); err != nil {
 			s.Paused = false
-			return err
+			return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
 		}
 		s.Running = false
 	case "restart":
-		if err := exec.Command("systemctl", "restart", serviceName).Run(); err != nil {
-			return err
+		if out, err := exec.Command("systemctl", "restart", serviceName).CombinedOutput(); err != nil {
+			return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
 		}
 		s.Paused = false
 		time.Sleep(300 * time.Millisecond)
