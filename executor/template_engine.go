@@ -166,6 +166,9 @@ func (e *TemplateEngine) ApplyNginxConfig(configContent string, targetPath strin
 	reloadCmd := exec.Command("nginx", "-s", "reload")
 	reloadOut, err := reloadCmd.CombinedOutput()
 	if err != nil {
+		// Reload failed — remove the config and symlink so Nginx can restart cleanly
+		_ = os.Remove(enabledPath)
+		_ = os.Remove(targetPath)
 		return fmt.Errorf("Nginx 重载失败: %s", string(reloadOut))
 	}
 
