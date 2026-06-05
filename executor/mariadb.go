@@ -138,6 +138,33 @@ func executeChangeDBPassword(task *Task) TaskResult {
 	}
 }
 
+// DetectDBTablePrefix 查询数据库中实际的 WordPress 表前缀
+func DetectDBTablePrefix(dbName string, cfg *config.Config) (string, error) {
+	cmd := exec.Command("mysql", "-u", cfg.MariaDB.RootUser, "-N", "-e",
+		fmt.Sprintf("SHOW TABLES FROM `%s` LIKE '%%options'", dbName))
+	cmd.Env = append(os.Environ(), "MYSQL_PWD="+cfg.MariaDB.RootPassword)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("查询失败: %s", strings.TrimSpace(stderr.String()))
+	}
+
+	output := strings.TrimSpace(stdout.String())
+	if output == "" {
+		return "", fmt.Errorf("未找到 options 表，数据库可能为空或不是 WordPress 数据库")
+	}
+
+	// 取第一行，提取 _options 之前的前缀
+	tableName := strings.Split(output, "\n")[0]
+	tableName = strings.TrimSpace(tableName)
+	idx := strings.LastIndex(tableName, "_options")
+	if idx < 0 {
+		return "", fmt.Errorf("无法解析表前缀: %s", tableName)
+	}
+	return tableName[:idx+1], nil
+}
+
 func maskPassword(pw string) string {
 	if len(pw) < 8 {
 		return "****"

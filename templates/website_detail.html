@@ -68,7 +68,14 @@
             <dl class="space-y-3 mb-4">
                 <div><dt class="text-sm text-gray-400">数据库名</dt><dd class="text-white font-mono text-sm" x-text="site.db_name"></dd></div>
                 <div><dt class="text-sm text-gray-400">用户名</dt><dd class="text-white font-mono text-sm" x-text="site.db_user"></dd></div>
-                <div x-show="site.site_type === 'wordpress'"><dt class="text-sm text-gray-400">表前缀</dt><dd class="text-white font-mono text-sm" x-text="site.table_prefix || '未检测到'"></dd></div>
+                <div x-show="site.site_type === 'wordpress'">
+                    <dt class="text-sm text-gray-400">表前缀</dt>
+                    <dd class="flex items-center space-x-2 mt-1">
+                        <input type="text" x-model="editTablePrefix" class="input-field text-sm font-mono py-1 w-40" placeholder="如 wp_ 或 wp_abc123_">
+                        <button @click="detectTablePrefix()" :disabled="detectingPrefix" class="text-xs py-1 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;" x-text="detectingPrefix ? '检测中...' : '自动检测'"></button>
+                    </dd>
+                    <p class="text-xs text-gray-500 mt-1">搬家后如数据库表前缀与 wp-config.php 不一致，可在此修改。点击「自动检测」从数据库读取实际前缀。</p>
+                </div>
             </dl>
             <button @click="dbPasswordModal = true" class="text-sm py-1.5 px-3 rounded" style="background-color: #1e3a5f; color: #93c5fd;">修改密码</button>
             <button @click="fixWPConfig()" :disabled="dbSubmitting" class="text-sm py-1.5 px-3 rounded ml-2" style="background-color: #14532d; color: #86efac;" x-text="dbSubmitting ? '处理中...' : '同步数据库信息'"></button>
@@ -428,6 +435,8 @@ function websiteDetail() {
         editDomain: '',
         editAliasesStr: '',
         domainSubmitting: false,
+        editTablePrefix: '',
+        detectingPrefix: false,
         async fetchDetail() {
             const id = window.location.pathname.split('/').pop();
             try {
@@ -445,6 +454,7 @@ function websiteDetail() {
                     this.logRetentionDays = r.data.log_retention_days || 7;
                     this.monitoringEnabled = r.data.monitoring_enabled || false;
                     this.monitoringInterval = r.data.monitoring_interval || 5;
+                    this.editTablePrefix = r.data.table_prefix || '';
                 }
             } catch(e) { showToast('加载失败: ' + e.message, 'error'); }
             this.loading = false;
@@ -524,14 +534,39 @@ function websiteDetail() {
             this.dbSubmitting = false;
         },
         async fixWPConfig() {
-            if (!await confirmModal('将使用当前数据库名和用户名覆盖 wp-config.php 中的 DB_NAME 和 DB_USER，确认继续？')) return;
+            const parts = ['将使用当前数据库名和用户名覆盖 wp-config.php 中的 DB_NAME 和 DB_USER'];
+            if (this.editTablePrefix && this.editTablePrefix !== this.site.table_prefix) {
+                parts.push('同时更新 $table_prefix 为 ' + this.editTablePrefix);
+            }
+            if (!await confirmModal(parts.join('，') + '，确认继续？')) return;
             this.dbSubmitting = true;
             try {
-                const r = await api('/websites/' + this.site.id + '/fix-wp-config', { method: 'POST' });
-                if (r.success) showToast(r.data?.message || '已更新', 'success');
-                else showToast(r.data?.message || '操作失败', 'error');
+                const body = {};
+                if (this.editTablePrefix && this.editTablePrefix !== this.site.table_prefix) {
+                    body.table_prefix = this.editTablePrefix;
+                }
+                const r = await api('/websites/' + this.site.id + '/fix-wp-config', { method: 'POST', body });
+                if (r.success) {
+                    showToast(r.data?.message || '已更新', 'success');
+                    await this.fetchDetail();
+                } else {
+                    showToast(r.data?.message || '操作失败', 'error');
+                }
             } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
             this.dbSubmitting = false;
+        },
+        async detectTablePrefix() {
+            this.detectingPrefix = true;
+            try {
+                const r = await api('/websites/' + this.site.id + '/detect-table-prefix');
+                if (r.success && r.data.prefix) {
+                    this.editTablePrefix = r.data.prefix;
+                    showToast('检测到表前缀: ' + r.data.prefix, 'success');
+                } else {
+                    showToast(r.data?.message || '未检测到表前缀', 'error');
+                }
+            } catch(e) { showToast('检测失败: ' + e.message, 'error'); }
+            this.detectingPrefix = false;
         },
         async clearDatabase() {
             if (!await confirmModal('确认清空数据库「' + this.site.db_name + '」？此操作将删除所有表，不可撤销！')) return;

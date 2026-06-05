@@ -14,7 +14,7 @@ func phpSingleQuoteEscape(s string) string {
 	return s
 }
 
-func FixWPConfigCredentials(webRoot, domain, dbName, dbUser string) error {
+func FixWPConfigCredentials(webRoot, domain, dbName, dbUser, tablePrefix string) error {
 	configPath := filepath.Join(webRoot, "wp-config.php")
 	content, err := os.ReadFile(configPath)
 	if err != nil {
@@ -34,9 +34,23 @@ func FixWPConfigCredentials(webRoot, domain, dbName, dbUser string) error {
 		return fmt.Errorf("未找到 DB_USER 定义，wp-config.php 可能格式异常")
 	}
 
-	userUpdated, _ = ensureWPConfigCachePrefixes(userUpdated, wpCacheKeySalt(domain))
+	result := userUpdated
 
-	if err := os.WriteFile(configPath, []byte(userUpdated), 0600); err != nil {
+	// 如果提供了 tablePrefix，替换 $table_prefix
+	if tablePrefix != "" {
+		rePrefix := regexp.MustCompile(`(?m)\$table_prefix\s*=\s*'[^']*'\s*;`)
+		prefixUpdated := rePrefix.ReplaceAllString(result, fmt.Sprintf("$table_prefix = '%s';", phpSingleQuoteEscape(tablePrefix)))
+		if prefixUpdated == result {
+			// 尝试双引号格式
+			rePrefix2 := regexp.MustCompile(`(?m)\$table_prefix\s*=\s*"[^"]*"\s*;`)
+			prefixUpdated = rePrefix2.ReplaceAllString(result, fmt.Sprintf("$table_prefix = '%s';", phpSingleQuoteEscape(tablePrefix)))
+		}
+		result = prefixUpdated
+	}
+
+	result, _ = ensureWPConfigCachePrefixes(result, wpCacheKeySalt(domain))
+
+	if err := os.WriteFile(configPath, []byte(result), 0600); err != nil {
 		return fmt.Errorf("写入 wp-config.php 失败: %w", err)
 	}
 	return nil

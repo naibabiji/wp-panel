@@ -469,12 +469,50 @@ func (h *WebsiteHandler) FixWPConfig(c *gin.Context) {
 		return
 	}
 
-	if err := executor.FixWPConfigCredentials(site.WebRoot, site.Domain, site.DBName, site.DBUser); err != nil {
+	var req struct {
+		TablePrefix string `json:"table_prefix"`
+	}
+	c.ShouldBindJSON(&req)
+
+	if err := executor.FixWPConfigCredentials(site.WebRoot, site.Domain, site.DBName, site.DBUser, req.TablePrefix); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(err.Error()))
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "wp-config.php 数据库名和用户名已更新"}))
+	msg := "wp-config.php 数据库名和用户名已更新"
+	if req.TablePrefix != "" {
+		msg = "wp-config.php 数据库名、用户名和表前缀已更新"
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": msg}))
+}
+
+func (h *WebsiteHandler) DetectDBTablePrefix(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
+		return
+	}
+
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+
+	if site.SiteType != "wordpress" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("仅 WordPress 站点支持此功能"))
+		return
+	}
+
+	cfg := config.AppConfig
+	prefix, err := executor.DetectDBTablePrefix(site.DBName, cfg)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("检测失败: "+err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"prefix": prefix}))
 }
 
 func (h *WebsiteHandler) ViewLogs(c *gin.Context) {
