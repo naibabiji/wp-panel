@@ -198,22 +198,32 @@ func ReadWPSiteURLs(dbName, tablePrefix string, cfg *config.Config) (siteURL, ho
 	return siteURL, homeURL, nil
 }
 
-// UpdateWPSiteURLs 更新 wp_options 中的 siteurl 和 home
+// UpdateWPSiteURLs 更新 wp_options 中的 siteurl 和 home（仅更新非空字段）
 func UpdateWPSiteURLs(dbName, tablePrefix, newSiteURL, newHomeURL string, cfg *config.Config) error {
-	// 转义 SQL 单引号
-	escSiteURL := strings.ReplaceAll(newSiteURL, "'", "''")
-	escHomeURL := strings.ReplaceAll(newHomeURL, "'", "''")
-
-	query := fmt.Sprintf(
-		"UPDATE `%s`.`%soptions` SET option_value = CASE WHEN option_name = 'siteurl' THEN '%s' WHEN option_name = 'home' THEN '%s' END WHERE option_name IN ('siteurl','home')",
-		dbName, tablePrefix, escSiteURL, escHomeURL)
-	cmd := exec.Command("mysql", "-u", cfg.MariaDB.RootUser, "-e", query)
-	cmd.Env = append(os.Environ(), "MYSQL_PWD="+cfg.MariaDB.RootPassword)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("更新失败: %s", strings.TrimSpace(stderr.String()))
+	if newSiteURL == "" && newHomeURL == "" {
+		return fmt.Errorf("至少需要提供一个 URL")
 	}
+
+	if newSiteURL != "" {
+		escURL := strings.ReplaceAll(newSiteURL, "'", "''")
+		query := fmt.Sprintf(
+			"UPDATE `%s`.`%soptions` SET option_value = '%s' WHERE option_name = 'siteurl'",
+			dbName, tablePrefix, escURL)
+		if err := runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", query); err != nil {
+			return fmt.Errorf("更新 siteurl 失败: %w", err)
+		}
+	}
+
+	if newHomeURL != "" {
+		escURL := strings.ReplaceAll(newHomeURL, "'", "''")
+		query := fmt.Sprintf(
+			"UPDATE `%s`.`%soptions` SET option_value = '%s' WHERE option_name = 'home'",
+			dbName, tablePrefix, escURL)
+		if err := runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", query); err != nil {
+			return fmt.Errorf("更新 home 失败: %w", err)
+		}
+	}
+
 	return nil
 }
 
