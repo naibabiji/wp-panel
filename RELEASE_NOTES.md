@@ -1,6 +1,6 @@
 # 更新说明
 
-## [Unreleased]
+## v1.2.6
 
 ### 新功能
 
@@ -18,22 +18,3 @@
 
 - **wp-config.php 双引号格式不兼容**：原正则仅匹配 `define('DB_NAME', '...')` 单引号格式，部分手动安装的 WordPress 使用 `define("DB_NAME", "...")` 双引号格式。现同时支持两种引号格式，DB_NAME、DB_USER、`$table_prefix` 均已覆盖。（`executor/wpconfig.go`）
 
-- **错误信息缺少文件路径**：`FixWPConfigCredentials` 报错时未显示实际读取的 wp-config.php 路径，排查困难。错误信息现已包含完整路径。（`executor/wpconfig.go`）
-
-- **下载安装包缺少 ZIP 完整性校验**：下载后若网络中断会留下不完整文件，导致后续建站失败。新增 `unzip -t` 校验，确保文件完整；恢复 `%w` 错误包装，保留 wget 失败的具体原因。（`executor/deploy.go`）
-
-- **UpdateWPSiteURLs 空字符串覆盖**：原 SQL 使用 `CASE WHEN` 在字段为空时写入 `''`，导致 WordPress 白屏。改为按条件独立执行 UPDATE，仅非空字段才写入。（`executor/mariadb.go`）
-
-- **自动检测表前缀后提示不明确**：检测成功后缺少提示用户需点击同步保存。（`templates/website_detail.html`）
-
-- **文件管理 site_id 参数类型不匹配**：`URLSearchParams.get()` 返回字符串，而 Alpine.js `option :value` 绑定整数，严格比较导致下拉框无法选中。改用 `parseInt()` 匹配类型。（`templates/files.html`）
-
-### 改进
-
-- **域名变更后缓存清理优化**：`UpdateWPSiteURLs` 原实现使用 `find /var/cache/nginx/fastcgi -type f -delete` 全局删除所有站点的 Nginx 缓存，改为调用 `executor.ClearSiteCache(site.ID)` 精准清理当前站点（换 cache key + 重载 Nginx）。（`handlers/website.go`）
-
-- **域名变更后 Redis Object Cache 清理**：域名变更后旧前缀的 Redis 缓存可能残留 `siteurl`/`home` 旧值，导致 WordPress 后台显示不一致。新增按域名前缀 `--scan` + 批量 `DEL` 清理逻辑，单次 `redis-cli DEL key1 key2 ...` 批量执行，避免逐 key 启动进程。（`handlers/website.go`）
-
-### UI
-
-- **WordPress 安装包和远程备份并排显示**：设置页布局调整，安装包管理卡片与远程备份卡片并排展示。（`templates/settings.html`）
