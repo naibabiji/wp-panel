@@ -336,6 +336,37 @@ func StartAutoBackupScheduler() {
 	}()
 }
 
+// StartDBBackupScheduler 面板 SQLite 数据库自动备份调度器（每天凌晨 2:30）
+func StartDBBackupScheduler() {
+	go func() {
+		for {
+			now := time.Now()
+			next := time.Date(now.Year(), now.Month(), now.Day(), 2, 30, 0, 0, now.Location())
+			if now.After(next) {
+				next = next.Add(24 * time.Hour)
+			}
+			time.Sleep(next.Sub(now))
+			autoBackupPanelDB()
+		}
+	}()
+}
+
+func autoBackupPanelDB() {
+	cfg := config.AppConfig
+	backupDir := filepath.Join(cfg.Panel.BackupDir, "panel-db")
+
+	path, err := database.BackupDatabase(backupDir)
+	if err != nil {
+		log.Printf("面板数据库自动备份失败: %v", err)
+		return
+	}
+	log.Printf("面板数据库自动备份完成: %s", path)
+
+	if removed := database.CleanupOldDBBackups(backupDir, 7); removed > 0 {
+		log.Printf("面板数据库备份清理: 删除 %d 个旧备份", removed)
+	}
+}
+
 func getSiteDomain(siteID int) string {
 	var domain string
 	database.GetDB().QueryRow("SELECT domain FROM websites WHERE id = ?", siteID).Scan(&domain)

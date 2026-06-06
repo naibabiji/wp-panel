@@ -334,6 +334,44 @@
     </div>
     </div>
 
+    <div class="card mb-6" x-data="dbBackup()" x-init="fetchBackups()">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-white">面板数据库备份</h3>
+            <div class="flex items-center space-x-2">
+                <button @click="doBackup()" :disabled="backingUp" class="btn-primary text-sm" x-text="backingUp ? '备份中...' : '立即备份'"></button>
+            </div>
+        </div>
+        <p class="text-gray-400 text-xs mb-4">每天凌晨 2:30 自动备份面板数据库，保留最近 7 份。恢复后面板将自动重启。</p>
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead class="border-b border-gray-700">
+                    <tr>
+                        <th class="table-header">备份时间</th>
+                        <th class="table-header">文件名</th>
+                        <th class="table-header">大小</th>
+                        <th class="table-header">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="b in backups" :key="b.filename">
+                        <tr class="border-b border-gray-700/50">
+                            <td class="table-cell text-sm" x-text="b.created_at"></td>
+                            <td class="table-cell text-xs font-mono" x-text="b.filename"></td>
+                            <td class="table-cell text-sm" x-text="b.size_text"></td>
+                            <td class="table-cell">
+                                <button @click="doRestore(b.filename)" class="btn-warning text-xs py-1 px-2">恢复</button>
+                                <button @click="doDelete(b.filename)" class="btn-danger text-xs py-1 px-2 ml-1">删除</button>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="backups.length === 0">
+                        <td colspan="4" class="table-cell text-center text-gray-500 py-6">暂无备份记录</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     <div class="card" x-data="operationLogs()" x-init="fetchLogs()">
         <h3 class="text-lg font-semibold text-white mb-4">最近操作日志</h3>
         <div class="overflow-x-auto">
@@ -364,9 +402,9 @@
                 </tbody>
             </table>
         </div>
-        <div x-show="logTotalPages > 1" class="flex items-center justify-between mt-4 pt-3 border-t border-gray-700/50">
+        <div x-show="logTotal > 0" class="flex items-center justify-between mt-4 pt-3 border-t border-gray-700/50">
             <span class="text-sm text-gray-400" x-text="`共 ${logTotal} 条记录`"></span>
-            <div class="flex items-center space-x-1">
+            <div class="flex items-center space-x-1" x-show="logTotalPages > 1">
                 <button @click="logGoPage(logPage-1)" :disabled="logPage <= 1" class="px-3 py-1 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed">上一页</button>
                 <template x-for="p in logPageNumbers" :key="p">
                     <button @click="logGoPage(p)" :class="p === logPage ? 'bg-blue-600 text-white' : 'bg-gray-700 hover:bg-gray-600'" class="px-3 py-1 text-sm rounded" x-text="p"></button>
@@ -615,6 +653,41 @@ function versionCheck() {
 }
 
 
+function dbBackup() {
+    return {
+        backups: [],
+        backingUp: false,
+        async fetchBackups() {
+            try { const r = await api('/settings/db-backup'); if (r.success) this.backups = r.data || []; } catch(e) {}
+        },
+        async doBackup() {
+            this.backingUp = true;
+            try {
+                const r = await api('/settings/db-backup', { method: 'POST' });
+                showToast(r.data?.message || '备份完成', 'success');
+                await this.fetchBackups();
+            } catch(e) { showToast(e.message, 'error'); }
+            this.backingUp = false;
+        },
+        async doRestore(filename) {
+            if (!await confirmModal('确认使用此备份恢复数据库？恢复前面板会先做安全备份，恢复后面板将自动重启。')) return;
+            try {
+                const r = await api('/settings/db-backup/restore', { method: 'POST', body: { filename } });
+                showToast(r.data?.message || '恢复中...', 'success');
+                setTimeout(() => { location.reload(); }, 5000);
+            } catch(e) { showToast(e.message, 'error'); }
+        },
+        async doDelete(filename) {
+            if (!await confirmModal('确认删除此备份？')) return;
+            try {
+                const r = await api('/settings/db-backup?filename=' + encodeURIComponent(filename), { method: 'DELETE' });
+                showToast(r.data?.message || '已删除', 'success');
+                await this.fetchBackups();
+            } catch(e) { showToast(e.message, 'error'); }
+        }
+    }
+}
+
 function operationLogs() {
     return {
         logs: [],
@@ -630,7 +703,7 @@ function operationLogs() {
                     this.logPage = r.data?.page || 1;
                     this.logTotalPages = r.data?.total_pages || 1;
                 }
-            } catch(e) {}
+            } catch(e) { console.error('fetchLogs error:', e); }
         },
         logGoPage(p) {
             if (p < 1 || p > this.logTotalPages) return;

@@ -238,7 +238,7 @@ func (h *SettingsHandler) GetOperationLogs(c *gin.Context) {
 	if page < 1 {
 		page = 1
 	}
-	perPage := 100
+	perPage := 30
 
 	var total int
 	db.QueryRow("SELECT COUNT(*) FROM operation_logs").Scan(&total)
@@ -532,4 +532,109 @@ func updateConfigValue(section, key, value string) error {
 		return fmt.Errorf("写入配置文件失败")
 	}
 	return nil
+}
+
+// ============================================================
+// 面板数据库备份管理
+// ============================================================
+
+func (h *SettingsHandler) GetDBBackups(c *gin.Context) {
+	cfg := config.AppConfig
+	backupDir := filepath.Join(cfg.Panel.BackupDir, "panel-db")
+	backups, err := database.ListDBBackups(backupDir)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询备份列表失败"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(backups))
+}
+
+func (h *SettingsHandler) CreateDBBackup(c *gin.Context) {
+	cfg := config.AppConfig
+	backupDir := filepath.Join(cfg.Panel.BackupDir, "panel-db")
+
+	path, err := database.BackupDatabase(backupDir)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("备份失败: "+err.Error()))
+		return
+	}
+
+	database.CleanupOldDBBackups(backupDir, 7)
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"message": "数据库备份完成",
+		"path":   path,
+	}))
+}
+
+func (h *SettingsHandler) RestoreDBBackup(c *gin.Context) {
+	var req struct {
+		Filename string `json:"filename"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Filename == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("请选择要恢复的备份"))
+		return
+	}
+
+	cfg := config.AppConfig
+	backupDir := filepath.Join(cfg.Panel.BackupDir, "panel-db")
+
+	backupPath, err := database.RestoreDBBackupPath(backupDir, req.Filename)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+		return
+	}
+
+	dbPath := cfg.SQLite.Path
+
+	// 先做一份安全备份
+	safeBackup, safeErr := database.BackupDatabase(backupDir)
+	if safeErr != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("恢复前安全备份失败: "+safeErr.Error()))
+		return
+	}
+	_ = safeBackup
+
+	// 写一个恢复脚本，延迟执行：替换 db 文件 → 重启服务
+	// 对路径中的单引号做转义，避免 shell 注入
+	safeBackupPath := strings.ReplaceAll(backupPath, "'", "'\\''")
+	safeDBPath := strings.ReplaceAll(dbPath, "'", "'\\''")
+	script := "#!/bin/bash\nsleep 1\ncp -f '" + safeBackupPath + "' '" + safeDBPath + "'\nsystemctl restart wp-panel\nrm -f /tmp/wp-panel-db-restore.sh\n"
+
+	scriptPath := "/tmp/wp-panel-db-restore.sh"
+	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建恢复脚本失败"))
+		return
+	}
+
+	// 异步执行
+	exec.Command("bash", scriptPath).Start()
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"message": "数据库恢复中，面板将自动重启...",
+	}))
+}
+
+func (h *SettingsHandler) DeleteDBBackup(c *gin.Context) {
+	filename := c.Query("filename")
+	if filename == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("请指定文件名"))
+		return
+	}
+
+	cfg := config.AppConfig
+	backupDir := filepath.Join(cfg.Panel.BackupDir, "panel-db")
+
+	fullPath, err := database.RestoreDBBackupPath(backupDir, filename)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+		return
+	}
+
+	if err := os.Remove(fullPath); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("删除失败"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "备份已删除"}))
 }
