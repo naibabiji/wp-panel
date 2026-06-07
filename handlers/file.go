@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -62,6 +63,42 @@ type fileEntry struct {
 	Size    int64  `json:"size"`
 	Mode    string `json:"mode"`
 	ModTime string `json:"mod_time"`
+}
+
+type fileTransferRequest struct {
+	SiteID int `json:"site_id"`
+	// DestSiteID is optional to keep existing same-site copy/move requests compatible.
+	DestSiteID *int     `json:"dest_site_id"`
+	SrcPath    string   `json:"src_path"`
+	Names      []string `json:"names"`
+	DestPath   string   `json:"dest_path"`
+}
+
+type fileTransferItem struct {
+	name string
+	src  string
+	dest string
+}
+
+type fileTransferError struct {
+	status  int
+	message string
+}
+
+func (e *fileTransferError) Error() string {
+	return e.message
+}
+
+func newFileTransferError(status int, format string, args ...interface{}) error {
+	return &fileTransferError{status: status, message: fmt.Sprintf(format, args...)}
+}
+
+func fileTransferHTTPStatus(err error) int {
+	var transferErr *fileTransferError
+	if errors.As(err, &transferErr) {
+		return transferErr.status
+	}
+	return http.StatusInternalServerError
 }
 
 const (
@@ -1337,108 +1374,204 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "解压完成"}))
 }
 
-func (h *FileHandler) Move(c *gin.Context) {
-	var req struct {
-		SiteID   int      `json:"site_id"`
-		SrcPath  string   `json:"src_path"`
-		Names    []string `json:"names"`
-		DestPath string   `json:"dest_path"`
+func resolveTransferRequest(req fileTransferRequest) (int, string, string, string, string, []fileTransferItem, error) {
+	destSiteID := req.SiteID
+	if req.DestSiteID != nil {
+		destSiteID = *req.DestSiteID
 	}
+	if req.SiteID != destSiteID && (req.SiteID == 0 || destSiteID == 0) {
+		return 0, "", "", "", "", nil, newFileTransferError(http.StatusBadRequest, "跨站复制/剪切仅支持网站目录")
+	}
+
+	srcBase, err := fileBasePath(req.SiteID)
+	if err != nil {
+		return 0, "", "", "", "", nil, newFileTransferError(http.StatusNotFound, "源网站不存在")
+	}
+	destBase, err := fileBasePath(destSiteID)
+	if err != nil {
+		return 0, "", "", "", "", nil, newFileTransferError(http.StatusNotFound, "目标网站不存在")
+	}
+
+	srcDir := filepath.Clean(filepath.Join(srcBase, req.SrcPath))
+	destDir := filepath.Clean(filepath.Join(destBase, req.DestPath))
+	if !isPathWithin(srcBase, srcDir) || !isPathWithin(destBase, destDir) {
+		return 0, "", "", "", "", nil, newFileTransferError(http.StatusForbidden, "路径越权")
+	}
+
+	items := make([]fileTransferItem, 0, len(req.Names))
+	for _, name := range req.Names {
+		cleanName, err := cleanFileOperationName(name)
+		if err != nil {
+			return 0, "", "", "", "", nil, newFileTransferError(http.StatusBadRequest, "%s", err.Error())
+		}
+		src := filepath.Clean(filepath.Join(srcDir, cleanName))
+		dest := filepath.Clean(filepath.Join(destDir, cleanName))
+		if !isPathWithin(srcBase, src) || !isPathWithin(destBase, dest) {
+			return 0, "", "", "", "", nil, newFileTransferError(http.StatusForbidden, "路径越权")
+		}
+		if isSamePath(src, dest) {
+			return 0, "", "", "", "", nil, newFileTransferError(http.StatusBadRequest, "目标已存在: %s", cleanName)
+		}
+		if _, err := os.Stat(src); err != nil {
+			if os.IsNotExist(err) {
+				return 0, "", "", "", "", nil, newFileTransferError(http.StatusNotFound, "源文件不存在: %s", cleanName)
+			}
+			return 0, "", "", "", "", nil, err
+		}
+		if _, err := os.Stat(dest); err == nil {
+			return 0, "", "", "", "", nil, newFileTransferError(http.StatusBadRequest, "目标已存在: %s", cleanName)
+		} else if !os.IsNotExist(err) {
+			return 0, "", "", "", "", nil, err
+		}
+		items = append(items, fileTransferItem{name: cleanName, src: src, dest: dest})
+	}
+	return destSiteID, srcBase, destBase, srcDir, destDir, items, nil
+}
+
+func chownTransferredPath(destSiteID int, dest string) error {
+	if destSiteID == 0 {
+		return nil
+	}
+	site := getWebsiteByID(destSiteID)
+	if site == nil {
+		return fmt.Errorf("目标网站不存在")
+	}
+	return executor.ChownSitePath(dest, site.WebRoot, site.SystemUser)
+}
+
+func removeFileOrDir(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return os.RemoveAll(path)
+	}
+	return os.Remove(path)
+}
+
+func cleanupTransferredItems(items []fileTransferItem) []string {
+	failed := []string{}
+	for _, item := range items {
+		if err := removeFileOrDir(item.dest); err != nil && !os.IsNotExist(err) {
+			log.Printf("跨站操作清理目标失败 dest=%s: %v", item.dest, err)
+			failed = append(failed, item.name)
+		}
+	}
+	return failed
+}
+
+func joinItemNames(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	if len(items) > 5 {
+		return strings.Join(items[:5], "、") + fmt.Sprintf(" 等 %d 个项目", len(items))
+	}
+	return strings.Join(items, "、")
+}
+
+func (h *FileHandler) Move(c *gin.Context) {
+	var req fileTransferRequest
 	if err := c.ShouldBindJSON(&req); err != nil || len(req.Names) == 0 {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
 
-	basePath, err := fileBasePath(req.SiteID)
+	destSiteID, srcBase, destBase, _, _, items, err := resolveTransferRequest(req)
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		c.JSON(fileTransferHTTPStatus(err), models.ErrorResponse(err.Error()))
 		return
 	}
 
-	srcDir := filepath.Join(basePath, req.SrcPath)
-	destDir := filepath.Join(basePath, req.DestPath)
-	srcDir = filepath.Clean(srcDir)
-	destDir = filepath.Clean(destDir)
-
-	if !isPathWithin(basePath, srcDir) || !isPathWithin(basePath, destDir) {
-		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
+	if req.SiteID == destSiteID {
+		for _, item := range items {
+			if err := os.Rename(item.src, item.dest); err != nil {
+				log.Printf("移动失败 src=%s dest=%s: %v", item.src, item.dest, err)
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse("移动失败"))
+				return
+			}
+		}
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": fmt.Sprintf("已移动 %d 个项目", len(req.Names))}))
 		return
 	}
 
-	for _, name := range req.Names {
-		cleanName, err := cleanFileOperationName(name)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+	copied := []fileTransferItem{}
+	for _, item := range items {
+		if err := copyFileOrDir(srcBase, destBase, item.src, item.dest); err != nil {
+			cleanupFailed := cleanupTransferredItems(copied)
+			log.Printf("跨站移动复制失败 src=%s dest=%s: %v", item.src, item.dest, err)
+			msg := "移动失败"
+			if len(cleanupFailed) > 0 {
+				msg += "，且目标清理失败: " + joinItemNames(cleanupFailed)
+			}
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(msg))
 			return
 		}
-		src := filepath.Join(srcDir, cleanName)
-		dest := filepath.Join(destDir, cleanName)
-		if !isPathWithin(basePath, src) || !isPathWithin(basePath, dest) {
-			c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
+		copied = append(copied, item)
+		if err := chownTransferredPath(destSiteID, item.dest); err != nil {
+			cleanupFailed := cleanupTransferredItems(copied)
+			log.Printf("跨站移动权限修复失败 dest=%s: %v", item.dest, err)
+			msg := "目标权限修复失败"
+			if len(cleanupFailed) > 0 {
+				msg += "，且目标清理失败: " + joinItemNames(cleanupFailed)
+			}
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(msg))
 			return
 		}
-		if err := os.Rename(src, dest); err != nil {
-			log.Printf("移动失败 src=%s dest=%s: %v", src, dest, err)
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("移动失败"))
-			return
+	}
+
+	deleteFailed := []string{}
+	for _, item := range items {
+		if err := removeFileOrDir(item.src); err != nil {
+			log.Printf("跨站移动删除源失败 src=%s: %v", item.src, err)
+			deleteFailed = append(deleteFailed, item.name)
 		}
+	}
+	if len(deleteFailed) > 0 {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("移动未完全完成：目标站点已有文件副本，但源站点文件未能删除: "+joinItemNames(deleteFailed)))
+		return
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": fmt.Sprintf("已移动 %d 个项目", len(req.Names))}))
 }
 
 func (h *FileHandler) Copy(c *gin.Context) {
-	var req struct {
-		SiteID   int      `json:"site_id"`
-		SrcPath  string   `json:"src_path"`
-		Names    []string `json:"names"`
-		DestPath string   `json:"dest_path"`
-	}
+	var req fileTransferRequest
 	if err := c.ShouldBindJSON(&req); err != nil || len(req.Names) == 0 {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
 
-	basePath, err := fileBasePath(req.SiteID)
+	destSiteID, srcBase, destBase, _, _, items, err := resolveTransferRequest(req)
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		c.JSON(fileTransferHTTPStatus(err), models.ErrorResponse(err.Error()))
 		return
 	}
 
-	srcDir := filepath.Join(basePath, req.SrcPath)
-	destDir := filepath.Join(basePath, req.DestPath)
-	srcDir = filepath.Clean(srcDir)
-	destDir = filepath.Clean(destDir)
-
-	if !isPathWithin(basePath, srcDir) || !isPathWithin(basePath, destDir) {
-		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
-		return
-	}
-
-	for _, name := range req.Names {
-		cleanName, err := cleanFileOperationName(name)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
-			return
-		}
-		src := filepath.Join(srcDir, cleanName)
-		dest := filepath.Join(destDir, cleanName)
-		if !isPathWithin(basePath, src) || !isPathWithin(basePath, dest) {
-			c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
-			return
-		}
-		if err := copyFileOrDir(basePath, src, dest); err != nil {
-			log.Printf("复制失败 src=%s dest=%s: %v", src, dest, err)
+	for _, item := range items {
+		if err := copyFileOrDir(srcBase, destBase, item.src, item.dest); err != nil {
+			log.Printf("复制失败 src=%s dest=%s: %v", item.src, item.dest, err)
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("复制失败"))
 			return
+		}
+		if req.SiteID != destSiteID {
+			if err := chownTransferredPath(destSiteID, item.dest); err != nil {
+				if cleanupErr := removeFileOrDir(item.dest); cleanupErr != nil && !os.IsNotExist(cleanupErr) {
+					log.Printf("跨站复制清理目标失败 dest=%s: %v", item.dest, cleanupErr)
+				}
+				log.Printf("跨站复制权限修复失败 dest=%s: %v", item.dest, err)
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse("目标权限修复失败"))
+				return
+			}
 		}
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": fmt.Sprintf("已复制 %d 个项目", len(req.Names))}))
 }
 
-func copyFileOrDir(basePath, src, dest string) error {
-	if !isPathWithin(basePath, src) || !isPathWithin(basePath, dest) {
+func copyFileOrDir(srcBase, destBase, src, dest string) error {
+	if !isPathWithin(srcBase, src) || !isPathWithin(destBase, dest) {
 		return fmt.Errorf("path outside base")
 	}
 	info, err := os.Stat(src)
@@ -1449,7 +1582,10 @@ func copyFileOrDir(basePath, src, dest string) error {
 		if isSamePath(src, dest) || isPathWithin(src, dest) {
 			return fmt.Errorf("cannot copy directory into itself")
 		}
-		if err := os.MkdirAll(dest, info.Mode()); err != nil {
+		if err := os.MkdirAll(dest, info.Mode().Perm()); err != nil {
+			return err
+		}
+		if err := os.Chmod(dest, info.Mode().Perm()); err != nil {
 			return err
 		}
 		entries, err := os.ReadDir(src)
@@ -1457,7 +1593,7 @@ func copyFileOrDir(basePath, src, dest string) error {
 			return err
 		}
 		for _, e := range entries {
-			if err := copyFileOrDir(basePath, filepath.Join(src, e.Name()), filepath.Join(dest, e.Name())); err != nil {
+			if err := copyFileOrDir(srcBase, destBase, filepath.Join(src, e.Name()), filepath.Join(dest, e.Name())); err != nil {
 				return err
 			}
 		}
@@ -1468,13 +1604,28 @@ func copyFileOrDir(basePath, src, dest string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dest)
+	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	copyOK := false
+	defer func() {
+		out.Close()
+		if !copyOK {
+			os.Remove(dest)
+		}
+	}()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(dest, info.Mode().Perm()); err != nil {
+		return err
+	}
+	copyOK = true
+	return nil
 }
 
 func (h *FileHandler) CreateDir(c *gin.Context) {

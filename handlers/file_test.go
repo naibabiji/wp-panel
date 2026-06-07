@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -268,8 +269,71 @@ func TestCopyFileOrDirRejectsDirectoryIntoItself(t *testing.T) {
 	if err := os.MkdirAll(src, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyFileOrDir(base, src, dest); err == nil {
+	if err := copyFileOrDir(base, base, src, dest); err == nil {
 		t.Fatal("copyFileOrDir into itself error = nil, want error")
+	}
+}
+
+func TestCopyFileOrDirAllowsSeparateBases(t *testing.T) {
+	srcBase := t.TempDir()
+	destBase := t.TempDir()
+	src := filepath.Join(srcBase, "readme.txt")
+	dest := filepath.Join(destBase, "readme.txt")
+	if err := os.WriteFile(src, []byte("ok"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyFileOrDir(srcBase, destBase, src, dest); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "ok" {
+		t.Fatalf("copied content = %q, want ok", string(data))
+	}
+}
+
+func TestCopyFileOrDirPreservesFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not reliably preserve Unix executable bits")
+	}
+	srcBase := t.TempDir()
+	destBase := t.TempDir()
+	src := filepath.Join(srcBase, "wp-cli")
+	dest := filepath.Join(destBase, "wp-cli")
+	if err := os.WriteFile(src, []byte("ok"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyFileOrDir(srcBase, destBase, src, dest); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0755 {
+		t.Fatalf("copied mode = %o, want 0755", got)
+	}
+}
+
+func TestCopyFileOrDirRejectsDestinationOutsideBase(t *testing.T) {
+	srcBase := t.TempDir()
+	destBase := t.TempDir()
+	outside := t.TempDir()
+	src := filepath.Join(srcBase, "readme.txt")
+	dest := filepath.Join(outside, "readme.txt")
+	if err := os.WriteFile(src, []byte("ok"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyFileOrDir(srcBase, destBase, src, dest); err == nil {
+		t.Fatal("copyFileOrDir outside destination error = nil, want error")
 	}
 }
 

@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/user"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/naibabiji/wp-panel/database"
@@ -73,6 +76,85 @@ func HardenSiteSensitivePermissions(domain, webRoot, systemUser string) error {
 	}
 
 	return nil
+}
+
+func isPathWithinRoot(rootPath, targetPath string) bool {
+	cleanExistingPath := func(path string) (string, error) {
+		cleanPath := filepath.Clean(path)
+		resolved, err := filepath.EvalSymlinks(cleanPath)
+		if err == nil {
+			return resolved, nil
+		}
+		if runtime.GOOS == "windows" {
+			return filepath.Abs(cleanPath)
+		}
+		return "", err
+	}
+
+	root, err := cleanExistingPath(rootPath)
+	if err != nil {
+		return false
+	}
+	target, err := cleanExistingPath(targetPath)
+	if err != nil {
+		return false
+	}
+	root = filepath.Clean(root)
+	target = filepath.Clean(target)
+	if runtime.GOOS == "windows" {
+		root = strings.ToLower(root)
+		target = strings.ToLower(target)
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+func ChownSitePath(path, allowedRoot, systemUser string) error {
+	path = filepath.Clean(strings.TrimSpace(path))
+	allowedRoot = filepath.Clean(strings.TrimSpace(allowedRoot))
+	systemUser = strings.TrimSpace(systemUser)
+	if path == "" || path == "." || path == string(filepath.Separator) {
+		return fmt.Errorf("path is unsafe")
+	}
+	if allowedRoot == "" || allowedRoot == "." || allowedRoot == string(filepath.Separator) {
+		return fmt.Errorf("allowed root is unsafe")
+	}
+	if !isPathWithinRoot(allowedRoot, path) {
+		return fmt.Errorf("path outside allowed root")
+	}
+	if systemUser == "" {
+		return fmt.Errorf("system user is empty")
+	}
+
+	u, err := user.Lookup(systemUser)
+	if err != nil {
+		return err
+	}
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil {
+		return err
+	}
+	gid, err := strconv.Atoi(u.Gid)
+	if err != nil {
+		return err
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return os.Chown(path, uid, gid)
+	}
+	return filepath.Walk(path, func(p string, _ os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chown(p, uid, gid)
+	})
 }
 
 func init() {

@@ -432,12 +432,19 @@ function fileManager() {
         },
         async pasteItems() {
             if (!this.clipboard) return;
+            if (!this.selectedSite) { showToast('请先选择目标网站或目录', 'error'); return; }
             const cb = this.clipboard;
             const apiPath = cb.action === 'cut' ? '/files/move' : '/files/copy';
             try {
                 const r = await api(apiPath, {
                     method: 'POST',
-                    body: { site_id: parseInt(cb.site_id), src_path: cb.src_path, dest_path: this.currentPath, names: cb.names }
+                    body: {
+                        site_id: parseInt(cb.site_id),
+                        dest_site_id: parseInt(this.selectedSite),
+                        src_path: cb.src_path,
+                        dest_path: this.currentPath,
+                        names: cb.names
+                    }
                 });
                 showToast(r.data?.message || '操作完成', 'success');
                 this.clipboard = null;
