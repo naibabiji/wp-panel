@@ -341,7 +341,8 @@
                 <button @click="doBackup()" :disabled="backingUp" class="btn-primary text-sm" x-text="backingUp ? '备份中...' : '立即备份'"></button>
             </div>
         </div>
-        <p class="text-gray-400 text-xs mb-4">每天凌晨 2:30 自动备份面板数据库，保留最近 7 份。恢复后面板将自动重启。</p>
+        <p class="text-gray-400 text-xs mb-2">每天凌晨 2:30 自动备份面板数据库，保留最近 7 份。恢复后面板将自动重启。</p>
+        <p class="text-yellow-500/80 text-xs mb-4">⚠ 备份包含敏感数据（密码哈希、数据库凭证等），请勿分享给他人。面板无法启动时，可通过 SSH 从 /www/server/panel/backups/panel-db/ 获取备份文件。</p>
         <div class="overflow-x-auto">
             <table class="w-full">
                 <thead class="border-b border-gray-700">
@@ -359,7 +360,8 @@
                             <td class="table-cell text-xs font-mono" x-text="b.filename"></td>
                             <td class="table-cell text-sm" x-text="b.size_text"></td>
                             <td class="table-cell">
-                                <button @click="doRestore(b.filename)" class="btn-warning text-xs py-1 px-2">恢复</button>
+                                <button @click="doDownload(b.filename)" class="btn-primary text-xs py-1 px-2">下载</button>
+                                <button @click="doRestore(b.filename)" class="btn-warning text-xs py-1 px-2 ml-1">恢复</button>
                                 <button @click="doDelete(b.filename)" class="btn-danger text-xs py-1 px-2 ml-1">删除</button>
                             </td>
                         </tr>
@@ -669,8 +671,12 @@ function dbBackup() {
             } catch(e) { showToast(e.message, 'error'); }
             this.backingUp = false;
         },
+        doDownload(filename) {
+            const prefix = document.body.dataset.panelPrefix || '';
+            window.open(prefix + '/api/settings/db-backup/' + encodeURIComponent(filename) + '/download');
+        },
         async doRestore(filename) {
-            if (!await confirmModal('确认使用此备份恢复数据库？恢复前面板会先做安全备份，恢复后面板将自动重启。')) return;
+            if (!await confirmModal('确认使用此备份恢复数据库？\n\n恢复前面板会先做安全备份，恢复后面板将自动重启。\n如果恢复后面板无法启动，安全备份可用于回滚。')) return;
             try {
                 const r = await api('/settings/db-backup/restore', { method: 'POST', body: { filename } });
                 showToast(r.data?.message || '恢复中...', 'success');

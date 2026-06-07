@@ -212,7 +212,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/settings/db-backup", settingsHandler.CreateDBBackup)
 	protected.POST("/api/settings/db-backup/restore", settingsHandler.RestoreDBBackup)
 	protected.DELETE("/api/settings/db-backup", settingsHandler.DeleteDBBackup)
-		protected.GET("/api/proxy/test", settingsHandler.TestProxy)
+	protected.GET("/api/settings/db-backup/:filename/download", settingsHandler.DownloadDBBackup)
+	protected.GET("/api/proxy/test", settingsHandler.TestProxy)
 
 	extensionHandler := &handlers.ExtensionHandler{}
 	protected.GET("/api/extensions", extensionHandler.List)

@@ -1,6 +1,7 @@
 package database
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -113,6 +114,24 @@ func RestoreDBBackupPath(backupDir, filename string) (string, error) {
 		return "", fmt.Errorf("备份文件不存在")
 	}
 	return fullPath, nil
+}
+
+// VerifyDBBackup 打开备份文件执行 PRAGMA integrity_check，校验备份完整性
+func VerifyDBBackup(backupPath string) error {
+	db, err := sql.Open("sqlite", backupPath)
+	if err != nil {
+		return fmt.Errorf("打开备份文件失败: %w", err)
+	}
+	defer db.Close()
+
+	var result string
+	if err := db.QueryRow("PRAGMA integrity_check").Scan(&result); err != nil {
+		return fmt.Errorf("完整性校验执行失败: %w", err)
+	}
+	if result != "ok" {
+		return fmt.Errorf("备份文件损坏: %s", result)
+	}
+	return nil
 }
 
 func formatDBSize(size int64) string {

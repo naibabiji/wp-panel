@@ -360,6 +360,11 @@ func autoBackupPanelDB() {
 		log.Printf("面板数据库自动备份失败: %v", err)
 		return
 	}
+	if err := database.VerifyDBBackup(path); err != nil {
+		os.Remove(path)
+		log.Printf("面板数据库自动备份校验失败，已删除无效备份: %v", err)
+		return
+	}
 	log.Printf("面板数据库自动备份完成: %s", path)
 
 	if removed := database.CleanupOldDBBackups(backupDir, 7); removed > 0 {

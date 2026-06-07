@@ -559,11 +559,17 @@ func (h *SettingsHandler) CreateDBBackup(c *gin.Context) {
 		return
 	}
 
+	// 校验备份完整性
+	if verr := database.VerifyDBBackup(path); verr != nil {
+		os.Remove(path)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("备份校验失败: "+verr.Error()))
+		return
+	}
+
 	database.CleanupOldDBBackups(backupDir, 7)
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"message": "数据库备份完成",
-		"path":   path,
 	}))
 }
 
@@ -585,21 +591,43 @@ func (h *SettingsHandler) RestoreDBBackup(c *gin.Context) {
 		return
 	}
 
+	// 校验备份文件完整性
+	if verr := database.VerifyDBBackup(backupPath); verr != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("备份文件校验失败，无法恢复: "+verr.Error()))
+		return
+	}
+
 	dbPath := cfg.SQLite.Path
 
-	// 先做一份安全备份
+	// 先做一份安全备份（当前运行中的数据库），用于回滚
 	safeBackup, safeErr := database.BackupDatabase(backupDir)
 	if safeErr != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("恢复前安全备份失败: "+safeErr.Error()))
 		return
 	}
-	_ = safeBackup
 
-	// 写一个恢复脚本，延迟执行：替换 db 文件 → 重启服务
+	// 写恢复脚本：原子替换（先 cp 到 .tmp 再 mv）→ 清理 WAL/SHM → 重启；cp/mv 失败时回滚到安全备份。
 	// 对路径中的单引号做转义，避免 shell 注入
-	safeBackupPath := strings.ReplaceAll(backupPath, "'", "'\\''")
-	safeDBPath := strings.ReplaceAll(dbPath, "'", "'\\''")
-	script := "#!/bin/bash\nsleep 1\ncp -f '" + safeBackupPath + "' '" + safeDBPath + "'\nsystemctl restart wp-panel\nrm -f /tmp/wp-panel-db-restore.sh\n"
+	sb := strings.ReplaceAll(safeBackup, "'", "'\\''")
+	bp := strings.ReplaceAll(backupPath, "'", "'\\''")
+	dp := strings.ReplaceAll(dbPath, "'", "'\\''")
+
+	script := "#!/bin/bash\n" +
+		"sleep 1\n" +
+		"rm -f '" + dp + "'.tmp\n" +
+		// 原子替换：先复制到 .tmp，再 mv（同文件系统下 mv 是原子的）
+		"cp -f '" + bp + "' '" + dp + "'.tmp && " +
+		"mv -f '" + dp + "'.tmp '" + dp + "'\n" +
+		"restore_status=$?\n" +
+		"rm -f '" + dp + "'.tmp\n" +
+		"if [ $restore_status -ne 0 ]; then\n" +
+		// cp/mv 失败 → 回滚到安全备份
+		"  echo 'DB restore cp/mv failed, rolling back...' >&2\n" +
+		"  cp -f '" + sb + "' '" + dp + "'\n" +
+		"fi\n" +
+		"rm -f '" + dp + "-wal' '" + dp + "-shm'\n" +
+		"systemctl restart wp-panel\n" +
+		"rm -f /tmp/wp-panel-db-restore.sh\n"
 
 	scriptPath := "/tmp/wp-panel-db-restore.sh"
 	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
@@ -608,10 +636,14 @@ func (h *SettingsHandler) RestoreDBBackup(c *gin.Context) {
 	}
 
 	// 异步执行
-	exec.Command("bash", scriptPath).Start()
+	if err := exec.Command("bash", scriptPath).Start(); err != nil {
+		os.Remove(scriptPath)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("启动恢复脚本失败: "+err.Error()))
+		return
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"message": "数据库恢复中，面板将自动重启...",
+		"message": "数据库恢复中，面板将自动重启。如启动失败，安全备份位于 " + filepath.Base(safeBackup),
 	}))
 }
 
@@ -637,4 +669,19 @@ func (h *SettingsHandler) DeleteDBBackup(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "备份已删除"}))
+}
+
+func (h *SettingsHandler) DownloadDBBackup(c *gin.Context) {
+	filename := c.Param("filename")
+
+	cfg := config.AppConfig
+	backupDir := filepath.Join(cfg.Panel.BackupDir, "panel-db")
+
+	fullPath, err := database.RestoreDBBackupPath(backupDir, filename)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+		return
+	}
+
+	c.FileAttachment(fullPath, filename)
 }
