@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -176,8 +177,10 @@ func (h *UpdateHandler) Update(c *gin.Context) {
 
 	newBinary := filepath.Join(tmpDir, binaryName)
 	setUpdateStep("download_binary", "正在下载更新包...", 15)
-	if err := downloadFileWithProgress(proxyURL(proxy, downloadURL), newBinary, 10*time.Minute, setBinaryDownloadProgress); err != nil {
-		fail(http.StatusInternalServerError, "下载失败")
+	binaryURL := proxyURL(proxy, downloadURL)
+	if err := downloadFileWithProgress(binaryURL, newBinary, 10*time.Minute, setBinaryDownloadProgress); err != nil {
+		log.Printf("下载更新包失败 url=%s: %v", binaryURL, err)
+		fail(http.StatusInternalServerError, "更新包下载失败，可能是 GitHub 或服务器网络临时异常，请稍后重试")
 		return
 	}
 	if err := os.Chmod(newBinary, 0755); err != nil {
@@ -188,8 +191,10 @@ func (h *UpdateHandler) Update(c *gin.Context) {
 	// Verify SHA256
 	setUpdateStep("download_sha256", "正在下载校验文件...", 62)
 	shaFile := filepath.Join(tmpDir, binaryName+".sha256")
-	if err := downloadFile(proxyURL(proxy, sha256URL), shaFile); err != nil {
-		fail(http.StatusInternalServerError, "SHA256 校验文件下载失败")
+	resolvedSHA256URL := proxyURL(proxy, sha256URL)
+	if err := downloadFile(resolvedSHA256URL, shaFile); err != nil {
+		log.Printf("下载 SHA256 校验文件失败 url=%s: %v", resolvedSHA256URL, err)
+		fail(http.StatusInternalServerError, "SHA256 校验文件下载失败，可能是 GitHub 或服务器网络临时异常，请稍后重试")
 		return
 	}
 	setUpdateStep("verify_sha256", "正在校验更新包完整性...", 68)
@@ -201,8 +206,10 @@ func (h *UpdateHandler) Update(c *gin.Context) {
 	// Verify Ed25519 signature of checksum file
 	setUpdateStep("download_signature", "正在下载签名文件...", 72)
 	sigFile := filepath.Join(tmpDir, binaryName+".sha256.sig")
-	if err := downloadFile(proxyURL(proxy, sigURL), sigFile); err != nil {
-		fail(http.StatusInternalServerError, "签名文件下载失败")
+	resolvedSigURL := proxyURL(proxy, sigURL)
+	if err := downloadFile(resolvedSigURL, sigFile); err != nil {
+		log.Printf("下载签名文件失败 url=%s: %v", resolvedSigURL, err)
+		fail(http.StatusInternalServerError, "签名文件下载失败，可能是 GitHub 或服务器网络临时异常，请稍后重试")
 		return
 	}
 	setUpdateStep("verify_signature", "正在校验更新来源...", 78)
@@ -260,7 +267,18 @@ func (h *UpdateHandler) Update(c *gin.Context) {
 }
 
 func downloadFile(url, dest string) error {
-	return downloadFileWithProgress(url, dest, 60*time.Second, nil)
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		if attempt > 1 {
+			time.Sleep(time.Duration(attempt-1) * 2 * time.Second)
+		}
+		lastErr = downloadFileWithProgress(url, dest, 60*time.Second, nil)
+		if lastErr == nil {
+			return nil
+		}
+		_ = os.Remove(dest)
+	}
+	return lastErr
 }
 
 func downloadFileWithProgress(url, dest string, timeout time.Duration, progress func(downloaded, total int64)) error {
