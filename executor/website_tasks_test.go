@@ -65,3 +65,32 @@ func TestMoveSiteLogDirRejectsNonEmptyTarget(t *testing.T) {
 		t.Fatalf("target log file should remain: %v", err)
 	}
 }
+
+func TestCreateSiteLogDirCreatesMissingLogs(t *testing.T) {
+	logDir := filepath.Join(t.TempDir(), "88.vps17.top")
+
+	if err := createSiteLogDir(logDir); err != nil {
+		t.Fatalf("createSiteLogDir failed: %v", err)
+	}
+	for _, name := range []string{"access.log", "error.log"} {
+		if _, err := os.Stat(filepath.Join(logDir, name)); err != nil {
+			t.Fatalf("%s should exist: %v", name, err)
+		}
+	}
+}
+
+func TestCreateSiteLogDirRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	link := filepath.Join(root, "88.vps17.top")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unavailable on this platform: %v", err)
+	}
+
+	if err := createSiteLogDir(link); err == nil {
+		t.Fatal("expected symlink log dir to be rejected")
+	}
+}

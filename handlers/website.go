@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -635,28 +634,8 @@ func (h *WebsiteHandler) UpdateWPSiteURLs(c *gin.Context) {
 		return
 	}
 
-	// 异步清理 FastCGI 缓存（换 cache key + 重载 Nginx），避免旧域名缓存导致后台显示不一致
-	executor.GoSafe(func() { executor.ClearSiteCache(site.ID) })
-
-	// 异步清理该域名的 Redis Object Cache（旧前缀缓存可能残留 siteurl/home 旧值）
-	executor.GoSafe(func() {
-		redisPrefix := strings.ToLower(site.Domain) + ":"
-		keys, err := exec.Command("redis-cli", "--scan", "--pattern", redisPrefix+"*").Output()
-		if err != nil || len(keys) == 0 {
-			return
-		}
-		var keyList []string
-		for _, k := range strings.Split(string(keys), "\n") {
-			if k = strings.TrimSpace(k); k != "" {
-				keyList = append(keyList, k)
-			}
-		}
-		if len(keyList) > 0 {
-			// 批量 DEL，避免逐 key 启动 redis-cli 进程
-			args := append([]string{"DEL"}, keyList...)
-			exec.Command("redis-cli", args...).Run()
-		}
-	})
+	// 异步清理 FastCGI 和 Redis Object Cache，避免旧缓存继续返回旧站点 URL。
+	executor.GoSafe(func() { executor.ClearWPSiteRuntimeCaches(site.ID, site.Domain, site.WebRoot) })
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "站点 URL 已更新"}))
 }

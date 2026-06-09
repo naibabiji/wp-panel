@@ -46,6 +46,28 @@ func moveSiteLogDir(oldLogDir, newLogDir string) error {
 	return os.Rename(oldLogDir, newLogDir)
 }
 
+func createSiteLogDir(logDir string) error {
+	if strings.TrimSpace(logDir) == "" {
+		return fmt.Errorf("日志目录为空")
+	}
+	if info, err := os.Lstat(logDir); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("日志目录不能是符号链接: %s", logDir)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("日志路径已存在且不是目录: %s", logDir)
+		}
+	} else if os.IsNotExist(err) {
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			return err
+		}
+	} else {
+		return err
+	}
+	ensureSiteLogFiles(logDir)
+	return nil
+}
+
 func ensureCreateSiteResourcesAvailable(systemUser, webRoot, logDir, dbName, dbUser, phpPoolPath, nginxConfPath, nginxEnabledPath, phpSockPath string) error {
 	db := database.GetDB()
 	if db != nil {
@@ -584,14 +606,27 @@ func executeUpdateDomains(task *Task) TaskResult {
 			return os.Rename(newWebRoot, oldWebRoot)
 		}})
 
+		logDirMoved := true
 		if err := moveSiteLogDir(oldLogDir, newLogDir); err != nil {
-			rollback()
-			log.Printf("重命名日志目录失败: %v", err)
-			return TaskResult{Success: false, Message: "重命名日志目录失败"}
+			logDirMoved = false
+			log.Printf("重命名日志目录失败，改为创建新日志目录: %v", err)
+			if createErr := createSiteLogDir(newLogDir); createErr != nil {
+				rollback()
+				log.Printf("创建新日志目录失败: %v", createErr)
+				return TaskResult{Success: false, Message: "创建新日志目录失败"}
+			}
 		}
-		rollbacks = append(rollbacks, rollbackStep{"恢复日志目录 " + oldLogDir, func() error {
-			return os.Rename(newLogDir, oldLogDir)
-		}})
+		if logDirMoved {
+			rollbacks = append(rollbacks, rollbackStep{"恢复日志目录 " + oldLogDir, func() error {
+				return os.Rename(newLogDir, oldLogDir)
+			}})
+		} else {
+			rollbacks = append(rollbacks, rollbackStep{"删除新日志目录 " + newLogDir, func() error {
+				_ = os.Remove(filepath.Join(newLogDir, "access.log"))
+				_ = os.Remove(filepath.Join(newLogDir, "error.log"))
+				return os.Remove(newLogDir)
+			}})
+		}
 
 		if err := engine.ApplyPHPFPMPool(phpConfig, newPHPPool, newLogDir); err != nil {
 			rollback()

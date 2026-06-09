@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/naibabiji/wp-panel/config"
@@ -119,6 +121,85 @@ func ClearSiteCache(siteID int) {
 	key := NewCacheKey()
 	db.Exec("UPDATE websites SET fastcgi_cache_key = ? WHERE id = ?", key, siteID)
 	RegenerateSiteNginx(siteID)
+}
+
+func ClearWPSiteRuntimeCaches(siteID int, domain, webRoot string) {
+	ClearSiteCache(siteID)
+	if err := ClearWPRedisObjectCache(domain, webRoot); err != nil {
+		log.Printf("清理 Redis Object Cache 失败 domain=%s: %v", domain, err)
+	}
+}
+
+func ClearWPRedisObjectCache(domain, webRoot string) error {
+	prefixes := redisObjectCachePrefixes(domain, webRoot)
+	for _, prefix := range prefixes {
+		if err := deleteRedisKeysByPrefix(prefix); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func redisObjectCachePrefixes(domain, webRoot string) []string {
+	seen := make(map[string]bool)
+	var prefixes []string
+	add := func(prefix string) {
+		prefix = strings.TrimSpace(prefix)
+		if prefix == "" || seen[prefix] {
+			return
+		}
+		seen[prefix] = true
+		prefixes = append(prefixes, prefix)
+	}
+
+	if strings.TrimSpace(webRoot) != "" {
+		if data, err := os.ReadFile(filepath.Join(webRoot, "wp-config.php")); err == nil {
+			content := string(data)
+			add(extractWPConfigStringConstant(content, "WP_REDIS_PREFIX"))
+			add(extractWPConfigStringConstant(content, "WP_CACHE_KEY_SALT"))
+		}
+	}
+	add(wpCacheKeySalt(domain))
+	return prefixes
+}
+
+func extractWPConfigStringConstant(content, name string) string {
+	re := regexp.MustCompile(`(?m)^\s*define\s*\(\s*['"]` + regexp.QuoteMeta(name) + `['"]\s*,\s*['"]([^'"]*)['"]\s*\)\s*;`)
+	matches := re.FindStringSubmatch(content)
+	if len(matches) != 2 {
+		return ""
+	}
+	return matches[1]
+}
+
+func deleteRedisKeysByPrefix(prefix string) error {
+	keys, err := exec.Command("redis-cli", "--scan", "--pattern", prefix+"*").Output()
+	if err != nil {
+		return err
+	}
+
+	var batch []string
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		args := append([]string{"DEL"}, batch...)
+		batch = nil
+		return exec.Command("redis-cli", args...).Run()
+	}
+	for _, key := range strings.Split(string(keys), "\n") {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		batch = append(batch, key)
+		if len(batch) >= 200 {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+	}
+	return flush()
 }
 
 func RegenerateSiteNginx(siteID int) {
