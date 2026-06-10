@@ -86,25 +86,23 @@ async function migrateCounters(env) {
       cursor = result.list_complete ? undefined : result.cursor;
     } while (cursor);
     if (active > 0) {
-      await env.STATS_KV.put(`meta:active:${day}`, String(active), { expirationTtl: 172800 });
+      await env.STATS_KV.put(`meta:active:${day}`, String(active), { expirationTtl: 129600 });
     }
   }
 }
 
-// 仅读取聚合计数器，每次调用 3 次 $get（零次 list）
+// 仅读取聚合计数器，每次调用 2 次 $get（零次 list）
 async function getStats(env) {
   const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
 
-  const [total, activeToday, activeYesterday] = await Promise.all([
+  const [total, activeToday] = await Promise.all([
     env.STATS_KV.get('meta:total'),
     env.STATS_KV.get(`meta:active:${today}`),
-    env.STATS_KV.get(`meta:active:${yesterday}`),
   ]);
 
   return {
     total: parseInt(total) || 0,
-    active: (parseInt(activeToday) || 0) + (parseInt(activeYesterday) || 0),
+    active: parseInt(activeToday) || 0,
   };
 }
 
@@ -136,9 +134,9 @@ async function saveHeartbeat(env, anonymousId, version) {
 
   // 今日首次心跳 → 日活 +1
   if (!dailyExists) {
-    writes.push(env.STATS_KV.put(dailyKey, '1', { expirationTtl: 172800 }));
+    writes.push(env.STATS_KV.put(dailyKey, '1', { expirationTtl: 129600 }));
     const activeToday = parseInt(await env.STATS_KV.get(`meta:active:${today}`)) || 0;
-    writes.push(env.STATS_KV.put(`meta:active:${today}`, String(activeToday + 1), { expirationTtl: 172800 }));
+    writes.push(env.STATS_KV.put(`meta:active:${today}`, String(activeToday + 1), { expirationTtl: 129600 }));
   }
 
   await Promise.all(writes);

@@ -23,7 +23,7 @@ type heartbeatPayload struct {
 
 var telemetryVersion string
 
-// StartTelemetry 启动匿名统计：立即上报一次，此后每 24 小时上报一次。
+// StartTelemetry 启动匿名统计：新装面板立即上报一次，此后每天 UTC 00:00 附近上报。
 // 上报内容仅含匿名 ID（machine-id 的 SHA256 前 16 字节）和面板版本号。
 func StartTelemetry(version string) {
 	telemetryVersion = version
@@ -34,11 +34,14 @@ func StartTelemetry(version string) {
 	}
 
 	go func() {
-		sendHeartbeat()
+		// 新装面板（从未成功上报过）立即上报，更新/重启则跳过
+		if isFirstHeartbeat() {
+			sendHeartbeat()
+		}
 
-		// 计算距服务器本地时间下一个凌晨 00:00 的间隔，加 ±5 分钟随机抖动
-		now := time.Now()
-		midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+		// 计算距下一个 UTC 00:00 的间隔，加 ±5 分钟随机抖动
+		now := time.Now().UTC()
+		midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
 		jitter := time.Duration(rand.Intn(600)-300) * time.Second
 		waitDur := midnight.Sub(now) + jitter
 		if waitDur < 0 {
@@ -54,6 +57,17 @@ func StartTelemetry(version string) {
 			sendHeartbeat()
 		}
 	}()
+}
+
+// isFirstHeartbeat 检查是否从未成功上报过心跳（新装面板）。
+func isFirstHeartbeat() bool {
+	db := database.GetDB()
+	if db == nil {
+		return true
+	}
+	var val string
+	err := db.QueryRow("SELECT svalue FROM security_settings WHERE skey = 'telemetry_first_sent'").Scan(&val)
+	return err != nil || val == ""
 }
 
 func sendHeartbeat() {
@@ -84,6 +98,13 @@ func sendHeartbeat() {
 		log.Printf("[遥测] 上报返回非预期状态: %d", resp.StatusCode)
 		return
 	}
+
+	// 标记首次心跳已发送，后续重启不再立即上报
+	db := database.GetDB()
+	if db != nil {
+		db.Exec("INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('telemetry_first_sent', ?, '首次心跳上报时间')", time.Now().UTC().Format(time.RFC3339))
+	}
+
 	log.Println("[遥测] 匿名心跳上报成功")
 }
 
