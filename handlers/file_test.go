@@ -9,6 +9,9 @@ import (
 	"reflect"
 	"runtime"
 	"testing"
+	"time"
+
+	"github.com/naibabiji/wp-panel/config"
 )
 
 func TestUploadSessionIDIsStableForResume(t *testing.T) {
@@ -69,6 +72,57 @@ func TestExpectedUploadChunksAllowsEmptyFiles(t *testing.T) {
 		if got := expectedUploadChunks(tt.size); got != tt.want {
 			t.Fatalf("expectedUploadChunks(%d) = %d, want %d", tt.size, got, tt.want)
 		}
+	}
+}
+
+func TestUploadSessionDirUsesPanelDataDir(t *testing.T) {
+	oldConfig := config.AppConfig
+	defer func() { config.AppConfig = oldConfig }()
+
+	dataDir := t.TempDir()
+	config.AppConfig = &config.Config{Panel: config.PanelConfig{DataDir: dataDir}}
+
+	got := uploadSessionDir("../abc123")
+	want := filepath.Join(dataDir, "upload-sessions", uploadSessionDirPrefix+"abc123")
+	if got != want {
+		t.Fatalf("uploadSessionDir = %q, want %q", got, want)
+	}
+}
+
+func TestCleanupExpiredUploadSessionsOnlyRemovesExpiredUploadDirs(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	expired := filepath.Join(root, uploadSessionDirPrefix+"expired")
+	active := filepath.Join(root, uploadSessionDirPrefix+"active")
+	other := filepath.Join(root, "not-upload-expired")
+	for _, dir := range []string{expired, active, other} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := saveUploadSession(expired, uploadSession{CreatedAt: now.Add(-25 * time.Hour).Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(expired, now.Add(-25*time.Hour), now.Add(-25*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveUploadSession(active, uploadSession{CreatedAt: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(other, now.Add(-25*time.Hour), now.Add(-25*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	cleanupExpiredUploadSessions(root, 24*time.Hour)
+
+	if _, err := os.Stat(expired); !os.IsNotExist(err) {
+		t.Fatalf("expired upload session still exists, err=%v", err)
+	}
+	if _, err := os.Stat(active); err != nil {
+		t.Fatalf("active upload session removed: %v", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("non-upload directory removed: %v", err)
 	}
 }
 

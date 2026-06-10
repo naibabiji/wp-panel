@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/models"
 
@@ -30,9 +31,11 @@ import (
 type FileHandler struct{}
 
 const (
-	maxArchiveEntries = 100000
-	uploadChunkSize   = int64(5 * 1024 * 1024)
-	maxUploadChunks   = 20000
+	maxArchiveEntries      = 100000
+	uploadChunkSize        = int64(5 * 1024 * 1024)
+	maxUploadChunks        = 20000
+	uploadSessionDirPrefix = "wppanel-upload-"
+	uploadSessionTTL       = 24 * time.Hour
 )
 
 type multiCloser []io.Closer
@@ -286,12 +289,77 @@ func resolvePathForAccess(path string) (string, error) {
 	}
 }
 
+func uploadSessionRoot() string {
+	if config.AppConfig != nil {
+		if config.AppConfig.Panel.DataDir != "" {
+			return filepath.Join(config.AppConfig.Panel.DataDir, "upload-sessions")
+		}
+		if config.AppConfig.Panel.BackupDir != "" {
+			return filepath.Join(config.AppConfig.Panel.BackupDir, "upload-sessions")
+		}
+	}
+	return filepath.Join(os.TempDir(), "wppanel-upload-sessions")
+}
+
 func uploadSessionDir(uploadID string) string {
-	return filepath.Join(os.TempDir(), "wppanel-upload-"+filepath.Base(uploadID))
+	return filepath.Join(uploadSessionRoot(), uploadSessionDirPrefix+filepath.Base(uploadID))
 }
 
 func uploadSessionMetaPath(dir string) string {
 	return filepath.Join(dir, "session.json")
+}
+
+func cleanupExpiredUploadSessions(root string, ttl time.Duration) {
+	if root == "" || ttl <= 0 {
+		return
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("扫描上传会话目录失败 root=%s: %v", root, err)
+		}
+		return
+	}
+
+	now := time.Now()
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), uploadSessionDirPrefix) {
+			continue
+		}
+		dir := filepath.Join(root, entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		lastActive := info.ModTime()
+		if session, err := loadUploadSession(dir); err == nil && session.CreatedAt > 0 {
+			createdAt := time.Unix(session.CreatedAt, 0)
+			if createdAt.After(lastActive) {
+				lastActive = createdAt
+			}
+		}
+		if now.Sub(lastActive) <= ttl {
+			continue
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			log.Printf("清理过期上传会话失败 dir=%s: %v", dir, err)
+		}
+	}
+}
+
+func cleanupUploadSessions() {
+	cleanupExpiredUploadSessions(uploadSessionRoot(), uploadSessionTTL)
+	legacyRoot := os.TempDir()
+	if legacyRoot != uploadSessionRoot() {
+		cleanupExpiredUploadSessions(legacyRoot, uploadSessionTTL)
+	}
+}
+
+func uploadSaveErrorMessage(action string, err error) string {
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "no space left on device") {
+		return action + "失败：上传暂存空间不足，请清理磁盘后重试"
+	}
+	return action + "失败"
 }
 
 func sanitizeUploadFilename(filename string) string {
@@ -477,7 +545,7 @@ func (h *FileHandler) UploadInit(c *gin.Context) {
 		Filename     string `json:"filename"`
 		FileSize     int64  `json:"file_size"`
 		TotalChunks  int    `json:"total_chunks"`
-		SiteID       int    `json:"site_id"`
+		SiteID       *int   `json:"site_id"`
 		Path         string `json:"path"`
 		LastModified int64  `json:"last_modified"`
 	}
@@ -485,6 +553,11 @@ func (h *FileHandler) UploadInit(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数无效"))
 		return
 	}
+	if req.SiteID == nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("请选择网站或备份目录"))
+		return
+	}
+	siteID := *req.SiteID
 	filename := sanitizeUploadFilename(req.Filename)
 	expectedChunks := expectedUploadChunks(req.FileSize)
 	if filename == "" || req.FileSize < 0 || req.TotalChunks != expectedChunks || req.TotalChunks > maxUploadChunks {
@@ -495,7 +568,7 @@ func (h *FileHandler) UploadInit(c *gin.Context) {
 		req.Path = "/"
 	}
 
-	basePath, err := fileBasePath(req.SiteID)
+	basePath, err := fileBasePath(siteID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
@@ -507,11 +580,13 @@ func (h *FileHandler) UploadInit(c *gin.Context) {
 		return
 	}
 
+	cleanupUploadSessions()
+
 	session := uploadSession{
 		Filename:     filename,
 		FileSize:     req.FileSize,
 		TotalChunks:  req.TotalChunks,
-		SiteID:       req.SiteID,
+		SiteID:       siteID,
 		Path:         req.Path,
 		LastModified: req.LastModified,
 		CreatedAt:    time.Now().Unix(),
@@ -519,14 +594,16 @@ func (h *FileHandler) UploadInit(c *gin.Context) {
 	uploadID := makeUploadID(session)
 	dir := uploadSessionDir(uploadID)
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建上传会话失败"))
+		log.Printf("创建上传会话失败 dir=%s: %v", dir, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(uploadSaveErrorMessage("创建上传会话", err)))
 		return
 	}
 	if existing, err := loadUploadSession(dir); err == nil {
 		session.CreatedAt = existing.CreatedAt
 	}
 	if err := saveUploadSession(dir, session); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存上传会话失败"))
+		log.Printf("保存上传会话失败 dir=%s: %v", dir, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(uploadSaveErrorMessage("保存上传会话", err)))
 		return
 	}
 
@@ -582,7 +659,8 @@ func (h *FileHandler) UploadChunk(c *gin.Context) {
 	chunkPath := filepath.Join(dir, fmt.Sprintf("chunk-%d", chunkIdx))
 	tmpPath := chunkPath + ".tmp"
 	if err := c.SaveUploadedFile(file, tmpPath); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存分片失败"))
+		log.Printf("保存上传分片失败 path=%s: %v", tmpPath, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(uploadSaveErrorMessage("保存分片", err)))
 		return
 	}
 	os.Remove(chunkPath)
@@ -598,11 +676,15 @@ func (h *FileHandler) UploadChunk(c *gin.Context) {
 func (h *FileHandler) UploadComplete(c *gin.Context) {
 	var req struct {
 		UploadID string `json:"upload_id"`
-		SiteID   int    `json:"site_id"`
+		SiteID   *int   `json:"site_id"`
 		Path     string `json:"path"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.UploadID == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数无效"))
+		return
+	}
+	if req.SiteID == nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("请选择网站或备份目录"))
 		return
 	}
 
@@ -617,7 +699,7 @@ func (h *FileHandler) UploadComplete(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("上传会话无效"))
 		return
 	}
-	if req.SiteID != session.SiteID || filepath.Clean(req.Path) != filepath.Clean(session.Path) {
+	if *req.SiteID != session.SiteID || filepath.Clean(req.Path) != filepath.Clean(session.Path) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("上传会话不匹配"))
 		return
 	}
@@ -643,7 +725,7 @@ func (h *FileHandler) UploadComplete(c *gin.Context) {
 	tmpDestPath := destPath + ".uploading-" + uploadID
 	dst, err := os.OpenFile(tmpDestPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建文件失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(uploadSaveErrorMessage("创建文件", err)))
 		return
 	}
 	copyOK := false
@@ -663,7 +745,8 @@ func (h *FileHandler) UploadComplete(c *gin.Context) {
 		}
 		if _, err := io.Copy(dst, src); err != nil {
 			src.Close()
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("合并分片失败"))
+			log.Printf("合并上传分片失败 dest=%s chunk=%s: %v", tmpDestPath, chunkPath, err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(uploadSaveErrorMessage("合并分片", err)))
 			return
 		}
 		src.Close()

@@ -185,6 +185,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/files/upload/init", fileHandler.UploadInit)
 	protected.POST("/api/files/upload/chunk", fileHandler.UploadChunk)
 	protected.POST("/api/files/upload/complete", fileHandler.UploadComplete)
+	protected.POST("/api/files/remote-import", fileHandler.RemoteImport)
+	protected.GET("/api/files/remote-import/:id", fileHandler.RemoteImportStatus)
 	protected.GET("/api/files/download", fileHandler.Download)
 	protected.DELETE("/api/files/delete", fileHandler.Delete)
 	protected.PUT("/api/files/rename", fileHandler.Rename)
