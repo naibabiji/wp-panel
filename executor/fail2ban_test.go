@@ -130,6 +130,31 @@ func TestWordPressTemplateIncludesSecurityLogAndTryFiles(t *testing.T) {
 	}
 }
 
+func TestWordPressTemplateKeepsSecurityLogWhenAccessLogIsOff(t *testing.T) {
+	engine := NewTemplateEngine(t.TempDir())
+	config, err := engine.RenderNginxConfig(&NginxSiteData{
+		Domain:        "example.com",
+		ServerNames:   "example.com",
+		WebRoot:       "/www/wwwroot/example.com",
+		PHPProxy:      "unix:/run/php/example.sock",
+		TemplateVer:   "v1.0",
+		AccessLogMode: "off",
+		SiteType:      "wordpress",
+	})
+	if err != nil {
+		t.Fatalf("render nginx config: %v", err)
+	}
+	if strings.Contains(config, "access_log off;") {
+		t.Fatalf("wordpress config must not disable security logs with access_log off:\n%s", config)
+	}
+	if !strings.Contains(config, `access_log /www/wwwlogs/example.com/access.log combined if=$wp_access_log_disabled;`) {
+		t.Fatalf("expected ordinary access log to be disabled by condition:\n%s", config)
+	}
+	if !strings.Contains(config, `access_log /www/wwwlogs/example.com/wp-security.log combined if=$wp_security_loggable;`) {
+		t.Fatalf("expected WordPress security log to remain enabled:\n%s", config)
+	}
+}
+
 func TestPHPTemplateDoesNotIncludeWordPressSecurityLog(t *testing.T) {
 	engine := NewTemplateEngine(t.TempDir())
 	config, err := engine.RenderNginxConfig(&NginxSiteData{

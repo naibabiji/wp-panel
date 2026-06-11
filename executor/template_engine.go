@@ -70,6 +70,10 @@ map $arg_wp_hc $wp_hc_loggable {
     default 0;
 }
 
+map $request_uri $wp_access_log_disabled {
+    default 0;
+}
+
 map $uri $wp_security_loggable {
     default 0;
     / 0;
@@ -473,7 +477,7 @@ server {
 	    {{else if eq .AccessLogMode "error_only"}}
 	    access_log /www/wwwlogs/{{.Domain}}/access.log combined if=$wp_loggable;
 	    {{else}}
-	    access_log off;
+	    access_log /www/wwwlogs/{{.Domain}}/access.log combined if=$wp_access_log_disabled;
 	    {{end}}
     access_log /www/wwwlogs/{{.Domain}}/wp-security.log combined if=$wp_security_loggable;
 
@@ -627,7 +631,7 @@ server {
 	    {{else if eq .AccessLogMode "error_only"}}
 	    access_log /www/wwwlogs/{{.Domain}}/access.log combined if=$wp_loggable;
 	    {{else}}
-	    access_log off;
+	    access_log /www/wwwlogs/{{.Domain}}/access.log combined if=$wp_access_log_disabled;
 	    {{end}}
     access_log /www/wwwlogs/{{.Domain}}/wp-security.log combined if=$wp_security_loggable;
 
