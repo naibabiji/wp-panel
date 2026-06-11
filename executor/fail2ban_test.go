@@ -105,6 +105,107 @@ func TestNginxTemplateIncludesFastCGIHeaderBuffers(t *testing.T) {
 	}
 }
 
+func TestWordPressTemplateIncludesSecurityLogAndTryFiles(t *testing.T) {
+	engine := NewTemplateEngine(t.TempDir())
+	config, err := engine.RenderNginxConfig(&NginxSiteData{
+		Domain:        "example.com",
+		ServerNames:   "example.com",
+		WebRoot:       "/www/wwwroot/example.com",
+		PHPProxy:      "unix:/run/php/example.sock",
+		TemplateVer:   "v1.0",
+		AccessLogMode: "error_only",
+		SiteType:      "wordpress",
+	})
+	if err != nil {
+		t.Fatalf("render nginx config: %v", err)
+	}
+	if !strings.Contains(config, `access_log /www/wwwlogs/example.com/wp-security.log combined if=$wp_security_loggable;`) {
+		t.Fatalf("expected WordPress security log in config:\n%s", config)
+	}
+	if !strings.Contains(config, "try_files $uri =404;") {
+		t.Fatalf("expected php location to reject missing php files before FastCGI:\n%s", config)
+	}
+}
+
+func TestPHPTemplateDoesNotIncludeWordPressSecurityLog(t *testing.T) {
+	engine := NewTemplateEngine(t.TempDir())
+	config, err := engine.RenderNginxConfig(&NginxSiteData{
+		Domain:        "example.com",
+		ServerNames:   "example.com",
+		WebRoot:       "/www/wwwroot/example.com",
+		PHPProxy:      "unix:/run/php/example.sock",
+		TemplateVer:   "v1.0",
+		AccessLogMode: "error_only",
+		SiteType:      "php",
+	})
+	if err != nil {
+		t.Fatalf("render nginx config: %v", err)
+	}
+	if strings.Contains(config, "wp-security.log") {
+		t.Fatalf("did not expect WordPress security log in generic PHP config:\n%s", config)
+	}
+}
+
+func TestNormalizeWPSecurityLogWhitelist(t *testing.T) {
+	patterns, err := NormalizeWPSecurityLogWhitelist("/google*.html\n/BingSiteAuth.xml\n/google*.html")
+	if err != nil {
+		t.Fatalf("normalize whitelist: %v", err)
+	}
+	if got := strings.Join(patterns, ","); got != "/google*.html,/BingSiteAuth.xml" {
+		t.Fatalf("unexpected normalized whitelist: %s", got)
+	}
+	if _, err := NormalizeWPSecurityLogWhitelist("relative.txt"); err == nil {
+		t.Fatal("expected relative path to be rejected")
+	}
+	if _, err := NormalizeWPSecurityLogWhitelist("/bad;path"); err == nil {
+		t.Fatal("expected dangerous characters to be rejected")
+	}
+	for _, pattern := range []string{"/foo(.*)", "/foo[bar]", "/foo^bar", "/foo~bar"} {
+		if _, err := NormalizeWPSecurityLogWhitelist(pattern); err == nil {
+			t.Fatalf("expected %q to be rejected", pattern)
+		}
+	}
+}
+
+func TestBuildWPSecurityLogWhitelistMapEntriesEscapesWildcard(t *testing.T) {
+	openTestDB(t)
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue = ? WHERE skey = 'wp_security_log_whitelist'`, "/verify-*.txt"); err != nil {
+		t.Fatalf("save whitelist: %v", err)
+	}
+	entries := buildWPSecurityLogWhitelistMapEntries()
+	if !strings.Contains(entries, `~^/verify-.*\.txt$ 0;`) {
+		t.Fatalf("expected escaped wildcard map entry, got:\n%s", entries)
+	}
+}
+
+func TestWPSecurityReportCacheReturnsClone(t *testing.T) {
+	wpSecurityReportCacheMu.Lock()
+	wpSecurityReportCache = map[int]wpSecurityReportCacheEntry{}
+	wpSecurityReportCacheMu.Unlock()
+
+	items := []WPSecurityReportItem{{
+		IPAddress:   "203.0.113.10",
+		SamplePaths: []string{"GET /test.php x 1"},
+		Evidence:    []string{"Primary script unknown"},
+	}}
+	setWPSecurityReportCache(30, items)
+
+	got, ok := getWPSecurityReportCache(30)
+	if !ok {
+		t.Fatal("expected cache hit")
+	}
+	got[0].SamplePaths[0] = "mutated"
+	got[0].Evidence[0] = "mutated"
+
+	gotAgain, ok := getWPSecurityReportCache(30)
+	if !ok {
+		t.Fatal("expected second cache hit")
+	}
+	if gotAgain[0].SamplePaths[0] == "mutated" || gotAgain[0].Evidence[0] == "mutated" {
+		t.Fatalf("cache returned mutable internals: %+v", gotAgain[0])
+	}
+}
+
 func openTestDB(t *testing.T) {
 	t.Helper()
 

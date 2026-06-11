@@ -196,6 +196,7 @@ var migrations = []string{
 		('rate_limit_enabled',       'true',     '是否开启全局限速'),
 		('rate_limit_rpm',           '60',       '每IP每分钟最大请求数'),
 		('rate_limit_burst',         '300',      '突发缓冲允许量'),
+		('wp_security_log_whitelist','',         'WordPress安全日志路径白名单'),
 		('smtp_host',                '',         'SMTP 服务器地址'),
 		('smtp_port',                '587',      'SMTP 端口'),
 		('smtp_encryption',          'starttls', '加密方式：starttls/ssl/none'),

@@ -6,11 +6,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/naibabiji/wp-panel/database"
 )
 
 type NginxSiteData struct {
@@ -50,10 +53,12 @@ type TemplateEngine struct {
 
 const nginxConfigBackupKeepCount = 7
 
-func EnsureLogMap() {
+func EnsureLogMap() error {
 	confDir := "/etc/nginx/conf.d"
 	confPath := confDir + "/wppanel-log.conf"
-	os.MkdirAll(confDir, 0755)
+	if err := os.MkdirAll(confDir, 0755); err != nil {
+		return fmt.Errorf("创建 Nginx 配置目录失败: %w", err)
+	}
 	content := `# WP Panel — 日志条件变量 (勿手动修改)
 map $status $wp_loggable {
     ~^[45]  1;
@@ -64,9 +69,139 @@ map $arg_wp_hc $wp_hc_loggable {
     ""      1;
     default 0;
 }
+
+map $uri $wp_security_loggable {
+    default 0;
+    / 0;
+    /wp-admin 0;
+    /index.php 0;
+    /wp-login.php 0;
+    /wp-cron.php 0;
+    /wp-comments-post.php 0;
+    /xmlrpc.php 0;
+    /robots.txt 0;
+    /favicon.ico 0;
+    /ads.txt 0;
+    /app-ads.txt 0;
+    ~^/wp-admin/ 0;
+    ~^/wp-includes/ 0;
+    ~^/wp-content/ 0;
+    ~^/wp-json(/|$) 0;
+    ~^/sitemap.*\.xml$ 0;
+    ~^/\.well-known/ 0;
+    ~^/google[A-Za-z0-9_-]*\.html$ 0;
+    /BingSiteAuth.xml 0;
+    ~^/baidu_verify_[A-Za-z0-9_-]*\.html$ 0;
+    ~^/yandex_[A-Za-z0-9_-]*\.html$ 0;
+` + buildWPSecurityLogWhitelistMapEntries() + `    ~*(^|/)(config|settings|database|db|phpinfo|info|test|phptest|configuration|parameters)\.php$ 1;
+    ~*(^|/)(next|nuxt|vite)\.config\.js$ 1;
+    ~*(^|/)(composer\.(json|lock)|package\.json|yarn\.lock|pnpm-lock\.yaml)$ 1;
+    ~*(^|/)(\.env|\.git|\.DS_Store)$ 1;
+    ~*\.(sql|bak|old|save|swp|tar|tgz|gz|zip)$ 1;
+    ~*/dup-installer/ 1;
+    ~*^/(?!index\.php$|wp-login\.php$|wp-cron\.php$|wp-comments-post\.php$|xmlrpc\.php$).+\.php$ 1;
+}
 `
-	os.WriteFile(confPath, []byte(content), 0644)
-	exec.Command("nginx", "-s", "reload").Run()
+	oldContent, oldErr := os.ReadFile(confPath)
+	oldExists := oldErr == nil
+
+	if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("写入 Nginx 日志 map 配置失败: %w", err)
+	}
+	if out, err := exec.Command("nginx", "-t").CombinedOutput(); err != nil {
+		restoreLogMapConfig(confPath, oldContent, oldExists)
+		return fmt.Errorf("Nginx 日志 map 配置语法检查失败，已回滚: %s", strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("nginx", "-s", "reload").CombinedOutput(); err != nil {
+		restoreLogMapConfig(confPath, oldContent, oldExists)
+		return fmt.Errorf("Nginx 日志 map 配置重载失败，已回滚: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func restoreLogMapConfig(path string, oldContent []byte, oldExists bool) {
+	if oldExists {
+		_ = os.WriteFile(path, oldContent, 0644)
+		return
+	}
+	_ = os.Remove(path)
+}
+
+func buildWPSecurityLogWhitelistMapEntries() string {
+	if database.GetDB() == nil {
+		return ""
+	}
+	var raw string
+	_ = database.GetDB().QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'wp_security_log_whitelist'`).Scan(&raw)
+	patterns, err := NormalizeWPSecurityLogWhitelist(raw)
+	if err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, pattern := range patterns {
+		if strings.Contains(pattern, "*") {
+			b.WriteString("    ~^")
+			b.WriteString(wildcardPathToRegex(pattern))
+			b.WriteString("$ 0;\n")
+			continue
+		}
+		if strings.HasSuffix(pattern, "/") {
+			b.WriteString("    ~^")
+			b.WriteString(regexp.QuoteMeta(pattern))
+			b.WriteString(" 0;\n")
+			continue
+		}
+		b.WriteString("    ")
+		b.WriteString(pattern)
+		b.WriteString(" 0;\n")
+	}
+	return b.String()
+}
+
+func NormalizeWPSecurityLogWhitelist(raw string) ([]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	lines := strings.Split(raw, "\n")
+	if len(lines) > 200 {
+		return nil, fmt.Errorf("WordPress安全日志白名单最多200行")
+	}
+	patterns := make([]string, 0, len(lines))
+	seen := map[string]bool{}
+	for _, line := range lines {
+		pattern := strings.TrimSpace(line)
+		if pattern == "" {
+			continue
+		}
+		if len(pattern) > 200 {
+			return nil, fmt.Errorf("白名单路径过长: %s", pattern)
+		}
+		if !strings.HasPrefix(pattern, "/") {
+			return nil, fmt.Errorf("白名单路径必须以 / 开头: %s", pattern)
+		}
+		if strings.ContainsAny(pattern, " \t\r\n;{}()[]^~\\\"'`$#") {
+			return nil, fmt.Errorf("白名单路径包含不允许的字符: %s", pattern)
+		}
+		if strings.Contains(pattern, "..") {
+			return nil, fmt.Errorf("白名单路径不能包含 ..: %s", pattern)
+		}
+		if !seen[pattern] {
+			patterns = append(patterns, pattern)
+			seen[pattern] = true
+		}
+	}
+	return patterns, nil
+}
+
+func wildcardPathToRegex(pattern string) string {
+	var b strings.Builder
+	for _, part := range strings.Split(pattern, "*") {
+		b.WriteString(regexp.QuoteMeta(part))
+		b.WriteString(".*")
+	}
+	out := b.String()
+	return strings.TrimSuffix(out, ".*")
 }
 
 func NewTemplateEngine(backupDir string) *TemplateEngine {
@@ -340,6 +475,7 @@ server {
 	    {{else}}
 	    access_log off;
 	    {{end}}
+    access_log /www/wwwlogs/{{.Domain}}/wp-security.log combined if=$wp_security_loggable;
 
     include /www/server/panel/nginx-custom/{{.Domain}}.conf;
 
@@ -354,6 +490,7 @@ server {
 
     {{end}}
     location ~ \.php$ {
+        try_files $uri =404;
         include /etc/nginx/fastcgi_params;
         fastcgi_pass {{.PHPProxy}};
         fastcgi_index index.php;
@@ -488,6 +625,7 @@ server {
 	    {{else}}
 	    access_log off;
 	    {{end}}
+    access_log /www/wwwlogs/{{.Domain}}/wp-security.log combined if=$wp_security_loggable;
 
     include /www/server/panel/nginx-custom/{{.Domain}}.conf;
 
@@ -502,6 +640,7 @@ server {
 
     {{end}}
     location ~ \.php$ {
+        try_files $uri =404;
         include /etc/nginx/fastcgi_params;
         fastcgi_pass {{.PHPProxy}};
         fastcgi_index index.php;

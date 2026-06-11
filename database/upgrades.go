@@ -119,6 +119,13 @@ var upgrades = []Upgrade{
 		Version:     "1.0.10",
 		Description: "Backfill WP_CACHE_KEY_SALT for existing WordPress sites",
 	},
+	{
+		Version:     "1.0.11",
+		Description: "新增 WordPress 安全日志路径白名单设置",
+		SQL: []string{
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('wp_security_log_whitelist', '', 'WordPress安全日志路径白名单')`,
+		},
+	},
 }
 
 // LatestVersion 返回 upgrades 列表中的最新版本号。

@@ -82,11 +82,24 @@ func (h *FirewallHandler) ListBans(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"data":       bans,
-		"total":      total,
-		"page":       page,
-		"per_page":   perPage,
+		"data":        bans,
+		"total":       total,
+		"page":        page,
+		"per_page":    perPage,
 		"total_pages": totalPages,
+	}))
+}
+
+func (h *FirewallHandler) WPSecurityReport(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "30"))
+	items, err := executor.BuildWPSecurityReport(limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取 WordPress 安全日志失败"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"items": items,
+		"total": len(items),
 	}))
 }
 

@@ -264,6 +264,7 @@
             <div class="flex flex-wrap items-center gap-2 mb-3">
                 <button @click="logType='access'; fetchLogs()" :class="logType === 'access' ? 'text-white border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-3 py-1 text-sm font-medium">访问日志</button>
                 <button @click="logType='error'; fetchLogs()" :class="logType === 'error' ? 'text-white border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-3 py-1 text-sm font-medium">错误日志</button>
+                <button x-show="site.site_type === 'wordpress'" @click="logType='security'; fetchLogs()" :class="logType === 'security' ? 'text-white border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-3 py-1 text-sm font-medium">安全日志</button>
                 <button @click="fetchLogs()" class="text-sm py-1 px-3 rounded text-gray-400 hover:text-white" style="background-color: #1e293b; border: 1px solid #334155;">刷新</button>
                 <button @click="clearLogs()" class="text-sm py-1 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">清空</button>
                 <button @click="logFullscreen = true" class="text-sm py-1 px-3 rounded text-gray-400 hover:text-white" style="background-color: #1e293b; border: 1px solid #334155;">全屏查看</button>
@@ -286,9 +287,10 @@
     <div x-show="logFullscreen" class="fixed inset-0 bg-black bg-opacity-90 flex flex-col z-50" @keydown.escape.window="logFullscreen = false">
         <div class="flex items-center justify-between px-6 py-3 border-b border-gray-700">
             <div class="flex items-center space-x-4 text-sm">
-                <span class="text-white font-semibold" x-text="logType === 'access' ? '访问日志' : '错误日志'"></span>
+                <span class="text-white font-semibold" x-text="logType === 'access' ? '访问日志' : (logType === 'security' ? '安全日志' : '错误日志')"></span>
                 <button @click="logType='access'; fetchLogs()" :class="logType === 'access' ? 'text-white border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-3 py-1 text-sm font-medium">访问日志</button>
                 <button @click="logType='error'; fetchLogs()" :class="logType === 'error' ? 'text-white border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-3 py-1 text-sm font-medium">错误日志</button>
+                <button x-show="site.site_type === 'wordpress'" @click="logType='security'; fetchLogs()" :class="logType === 'security' ? 'text-white border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-3 py-1 text-sm font-medium">安全日志</button>
                 <button @click="fetchLogs()" class="text-sm py-1 px-3 rounded text-gray-400 hover:text-white" style="background-color: #1e293b; border: 1px solid #334155;">刷新</button>
             </div>
             <button @click="logFullscreen = false" class="text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
@@ -727,7 +729,8 @@ function websiteDetail() {
             } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
         },
         async clearLogs() {
-            if (!await confirmModal('确认清空 ' + (this.logType === 'error' ? '错误' : '访问') + '日志？')) return;
+            const label = this.logType === 'error' ? '错误' : (this.logType === 'security' ? '安全' : '访问');
+            if (!await confirmModal('确认清空 ' + label + '日志？')) return;
             try {
                 const r = await api('/websites/' + this.site.id + '/logs?type=' + this.logType, { method: 'DELETE' });
                 if (r.success) {

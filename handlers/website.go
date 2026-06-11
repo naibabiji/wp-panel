@@ -669,8 +669,8 @@ func (h *WebsiteHandler) ViewLogs(c *gin.Context) {
 	}
 
 	logType := c.Query("type")
-	if logType != "error" && logType != "access" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("日志类型无效，仅支持 error 或 access"))
+	if logType != "error" && logType != "access" && logType != "security" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("日志类型无效，仅支持 error、access 或 security"))
 		return
 	}
 
@@ -683,6 +683,8 @@ func (h *WebsiteHandler) ViewLogs(c *gin.Context) {
 	var logFile string
 	if logType == "error" {
 		logFile = filepath.Join(site.LogDir, "error.log")
+	} else if logType == "security" {
+		logFile = filepath.Join(site.LogDir, "wp-security.log")
 	} else {
 		logFile = filepath.Join(site.LogDir, "access.log")
 	}
@@ -697,6 +699,8 @@ func (h *WebsiteHandler) ViewLogs(c *gin.Context) {
 	if content == "" {
 		if logType == "access" {
 			content = "（暂无异常访问日志；默认仅记录 4xx/5xx 请求，正常访问不会写入 access.log）"
+		} else if logType == "security" {
+			content = "（暂无 WordPress 安全日志，暂未发现异常路径访问）"
 		} else {
 			content = "（暂无错误日志，网站运行正常）"
 		}
@@ -719,14 +723,16 @@ func (h *WebsiteHandler) ClearLogs(c *gin.Context) {
 	}
 
 	logType := c.Query("type")
-	if logType != "error" && logType != "access" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("日志类型无效，仅支持 error 或 access"))
+	if logType != "error" && logType != "access" && logType != "security" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("日志类型无效，仅支持 error、access 或 security"))
 		return
 	}
 
 	var logFile string
 	if logType == "error" {
 		logFile = filepath.Join(site.LogDir, "error.log")
+	} else if logType == "security" {
+		logFile = filepath.Join(site.LogDir, "wp-security.log")
 	} else {
 		logFile = filepath.Join(site.LogDir, "access.log")
 	}
@@ -1510,7 +1516,8 @@ func writeLogrotateConfig(domain, logDir string, retentionDays int) {
 
 	content := fmt.Sprintf(`# WP Panel Generated - %s
 %s/access.log
-%s/error.log {
+%s/error.log
+%s/wp-security.log {
     daily
     rotate %d
     missingok
@@ -1519,7 +1526,7 @@ func writeLogrotateConfig(domain, logDir string, retentionDays int) {
     delaycompress
     copytruncate
 }
-`, domain, logDir, logDir, retentionDays)
+`, domain, logDir, logDir, logDir, retentionDays)
 
 	os.WriteFile(confPath, []byte(content), 0644)
 }

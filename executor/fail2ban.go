@@ -154,6 +154,7 @@ func ensureLogFiles() {
 			}
 			touch("/www/wwwlogs/" + e.Name() + "/access.log")
 			touch("/www/wwwlogs/" + e.Name() + "/error.log")
+			touch("/www/wwwlogs/" + e.Name() + "/wp-security.log")
 			hasLogs = true
 		}
 	}
@@ -161,6 +162,7 @@ func ensureLogFiles() {
 		os.MkdirAll("/www/wwwlogs/_panel_placeholder", 0755)
 		touch("/www/wwwlogs/_panel_placeholder/access.log")
 		touch("/www/wwwlogs/_panel_placeholder/error.log")
+		touch("/www/wwwlogs/_panel_placeholder/wp-security.log")
 	}
 	touch("/var/log/auth.log")
 }
@@ -171,6 +173,7 @@ func ensureSiteLogFiles(logDir string) {
 	}
 	touch(filepath.Join(logDir, "access.log"))
 	touch(filepath.Join(logDir, "error.log"))
+	touch(filepath.Join(logDir, "wp-security.log"))
 }
 
 func touch(path string) {

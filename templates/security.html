@@ -44,6 +44,10 @@
                             <p class="text-blue-400 font-medium">自定义白名单</p>
                             <p>手动添加不会被封禁的 IP 或 IP 段，每行一个。支持 IPv4/IPv6 地址和 CIDR 格式（如 <code>10.0.0.0/8</code>）。自定义白名单不会被官方拉取覆盖。</p>
                         </li>
+                        <li>
+                            <p class="text-blue-400 font-medium">WordPress 安全日志路径白名单</p>
+                            <p>用于排除搜索引擎、广告平台、站点所有权验证等正常文件。该配置只影响 WordPress 异常访问统计，不影响通用 PHP 网站，不会直接放行或封禁请求。</p>
+                        </li>
                     </ul>
                 </div>
                 <div>
@@ -151,6 +155,12 @@
             <textarea x-model="settings.whitelist_ips" class="input-field font-mono text-sm" rows="4" placeholder="1.2.3.4&#10;10.0.0.0/8"></textarea>
         </div>
         <button @click="saveWhitelist" class="btn-primary">保存自定义白名单</button>
+        <div class="mt-6 pt-4 border-t border-gray-700/50">
+            <label class="label">WordPress 安全日志路径白名单</label>
+            <textarea x-model="settings.wp_security_log_whitelist" class="input-field font-mono text-sm" rows="5" placeholder="/google*.html&#10;/BingSiteAuth.xml&#10;/custom-verify-*.txt"></textarea>
+            <p class="text-xs text-gray-500 mt-1">一行一个路径，可使用 * 通配符；必须以 / 开头。不支持正则，不允许空格、分号、引号或 ..。</p>
+            <button @click="saveWPSecurityLogWhitelist" class="btn-primary mt-3">保存路径白名单</button>
+        </div>
     </div>
 
     <div class="card">
@@ -225,6 +235,12 @@ function securitySettings() {
             try {
                 await api('/security/settings', { method: 'PUT', body: { whitelist_ips: this.settings.whitelist_ips || '' } });
                 showToast('白名单已更新', 'success');
+            } catch(e) { showToast(e.message, 'error'); }
+        },
+        async saveWPSecurityLogWhitelist() {
+            try {
+                await api('/security/settings', { method: 'PUT', body: { wp_security_log_whitelist: this.settings.wp_security_log_whitelist || '' } });
+                showToast('WordPress 安全日志路径白名单已更新', 'success');
             } catch(e) { showToast(e.message, 'error'); }
         },
         async refreshWhitelist() {

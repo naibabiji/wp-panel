@@ -151,7 +151,9 @@ func main() {
 	collector.Start()
 
 	executor.ApplyFail2banSettings()
-	executor.EnsureLogMap()
+	if err := executor.EnsureLogMap(); err != nil {
+		log.Printf("Nginx 日志 map 配置跳过: %v", err)
+	}
 	if err := executor.EnsureNginxBannedIPsConfig(); err != nil {
 		log.Printf("Nginx 黑名单初始化失败: %v", err)
 	}

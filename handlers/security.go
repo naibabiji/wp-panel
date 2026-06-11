@@ -64,6 +64,12 @@ func (h *SecurityHandler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
+	if _, ok := raw["wp_security_log_whitelist"]; ok {
+		if err := executor.EnsureLogMap(); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Nginx 日志规则应用失败: "+err.Error()))
+			return
+		}
+	}
 	if err := executor.ApplyFail2banSettings(); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Fail2ban 配置应用失败: "+err.Error()))
 		return
@@ -116,6 +122,16 @@ func normalizeSecuritySetting(key string, val interface{}) (string, bool, error)
 			return "", false, err
 		}
 		return v, true, nil
+	case "wp_security_log_whitelist":
+		v, ok := val.(string)
+		if !ok {
+			return "", false, fmt.Errorf("WordPress安全日志白名单格式不正确")
+		}
+		patterns, err := executor.NormalizeWPSecurityLogWhitelist(v)
+		if err != nil {
+			return "", false, err
+		}
+		return strings.Join(patterns, "\n"), true, nil
 	default:
 		return "", false, nil
 	}
