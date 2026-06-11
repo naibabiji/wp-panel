@@ -155,6 +155,8 @@ func ensureLogFiles() {
 			touch("/www/wwwlogs/" + e.Name() + "/access.log")
 			touch("/www/wwwlogs/" + e.Name() + "/error.log")
 			touch("/www/wwwlogs/" + e.Name() + "/wp-security.log")
+			touch("/www/wwwlogs/" + e.Name() + "/php-error.log")
+			touch("/www/wwwlogs/" + e.Name() + "/php-slow.log")
 			hasLogs = true
 		}
 	}
@@ -163,6 +165,8 @@ func ensureLogFiles() {
 		touch("/www/wwwlogs/_panel_placeholder/access.log")
 		touch("/www/wwwlogs/_panel_placeholder/error.log")
 		touch("/www/wwwlogs/_panel_placeholder/wp-security.log")
+		touch("/www/wwwlogs/_panel_placeholder/php-error.log")
+		touch("/www/wwwlogs/_panel_placeholder/php-slow.log")
 	}
 	touch("/var/log/auth.log")
 }
@@ -174,6 +178,8 @@ func ensureSiteLogFiles(logDir string) {
 	touch(filepath.Join(logDir, "access.log"))
 	touch(filepath.Join(logDir, "error.log"))
 	touch(filepath.Join(logDir, "wp-security.log"))
+	touch(filepath.Join(logDir, "php-error.log"))
+	touch(filepath.Join(logDir, "php-slow.log"))
 }
 
 func touch(path string) {

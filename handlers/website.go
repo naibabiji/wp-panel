@@ -673,6 +673,10 @@ func (h *WebsiteHandler) ViewLogs(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("日志类型无效，仅支持 error、access 或 security"))
 		return
 	}
+	if logType == "security" && site.SiteType != "wordpress" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("仅 WordPress 站点支持安全日志"))
+		return
+	}
 
 	linesStr := c.DefaultQuery("lines", "200")
 	lines, _ := strconv.Atoi(linesStr)
@@ -725,6 +729,10 @@ func (h *WebsiteHandler) ClearLogs(c *gin.Context) {
 	logType := c.Query("type")
 	if logType != "error" && logType != "access" && logType != "security" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("日志类型无效，仅支持 error、access 或 security"))
+		return
+	}
+	if logType == "security" && site.SiteType != "wordpress" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("仅 WordPress 站点支持安全日志"))
 		return
 	}
 
@@ -1457,10 +1465,17 @@ func (h *WebsiteHandler) SetLogRetention(c *gin.Context) {
 		req.RetentionDays = 0
 	}
 
-	db := database.GetDB()
-	db.Exec("UPDATE websites SET log_retention_days = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", req.RetentionDays, id)
+	if err := executor.WriteSiteLogrotateConfig(site.Domain, site.LogDir, req.RetentionDays); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("日志轮转配置应用失败"))
+		return
+	}
 
-	writeLogrotateConfig(site.Domain, site.LogDir, req.RetentionDays)
+	db := database.GetDB()
+	if _, err := db.Exec("UPDATE websites SET log_retention_days = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", req.RetentionDays, id); err != nil {
+		_ = executor.WriteSiteLogrotateConfig(site.Domain, site.LogDir, site.LogRetentionDays)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败"))
+		return
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
 }
@@ -1504,29 +1519,4 @@ func (h *WebsiteHandler) UpdateExpiry(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
-}
-
-func writeLogrotateConfig(domain, logDir string, retentionDays int) {
-	confPath := "/etc/logrotate.d/wppanel-" + domain
-
-	if retentionDays <= 0 {
-		os.Remove(confPath)
-		return
-	}
-
-	content := fmt.Sprintf(`# WP Panel Generated - %s
-%s/access.log
-%s/error.log
-%s/wp-security.log {
-    daily
-    rotate %d
-    missingok
-    notifempty
-    compress
-    delaycompress
-    copytruncate
-}
-`, domain, logDir, logDir, logDir, retentionDays)
-
-	os.WriteFile(confPath, []byte(content), 0644)
 }

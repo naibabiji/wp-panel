@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/naibabiji/wp-panel/config"
-	"github.com/naibabiji/wp-panel/database"
 
 	"github.com/google/uuid"
 )
@@ -191,13 +190,7 @@ func logOp(task *Task, result TaskResult) {
 		}
 	}
 
-	db := database.GetDB()
-	if db != nil {
-		_, _ = db.Exec(
-			"INSERT INTO operation_logs (operation, target, status, message) VALUES (?, ?, ?, ?)",
-			string(task.Type), target, status, result.Message,
-		)
-	}
+	recordOperationLog(string(task.Type), target, status, result.Message)
 }
 
 func buildSiteName(domain string) string {

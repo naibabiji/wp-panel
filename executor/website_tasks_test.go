@@ -72,7 +72,7 @@ func TestCreateSiteLogDirCreatesMissingLogs(t *testing.T) {
 	if err := createSiteLogDir(logDir); err != nil {
 		t.Fatalf("createSiteLogDir failed: %v", err)
 	}
-	for _, name := range []string{"access.log", "error.log"} {
+	for _, name := range []string{"access.log", "error.log", "wp-security.log", "php-error.log", "php-slow.log"} {
 		if _, err := os.Stat(filepath.Join(logDir, name)); err != nil {
 			t.Fatalf("%s should exist: %v", name, err)
 		}

@@ -198,10 +198,10 @@ func wildcardPathToRegex(pattern string) string {
 	var b strings.Builder
 	for _, part := range strings.Split(pattern, "*") {
 		b.WriteString(regexp.QuoteMeta(part))
-		b.WriteString(".*")
+		b.WriteString("[^/]*")
 	}
 	out := b.String()
-	return strings.TrimSuffix(out, ".*")
+	return strings.TrimSuffix(out, "[^/]*")
 }
 
 func NewTemplateEngine(backupDir string) *TemplateEngine {
@@ -479,6 +479,10 @@ server {
 
     include /www/server/panel/nginx-custom/{{.Domain}}.conf;
 
+    location ~* /dup-installer/ {
+        return 404;
+    }
+
     location / {
         try_files $uri $uri/ /index.php?$args;
     }
@@ -628,6 +632,10 @@ server {
     access_log /www/wwwlogs/{{.Domain}}/wp-security.log combined if=$wp_security_loggable;
 
     include /www/server/panel/nginx-custom/{{.Domain}}.conf;
+
+    location ~* /dup-installer/ {
+        return 404;
+    }
 
     location / {
         try_files $uri $uri/ /index.php?$args;

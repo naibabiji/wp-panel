@@ -396,6 +396,9 @@ func executeCreateSite(task *Task) TaskResult {
 		log.Printf("写入数据库失败: %v", err)
 		return TaskResult{Success: false, Message: "写入数据库失败"}
 	}
+	if err := WriteSiteLogrotateConfig(domain, logDir, defaultSiteLogRetentionDays); err != nil {
+		log.Printf("site logrotate config skipped after site create: %v", err)
+	}
 	if err := ReloadFail2ban(); err != nil {
 		log.Printf("Fail2ban reload skipped after site create: %v", err)
 	}
@@ -657,12 +660,6 @@ func executeUpdateDomains(task *Task) TaskResult {
 		site.LogDir = newLogDir
 		site.NginxConfPath = newNginxConf
 
-		// Rename logrotate config if it exists
-		oldLogrotate := "/etc/logrotate.d/wppanel-" + oldDomain
-		newLogrotate := "/etc/logrotate.d/wppanel-" + newDomain
-		if _, err := os.Stat(oldLogrotate); err == nil {
-			os.Rename(oldLogrotate, newLogrotate)
-		}
 		site.PHPPoolPath = newPHPPool
 		if site.SSLCertPath != "" {
 			site.SSLCertPath = filepath.Join(newCertDir, "fullchain.pem")
@@ -701,6 +698,13 @@ func executeUpdateDomains(task *Task) TaskResult {
 		}
 
 		msg := fmt.Sprintf("主域名已从 %s 更换为 %s", oldDomain, newDomain)
+		if err := WriteSiteLogrotateConfig(oldDomain, oldLogDir, 0); err != nil {
+			log.Printf("old site logrotate config cleanup skipped after domain update: %v", err)
+		}
+		if err := WriteSiteLogrotateConfig(newDomain, newLogDir, site.LogRetentionDays); err != nil {
+			log.Printf("site logrotate config skipped after domain update: %v", err)
+		}
+
 		if site.SSLEnabled {
 			msg += "。请重新申请 SSL 证书以匹配新域名"
 		}

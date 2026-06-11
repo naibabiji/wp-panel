@@ -49,6 +49,7 @@ func (h *SecurityHandler) UpdateSettings(c *gin.Context) {
 
 	db := database.GetDB()
 
+	normalized := make(map[string]string)
 	for key, val := range raw {
 		strVal, ok, err := normalizeSecuritySetting(key, val)
 		if err != nil {
@@ -58,28 +59,63 @@ func (h *SecurityHandler) UpdateSettings(c *gin.Context) {
 		if !ok {
 			continue
 		}
+		normalized[key] = strVal
+	}
+
+	var oldWPSecurityWhitelist string
+	if newVal, ok := normalized["wp_security_log_whitelist"]; ok {
+		_ = db.QueryRow("SELECT svalue FROM security_settings WHERE skey = 'wp_security_log_whitelist'").Scan(&oldWPSecurityWhitelist)
+		if _, err := db.Exec("UPDATE security_settings SET svalue = ?, updated_at = CURRENT_TIMESTAMP WHERE skey = 'wp_security_log_whitelist'", newVal); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("安全设置保存失败"))
+			return
+		}
+		if err := executor.EnsureLogMap(); err != nil {
+			_, _ = db.Exec("UPDATE security_settings SET svalue = ?, updated_at = CURRENT_TIMESTAMP WHERE skey = 'wp_security_log_whitelist'", oldWPSecurityWhitelist)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Nginx 日志规则应用失败，已回滚白名单设置: "+err.Error()))
+			return
+		}
+		delete(normalized, "wp_security_log_whitelist")
+	}
+
+	for key, strVal := range normalized {
 		if _, err := db.Exec("UPDATE security_settings SET svalue = ?, updated_at = CURRENT_TIMESTAMP WHERE skey = ?", strVal, key); err != nil {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("安全设置保存失败"))
 			return
 		}
 	}
 
-	if _, ok := raw["wp_security_log_whitelist"]; ok {
-		if err := executor.EnsureLogMap(); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Nginx 日志规则应用失败: "+err.Error()))
+	if needsFail2banApply(normalized) {
+		if err := executor.ApplyFail2banSettings(); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Fail2ban 配置应用失败: "+err.Error()))
 			return
 		}
 	}
-	if err := executor.ApplyFail2banSettings(); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Fail2ban 配置应用失败: "+err.Error()))
-		return
-	}
-	if err := applyRateLimit(); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Nginx 限速配置应用失败: "+err.Error()))
-		return
+	if needsRateLimitApply(normalized) {
+		if err := applyRateLimit(); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Nginx 限速配置应用失败: "+err.Error()))
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "安全设置已更新"}))
+}
+
+func needsFail2banApply(settings map[string]string) bool {
+	for _, key := range []string{"fail2ban_maxretry", "fail2ban_findtime", "fail2ban_bantime", "auto_whitelist_enabled", "whitelist_ips"} {
+		if _, ok := settings[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func needsRateLimitApply(settings map[string]string) bool {
+	for _, key := range []string{"rate_limit_enabled", "rate_limit_rpm", "rate_limit_burst"} {
+		if _, ok := settings[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *SecurityHandler) RefreshWhitelist(c *gin.Context) {

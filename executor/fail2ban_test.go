@@ -125,6 +125,9 @@ func TestWordPressTemplateIncludesSecurityLogAndTryFiles(t *testing.T) {
 	if !strings.Contains(config, "try_files $uri =404;") {
 		t.Fatalf("expected php location to reject missing php files before FastCGI:\n%s", config)
 	}
+	if !strings.Contains(config, "location ~* /dup-installer/") {
+		t.Fatalf("expected explicit dup-installer block before WordPress fallback:\n%s", config)
+	}
 }
 
 func TestPHPTemplateDoesNotIncludeWordPressSecurityLog(t *testing.T) {
@@ -173,7 +176,7 @@ func TestBuildWPSecurityLogWhitelistMapEntriesEscapesWildcard(t *testing.T) {
 		t.Fatalf("save whitelist: %v", err)
 	}
 	entries := buildWPSecurityLogWhitelistMapEntries()
-	if !strings.Contains(entries, `~^/verify-.*\.txt$ 0;`) {
+	if !strings.Contains(entries, `~^/verify-[^/]*\.txt$ 0;`) {
 		t.Fatalf("expected escaped wildcard map entry, got:\n%s", entries)
 	}
 }

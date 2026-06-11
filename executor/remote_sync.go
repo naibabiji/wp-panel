@@ -176,7 +176,5 @@ func syncLog(domain string, msg string, status string) {
 	if domain == "" {
 		domain = "—"
 	}
-	database.GetDB().Exec(
-		"INSERT INTO operation_logs (operation, target, status, message) VALUES (?, ?, ?, ?)",
-		"远程备份", domain, status, msg)
+	recordOperationLog("远程备份", domain, status, msg)
 }
