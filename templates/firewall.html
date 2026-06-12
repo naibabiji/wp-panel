@@ -163,7 +163,7 @@
                             </td>
                             <td class="table-cell whitespace-nowrap">
                                 <button @click="copySecurityReport(item)" class="btn-secondary text-xs py-1 px-2">复制报告</button>
-                                <button @click="banIP = item.ip_address; showToast('已填入手动封禁 IP', 'success')" class="btn-danger text-xs py-1 px-2 ml-1">填入封禁</button>
+                                <button @click="banIP = item.ip_address; showToast('IP已填入手动封禁IP框，请手动选择封禁时长和点击封禁按钮', 'success')" class="btn-danger text-xs py-1 px-2 ml-1">填入封禁</button>
                             </td>
                         </tr>
                     </template>

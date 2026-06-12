@@ -32,6 +32,7 @@ type FileHandler struct{}
 
 const (
 	maxArchiveEntries      = 100000
+	maxPanelArchiveBytes   = int64(5 * 1024 * 1024 * 1024)
 	uploadChunkSize        = int64(5 * 1024 * 1024)
 	maxUploadChunks        = 20000
 	uploadSessionDirPrefix = "wppanel-upload-"
@@ -1170,6 +1171,35 @@ func supportedArchiveMessage() string {
 	return "仅支持解压 .zip / .tar / .tar.gz / .tgz / .tar.bz2 / .tbz2 文件"
 }
 
+func shellQuoteForDisplay(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+func archiveSSHExtractCommand(archivePath, format string) string {
+	dir := filepath.ToSlash(filepath.Dir(archivePath))
+	name := filepath.ToSlash(filepath.Base(archivePath))
+	switch format {
+	case "zip":
+		return fmt.Sprintf("cd %s && unzip -o %s", shellQuoteForDisplay(dir), shellQuoteForDisplay(name))
+	case "tar":
+		return fmt.Sprintf("cd %s && tar xvf %s", shellQuoteForDisplay(dir), shellQuoteForDisplay(name))
+	case "tar.gz":
+		return fmt.Sprintf("cd %s && tar zxvf %s", shellQuoteForDisplay(dir), shellQuoteForDisplay(name))
+	case "tar.bz2":
+		return fmt.Sprintf("cd %s && tar jxvf %s", shellQuoteForDisplay(dir), shellQuoteForDisplay(name))
+	default:
+		return ""
+	}
+}
+
+func oversizedArchiveMessage(archivePath, format string) string {
+	cmd := archiveSSHExtractCommand(archivePath, format)
+	if cmd == "" {
+		return "文件超大，面板解压可能不稳定，建议从 SSH 端执行解压命令。"
+	}
+	return "文件超大，面板解压可能不稳定，建议从 SSH 端执行解压命令：\n" + cmd
+}
+
 func openTarReader(path, format string) (*tar.Reader, io.Closer, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -1350,6 +1380,16 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 	format := archiveFormat(fullPath)
 	if format == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(supportedArchiveMessage()))
+		return
+	}
+
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("压缩文件不存在"))
+		return
+	}
+	if info.Size() > maxPanelArchiveBytes {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(oversizedArchiveMessage(fullPath, format)))
 		return
 	}
 

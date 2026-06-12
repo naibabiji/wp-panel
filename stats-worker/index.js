@@ -1,6 +1,6 @@
 // WP Panel 匿名安装统计 Worker
 // POST /api/heartbeat — 面板匿名心跳上报
-// GET  /api/stats     — 公开统计（total + active_24h）
+// GET  /api/stats     — 公开统计（total + active_24h 滚动窗口）
 
 export default {
   async fetch(request, env) {
@@ -62,60 +62,89 @@ export default {
   },
 };
 
-// 从已有的 id:* / daily:* 键重建 meta:total 和 meta:active 计数器
+// 从已有的 id:* 键重建 total 计数器和 24h 小时槽
 async function migrateCounters(env) {
-  // 重建 total
   let total = 0;
+  const now = Date.now();
+  const hourCounters = {}; // hourKey → count
+
   let cursor;
   do {
     const result = await env.STATS_KV.list({ prefix: 'id:', cursor, limit: 1000 });
     total += result.keys.length;
+
+    for (const key of result.keys) {
+      try {
+        const data = await env.STATS_KV.get(key.name, { type: 'json' });
+        if (!data || !data.last) continue;
+
+        const lastTime = new Date(data.last).getTime();
+        const hoursAgo = (now - lastTime) / 3600000;
+        if (hoursAgo < 0 || hoursAgo > 24) continue;
+
+        const hourKey = new Date(lastTime).toISOString().slice(0, 13).replace('T', '-');
+        const anonymousId = key.name.slice(3); // remove "id:" prefix
+        const hourlyMarker = `hourly:${hourKey}:${anonymousId}`;
+
+        const existingMarker = await env.STATS_KV.get(hourlyMarker);
+        if (!existingMarker) {
+          await env.STATS_KV.put(hourlyMarker, '1', { expirationTtl: 172800 });
+          hourCounters[hourKey] = (hourCounters[hourKey] || 0) + 1;
+        }
+      } catch {
+        // skip corrupted records
+      }
+    }
+
     cursor = result.list_complete ? undefined : result.cursor;
   } while (cursor);
+
+  // 写入 total
   await env.STATS_KV.put('meta:total', String(total));
 
-  // 重建日活计数
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-  for (const day of [today, yesterday]) {
-    let active = 0;
-    cursor = undefined;
-    do {
-      const result = await env.STATS_KV.list({ prefix: `daily:${day}:`, cursor, limit: 1000 });
-      active += result.keys.length;
-      cursor = result.list_complete ? undefined : result.cursor;
-    } while (cursor);
-    if (active > 0) {
-      await env.STATS_KV.put(`meta:active:${day}`, String(active), { expirationTtl: 129600 });
-    }
+  // 写入所有小时计数器
+  const writes = [];
+  for (const [hourKey, count] of Object.entries(hourCounters)) {
+    const hourlyCounter = `active:hour:${hourKey}`;
+    const cur = parseInt(await env.STATS_KV.get(hourlyCounter)) || 0;
+    writes.push(env.STATS_KV.put(hourlyCounter, String(cur + count), { expirationTtl: 172800 }));
   }
+  await Promise.all(writes);
 }
 
-// 仅读取聚合计数器，每次调用 2 次 $get（零次 list）
+// 汇总过去 24 个整点小时槽的独立服务器数
 async function getStats(env) {
-  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const hourKeys = [];
+  for (let i = 0; i < 24; i++) {
+    const d = new Date(now.getTime() - i * 3600000);
+    hourKeys.push(`active:hour:${d.toISOString().slice(0, 13).replace('T', '-')}`);
+  }
 
-  const [total, activeToday] = await Promise.all([
+  const [total, ...hourlyCounts] = await Promise.all([
     env.STATS_KV.get('meta:total'),
-    env.STATS_KV.get(`meta:active:${today}`),
+    ...hourKeys.map(k => env.STATS_KV.get(k)),
   ]);
+
+  const active = hourlyCounts.reduce((sum, v) => sum + (parseInt(v) || 0), 0);
 
   return {
     total: parseInt(total) || 0,
-    active: parseInt(activeToday) || 0,
+    active_24h: active,
+    active: active,
   };
 }
 
-// 写入心跳时同步更新计数器
+// 写入心跳时同步更新计数器（按小时粒度，支持 24h 滚动窗口）
 async function saveHeartbeat(env, anonymousId, version) {
   const now = new Date().toISOString();
-  const today = now.slice(0, 10);
+  const hourKey = now.slice(0, 13).replace('T', '-');
   const idKey = `id:${anonymousId}`;
-  const dailyKey = `daily:${today}:${anonymousId}`;
+  const hourlyMarker = `hourly:${hourKey}:${anonymousId}`;
 
-  const [existing, dailyExists] = await Promise.all([
+  const [existing, hourlyExists] = await Promise.all([
     env.STATS_KV.get(idKey, { type: 'json' }),
-    env.STATS_KV.get(dailyKey),
+    env.STATS_KV.get(hourlyMarker),
   ]);
 
   const writes = [];
@@ -132,11 +161,12 @@ async function saveHeartbeat(env, anonymousId, version) {
     writes.push(env.STATS_KV.put('meta:total', String(total + 1)));
   }
 
-  // 今日首次心跳 → 日活 +1
-  if (!dailyExists) {
-    writes.push(env.STATS_KV.put(dailyKey, '1', { expirationTtl: 129600 }));
-    const activeToday = parseInt(await env.STATS_KV.get(`meta:active:${today}`)) || 0;
-    writes.push(env.STATS_KV.put(`meta:active:${today}`, String(activeToday + 1), { expirationTtl: 129600 }));
+  // 本小时首次心跳 → 当前小时活跃数 +1
+  if (!hourlyExists) {
+    writes.push(env.STATS_KV.put(hourlyMarker, '1', { expirationTtl: 172800 }));
+    const hourlyCounter = `active:hour:${hourKey}`;
+    const cur = parseInt(await env.STATS_KV.get(hourlyCounter)) || 0;
+    writes.push(env.STATS_KV.put(hourlyCounter, String(cur + 1), { expirationTtl: 172800 }));
   }
 
   await Promise.all(writes);

@@ -145,6 +145,33 @@ func TestArchiveFormatSupportsCommonWebsitePackages(t *testing.T) {
 	}
 }
 
+func TestArchiveSSHExtractCommandUsesMatchingFormat(t *testing.T) {
+	tests := []struct {
+		path   string
+		format string
+		want   string
+	}{
+		{"/www/wwwroot/example.com/backup.zip", "zip", "cd '/www/wwwroot/example.com' && unzip -o 'backup.zip'"},
+		{"/www/wwwroot/example.com/backup.tar", "tar", "cd '/www/wwwroot/example.com' && tar xvf 'backup.tar'"},
+		{"/www/wwwroot/example.com/backup.tar.gz", "tar.gz", "cd '/www/wwwroot/example.com' && tar zxvf 'backup.tar.gz'"},
+		{"/www/wwwroot/example.com/backup.tar.bz2", "tar.bz2", "cd '/www/wwwroot/example.com' && tar jxvf 'backup.tar.bz2'"},
+	}
+
+	for _, tt := range tests {
+		if got := archiveSSHExtractCommand(tt.path, tt.format); got != tt.want {
+			t.Fatalf("archiveSSHExtractCommand(%q, %q) = %q, want %q", tt.path, tt.format, got, tt.want)
+		}
+	}
+}
+
+func TestArchiveSSHExtractCommandQuotesSingleQuote(t *testing.T) {
+	got := archiveSSHExtractCommand("/www/wwwroot/site's/backup's.tar.gz", "tar.gz")
+	want := "cd '/www/wwwroot/site'\\''s' && tar zxvf 'backup'\\''s.tar.gz'"
+	if got != want {
+		t.Fatalf("archiveSSHExtractCommand quoted = %q, want %q", got, want)
+	}
+}
+
 func TestExtractTarGzArchive(t *testing.T) {
 	base := t.TempDir()
 	archivePath := filepath.Join(base, "site.tar.gz")
