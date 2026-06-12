@@ -94,3 +94,33 @@ func TestCreateSiteLogDirRejectsSymlink(t *testing.T) {
 		t.Fatal("expected symlink log dir to be rejected")
 	}
 }
+
+func TestManagedSubpathAllowsOnlyChildren(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sites")
+	target := filepath.Join(root, "example.com")
+
+	got, err := managedSubpath(root, target, "网站目录")
+	if err != nil {
+		t.Fatalf("managedSubpath rejected child path: %v", err)
+	}
+	if got != filepath.Clean(target) {
+		t.Fatalf("managedSubpath() = %q, want %q", got, filepath.Clean(target))
+	}
+}
+
+func TestManagedSubpathRejectsRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sites")
+
+	if _, err := managedSubpath(root, root, "网站目录"); err == nil {
+		t.Fatal("expected root path to be rejected")
+	}
+}
+
+func TestManagedSubpathRejectsEscape(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sites")
+	target := filepath.Join(root, "..", "outside")
+
+	if _, err := managedSubpath(root, target, "网站目录"); err == nil {
+		t.Fatal("expected escaped path to be rejected")
+	}
+}

@@ -68,6 +68,25 @@ func createSiteLogDir(logDir string) error {
 	return nil
 }
 
+func managedSubpath(rootPath, targetPath, label string) (string, error) {
+	rootPath = strings.TrimSpace(rootPath)
+	targetPath = strings.TrimSpace(targetPath)
+	if rootPath == "" || targetPath == "" {
+		return "", fmt.Errorf("%s路径为空", label)
+	}
+
+	root := filepath.Clean(rootPath)
+	target := filepath.Clean(targetPath)
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return "", fmt.Errorf("%s路径校验失败: %w", label, err)
+	}
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%s路径不在允许目录内: %s", label, targetPath)
+	}
+	return target, nil
+}
+
 func ensureCreateSiteResourcesAvailable(systemUser, webRoot, logDir, dbName, dbUser, phpPoolPath, nginxConfPath, nginxEnabledPath, phpSockPath string) error {
 	db := database.GetDB()
 	if db != nil {
@@ -431,28 +450,61 @@ func executeDeleteSite(task *Task) TaskResult {
 	site := payload.Site
 	cfg := config.AppConfig
 
+	webRoot, err := managedSubpath(cfg.Paths.WWWRoot, site.WebRoot, "网站目录")
+	if err != nil {
+		return TaskResult{Success: false, Message: err.Error()}
+	}
+	logDir, err := managedSubpath(cfg.Paths.WWWLogs, site.LogDir, "日志目录")
+	if err != nil {
+		return TaskResult{Success: false, Message: err.Error()}
+	}
+	phpPoolPath, err := managedSubpath(cfg.Paths.PHPFPMPool, site.PHPPoolPath, "PHP-FPM配置")
+	if err != nil {
+		return TaskResult{Success: false, Message: err.Error()}
+	}
+	nginxConfPath, err := managedSubpath(cfg.Paths.NginxSitesAvailable, site.NginxConfPath, "Nginx配置")
+	if err != nil {
+		return TaskResult{Success: false, Message: err.Error()}
+	}
+	enabledPath := nginxEnabledPath(cfg, nginxConfPath, site.Domain)
+	enabledPath, err = managedSubpath(cfg.Paths.NginxSitesEnabled, enabledPath, "Nginx启用链接")
+	if err != nil {
+		return TaskResult{Success: false, Message: err.Error()}
+	}
+	secretsDir, err := managedSubpath("/var/wp-panel/site-secrets", filepath.Join("/var/wp-panel/site-secrets", site.Domain), "站点密钥目录")
+	if err != nil {
+		return TaskResult{Success: false, Message: err.Error()}
+	}
+	logrotatePath, err := managedSubpath("/etc/logrotate.d", filepath.Join("/etc/logrotate.d", "wppanel-"+site.Domain), "日志轮转配置")
+	if err != nil {
+		return TaskResult{Success: false, Message: err.Error()}
+	}
+	certDir, err := managedSubpath(cfg.Paths.Certificates, filepath.Join(cfg.Paths.Certificates, site.Domain), "证书目录")
+	if err != nil {
+		return TaskResult{Success: false, Message: err.Error()}
+	}
+
 	if _, err := executeCommand("userdel", "-r", "-f", site.SystemUser); err != nil {
 		fmt.Fprintf(os.Stderr, "删除系统用户警告: %v\n", err)
 	}
 
-	os.RemoveAll(site.WebRoot)
-	os.RemoveAll(site.LogDir)
-	os.RemoveAll(filepath.Join("/var/wp-panel/site-secrets", site.Domain))
+	os.RemoveAll(webRoot)
+	os.RemoveAll(logDir)
+	os.RemoveAll(secretsDir)
 
 	// Clean up logrotate config
-	os.Remove("/etc/logrotate.d/wppanel-" + site.Domain)
+	os.Remove(logrotatePath)
 
 	_ = dropMariaDBDatabase(site.DBName, site.DBUser, cfg)
 
-	os.Remove(site.PHPPoolPath)
-	enabledPath := nginxEnabledPath(cfg, site.NginxConfPath, site.Domain)
+	os.Remove(phpPoolPath)
 	os.Remove(enabledPath)
-	os.Remove(site.NginxConfPath)
+	os.Remove(nginxConfPath)
 
 	exec.Command("nginx", "-s", "reload").Run()
 	exec.Command("systemctl", "reload", "php8.3-fpm").Run()
 
-	os.RemoveAll(filepath.Join(cfg.Paths.Certificates, site.Domain))
+	os.RemoveAll(certDir)
 
 	db := database.GetDB()
 	if _, err := db.Exec("DELETE FROM websites WHERE id = ?", site.ID); err != nil {
@@ -470,10 +522,33 @@ func executePauseSite(task *Task) TaskResult {
 	site := payload.Site
 	cfg := config.AppConfig
 
-	enabledPath := nginxEnabledPath(cfg, site.NginxConfPath, site.Domain)
-	os.Remove(enabledPath)
+	nginxConfPath, err := managedSubpath(cfg.Paths.NginxSitesAvailable, site.NginxConfPath, "Nginx配置")
+	if err != nil {
+		return TaskResult{Success: false, Message: err.Error()}
+	}
+	enabledPath := nginxEnabledPath(cfg, nginxConfPath, site.Domain)
+	enabledPath, err = managedSubpath(cfg.Paths.NginxSitesEnabled, enabledPath, "Nginx启用链接")
+	if err != nil {
+		return TaskResult{Success: false, Message: err.Error()}
+	}
+	var removedEnabled bool
+	if _, err := os.Lstat(enabledPath); err == nil {
+		if err := os.Remove(enabledPath); err != nil {
+			return TaskResult{Success: false, Message: "移除Nginx启用链接失败: " + err.Error()}
+		}
+		removedEnabled = true
+	} else if !os.IsNotExist(err) {
+		return TaskResult{Success: false, Message: "检查Nginx启用链接失败: " + err.Error()}
+	}
 
 	if out, err := exec.Command("nginx", "-s", "reload").CombinedOutput(); err != nil {
+		if removedEnabled {
+			if restoreErr := os.Symlink(nginxConfPath, enabledPath); restoreErr != nil {
+				log.Printf("暂停失败后恢复Nginx启用链接失败 path=%s: %v", enabledPath, restoreErr)
+			} else {
+				exec.Command("nginx", "-s", "reload").Run()
+			}
+		}
 		return TaskResult{Success: false, Message: "Nginx 重载失败: " + string(out)}
 	}
 
@@ -493,14 +568,35 @@ func executeEnableSite(task *Task) TaskResult {
 	site := payload.Site
 	cfg := config.AppConfig
 
-	enabledPath := nginxEnabledPath(cfg, site.NginxConfPath, site.Domain)
+	nginxConfPath, err := managedSubpath(cfg.Paths.NginxSitesAvailable, site.NginxConfPath, "Nginx配置")
+	if err != nil {
+		return TaskResult{Success: false, Message: err.Error()}
+	}
+	enabledPath := nginxEnabledPath(cfg, nginxConfPath, site.Domain)
+	enabledPath, err = managedSubpath(cfg.Paths.NginxSitesEnabled, enabledPath, "Nginx启用链接")
+	if err != nil {
+		return TaskResult{Success: false, Message: err.Error()}
+	}
+	oldTarget, hadOldLink := "", false
+	if target, err := os.Readlink(enabledPath); err == nil {
+		oldTarget = target
+		hadOldLink = true
+	}
 	os.Remove(enabledPath)
-	if err := os.Symlink(site.NginxConfPath, enabledPath); err != nil {
+	if err := os.Symlink(nginxConfPath, enabledPath); err != nil {
 		log.Printf("创建软链接失败: %v", err)
 		return TaskResult{Success: false, Message: "创建软链接失败"}
 	}
 
 	if out, err := exec.Command("nginx", "-s", "reload").CombinedOutput(); err != nil {
+		_ = os.Remove(enabledPath)
+		if hadOldLink {
+			if restoreErr := os.Symlink(oldTarget, enabledPath); restoreErr != nil {
+				log.Printf("启用失败后恢复Nginx启用链接失败 path=%s: %v", enabledPath, restoreErr)
+			} else {
+				exec.Command("nginx", "-s", "reload").Run()
+			}
+		}
 		return TaskResult{Success: false, Message: "Nginx 重载失败: " + string(out)}
 	}
 
@@ -757,18 +853,25 @@ func nilIfEmpty(s string) interface{} {
 
 func ReinstallWordPress(packagePath, webRoot, dbName, dbUser, systemUser string, cfg *config.Config,
 	cleanDefaults, removeThemes bool, installThemes, installPlugins []string) error {
-	os.RemoveAll(webRoot)
-	if err := os.MkdirAll(webRoot, 0755); err != nil {
-		return fmt.Errorf("重建网站目录失败: %w", err)
+	webRoot, err := managedSubpath(cfg.Paths.WWWRoot, webRoot, "网站目录")
+	if err != nil {
+		return err
 	}
 
 	tmpDir := "/tmp/wp_reinstall_" + dbName + "_" + generatePassword(8)
-	if err := deployWordPress(packagePath, webRoot, tmpDir); err != nil {
+	tmpWebRoot := filepath.Join(filepath.Dir(webRoot), "."+filepath.Base(webRoot)+".reinstall_"+generatePassword(8))
+	os.RemoveAll(tmpWebRoot)
+	defer os.RemoveAll(tmpWebRoot)
+
+	if err := os.MkdirAll(tmpWebRoot, 0755); err != nil {
+		return fmt.Errorf("创建临时网站目录失败: %w", err)
+	}
+	if err := deployWordPress(packagePath, tmpWebRoot, tmpDir); err != nil {
 		return fmt.Errorf("WordPress 部署失败: %w", err)
 	}
 
 	if err := dropMariaDBDatabase(dbName, dbUser, cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "删除旧数据库警告: %v\n", err)
+		return fmt.Errorf("删除旧数据库失败: %w", err)
 	}
 
 	dbPassword := generatePassword(24)
@@ -776,12 +879,19 @@ func ReinstallWordPress(packagePath, webRoot, dbName, dbUser, systemUser string,
 		return fmt.Errorf("重建数据库失败: %w", err)
 	}
 
-	if err := generateWPConfig(webRoot, filepath.Base(webRoot), dbName, dbUser, dbPassword); err != nil {
+	if err := generateWPConfig(tmpWebRoot, filepath.Base(webRoot), dbName, dbUser, dbPassword); err != nil {
 		return fmt.Errorf("生成 wp-config.php 失败: %w", err)
 	}
 
-	if _, err := executeCommand("chown", "-R", siteOwner(systemUser), webRoot); err != nil {
-		fmt.Fprintf(os.Stderr, "设置权限警告: %v\n", err)
+	if _, err := executeCommand("chown", "-R", siteOwner(systemUser), tmpWebRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "设置临时目录权限警告: %v\n", err)
+	}
+
+	if err := os.RemoveAll(webRoot); err != nil {
+		return fmt.Errorf("清理旧网站目录失败: %w", err)
+	}
+	if err := os.Rename(tmpWebRoot, webRoot); err != nil {
+		return fmt.Errorf("替换网站目录失败: %w", err)
 	}
 	if err := HardenSiteSensitivePermissions(filepath.Base(webRoot), webRoot, systemUser); err != nil {
 		fmt.Fprintf(os.Stderr, "设置安全权限警告: %v\n", err)

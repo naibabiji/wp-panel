@@ -1207,13 +1207,39 @@ func (h *WebsiteHandler) ReinstallWordPress(c *gin.Context) {
 	if err := executor.ReinstallWordPress(cfg.Paths.WordPressPackage, webRoot, dbName, dbUser, systemUser, cfg,
 		req.CleanDefaults, req.RemoveUnusedThemes, req.InstallThemes, req.InstallPlugins); err != nil {
 		log.Printf("WordPress 重装失败 site=%d: %v", id, err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("WordPress 重装失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(reinstallWordPressErrorMessage(err)))
 		return
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"message": "WordPress 已重装完成，数据库和文件均已恢复为全新状态",
 	}))
+}
+
+func reinstallWordPressErrorMessage(err error) string {
+	const prefix = "WordPress 重装失败"
+	if err == nil {
+		return prefix
+	}
+	stage := strings.TrimSpace(err.Error())
+	if idx := strings.IndexAny(stage, ":："); idx >= 0 {
+		stage = strings.TrimSpace(stage[:idx])
+	}
+	switch stage {
+	case "网站目录路径为空",
+		"网站目录路径校验失败",
+		"网站目录路径不在允许目录内",
+		"创建临时网站目录失败",
+		"WordPress 部署失败",
+		"删除旧数据库失败",
+		"重建数据库失败",
+		"生成 wp-config.php 失败",
+		"清理旧网站目录失败",
+		"替换网站目录失败":
+		return prefix + "：" + stage
+	default:
+		return prefix
+	}
 }
 
 // ============================================================

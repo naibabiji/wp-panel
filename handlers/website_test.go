@@ -1,6 +1,9 @@
 package handlers
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestNormalizeWPSiteURL(t *testing.T) {
 	got, err := normalizeWPSiteURL(" https://example.com/wp ")
@@ -21,5 +24,19 @@ func TestNormalizeWPSiteURLRejectsInvalidValues(t *testing.T) {
 		if _, err := normalizeWPSiteURL(value); err == nil {
 			t.Fatalf("expected %q to be rejected", value)
 		}
+	}
+}
+
+func TestReinstallWordPressErrorMessageShowsSafeStage(t *testing.T) {
+	msg := reinstallWordPressErrorMessage(errors.New("重建数据库失败: mysql: Access denied for /www/server/panel/config.json"))
+	if msg != "WordPress 重装失败：重建数据库失败" {
+		t.Fatalf("message = %q", msg)
+	}
+}
+
+func TestReinstallWordPressErrorMessageHidesUnknownDetails(t *testing.T) {
+	msg := reinstallWordPressErrorMessage(errors.New("mysql: Access denied for /www/server/panel/config.json"))
+	if msg != "WordPress 重装失败" {
+		t.Fatalf("message = %q", msg)
 	}
 }
