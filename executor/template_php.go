@@ -30,6 +30,10 @@ server {
 	    access_log off;
 	    {{end}}
 
+    {{if .FCacheEnabled}}
+    set $wp_skip_cache 0;
+    {{end}}
+
     include /www/server/panel/nginx-custom/{{.Domain}}.conf;
 
     location / {
@@ -46,7 +50,6 @@ server {
         fastcgi_buffers 8 128k;
         fastcgi_busy_buffers_size 256k;
 	    {{if .FCacheEnabled}}
-	    set $wp_skip_cache 0;
 	    if ($request_method = POST) { set $wp_skip_cache 1; }
 	    if ($query_string != "") { set $wp_skip_cache 1; }
 	    fastcgi_cache WP_CACHE;
@@ -141,6 +144,10 @@ server {
 	    access_log off;
 	    {{end}}
 
+    {{if .FCacheEnabled}}
+    set $wp_skip_cache 0;
+    {{end}}
+
     include /www/server/panel/nginx-custom/{{.Domain}}.conf;
 
     location / {
@@ -158,7 +165,6 @@ server {
         fastcgi_buffers 8 128k;
         fastcgi_busy_buffers_size 256k;
 	    {{if .FCacheEnabled}}
-	    set $wp_skip_cache 0;
 	    if ($request_method = POST) { set $wp_skip_cache 1; }
 	    if ($query_string != "") { set $wp_skip_cache 1; }
 	    fastcgi_cache WP_CACHE;

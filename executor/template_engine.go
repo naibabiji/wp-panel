@@ -481,6 +481,10 @@ server {
 	    {{end}}
     access_log /www/wwwlogs/{{.Domain}}/wp-security.log combined if=$wp_security_loggable;
 
+    {{if .FCacheEnabled}}
+    set $wp_skip_cache 0;
+    {{end}}
+
     include /www/server/panel/nginx-custom/{{.Domain}}.conf;
 
     location ~* /dup-installer/ {
@@ -508,11 +512,10 @@ server {
         fastcgi_buffers 8 128k;
         fastcgi_busy_buffers_size 256k;
 	    {{if .FCacheEnabled}}
-	    set $wp_skip_cache 0;
 	    if ($request_method = POST) { set $wp_skip_cache 1; }
 	    if ($query_string != "") { set $wp_skip_cache 1; }
-	    if ($http_cookie ~* "wordpress_logged_in|comment_author|woocommerce|wp_woocommerce_session|wp-resetpass") { set $wp_skip_cache 1; }
-	    if ($request_uri ~* "/wp-admin/|/wp-login.php|/cart/|/checkout/|/my-account/") { set $wp_skip_cache 1; }
+	    if ($http_cookie ~* "wordpress_logged_in|wordpress_sec_|wp-settings-|comment_author|woocommerce|wp_woocommerce_session|wp-resetpass") { set $wp_skip_cache 1; }
+	    if ($request_uri ~* "/wp-admin/|/wp-login.php|/wp-signup.php|/cart/|/checkout/|/my-account/") { set $wp_skip_cache 1; }
 	    fastcgi_cache WP_CACHE;
 	    fastcgi_cache_key "$scheme$request_method$host$request_uri$wp_cache_ver";
 	    fastcgi_cache_valid 200 301 {{.FCacheTTL}}s;
@@ -635,6 +638,10 @@ server {
 	    {{end}}
     access_log /www/wwwlogs/{{.Domain}}/wp-security.log combined if=$wp_security_loggable;
 
+    {{if .FCacheEnabled}}
+    set $wp_skip_cache 0;
+    {{end}}
+
     include /www/server/panel/nginx-custom/{{.Domain}}.conf;
 
     location ~* /dup-installer/ {
@@ -662,14 +669,11 @@ server {
         fastcgi_buffer_size 128k;
         fastcgi_buffers 8 128k;
         fastcgi_busy_buffers_size 256k;
-    }
-
 	    {{if .FCacheEnabled}}
-	    set $wp_skip_cache 0;
 	    if ($request_method = POST) { set $wp_skip_cache 1; }
 	    if ($query_string != "") { set $wp_skip_cache 1; }
-	    if ($http_cookie ~* "wordpress_logged_in|comment_author|woocommerce|wp_woocommerce_session|wp-resetpass") { set $wp_skip_cache 1; }
-	    if ($request_uri ~* "/wp-admin/|/wp-login.php|/cart/|/checkout/|/my-account/") { set $wp_skip_cache 1; }
+	    if ($http_cookie ~* "wordpress_logged_in|wordpress_sec_|wp-settings-|comment_author|woocommerce|wp_woocommerce_session|wp-resetpass") { set $wp_skip_cache 1; }
+	    if ($request_uri ~* "/wp-admin/|/wp-login.php|/wp-signup.php|/cart/|/checkout/|/my-account/") { set $wp_skip_cache 1; }
 	    fastcgi_cache WP_CACHE;
 	    fastcgi_cache_key "$scheme$request_method$host$request_uri$wp_cache_ver";
 	    fastcgi_cache_valid 200 301 {{.FCacheTTL}}s;
@@ -679,6 +683,8 @@ server {
 	    fastcgi_cache_lock on;
 	    add_header X-FastCGI-Cache $upstream_cache_status;
 	    {{end}}
+    }
+
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
         expires 30d;
         add_header Cache-Control "public, immutable";

@@ -165,15 +165,41 @@
 
             <hr class="my-5 border-gray-700">
 
-            <h3 class="text-lg font-semibold text-white mb-4">Nginx 自定义配置</h3>
-            <p class="text-gray-500 text-xs mb-3">添加 WordPress 插件所需的 Nginx 规则。面板安全规则不受影响，语法错误会自动拒绝保存。</p>
+            <h3 class="text-lg font-semibold text-white mb-2">Nginx 自定义配置</h3>
+            <details class="mb-4">
+                <summary class="cursor-pointer text-blue-400 hover:text-blue-300 text-xs">配置说明与示例</summary>
+                <div class="mt-2 ml-2 space-y-2 text-gray-500 text-xs">
+                    <p><strong class="text-gray-400">pre.conf</strong> — 位于 <code class="text-gray-400">root</code> 指令之前，适合设置上传大小限制、早期 rewrite 等需要在请求处理最前端生效的指令。</p>
+                    <pre class="bg-gray-900 p-2 rounded leading-relaxed"># 上传文件大小限制
+client_max_body_size 128m;
+
+# 自定义变量（供 .conf 使用）
+set $custom_var "value";</pre>
+                    <p><strong class="text-gray-400">.conf</strong> — 位于 <code class="text-gray-400">location</code> 块之前，适合添加自定义 location 块、缓存绕过规则、插件 rewrite 等。</p>
+                    <pre class="bg-gray-900 p-2 rounded leading-relaxed"># 绕过 FastCGI 缓存：指定路径不走缓存
+if ($request_uri ~* "/ai-assistant") {
+    set $wp_skip_cache 1;
+}
+
+# 绕过缓存：指定 Cookie 不走缓存
+if ($http_cookie ~* "my_app_session") {
+    set $wp_skip_cache 1;
+}
+
+# 自定义 location 块
+location ^~ /api/ {
+    proxy_pass http://127.0.0.1:3000;
+}</pre>
+                    <p class="text-yellow-500">⚠️ pre.conf 和 .conf 都在 server 级别生效，不要将 location 块嵌套到其他 location 中。</p>
+                </div>
+            </details>
             <div class="mb-3">
-                <label class="block text-sm text-gray-300 mb-1">Server 级配置（pre.conf — client_max_body_size 等指令）</label>
-                <textarea x-model="nginxPreContent" rows="3" class="w-full rounded p-2 text-xs font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;" placeholder="# 示例：client_max_body_size 128m;"></textarea>
+                <label class="block text-sm text-gray-300 mb-1">Server 级配置（pre.conf — root 指令之前）</label>
+                <textarea x-model="nginxPreContent" rows="3" class="w-full rounded p-2 text-xs font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;" placeholder="client_max_body_size 128m;"></textarea>
             </div>
             <div class="mb-4">
-                <label class="block text-sm text-gray-300 mb-1">Location 级配置（.conf — 插件 rewrite、缓存规则等）</label>
-                <textarea x-model="nginxContent" rows="6" class="w-full rounded p-2 text-xs font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;" placeholder="# W3 Total Cache 或 WP Rocket 的 Nginx 规则粘贴到此处"></textarea>
+                <label class="block text-sm text-gray-300 mb-1">Location 级配置（.conf — location 块之前，缓存绕过规则写这里）</label>
+                <textarea x-model="nginxContent" rows="6" class="w-full rounded p-2 text-xs font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;" placeholder="if ($request_uri ~* &quot;/ai-assistant&quot;) { set $wp_skip_cache 1; }"></textarea>
             </div>
             <div class="flex space-x-3">
                 <button @click="saveNginxCustom()" :disabled="nginxSubmitting" class="btn-primary text-sm" x-text="nginxSubmitting ? '校验中...' : '保存并生效'"></button>
