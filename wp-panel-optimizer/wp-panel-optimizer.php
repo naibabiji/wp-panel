@@ -2,8 +2,8 @@
 /**
  * Plugin Name: WP Panel Optimizer
  * Plugin URI:  https://github.com/naibabiji/wp-panel
- * Description: 与 WP Panel 面板配合，管理 FastCGI 缓存、调试模式、文章修订、内存限制等优化项。发布/更新文章自动清除缓存。
- * Version:     1.1.2
+ * Description: 与 WP Panel 面板配合，管理 FastCGI 缓存、预加载、调试模式、文章修订、内存限制等优化项。发布/更新文章自动清除缓存。
+ * Version:     1.1.3
  * Author:      WP Panel
  * Author URI:  https://blog.naibabiji.com
  * License:     GPL-2.0+
@@ -23,11 +23,16 @@ function wpp_optimizer_uninstall() {
     delete_option('wpp_optimizer_wp_debug');
     delete_option('wpp_optimizer_post_revisions');
     delete_option('wpp_optimizer_memory_limit');
+    delete_option('wpp_optimizer_preload_enabled');
+    delete_option('wpp_optimizer_preload_limit');
+    delete_option('wpp_optimizer_preload_queue');
+    delete_option('wpp_optimizer_preload_status');
+    wp_clear_scheduled_hook('wpp_optimizer_preload_batch');
 }
 
 class WP_Panel_Optimizer {
 
-    const VERSION = '1.1.2';
+    const VERSION = '1.1.3';
 
     const OPTION_FCACHE_ENABLED = 'wpp_optimizer_fcache_enabled';
     const OPTION_FCACHE_TTL     = 'wpp_optimizer_fcache_ttl';
@@ -39,6 +44,11 @@ class WP_Panel_Optimizer {
     const OPTION_WP_DEBUG       = 'wpp_optimizer_wp_debug';
     const OPTION_POST_REVISIONS = 'wpp_optimizer_post_revisions';
     const OPTION_MEMORY_LIMIT   = 'wpp_optimizer_memory_limit';
+    const OPTION_PRELOAD_ENABLED = 'wpp_optimizer_preload_enabled';
+    const OPTION_PRELOAD_LIMIT   = 'wpp_optimizer_preload_limit';
+    const OPTION_PRELOAD_QUEUE   = 'wpp_optimizer_preload_queue';
+    const OPTION_PRELOAD_STATUS  = 'wpp_optimizer_preload_status';
+    const PRELOAD_HOOK           = 'wpp_optimizer_preload_batch';
 
     private static function is_path_allowed_by_open_basedir($path) {
         $openBasedir = ini_get('open_basedir');
@@ -123,12 +133,15 @@ class WP_Panel_Optimizer {
         add_action('admin_bar_menu', [__CLASS__, 'admin_bar_button'], 100);
         add_action('admin_menu', [__CLASS__, 'settings_page']);
         add_action('admin_post_wpp_cache_clear', [__CLASS__, 'handle_clear']);
+        add_action('admin_post_wpp_cache_preload', [__CLASS__, 'handle_preload']);
+        add_action('admin_post_wpp_cache_preload_stop', [__CLASS__, 'handle_preload_stop']);
         add_action('save_post', [__CLASS__, 'auto_clear'], 99, 1);
         add_action('deleted_post', [__CLASS__, 'auto_clear'], 99, 1);
         add_action('wp_update_comment_count', [__CLASS__, 'auto_comment_clear']);
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), [__CLASS__, 'action_links']);
         add_action('admin_notices', [__CLASS__, 'clear_notice']);
         add_action('wp_ajax_wpp_optimizer_check_update', [__CLASS__, 'ajax_check_update']);
+        add_action(self::PRELOAD_HOOK, [__CLASS__, 'process_preload_batch']);
 
         // 禁止检测更新：完全屏蔽更新提示和通知
         if (get_option(self::OPTION_NO_UPDATES, '0') === '1') {
@@ -210,9 +223,12 @@ class WP_Panel_Optimizer {
             $wpDebug        = !empty($_POST['wp_debug'])        ? true : false;
             $postRevisions  = (isset($_POST['post_revisions']) && $_POST['post_revisions'] !== '') ? intval($_POST['post_revisions']) : -1;
             $memoryLimit    = isset($_POST['memory_limit']) ? sanitize_text_field($_POST['memory_limit']) : '';
+            $preloadEnabled = !empty($_POST['preload_enabled']) ? true : false;
+            $preloadLimit   = isset($_POST['preload_limit']) ? intval(wp_unslash($_POST['preload_limit'])) : 100;
 
             if ($fcacheTTL < 10)  $fcacheTTL = 300;
             if ($fcacheTTL > 86400) $fcacheTTL = 86400;
+            $preloadLimit = self::normalize_preload_limit($preloadLimit);
 
             update_option(self::OPTION_FCACHE_ENABLED, $fcacheEnabled ? '1' : '0');
             update_option(self::OPTION_FCACHE_TTL, $fcacheTTL);
@@ -221,6 +237,8 @@ class WP_Panel_Optimizer {
             update_option(self::OPTION_WP_DEBUG, $wpDebug ? '1' : '0');
             update_option(self::OPTION_POST_REVISIONS, $postRevisions);
             update_option(self::OPTION_MEMORY_LIMIT, $memoryLimit);
+            update_option(self::OPTION_PRELOAD_ENABLED, $preloadEnabled ? '1' : '0');
+            update_option(self::OPTION_PRELOAD_LIMIT, $preloadLimit);
 
             $pushed = self::push_optimizer_settings($fcacheEnabled, $fcacheTTL, $noUpdates, $noFileEdit, $wpDebug, $postRevisions, $memoryLimit);
             if ($pushed === true) {
@@ -239,6 +257,9 @@ class WP_Panel_Optimizer {
         $postRevisions  = intval(get_option(self::OPTION_POST_REVISIONS, '-1'));
         $memoryLimit    = get_option(self::OPTION_MEMORY_LIMIT, '');
         $log            = get_option(self::OPTION_LOG, []);
+        $preloadEnabled = get_option(self::OPTION_PRELOAD_ENABLED, '0') === '1';
+        $preloadLimit   = self::normalize_preload_limit(get_option(self::OPTION_PRELOAD_LIMIT, 100));
+        $preloadStatus  = self::get_preload_status();
         ?>
         <div class="wrap">
             <?php $pluginVersion = WP_Panel_Optimizer::VERSION; ?>
@@ -273,6 +294,20 @@ class WP_Panel_Optimizer {
                         <td>
                             <input id="wpp-fcache-ttl" name="fcache_ttl" type="number" class="regular-text" value="<?php echo esc_attr($fcacheTTL); ?>" min="10" max="86400">
                             <p class="description">建议 300-3600 秒（5分钟到1小时）。</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th><label for="wpp-preload-enabled">缓存预加载</label></th>
+                        <td>
+                            <label><input id="wpp-preload-enabled" name="preload_enabled" type="checkbox" value="1" <?php checked($preloadEnabled); ?>> 清除缓存后自动预加载</label>
+                            <p class="description">插件会以未登录访客身份访问本站公开页面，让 Nginx 自然生成 FastCGI 缓存文件。默认低速批处理，避免压垮小服务器。</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th><label for="wpp-preload-limit">单次最多预加载 URL</label></th>
+                        <td>
+                            <input id="wpp-preload-limit" name="preload_limit" type="number" class="small-text" value="<?php echo esc_attr($preloadLimit); ?>" min="10" max="500">
+                            <p class="description">范围 10-500。首页优先，其次为最近更新的公开文章、页面和公开分类归档。</p>
                         </td>
                     </tr>
                     <tr>
@@ -328,6 +363,38 @@ class WP_Panel_Optimizer {
                     <button type="button" id="wpp-verify-btn" class="button">验证连接</button>
                 </p>
             </form>
+
+            <hr>
+            <h2>缓存预加载</h2>
+            <p>当前状态：<strong><?php echo esc_html($preloadStatus['running'] ? '运行中' : '空闲'); ?></strong>
+                <?php if (!empty($preloadStatus['last_message'])): ?>
+                    <span class="description"><?php echo esc_html($preloadStatus['last_message']); ?></span>
+                <?php endif; ?>
+            </p>
+            <p class="description">
+                队列：<?php echo intval($preloadStatus['queued']); ?>，
+                成功：<?php echo intval($preloadStatus['done']); ?>，
+                失败：<?php echo intval($preloadStatus['failed']); ?>
+                <?php if (!empty($preloadStatus['started_at'])): ?>
+                    ，开始：<?php echo esc_html($preloadStatus['started_at']); ?>
+                <?php endif; ?>
+                <?php if (!empty($preloadStatus['finished_at'])): ?>
+                    ，结束：<?php echo esc_html($preloadStatus['finished_at']); ?>
+                <?php endif; ?>
+            </p>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;margin-right:8px;">
+                <?php wp_nonce_field('wpp_cache_preload'); ?>
+                <input type="hidden" name="action" value="wpp_cache_preload">
+                <button type="submit" class="button" <?php disabled(!$fcacheEnabled); ?>>立即预加载</button>
+            </form>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;">
+                <?php wp_nonce_field('wpp_cache_preload_stop'); ?>
+                <input type="hidden" name="action" value="wpp_cache_preload_stop">
+                <button type="submit" class="button" <?php disabled(!$preloadStatus['running']); ?>>停止预加载</button>
+            </form>
+            <?php if (!$fcacheEnabled): ?>
+                <p class="description">请先开启 FastCGI 缓存，再执行预加载。</p>
+            <?php endif; ?>
 
             <?php if (!empty($log)): ?>
             <hr>
@@ -399,12 +466,26 @@ class WP_Panel_Optimizer {
     }
 
     public static function clear_notice() {
-        if (!isset($_GET['wpp_cleared'])) return;
-        if (!isset($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'wpp_clear_notice')) return;
-        if ($_GET['wpp_cleared'] === '1') {
-            echo '<div class="notice notice-success is-dismissible"><p>Nginx 缓存已清除，旧页面将在几分钟内更新。</p></div>';
-        } else {
-            echo '<div class="notice notice-error is-dismissible"><p>清除缓存失败，请检查面板连接是否正常。</p></div>';
+        if (isset($_GET['wpp_cleared'])) {
+            if (!isset($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'wpp_clear_notice')) return;
+            if ($_GET['wpp_cleared'] === '1') {
+                echo '<div class="notice notice-success is-dismissible"><p>Nginx 缓存已清除，旧页面将在几分钟内更新。</p></div>';
+            } else {
+                echo '<div class="notice notice-error is-dismissible"><p>清除缓存失败，请检查面板连接是否正常。</p></div>';
+            }
+        }
+
+        if (isset($_GET['wpp_preload'])) {
+            if (!isset($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'wpp_preload_notice')) return;
+            $state = sanitize_key(wp_unslash($_GET['wpp_preload']));
+            $count = isset($_GET['count']) ? intval($_GET['count']) : 0;
+            if ($state === 'queued') {
+                echo '<div class="notice notice-success is-dismissible"><p>缓存预加载已加入队列，共 ' . esc_html($count) . ' 个 URL。</p></div>';
+            } elseif ($state === 'stopped') {
+                echo '<div class="notice notice-warning is-dismissible"><p>缓存预加载已停止，当前队列已清空。</p></div>';
+            } else {
+                echo '<div class="notice notice-error is-dismissible"><p>缓存预加载启动失败，请确认 FastCGI 缓存已开启。</p></div>';
+            }
         }
     }
 
@@ -424,8 +505,38 @@ class WP_Panel_Optimizer {
         $resp = self::do_clear();
         $success = !empty($resp['success']);
         self::log_clear('manual', $success);
+        if ($success) {
+            self::maybe_queue_preload(self::build_full_preload_urls(), 'manual_clear');
+        }
         wp_safe_redirect(add_query_arg(['wpp_cleared' => $success ? '1' : '0', '_wpnonce' => wp_create_nonce('wpp_clear_notice')], wp_get_referer() ?: admin_url()));
         exit;
+    }
+
+    public static function handle_preload() {
+        if (!current_user_can('manage_options')) return;
+        check_admin_referer('wpp_cache_preload');
+
+        if (get_option(self::OPTION_FCACHE_ENABLED, '0') !== '1') {
+            self::redirect_preload_notice('failed', 0);
+        }
+
+        $count = self::queue_preload(self::build_full_preload_urls(), 'manual');
+        self::redirect_preload_notice($count > 0 ? 'queued' : 'failed', $count);
+    }
+
+    public static function handle_preload_stop() {
+        if (!current_user_can('manage_options')) return;
+        check_admin_referer('wpp_cache_preload_stop');
+
+        wp_clear_scheduled_hook(self::PRELOAD_HOOK);
+        delete_option(self::OPTION_PRELOAD_QUEUE);
+        $status = self::get_preload_status();
+        $status['running'] = false;
+        $status['queued'] = 0;
+        $status['finished_at'] = current_time('Y-m-d H:i:s');
+        $status['last_message'] = '已手动停止';
+        update_option(self::OPTION_PRELOAD_STATUS, $status, false);
+        self::redirect_preload_notice('stopped', 0);
     }
 
     public static function auto_clear($post_id) {
@@ -443,6 +554,9 @@ class WP_Panel_Optimizer {
         $resp = self::do_clear();
         $success = !empty($resp['success']);
         self::log_clear('auto', $success);
+        if ($success) {
+            self::maybe_queue_preload(self::build_related_preload_urls($post_id), 'content_change');
+        }
     }
 
     public static function auto_comment_clear($_) {
@@ -452,6 +566,9 @@ class WP_Panel_Optimizer {
         $resp = self::do_clear();
         $success = !empty($resp['success']);
         self::log_clear('comment', $success);
+        if ($success) {
+            self::maybe_queue_preload([home_url('/')], 'comment_change');
+        }
     }
 
     private static function log_clear($type, $success) {
@@ -462,6 +579,299 @@ class WP_Panel_Optimizer {
             'success' => $success,
         ]);
         update_option(self::OPTION_LOG, array_slice($log, 0, 10));
+    }
+
+    private static function redirect_preload_notice($state, $count) {
+        wp_safe_redirect(add_query_arg([
+            'wpp_preload' => $state,
+            'count'       => max(0, intval($count)),
+            '_wpnonce'    => wp_create_nonce('wpp_preload_notice'),
+        ], wp_get_referer() ?: admin_url('options-general.php?page=wp-panel-optimizer')));
+        exit;
+    }
+
+    private static function normalize_preload_limit($limit) {
+        $limit = intval($limit);
+        if ($limit < 10) {
+            return 100;
+        }
+        if ($limit > 500) {
+            return 500;
+        }
+        return $limit;
+    }
+
+    private static function get_preload_limit() {
+        return self::normalize_preload_limit(get_option(self::OPTION_PRELOAD_LIMIT, 100));
+    }
+
+    private static function get_preload_status() {
+        $status = get_option(self::OPTION_PRELOAD_STATUS, []);
+        if (!is_array($status)) {
+            $status = [];
+        }
+        return array_merge([
+            'running'      => false,
+            'queued'       => 0,
+            'done'         => 0,
+            'failed'       => 0,
+            'reason'       => '',
+            'started_at'   => '',
+            'finished_at'  => '',
+            'last_message' => '',
+        ], $status);
+    }
+
+    private static function maybe_queue_preload($urls, $reason) {
+        if (get_option(self::OPTION_PRELOAD_ENABLED, '0') !== '1') {
+            return 0;
+        }
+        if (get_option(self::OPTION_FCACHE_ENABLED, '0') !== '1') {
+            return 0;
+        }
+        return self::queue_preload($urls, $reason);
+    }
+
+    private static function queue_preload($urls, $reason) {
+        $urls = self::filter_preload_urls($urls, self::get_preload_limit());
+        if (empty($urls)) {
+            return 0;
+        }
+
+        $queue = get_option(self::OPTION_PRELOAD_QUEUE, []);
+        if (!is_array($queue)) {
+            $queue = [];
+        }
+        $queue = self::filter_preload_urls(array_merge($queue, $urls), self::get_preload_limit());
+
+        $status = self::get_preload_status();
+        if (empty($status['running'])) {
+            $status['done'] = 0;
+            $status['failed'] = 0;
+            $status['started_at'] = current_time('Y-m-d H:i:s');
+            $status['finished_at'] = '';
+        }
+        $status['running'] = true;
+        $status['queued'] = count($queue);
+        $status['reason'] = sanitize_key($reason);
+        $status['last_message'] = '等待后台批量预加载';
+
+        update_option(self::OPTION_PRELOAD_QUEUE, array_values($queue), false);
+        update_option(self::OPTION_PRELOAD_STATUS, $status, false);
+
+        if (!wp_next_scheduled(self::PRELOAD_HOOK)) {
+            wp_schedule_single_event(time() + 10, self::PRELOAD_HOOK);
+        }
+        return count($queue);
+    }
+
+    public static function process_preload_batch() {
+        if (get_transient('wpp_optimizer_preload_lock')) {
+            return;
+        }
+        set_transient('wpp_optimizer_preload_lock', 1, 60);
+
+        $queue = get_option(self::OPTION_PRELOAD_QUEUE, []);
+        if (!is_array($queue)) {
+            $queue = [];
+        }
+        $status = self::get_preload_status();
+
+        if (empty($queue)) {
+            $status['running'] = false;
+            $status['queued'] = 0;
+            $status['finished_at'] = current_time('Y-m-d H:i:s');
+            $status['last_message'] = '预加载队列为空';
+            update_option(self::OPTION_PRELOAD_STATUS, $status, false);
+            delete_transient('wpp_optimizer_preload_lock');
+            return;
+        }
+
+        $batch = array_splice($queue, 0, 5);
+        foreach ($batch as $url) {
+            if (!self::is_preload_url_allowed($url)) {
+                $status['failed']++;
+                continue;
+            }
+            $resp = wp_remote_get($url, [
+                'timeout'     => 8,
+                'redirection' => 3,
+                'reject_unsafe_urls' => true,
+                'headers'     => [
+                    'User-Agent' => 'WP Panel Optimizer Preload/' . self::VERSION,
+                    'Accept'     => 'text/html,application/xhtml+xml',
+                ],
+                'cookies'     => [],
+            ]);
+            if (is_wp_error($resp)) {
+                $status['failed']++;
+                continue;
+            }
+            $code = intval(wp_remote_retrieve_response_code($resp));
+            if ($code >= 200 && $code < 400) {
+                $status['done']++;
+            } else {
+                $status['failed']++;
+            }
+        }
+
+        $status['queued'] = count($queue);
+        if (!empty($queue)) {
+            $status['running'] = true;
+            $status['last_message'] = '预加载进行中';
+            update_option(self::OPTION_PRELOAD_QUEUE, array_values($queue), false);
+            update_option(self::OPTION_PRELOAD_STATUS, $status, false);
+            wp_schedule_single_event(time() + 20, self::PRELOAD_HOOK);
+        } else {
+            delete_option(self::OPTION_PRELOAD_QUEUE);
+            $status['running'] = false;
+            $status['finished_at'] = current_time('Y-m-d H:i:s');
+            $status['last_message'] = '预加载完成';
+            update_option(self::OPTION_PRELOAD_STATUS, $status, false);
+        }
+
+        delete_transient('wpp_optimizer_preload_lock');
+    }
+
+    private static function build_full_preload_urls() {
+        $limit = self::get_preload_limit();
+        $urls = [home_url('/')];
+
+        $postTypes = get_post_types(['public' => true], 'names');
+        unset($postTypes['attachment']);
+        if (!empty($postTypes)) {
+            $posts = get_posts([
+                'post_type'      => array_values($postTypes),
+                'post_status'    => 'publish',
+                'posts_per_page' => $limit,
+                'orderby'        => 'modified',
+                'order'          => 'DESC',
+                'no_found_rows'  => true,
+                'fields'         => 'ids',
+            ]);
+            foreach ($posts as $postID) {
+                $urls[] = get_permalink($postID);
+                if (count($urls) >= $limit) {
+                    break;
+                }
+            }
+        }
+
+        if (count($urls) < $limit) {
+            $taxonomies = get_taxonomies(['public' => true], 'names');
+            foreach ($taxonomies as $taxonomy) {
+                $terms = get_terms([
+                    'taxonomy'   => $taxonomy,
+                    'hide_empty' => true,
+                    'number'     => max(1, $limit - count($urls)),
+                ]);
+                if (is_wp_error($terms)) {
+                    continue;
+                }
+                foreach ($terms as $term) {
+                    $link = get_term_link($term);
+                    if (!is_wp_error($link)) {
+                        $urls[] = $link;
+                    }
+                    if (count($urls) >= $limit) {
+                        break 2;
+                    }
+                }
+            }
+        }
+
+        return self::filter_preload_urls($urls, $limit);
+    }
+
+    private static function build_related_preload_urls($postID) {
+        $urls = [home_url('/')];
+        $permalink = get_permalink($postID);
+        if ($permalink) {
+            $urls[] = $permalink;
+        }
+
+        $postType = get_post_type($postID);
+        if ($postType && get_post_type_archive_link($postType)) {
+            $urls[] = get_post_type_archive_link($postType);
+        }
+
+        if ($postType) {
+            $taxonomies = get_object_taxonomies($postType, 'names');
+            foreach ($taxonomies as $taxonomy) {
+                $terms = wp_get_post_terms($postID, $taxonomy);
+                if (is_wp_error($terms)) {
+                    continue;
+                }
+                foreach ($terms as $term) {
+                    $link = get_term_link($term);
+                    if (!is_wp_error($link)) {
+                        $urls[] = $link;
+                    }
+                }
+            }
+        }
+
+        return self::filter_preload_urls($urls, 20);
+    }
+
+    private static function filter_preload_urls($urls, $limit) {
+        $clean = [];
+        $seen = [];
+        foreach ((array) $urls as $url) {
+            $url = esc_url_raw($url);
+            if (!$url || !self::is_preload_url_allowed($url)) {
+                continue;
+            }
+            $key = rtrim($url, '/');
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $clean[] = $url;
+            if (count($clean) >= $limit) {
+                break;
+            }
+        }
+        return $clean;
+    }
+
+    private static function is_preload_url_allowed($url) {
+        $homeHost = strtolower((string) wp_parse_url(home_url('/'), PHP_URL_HOST));
+        $host = strtolower((string) wp_parse_url($url, PHP_URL_HOST));
+        $scheme = strtolower((string) wp_parse_url($url, PHP_URL_SCHEME));
+        $path = (string) wp_parse_url($url, PHP_URL_PATH);
+        $query = wp_parse_url($url, PHP_URL_QUERY);
+
+        if (!$homeHost || !$host || $host !== $homeHost) {
+            return false;
+        }
+        if ($scheme !== 'http' && $scheme !== 'https') {
+            return false;
+        }
+        if ($query !== null && $query !== '') {
+            return false;
+        }
+
+        $path = '/' . ltrim($path, '/');
+        $excluded = [
+            '#^/wp-admin(/|$)#i',
+            '#^/wp-login\.php$#i',
+            '#^/wp-json(/|$)#i',
+            '#^/xmlrpc\.php$#i',
+            '#^/wp-cron\.php$#i',
+            '#/cart(/|$)#i',
+            '#/checkout(/|$)#i',
+            '#/my-account(/|$)#i',
+            '#/feed(/|$)#i',
+            '#/page/[0-9]+/?$#i',
+        ];
+        foreach ($excluded as $pattern) {
+            if (preg_match($pattern, $path)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     // ============================================================
