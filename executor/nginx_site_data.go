@@ -8,11 +8,6 @@ import (
 	"github.com/naibabiji/wp-panel/models"
 )
 
-func nginxDataFromSite(site *models.Website) *NginxSiteData {
-	data, _ := nginxDataFromSiteChecked(site)
-	return data
-}
-
 func nginxDataFromSiteChecked(site *models.Website) (*NginxSiteData, error) {
 	cfg := config.AppConfig
 	aliases := splitAliases(site.Aliases)

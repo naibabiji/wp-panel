@@ -108,7 +108,10 @@ func executeRemoveSSL(task *Task) TaskResult {
 	os.RemoveAll(certDir)
 
 	engine := NewTemplateEngine(cfg.Panel.BackupDir)
-	nginxData := nginxDataFromSite(site)
+	nginxData, err := nginxDataFromSiteChecked(site)
+	if err != nil {
+		return taskFailure("CDN 真实 IP 配置无效", err)
+	}
 	nginxData.UseSSL = false
 	nginxData.SSLCertPath = ""
 	nginxData.SSLKeyPath = ""
@@ -255,7 +258,10 @@ func applySSLToSite(site *models.Website, certPath, keyPath string, expiry time.
 	cfg := config.AppConfig
 
 	engine := NewTemplateEngine(cfg.Panel.BackupDir)
-	nginxData := nginxDataFromSite(site)
+	nginxData, err := nginxDataFromSiteChecked(site)
+	if err != nil {
+		return fmt.Errorf("CDN 真实 IP 配置无效: %w", err)
+	}
 	nginxData.UseSSL = true
 	nginxData.SSLCertPath = certPath
 	nginxData.SSLKeyPath = keyPath

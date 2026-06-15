@@ -212,7 +212,10 @@ func (h *SecurityHandler) UpdateCDNRealIPGroup(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组已保存，但 Fail2ban 白名单应用失败: "+err.Error()))
 		return
 	}
-	executor.RegenerateAllSitesNginx()
+	if err := executor.RegenerateAllSitesNginx(); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组已保存，但部分网站 Nginx 配置更新失败: "+err.Error()))
+		return
+	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "CDN 配置组已保存"}))
 }
 
@@ -241,7 +244,10 @@ func (h *SecurityHandler) DeleteCDNRealIPGroup(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组已删除，但 Fail2ban 白名单应用失败: "+err.Error()))
 		return
 	}
-	executor.RegenerateAllSitesNginx()
+	if err := executor.RegenerateAllSitesNginx(); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组已删除，但部分网站 Nginx 配置更新失败: "+err.Error()))
+		return
+	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "CDN 配置组已删除"}))
 }
 

@@ -2,6 +2,7 @@ package executor
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -18,6 +19,12 @@ import (
 var syncMu sync.Mutex
 var recordPersistBan = AddPersistBan
 
+type fail2banConfigBackup struct {
+	path    string
+	data    []byte
+	existed bool
+}
+
 func deployFail2ban(webWhitelistIPs, sshWhitelistIPs string, maxRetry, findTime, banTime int) error {
 	jailDir := "/etc/fail2ban/jail.d"
 	filterDir := "/etc/fail2ban/filter.d"
@@ -28,6 +35,23 @@ func deployFail2ban(webWhitelistIPs, sshWhitelistIPs string, maxRetry, findTime,
 
 	ensureLogFiles()
 	_ = EnsureNginxBannedIPsConfig()
+	jailPath := filepath.Join(jailDir, "wppanel.conf")
+	actionPath := filepath.Join(actionDir, "wppanel-nginx.conf")
+	filterPath := filepath.Join(filterDir, "wppanel.conf")
+	filter404Path := filepath.Join(filterDir, "wppanel-404.conf")
+	backups, err := backupFail2banConfigFiles(jailPath, actionPath, filterPath, filter404Path)
+	if err != nil {
+		return err
+	}
+	rollbackDeploy := func(cause error) error {
+		if restoreErr := restoreFail2banConfigFiles(backups); restoreErr != nil {
+			return fmt.Errorf("%w; rollback fail2ban config files failed: %v", cause, restoreErr)
+		}
+		if reloadErr := reloadOrStartFail2ban(); reloadErr != nil {
+			return fmt.Errorf("%w; fail2ban config files were rolled back, but reload failed: %v", cause, reloadErr)
+		}
+		return cause
+	}
 
 	webIgnoreIPs, err := buildFail2banIgnoreIPs(webWhitelistIPs)
 	if err != nil {
@@ -83,8 +107,8 @@ bantime = %d
 ignoreip = %s
 `, maxRetry, findTime, banTime, webIgnoreIPs, banTime, webIgnoreIPs, maxRetry, findTime, banTime, sshIgnoreIPs)
 
-	if err := os.WriteFile(jailDir+"/wppanel.conf", []byte(jailConfig), 0644); err != nil {
-		return fmt.Errorf("写入 jail 配置失败: %w", err)
+	if err := os.WriteFile(jailPath, []byte(jailConfig), 0644); err != nil {
+		return rollbackDeploy(fmt.Errorf("写入 jail 配置失败: %w", err))
 	}
 
 	actionConfig := `# WP Panel Generated - DO NOT EDIT MANUALLY
@@ -93,8 +117,8 @@ actionban = /usr/local/bin/wp-panel --banip-nginx <ip> --record-fail2ban <ip> --
 actionunban = /usr/local/bin/wp-panel --unbanip-nginx <ip>
 `
 
-	if err := os.WriteFile(actionDir+"/wppanel-nginx.conf", []byte(actionConfig), 0644); err != nil {
-		return fmt.Errorf("写入 nginx action 配置失败: %w", err)
+	if err := os.WriteFile(actionPath, []byte(actionConfig), 0644); err != nil {
+		return rollbackDeploy(fmt.Errorf("写入 nginx action 配置失败: %w", err))
 	}
 
 	filterConfig := `# WP Panel Generated — DO NOT EDIT MANUALLY
@@ -107,8 +131,8 @@ failregex = ^<HOST> .* "POST /wp-login\.php .*" .*$
 ignoreregex =
 `
 
-	if err := os.WriteFile(filterDir+"/wppanel.conf", []byte(filterConfig), 0644); err != nil {
-		return fmt.Errorf("写入 filter 配置失败: %w", err)
+	if err := os.WriteFile(filterPath, []byte(filterConfig), 0644); err != nil {
+		return rollbackDeploy(fmt.Errorf("写入 filter 配置失败: %w", err))
 	}
 
 	filter404Config := `# WP Panel Generated — DO NOT EDIT MANUALLY
@@ -117,16 +141,55 @@ failregex = ^<HOST> - - \[.*\] ".*" 404 .*$
 ignoreregex =
 `
 
-	if err := os.WriteFile(filterDir+"/wppanel-404.conf", []byte(filter404Config), 0644); err != nil {
-		return fmt.Errorf("写入 404 filter 配置失败: %w", err)
+	if err := os.WriteFile(filter404Path, []byte(filter404Config), 0644); err != nil {
+		return rollbackDeploy(fmt.Errorf("写入 404 filter 配置失败: %w", err))
 	}
 
+	if err := reloadOrStartFail2ban(); err != nil {
+		return rollbackDeploy(fmt.Errorf("重载 fail2ban 失败: %w", err))
+	}
+	return nil
+}
+
+func backupFail2banConfigFiles(paths ...string) ([]fail2banConfigBackup, error) {
+	backups := make([]fail2banConfigBackup, 0, len(paths))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				backups = append(backups, fail2banConfigBackup{path: path})
+				continue
+			}
+			return nil, fmt.Errorf("读取 Fail2ban 配置备份失败: %w", err)
+		}
+		backups = append(backups, fail2banConfigBackup{path: path, data: data, existed: true})
+	}
+	return backups, nil
+}
+
+func restoreFail2banConfigFiles(backups []fail2banConfigBackup) error {
+	var errs []error
+	for _, backup := range backups {
+		if backup.existed {
+			if err := os.WriteFile(backup.path, backup.data, 0644); err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", backup.path, err))
+			}
+			continue
+		}
+		if err := os.Remove(backup.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("%s: %w", backup.path, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func reloadOrStartFail2ban() error {
 	if _, err := executeCommand("fail2ban-client", "reload"); err != nil {
 		if _, activeErr := executeCommand("systemctl", "is-active", "--quiet", "fail2ban"); activeErr == nil {
-			return fmt.Errorf("重载 fail2ban 失败: %w", err)
+			return err
 		}
 		if _, startErr := executeCommand("systemctl", "start", "fail2ban"); startErr != nil {
-			return fmt.Errorf("重载 fail2ban 失败: %w", err)
+			return err
 		}
 	}
 	return nil

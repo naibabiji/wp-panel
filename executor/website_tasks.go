@@ -766,7 +766,11 @@ func executeUpdateDomains(task *Task) TaskResult {
 		site.Domain = newDomain
 		site.Aliases = aliasStr
 
-		nginxData := nginxDataFromSite(site)
+		nginxData, err := nginxDataFromSiteChecked(site)
+		if err != nil {
+			rollback()
+			return taskFailure("CDN 真实 IP 配置无效", err)
+		}
 
 		nginxConfig, err := engine.RenderNginxConfig(nginxData)
 		if err != nil {
@@ -811,7 +815,10 @@ func executeUpdateDomains(task *Task) TaskResult {
 	site.Aliases = aliasStr
 
 	engine := NewTemplateEngine(cfg.Panel.BackupDir)
-	nginxData := nginxDataFromSite(site)
+	nginxData, err := nginxDataFromSiteChecked(site)
+	if err != nil {
+		return taskFailure("CDN 真实 IP 配置无效", err)
+	}
 
 	nginxConfig, err := engine.RenderNginxConfig(nginxData)
 	if err != nil {

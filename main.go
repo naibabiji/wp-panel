@@ -166,7 +166,11 @@ func main() {
 	}
 	executor.EnsureFastCGICacheConfig()
 	// 升级后重建全部 Nginx 和 PHP-FPM 配置，确保新模板规则对旧站生效
-	executor.GoSafe(func() { executor.RegenerateAllSitesNginx() })
+	executor.GoSafe(func() {
+		if err := executor.RegenerateAllSitesNginx(); err != nil {
+			log.Printf("Nginx 批量重建部分失败: %v", err)
+		}
+	})
 	executor.GoSafe(func() { executor.RegenerateAllSitesFPM() })
 	log.Println("Nginx 日志 map 配置已就绪")
 	log.Println("FastCGI 缓存配置已就绪")

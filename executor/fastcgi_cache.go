@@ -203,7 +203,7 @@ func deleteRedisKeysByPrefix(prefix string) error {
 	return flush()
 }
 
-func RegenerateSiteNginx(siteID int) {
+func RegenerateSiteNginx(siteID int) error {
 	db := database.GetDB()
 	var domain, aliases, siteType, systemUser, webRoot, logDir, accessLogMode, cacheKey, templateVer string
 	var phpPoolPath, nginxConfPath string
@@ -218,7 +218,10 @@ func RegenerateSiteNginx(siteID int) {
 		 FROM websites WHERE id = ?`, siteID,
 	).Scan(&domain, &aliases, &siteType, &systemUser, &webRoot, &logDir, &sslEnabled, &accessLogMode, &fCacheEnabled, &fCacheTTL, &cacheKey, &sslCertPath, &sslKeyPath, &templateVer, &xmlrpcEnabled, &phpPoolPath, &nginxConfPath, &cdnRealIPEnabled)
 	if err != nil || domain == "" {
-		return
+		if err != nil {
+			return fmt.Errorf("查询站点失败(site %d): %w", siteID, err)
+		}
+		return fmt.Errorf("站点域名为空(site %d)", siteID)
 	}
 
 	if templateVer == "" {
@@ -258,8 +261,7 @@ func RegenerateSiteNginx(siteID int) {
 		groups, _ := GetWebsiteCDNRealIPGroups(siteID)
 		runtime, err := ResolveCDNRealIPRuntime(&models.Website{ID: siteID, CDNRealIPEnabled: true, CDNRealIPGroups: groups})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "跳过Nginx配置重建(site %d): CDN Real IP 配置无效: %v\n", siteID, err)
-			return
+			return fmt.Errorf("CDN Real IP 配置无效(site %d): %w", siteID, err)
 		}
 		if runtime.Enabled {
 			data.CDNRealIPEnabled = true
@@ -275,34 +277,45 @@ func RegenerateSiteNginx(siteID int) {
 
 	config, err := engine.RenderNginxConfig(data)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "渲染Nginx配置失败(site %d): %v\n", siteID, err)
-		return
+		return fmt.Errorf("渲染 Nginx 配置失败(site %d): %w", siteID, err)
 	}
 
 	if err := engine.ApplyNginxConfig(config, nginxConfPath, nginxEnabledPath(cfg, nginxConfPath, domain)); err != nil {
-		fmt.Fprintf(os.Stderr, "应用Nginx配置失败(site %d): %v\n", siteID, err)
-		return
+		return fmt.Errorf("应用 Nginx 配置失败(site %d): %w", siteID, err)
 	}
+	return nil
 }
 
 // RegenerateAllSitesNginx 重建全部网站的 Nginx 配置，用于模板更新后批量刷新。
-func RegenerateAllSitesNginx() {
+func RegenerateAllSitesNginx() error {
 	db := database.GetDB()
 	rows, err := db.Query("SELECT id FROM websites")
 	if err != nil {
 		log.Printf("[Nginx重建] 查询网站列表失败: %v", err)
-		return
+		return err
 	}
 	defer rows.Close()
 
+	var failures []string
 	for rows.Next() {
 		var siteID int
 		if err := rows.Scan(&siteID); err != nil {
+			failures = append(failures, err.Error())
 			continue
 		}
-		RegenerateSiteNginx(siteID)
+		if err := RegenerateSiteNginx(siteID); err != nil {
+			log.Printf("[Nginx重建] 站点 %d 更新失败: %v", siteID, err)
+			failures = append(failures, err.Error())
+		}
+	}
+	if err := rows.Err(); err != nil {
+		failures = append(failures, err.Error())
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("部分站点 Nginx 配置更新失败: %s", strings.Join(failures, "; "))
 	}
 	log.Printf("[Nginx重建] 全部网站 Nginx 配置已更新")
+	return nil
 }
 
 // RegenerateAllSitesFPM 重建全部网站的 PHP-FPM pool 配置，

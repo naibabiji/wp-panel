@@ -66,7 +66,10 @@ func executeSetAccessLogMode(task *Task) TaskResult {
 	cfg := config.AppConfig
 
 	engine := NewTemplateEngine(cfg.Panel.BackupDir)
-	nginxData := nginxDataFromSite(site)
+	nginxData, err := nginxDataFromSiteChecked(site)
+	if err != nil {
+		return taskFailure("CDN 真实 IP 配置无效", err)
+	}
 	nginxData.AccessLogMode = payload.Mode
 
 	nginxConfig, err := engine.RenderNginxConfig(nginxData)

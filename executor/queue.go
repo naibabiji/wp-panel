@@ -65,70 +65,100 @@ func (q *TaskQueue) IsRunning() bool {
 
 func (q *TaskQueue) worker() {
 	for task := range q.queue {
-		q.running.Store(true)
-		task.Status = TaskStatusRunning
+		func() {
+			q.running.Store(true)
+			task.Status = TaskStatusRunning
 
-		var result TaskResult
-		switch task.Type {
-		case TaskCreateSite:
-			result = executeCreateSite(task)
-		case TaskDeleteSite:
-			result = executeDeleteSite(task)
-		case TaskPauseSite:
-			result = executePauseSite(task)
-		case TaskEnableSite:
-			result = executeEnableSite(task)
-		case TaskRefreshWhitelist:
-			result = executeRefreshWhitelist(task)
-		case TaskUnbanIP:
-			result = executeUnbanIP(task)
-		case TaskEnableSSL:
-			result = executeEnableSSL(task)
-		case TaskRemoveSSL:
-			result = executeRemoveSSL(task)
-		case TaskChangeDBPassword:
-			result = executeChangeDBPassword(task)
-		case TaskUpdateDomains:
-			result = executeUpdateDomains(task)
-		case TaskSaveNginxCustom:
-			result = executeSaveNginxCustom(task)
-		case TaskSetAccessLogMode:
-			result = executeSetAccessLogMode(task)
-		case TaskSetCDNRealIP:
-			result = executeSetCDNRealIP(task)
-		case TaskRenewSSL:
-			result = executeRenewSSL(task)
-		case TaskRenderCron:
-			result = executeRenderCron(task)
-		case TaskRunCron:
-			result = executeRunCron(task)
-		case TaskManualBan:
-			result = executeManualBan(task)
-		case TaskCreateBackup:
-			result = executeCreateBackup(task)
-		case TaskRestoreBackup:
-			result = executeRestoreBackup(task)
-		default:
-			result = TaskResult{Success: false, Message: "未知任务类型: " + string(task.Type)}
-		}
+			var result TaskResult
+			finalized := false
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("task %s panic: %v", task.ID, r)
+					if finalized {
+						return
+					}
+					result = TaskResult{Success: false, Message: fmt.Sprintf("task execution panic: %v", r)}
+					task.Status = TaskStatusFailed
+					task.ResultCh <- result
+					close(task.ResultCh)
+					safeLogOp(task, result)
+					q.mu.Lock()
+					q.taskCount--
+					q.mu.Unlock()
+					q.running.Store(false)
+				}
+			}()
+			switch task.Type {
+			case TaskCreateSite:
+				result = executeCreateSite(task)
+			case TaskDeleteSite:
+				result = executeDeleteSite(task)
+			case TaskPauseSite:
+				result = executePauseSite(task)
+			case TaskEnableSite:
+				result = executeEnableSite(task)
+			case TaskRefreshWhitelist:
+				result = executeRefreshWhitelist(task)
+			case TaskUnbanIP:
+				result = executeUnbanIP(task)
+			case TaskEnableSSL:
+				result = executeEnableSSL(task)
+			case TaskRemoveSSL:
+				result = executeRemoveSSL(task)
+			case TaskChangeDBPassword:
+				result = executeChangeDBPassword(task)
+			case TaskUpdateDomains:
+				result = executeUpdateDomains(task)
+			case TaskSaveNginxCustom:
+				result = executeSaveNginxCustom(task)
+			case TaskSetAccessLogMode:
+				result = executeSetAccessLogMode(task)
+			case TaskSetCDNRealIP:
+				result = executeSetCDNRealIP(task)
+			case TaskRenewSSL:
+				result = executeRenewSSL(task)
+			case TaskRenderCron:
+				result = executeRenderCron(task)
+			case TaskRunCron:
+				result = executeRunCron(task)
+			case TaskManualBan:
+				result = executeManualBan(task)
+			case TaskCreateBackup:
+				result = executeCreateBackup(task)
+			case TaskRestoreBackup:
+				result = executeRestoreBackup(task)
+			default:
+				result = TaskResult{Success: false, Message: "未知任务类型: " + string(task.Type)}
+			}
 
-		if result.Success {
-			task.Status = TaskStatusSuccess
-		} else {
-			task.Status = TaskStatusFailed
-		}
+			if result.Success {
+				task.Status = TaskStatusSuccess
+			} else {
+				task.Status = TaskStatusFailed
+			}
 
-		logOp(task, result)
+			safeLogOp(task, result)
 
-		task.ResultCh <- result
-		close(task.ResultCh)
+			task.ResultCh <- result
+			close(task.ResultCh)
+			finalized = true
 
-		q.mu.Lock()
-		q.taskCount--
-		q.mu.Unlock()
+			q.mu.Lock()
+			q.taskCount--
+			q.mu.Unlock()
 
-		q.running.Store(false)
+			q.running.Store(false)
+		}()
 	}
+}
+
+func safeLogOp(task *Task, result TaskResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("record operation log for task %s panic: %v", task.ID, r)
+		}
+	}()
+	logOp(task, result)
 }
 
 func logOp(task *Task, result TaskResult) {
