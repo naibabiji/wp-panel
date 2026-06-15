@@ -160,6 +160,82 @@ func TestUpdateCDNRealIPGroupNginxFailureReportsRollbackFailure(t *testing.T) {
 	assertTestCDNRealIPGroupRolledBack(t)
 }
 
+func TestDeleteCDNRealIPGroupNginxFailureRollsBackRuntime(t *testing.T) {
+	setupSecurityTestDB(t)
+	insertTestCDNRealIPGroup(t)
+	restoreSecurityExecutorHooks(t)
+
+	applyCalls := 0
+	applyFail2banSettings = func() error {
+		applyCalls++
+		return nil
+	}
+	nginxCalls := 0
+	regenerateAllSitesNginx = func() error {
+		nginxCalls++
+		if nginxCalls == 1 {
+			return errors.New("nginx failed")
+		}
+		return nil
+	}
+
+	rec := performSecurityRequest(
+		http.MethodDelete,
+		"/groups/99",
+		"",
+		func(router *gin.Engine, h *SecurityHandler) {
+			router.DELETE("/groups/:id", h.DeleteCDNRealIPGroup)
+		},
+	)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	resp := decodeAPIResponse(t, rec)
+	if !strings.Contains(resp.Message, "nginx failed") {
+		t.Fatalf("unexpected message: %s", resp.Message)
+	}
+	if applyCalls != 2 || nginxCalls != 2 {
+		t.Fatalf("apply/nginx calls = %d/%d, want 2/2", applyCalls, nginxCalls)
+	}
+	assertTestCDNRealIPGroupRolledBack(t)
+}
+
+func TestDeleteCDNRealIPGroupNginxFailureReportsRollbackFailure(t *testing.T) {
+	setupSecurityTestDB(t)
+	insertTestCDNRealIPGroup(t)
+	restoreSecurityExecutorHooks(t)
+
+	applyFail2banSettings = func() error { return nil }
+	nginxCalls := 0
+	regenerateAllSitesNginx = func() error {
+		nginxCalls++
+		if nginxCalls == 1 {
+			return errors.New("nginx failed")
+		}
+		return errors.New("rollback nginx failed")
+	}
+
+	rec := performSecurityRequest(
+		http.MethodDelete,
+		"/groups/99",
+		"",
+		func(router *gin.Engine, h *SecurityHandler) {
+			router.DELETE("/groups/:id", h.DeleteCDNRealIPGroup)
+		},
+	)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	resp := decodeAPIResponse(t, rec)
+	if !strings.Contains(resp.Message, "rollback nginx failed") || !strings.Contains(resp.Message, "nginx failed") {
+		t.Fatalf("unexpected message: %s", resp.Message)
+	}
+	if nginxCalls != 2 {
+		t.Fatalf("nginx calls = %d, want 2", nginxCalls)
+	}
+	assertTestCDNRealIPGroupRolledBack(t)
+}
+
 func TestDeleteCDNRealIPGroupReportsRestoreFailure(t *testing.T) {
 	setupSecurityTestDB(t)
 	insertTestCDNRealIPGroup(t)
