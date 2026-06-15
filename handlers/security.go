@@ -16,6 +16,13 @@ import (
 
 type SecurityHandler struct{}
 
+var (
+	applyFail2banSettings             = executor.ApplyFail2banSettings
+	regenerateAllSitesNginx           = executor.RegenerateAllSitesNginx
+	websiteIDsForCDNRealIPGroup       = executor.WebsiteIDsForCDNRealIPGroup
+	restoreCDNRealIPGroupWithBindings = executor.RestoreCDNRealIPGroupWithBindings
+)
+
 func (h *SecurityHandler) GetSettings(c *gin.Context) {
 	db := database.GetDB()
 	rows, err := db.Query("SELECT id, skey, svalue, description, updated_at FROM security_settings")
@@ -85,7 +92,7 @@ func (h *SecurityHandler) UpdateSettings(c *gin.Context) {
 	}
 
 	if needsFail2banApply(normalized) {
-		if err := executor.ApplyFail2banSettings(); err != nil {
+		if err := applyFail2banSettings(); err != nil {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Fail2ban 配置应用失败: "+err.Error()))
 			return
 		}
@@ -157,11 +164,17 @@ func (h *SecurityHandler) CreateCDNRealIPGroup(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建 CDN 配置组失败"))
 		return
 	}
-	if err := executor.ApplyFail2banSettings(); err != nil {
-		if id, idErr := res.LastInsertId(); idErr == nil {
-			_, _ = database.GetDB().Exec(`DELETE FROM cdn_realip_groups WHERE id = ? AND builtin = 0`, id)
+	if err := applyFail2banSettings(); err != nil {
+		id, idErr := res.LastInsertId()
+		if idErr != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组已创建，但 Fail2ban 白名单应用失败，且数据库回滚失败: "+idErr.Error()+"；原始错误: "+err.Error()))
+			return
 		}
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组已保存，但 Fail2ban 白名单应用失败: "+err.Error()))
+		if _, rollbackErr := database.GetDB().Exec(`DELETE FROM cdn_realip_groups WHERE id = ? AND builtin = 0`, id); rollbackErr != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组已创建，但 Fail2ban 白名单应用失败，且数据库回滚失败: "+rollbackErr.Error()+"；原始错误: "+err.Error()))
+			return
+		}
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组未创建，Fail2ban 白名单应用失败，已回滚: "+err.Error()))
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "CDN 配置组已创建"}))
@@ -205,17 +218,23 @@ func (h *SecurityHandler) UpdateCDNRealIPGroup(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存 CDN 配置组失败"))
 		return
 	}
-	if err := executor.ApplyFail2banSettings(); err != nil {
-		_, _ = database.GetDB().Exec(`UPDATE cdn_realip_groups
+	if err := applyFail2banSettings(); err != nil {
+		if _, rollbackErr := database.GetDB().Exec(`UPDATE cdn_realip_groups
 			SET name = ?, header_name = ?, ip_ranges = ?, enabled = ?, description = ?, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?`, group.Name, group.HeaderName, group.IPRanges, boolToInt(group.Enabled), group.Description, id)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组已保存，但 Fail2ban 白名单应用失败: "+err.Error()))
+			WHERE id = ?`, group.Name, group.HeaderName, group.IPRanges, boolToInt(group.Enabled), group.Description, id); rollbackErr != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组已保存，但 Fail2ban 白名单应用失败，且数据库回滚失败: "+rollbackErr.Error()+"；原始错误: "+err.Error()))
+			return
+		}
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组未生效，Fail2ban 白名单应用失败，已回滚: "+err.Error()))
 		return
 	}
-	if err := executor.RegenerateAllSitesNginx(); err != nil {
-		_, _ = database.GetDB().Exec(`UPDATE cdn_realip_groups
+	if err := regenerateAllSitesNginx(); err != nil {
+		if _, rollbackErr := database.GetDB().Exec(`UPDATE cdn_realip_groups
 			SET name = ?, header_name = ?, ip_ranges = ?, enabled = ?, description = ?, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?`, group.Name, group.HeaderName, group.IPRanges, boolToInt(group.Enabled), group.Description, id)
+			WHERE id = ?`, group.Name, group.HeaderName, group.IPRanges, boolToInt(group.Enabled), group.Description, id); rollbackErr != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组已保存，但部分网站 Nginx 配置更新失败，且数据库回滚失败: "+rollbackErr.Error()+"；原始错误: "+err.Error()))
+			return
+		}
 		if rollbackErr := reapplyCDNRealIPRuntime(); rollbackErr != nil {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组已保存，但部分网站 Nginx 配置更新失败，且回滚失败: "+rollbackErr.Error()+"；原始错误: "+err.Error()))
 			return
@@ -241,7 +260,7 @@ func (h *SecurityHandler) DeleteCDNRealIPGroup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("内置 CDN 配置组不可删除"))
 		return
 	}
-	boundWebsiteIDs, err := executor.WebsiteIDsForCDNRealIPGroup(id)
+	boundWebsiteIDs, err := websiteIDsForCDNRealIPGroup(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取 CDN 配置组绑定网站失败"))
 		return
@@ -250,13 +269,16 @@ func (h *SecurityHandler) DeleteCDNRealIPGroup(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("删除 CDN 配置组失败"))
 		return
 	}
-	if err := executor.ApplyFail2banSettings(); err != nil {
-		_ = executor.RestoreCDNRealIPGroupWithBindings(group, boundWebsiteIDs)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组已删除，但 Fail2ban 白名单应用失败: "+err.Error()))
+	if err := applyFail2banSettings(); err != nil {
+		if restoreErr := restoreCDNRealIPGroupWithBindings(group, boundWebsiteIDs); restoreErr != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组已删除，但 Fail2ban 白名单应用失败，且数据库回滚失败: "+restoreErr.Error()+"；原始错误: "+err.Error()))
+			return
+		}
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组未删除，Fail2ban 白名单应用失败，已回滚: "+err.Error()))
 		return
 	}
-	if err := executor.RegenerateAllSitesNginx(); err != nil {
-		if restoreErr := executor.RestoreCDNRealIPGroupWithBindings(group, boundWebsiteIDs); restoreErr != nil {
+	if err := regenerateAllSitesNginx(); err != nil {
+		if restoreErr := restoreCDNRealIPGroupWithBindings(group, boundWebsiteIDs); restoreErr != nil {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("CDN 配置组已删除，但部分网站 Nginx 配置更新失败，且数据库回滚失败: "+restoreErr.Error()+"；原始错误: "+err.Error()))
 			return
 		}
@@ -271,10 +293,10 @@ func (h *SecurityHandler) DeleteCDNRealIPGroup(c *gin.Context) {
 }
 
 func reapplyCDNRealIPRuntime() error {
-	if err := executor.ApplyFail2banSettings(); err != nil {
+	if err := applyFail2banSettings(); err != nil {
 		return fmt.Errorf("Fail2ban 回滚失败: %w", err)
 	}
-	if err := executor.RegenerateAllSitesNginx(); err != nil {
+	if err := regenerateAllSitesNginx(); err != nil {
 		return fmt.Errorf("Nginx 回滚失败: %w", err)
 	}
 	return nil
