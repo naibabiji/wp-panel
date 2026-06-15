@@ -156,69 +156,77 @@
         </div>
         <button @click="saveWhitelist" class="btn-primary">保存自定义白名单</button>
         <div class="mt-6 pt-4 border-t border-gray-700/50">
-            <div class="flex items-center justify-between mb-2">
-                <label class="label">CDN 真实 IP 配置组</label>
-                <span class="text-xs text-gray-500">自定义组会同时加入防火墙白名单</span>
-            </div>
-            <div class="space-y-2 mb-4">
-                <template x-for="g in cdnGroups" :key="g.id">
-                    <div class="rounded border border-gray-700 p-3 text-sm">
-                        <div class="flex items-start justify-between gap-3">
-                            <div>
-                                <div class="text-white font-medium">
-                                    <span x-text="g.name"></span>
-                                    <span x-show="g.builtin" class="badge-info ml-2">内置</span>
-                                    <span x-show="!g.enabled" class="badge-warning ml-2">已禁用</span>
-                                </div>
-                                <div class="text-xs text-gray-400 mt-1">
-                                    <span x-text="'Header: ' + g.header_name"></span>
-                                    <span class="mx-2">|</span>
-                                    <span x-text="(g.ip_ranges || '').trim() ? '可信 IP 段已填写' : (g.provider === 'cloudflare' ? '自动拉取 Cloudflare IP' : '兼容模式')"></span>
-                                </div>
-                            </div>
-                            <div x-show="!g.builtin" class="flex items-center space-x-2">
-                                <button @click="editCDNGroup(g)" class="btn-secondary text-xs py-1 px-2">编辑</button>
-                                <button @click="deleteCDNGroup(g)" class="btn-danger text-xs py-1 px-2">删除</button>
-                            </div>
-                        </div>
-                    </div>
-                </template>
-            </div>
-            <div class="rounded border border-gray-700 p-3">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                        <label class="label text-xs">名称</label>
-                        <input x-model="cdnGroupForm.name" class="input-field text-sm" placeholder="阿里云 ESA">
-                    </div>
-                    <div>
-                        <label class="label text-xs">真实 IP Header</label>
-                        <input x-model="cdnGroupForm.header_name" class="input-field text-sm font-mono" placeholder="X-Real-IP">
-                    </div>
-                </div>
-                <div class="mt-3">
-                    <label class="label text-xs">可信 CDN 回源 IP/CIDR</label>
-                    <textarea x-model="cdnGroupForm.ip_ranges" class="input-field font-mono text-sm" rows="4" placeholder="一行一个，可留空进入兼容模式"></textarea>
-                </div>
-                <div class="mt-3">
-                    <label class="label text-xs">备注</label>
-                    <input x-model="cdnGroupForm.description" class="input-field text-sm" placeholder="用于说明 CDN 厂商或用途">
-                </div>
-                <label class="flex items-center space-x-2 text-sm text-gray-300 mt-3">
-                    <input type="checkbox" x-model="cdnGroupForm.enabled">
-                    <span>启用配置组</span>
-                </label>
-                <div class="mt-3 flex items-center space-x-2">
-                    <button @click="saveCDNGroup()" :disabled="cdnGroupSaving" class="btn-primary text-sm" x-text="cdnGroupForm.id ? '保存配置组' : '新增配置组'"></button>
-                    <button x-show="cdnGroupForm.id" @click="resetCDNGroupForm()" class="btn-secondary text-sm">取消编辑</button>
-                </div>
-                <p class="text-xs text-gray-500 mt-2">Header 名只允许英文字母、数字和短横线；IP 段留空时，绑定该组的网站会信任所有来源的该 Header。</p>
-            </div>
-        </div>
-        <div class="mt-6 pt-4 border-t border-gray-700/50">
             <label class="label">WordPress 安全日志路径白名单</label>
             <textarea x-model="settings.wp_security_log_whitelist" class="input-field font-mono text-sm" rows="5" placeholder="/google*.html&#10;/BingSiteAuth.xml&#10;/custom-verify-*.txt"></textarea>
             <p class="text-xs text-gray-500 mt-1">一行一个路径，可使用 * 通配符；必须以 / 开头。不支持正则，不允许空格、分号、引号或 ..。</p>
             <button @click="saveWPSecurityLogWhitelist" class="btn-primary mt-3">保存路径白名单</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-white">CDN 真实 IP 配置组</h3>
+            <span class="text-xs text-gray-500">一处填写，多处调用</span>
+        </div>
+        <div class="rounded border border-blue-900/60 bg-blue-950/30 p-3 mb-4 text-sm text-blue-100">
+            <p class="font-medium text-blue-200">结论：网站启用 CDN Real IP 后，日志分析、异常访问识别和自动封禁会按真实访客 IP 工作。</p>
+            <p class="text-xs text-blue-200/80 mt-1">不填写可信 CDN 回源 IP 段也能进入兼容模式；填写后会切换为更严格的可信 CDN 模式，并同时加入 Web 防护白名单，降低误伤 CDN 节点的风险。</p>
+            <p class="text-xs text-blue-200/80 mt-1">不会填写 CDN 回源 IP 段时，网站详情里可直接选择“通用 CDN（兼容模式）”。知道阿里云 ESA、腾讯 EdgeOne、又拍云等回源 IP 段时，再新增对应配置组并填写 IP 段。</p>
+        </div>
+        <div class="space-y-2 mb-4">
+            <template x-for="g in cdnGroups" :key="g.id">
+                <div class="rounded border border-gray-700 p-3 text-sm">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <div class="text-white font-medium">
+                                <span x-text="g.name"></span>
+                                <span x-show="g.builtin" class="badge-info ml-2">内置</span>
+                                <span x-show="!g.enabled" class="badge-warning ml-2">已禁用</span>
+                            </div>
+                            <div class="text-xs text-gray-400 mt-1">
+                                <span x-text="'Header: ' + g.header_name"></span>
+                                <span class="mx-2">|</span>
+                                <span x-text="cdnGroupModeLabel(g)"></span>
+                            </div>
+                            <p x-show="g.provider === 'compatible'" class="text-xs text-gray-500 mt-1">不会填写 CDN 回源 IP 段时选择此模式，适合大多数普通 CDN 场景。</p>
+                        </div>
+                        <div x-show="!g.builtin" class="flex items-center space-x-2">
+                            <button @click="editCDNGroup(g)" class="btn-secondary text-xs py-1 px-2">编辑</button>
+                            <button @click="deleteCDNGroup(g)" class="btn-danger text-xs py-1 px-2">删除</button>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+        <div class="rounded border border-gray-700 p-3">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                    <label class="label text-xs">名称</label>
+                    <input x-model="cdnGroupForm.name" class="input-field text-sm" placeholder="阿里云 ESA">
+                </div>
+                <div>
+                    <label class="label text-xs">真实 IP Header</label>
+                    <input x-model="cdnGroupForm.header_name" class="input-field text-sm font-mono" placeholder="X-Real-IP">
+                </div>
+            </div>
+            <div class="mt-3">
+                <label class="label text-xs">可信 CDN 回源 IP/CIDR</label>
+                <textarea x-model="cdnGroupForm.ip_ranges" class="input-field font-mono text-sm" rows="4" placeholder="一行一个，可留空进入兼容模式"></textarea>
+                <p class="text-xs text-gray-500 mt-1">不会填写 CDN 回源 IP 段时可以留空，网站将使用兼容模式；能拿到厂商回源 IP 段时填写在这里，日志和封禁会更严格、更可靠。</p>
+            </div>
+            <div class="mt-3">
+                <label class="label text-xs">备注</label>
+                <input x-model="cdnGroupForm.description" class="input-field text-sm" placeholder="用于说明 CDN 厂商或用途">
+            </div>
+            <label class="flex items-center space-x-2 text-sm text-gray-300 mt-3">
+                <input type="checkbox" x-model="cdnGroupForm.enabled">
+                <span>启用配置组</span>
+            </label>
+            <div class="mt-3 flex items-center space-x-2">
+                <button @click="saveCDNGroup()" :disabled="cdnGroupSaving" class="btn-primary text-sm" x-text="cdnGroupForm.id ? '保存配置组' : '新增配置组'"></button>
+                <button x-show="cdnGroupForm.id" @click="resetCDNGroupForm()" class="btn-secondary text-sm">取消编辑</button>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">常见国内 CDN 通常使用 X-Forwarded-For；Header 名只允许英文字母、数字和短横线。</p>
         </div>
     </div>
 
@@ -262,6 +270,12 @@ function securitySettings() {
                 const r = await api('/security/cdn-realip-groups');
                 if (r.success) this.cdnGroups = r.data || [];
             } catch(e) { showToast('读取 CDN 配置组失败: ' + e.message, 'error'); }
+        },
+        cdnGroupModeLabel(group) {
+            if ((group.ip_ranges || '').trim()) return '严格模式：已填写可信回源 IP 段';
+            if (group.provider === 'cloudflare') return '严格模式：自动拉取 Cloudflare IP';
+            if (group.provider === 'compatible') return '兼容模式：不会填写回源 IP 段时使用';
+            return '兼容模式：未填写可信回源 IP 段';
         },
         resetCDNGroupForm() {
             this.cdnGroupForm = { id: null, name: '', header_name: 'X-Real-IP', ip_ranges: '', enabled: true, description: '' };
