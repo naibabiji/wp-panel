@@ -84,6 +84,82 @@ func TestCreateCDNRealIPGroupFail2banFailureDeletesGroup(t *testing.T) {
 	}
 }
 
+func TestUpdateCDNRealIPGroupNginxFailureRollsBackRuntime(t *testing.T) {
+	setupSecurityTestDB(t)
+	insertTestCDNRealIPGroup(t)
+	restoreSecurityExecutorHooks(t)
+
+	applyCalls := 0
+	applyFail2banSettings = func() error {
+		applyCalls++
+		return nil
+	}
+	nginxCalls := 0
+	regenerateAllSitesNginx = func() error {
+		nginxCalls++
+		if nginxCalls == 1 {
+			return errors.New("nginx failed")
+		}
+		return nil
+	}
+
+	rec := performSecurityRequest(
+		http.MethodPut,
+		"/groups/99",
+		`{"name":"New","header_name":"X-Real-IP","ip_ranges":"198.51.100.0/24","enabled":true,"description":"new desc"}`,
+		func(router *gin.Engine, h *SecurityHandler) {
+			router.PUT("/groups/:id", h.UpdateCDNRealIPGroup)
+		},
+	)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	resp := decodeAPIResponse(t, rec)
+	if !strings.Contains(resp.Message, "nginx failed") {
+		t.Fatalf("unexpected message: %s", resp.Message)
+	}
+	if applyCalls != 2 || nginxCalls != 2 {
+		t.Fatalf("apply/nginx calls = %d/%d, want 2/2", applyCalls, nginxCalls)
+	}
+	assertTestCDNRealIPGroupRolledBack(t)
+}
+
+func TestUpdateCDNRealIPGroupNginxFailureReportsRollbackFailure(t *testing.T) {
+	setupSecurityTestDB(t)
+	insertTestCDNRealIPGroup(t)
+	restoreSecurityExecutorHooks(t)
+
+	applyFail2banSettings = func() error { return nil }
+	nginxCalls := 0
+	regenerateAllSitesNginx = func() error {
+		nginxCalls++
+		if nginxCalls == 1 {
+			return errors.New("nginx failed")
+		}
+		return errors.New("rollback nginx failed")
+	}
+
+	rec := performSecurityRequest(
+		http.MethodPut,
+		"/groups/99",
+		`{"name":"New","header_name":"X-Real-IP","ip_ranges":"198.51.100.0/24","enabled":true,"description":"new desc"}`,
+		func(router *gin.Engine, h *SecurityHandler) {
+			router.PUT("/groups/:id", h.UpdateCDNRealIPGroup)
+		},
+	)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	resp := decodeAPIResponse(t, rec)
+	if !strings.Contains(resp.Message, "rollback nginx failed") || !strings.Contains(resp.Message, "nginx failed") {
+		t.Fatalf("unexpected message: %s", resp.Message)
+	}
+	if nginxCalls != 2 {
+		t.Fatalf("nginx calls = %d, want 2", nginxCalls)
+	}
+	assertTestCDNRealIPGroupRolledBack(t)
+}
+
 func TestDeleteCDNRealIPGroupReportsRestoreFailure(t *testing.T) {
 	setupSecurityTestDB(t)
 	insertTestCDNRealIPGroup(t)
@@ -137,6 +213,19 @@ func insertTestCDNRealIPGroup(t *testing.T) {
 		(id, name, provider, header_name, ip_ranges, builtin, enabled, description)
 		VALUES (99, 'Old', 'custom', 'X-Forwarded-For', '203.0.113.0/24', 0, 1, 'old desc')`); err != nil {
 		t.Fatalf("insert cdn group: %v", err)
+	}
+}
+
+func assertTestCDNRealIPGroupRolledBack(t *testing.T) {
+	t.Helper()
+	var name, header, ranges string
+	var enabled int
+	if err := database.GetDB().QueryRow(`SELECT name, header_name, ip_ranges, enabled FROM cdn_realip_groups WHERE id = 99`).
+		Scan(&name, &header, &ranges, &enabled); err != nil {
+		t.Fatalf("query group: %v", err)
+	}
+	if name != "Old" || header != "X-Forwarded-For" || ranges != "203.0.113.0/24" || enabled != 1 {
+		t.Fatalf("group was not rolled back: name=%q header=%q ranges=%q enabled=%d", name, header, ranges, enabled)
 	}
 }
 
