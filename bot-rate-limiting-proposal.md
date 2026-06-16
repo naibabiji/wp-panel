@@ -426,7 +426,7 @@ limit_req zone=wp_bot_limit burst=20 nodelay;
 - `limit_req_status 429;` 由全局 `wppanel-limit-status.conf` 管理，不由站点注入/剥离函数管理。
 - 迁移过程中如果全局 429 配置写入失败，不能继续移除站点内旧的 `limit_req_status 429;`。
 
-现有 `stripRateLimitFromSites()` 和 `injectRateLimitToSites()` 会删除 `limit_req_status 429`。实现时需要调整为：这些函数可以清理旧站点配置中遗留的站点级 429 行，但状态码是否存在由全局 `wppanel-limit-status.conf` 决定，避免旧逻辑误删唯一的状态码配置。
+旧的站点限速注入/剥离逻辑会删除 `limit_req_status 429`。实现时需要调整为：站点重写逻辑可以清理旧站点配置中遗留的站点级 429 行，但状态码是否存在由全局 `wppanel-limit-status.conf` 决定，避免旧逻辑误删唯一的状态码配置。
 
 ---
 

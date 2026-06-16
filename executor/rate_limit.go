@@ -219,16 +219,6 @@ func testAndReloadNginx(backups []rateLimitBackup) error {
 	return nil
 }
 
-func injectRateLimitToSites(burst int) {
-	botEnabled, _, botBurst := GetBotRateLimitSettings()
-	rewriteRateLimitDirectivesToSites(true, burst, botEnabled, botBurst)
-}
-
-func stripRateLimitFromSites() {
-	botEnabled, _, botBurst := GetBotRateLimitSettings()
-	rewriteRateLimitDirectivesToSites(false, 0, botEnabled, botBurst)
-}
-
 func rewriteRateLimitDirectivesToSites(ipEnabled bool, ipBurst int, botEnabled bool, botBurst int) {
 	sitesDir := "/etc/nginx/sites-available"
 	entries, err := os.ReadDir(sitesDir)
@@ -270,16 +260,17 @@ func rewriteRateLimitDirectives(content, ipLimitLine, botLimitLine string, ipEna
 	}
 
 	var result []string
-	inServer := false
+	serverDepth := 0
 	injected := false
 	for _, line := range cleaned {
 		result = append(result, line)
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "server {") {
-			inServer = true
+		if serverDepth == 0 && strings.HasPrefix(trimmed, "server") && strings.Contains(trimmed, "{") {
+			serverDepth = countNginxBraces(trimmed)
 			injected = false
+			continue
 		}
-		if inServer && !injected && strings.HasPrefix(trimmed, "server_name ") {
+		if serverDepth > 0 && !injected && strings.HasPrefix(trimmed, "server_name ") {
 			if ipEnabled {
 				result = append(result, ipLimitLine)
 			}
@@ -288,28 +279,33 @@ func rewriteRateLimitDirectives(content, ipLimitLine, botLimitLine string, ipEna
 			}
 			injected = true
 		}
-		if inServer && trimmed == "}" {
-			inServer = false
+		if serverDepth > 0 {
+			serverDepth += countNginxBraces(trimmed)
+			if serverDepth < 0 {
+				serverDepth = 0
+			}
 		}
 	}
 	return strings.Join(result, "\n")
 }
 
-func updateRateLimitLine(path, content, burst string) {
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		if strings.Contains(line, "limit_req zone=wp_req_limit") {
-			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
-			lines[i] = indent + "limit_req zone=wp_req_limit burst=" + burst + " nodelay;"
+func countNginxBraces(line string) int {
+	depth := 0
+	for _, r := range line {
+		if r == '{' {
+			depth++
+		}
+		if r == '}' {
+			depth--
 		}
 	}
-	os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644)
+	return depth
 }
 
 func GetRateLimitSettings() (enabled bool, rpm int, burst int) {
 	db := database.GetDB()
 	if db == nil {
-		return true, 60, 30
+		return true, 60, 300
 	}
 
 	var sEnabled, sRPM, sBurst string
