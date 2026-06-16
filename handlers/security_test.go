@@ -268,6 +268,42 @@ func TestDeleteCDNRealIPGroupReportsRestoreFailure(t *testing.T) {
 	}
 }
 
+func TestNormalizeSecuritySettingAcceptsBotLimitSettings(t *testing.T) {
+	for _, tc := range []struct {
+		key  string
+		val  interface{}
+		want string
+	}{
+		{"bot_limit_enabled", true, "true"},
+		{"bot_limit_rpm", "30", "30"},
+		{"bot_limit_burst", float64(20), "20"},
+	} {
+		got, ok, err := normalizeSecuritySetting(tc.key, tc.val)
+		if err != nil {
+			t.Fatalf("%s returned error: %v", tc.key, err)
+		}
+		if !ok || got != tc.want {
+			t.Fatalf("%s = %q, %v; want %q, true", tc.key, got, ok, tc.want)
+		}
+	}
+}
+
+func TestNormalizeSecuritySettingRejectsBotLimitOutOfRange(t *testing.T) {
+	for _, tc := range []struct {
+		key string
+		val interface{}
+	}{
+		{"bot_limit_rpm", "4"},
+		{"bot_limit_rpm", "301"},
+		{"bot_limit_burst", "4"},
+		{"bot_limit_burst", "301"},
+	} {
+		if _, _, err := normalizeSecuritySetting(tc.key, tc.val); err == nil {
+			t.Fatalf("expected %s=%v to be rejected", tc.key, tc.val)
+		}
+	}
+}
+
 func setupSecurityTestDB(t *testing.T) {
 	t.Helper()
 	oldDB := database.DB

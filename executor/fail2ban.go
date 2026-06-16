@@ -293,12 +293,14 @@ func executeRefreshWhitelist(task *Task) TaskResult {
 	if googleIPs, err := fetchGooglebotIPs(); err == nil {
 		allIPs = append(allIPs, googleIPs...)
 		details = append(details, fmt.Sprintf("Googlebot: %d 条", len(googleIPs)))
+		cacheSearchBotIPRanges("googlebot_ips", googleIPs)
 	} else {
 		details = append(details, "Googlebot: 获取失败")
 	}
 	if bingIPs, err := fetchBingbotIPs(); err == nil {
 		allIPs = append(allIPs, bingIPs...)
 		details = append(details, fmt.Sprintf("Bingbot: %d 条", len(bingIPs)))
+		cacheSearchBotIPRanges("bingbot_ips", bingIPs)
 	} else {
 		details = append(details, "Bingbot: 获取失败")
 	}
@@ -316,6 +318,16 @@ func executeRefreshWhitelist(task *Task) TaskResult {
 		Success: true,
 		Message: fmt.Sprintf("共获取 %d 条（%s）", len(allIPs), strings.Join(details, "；")),
 	}
+}
+
+func cacheSearchBotIPRanges(key string, ips []string) {
+	if database.GetDB() == nil {
+		return
+	}
+	if key != "googlebot_ips" && key != "bingbot_ips" {
+		return
+	}
+	database.GetDB().Exec(`UPDATE security_settings SET svalue = ?, updated_at = CURRENT_TIMESTAMP WHERE skey = ?`, strings.Join(ips, "\n"), key)
 }
 
 func ApplyFail2banSettings() error {

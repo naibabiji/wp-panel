@@ -35,6 +35,8 @@ type NginxSiteData struct {
 	SiteType         string
 	RateLimitEnabled bool
 	RateLimitBurst   int
+	BotLimitEnabled  bool
+	BotLimitBurst    int
 	XMLRPCEnabled    bool
 	CDNRealIPEnabled bool
 	CDNRealIPHeader  string
@@ -224,6 +226,7 @@ func NewTemplateEngine(backupDir string) *TemplateEngine {
 
 func (e *TemplateEngine) RenderNginxConfig(data *NginxSiteData) (string, error) {
 	data.RateLimitEnabled, _, data.RateLimitBurst = GetRateLimitSettings()
+	data.BotLimitEnabled, _, data.BotLimitBurst = GetBotRateLimitSettings()
 	tmplName := "nginx_http"
 	if data.UseSSL {
 		tmplName = "nginx_https"
@@ -498,7 +501,9 @@ server {
 
     {{if .RateLimitEnabled}}
     limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
-    limit_req_status 429;
+    {{end}}
+    {{if .BotLimitEnabled}}
+    limit_req zone=wp_bot_limit burst={{.BotLimitBurst}} nodelay;
     {{end}}
 
     set $wp_cache_ver "{{.FCacheKey}}";
@@ -637,7 +642,9 @@ server {
 
     {{if .RateLimitEnabled}}
     limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
-    limit_req_status 429;
+    {{end}}
+    {{if .BotLimitEnabled}}
+    limit_req zone=wp_bot_limit burst={{.BotLimitBurst}} nodelay;
     {{end}}
 
     set $wp_cache_ver "{{.FCacheKey}}";
@@ -667,7 +674,9 @@ server {
 
     {{if .RateLimitEnabled}}
     limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
-    limit_req_status 429;
+    {{end}}
+    {{if .BotLimitEnabled}}
+    limit_req zone=wp_bot_limit burst={{.BotLimitBurst}} nodelay;
     {{end}}
 
     set $wp_cache_ver "{{.FCacheKey}}";

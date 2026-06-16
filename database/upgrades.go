@@ -159,6 +159,17 @@ var upgrades = []Upgrade{
 		},
 		Func: ensureCDNRealIPEnabledColumn,
 	},
+	{
+		Version:     "1.0.13",
+		Description: "新增 Bot UA 统一限速设置",
+		SQL: []string{
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('bot_limit_enabled', 'false', '是否开启Bot UA统一限速')`,
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('bot_limit_rpm', '30', '每站点Bot每分钟最大请求数')`,
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('bot_limit_burst', '20', 'Bot突发缓冲允许量')`,
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('googlebot_ips', '', 'Googlebot官方IP段缓存')`,
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('bingbot_ips', '', 'Bingbot官方IP段缓存')`,
+		},
+	},
 }
 
 func ensureCDNRealIPEnabledColumn() error {

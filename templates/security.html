@@ -137,6 +137,30 @@
                 <button type="submit" class="btn-primary">保存限速设置</button>
             </form>
         </div>
+
+        <div class="card">
+            <h3 class="text-lg font-semibold text-white mb-4">爬虫限速</h3>
+            <form @submit.prevent="saveBotLimit">
+                <div class="mb-4">
+                    <label class="flex items-center space-x-2 cursor-pointer">
+                        <input type="checkbox" x-model="settings.bot_limit_enabled" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600">
+                        <span class="text-gray-300">开启 Bot UA 统一限速</span>
+                    </label>
+                    <p class="text-xs text-gray-500 mt-1">默认关闭。开启后常见爬虫按站点共享限速桶，普通浏览器不受此层影响。</p>
+                </div>
+                <div class="mb-4">
+                    <label class="label">Bot 请求频率 (次/分钟)</label>
+                    <input type="number" x-model="settings.bot_limit_rpm" class="input-field" min="5" max="300">
+                    <p class="text-xs text-gray-500 mt-1">默认 30。用于压制多 IP 假爬虫持续扫站，避免打满 WordPress 动态 404。</p>
+                </div>
+                <div class="mb-4">
+                    <label class="label">Bot 突发缓冲 (次)</label>
+                    <input type="number" x-model="settings.bot_limit_burst" class="input-field" min="5" max="300">
+                    <p class="text-xs text-gray-500 mt-1">默认 20。Googlebot/Bingbot 仅在来源 IP 属于官方段时豁免；假冒搜索爬虫会进入限速桶。</p>
+                </div>
+                <button type="submit" class="btn-primary">保存爬虫限速</button>
+            </form>
+        </div>
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-6">
@@ -258,10 +282,13 @@ function securitySettings() {
                     const map = {};
                     r.data.forEach(s => {
                         let v = s.svalue;
-                        if (['auto_whitelist_enabled','rate_limit_enabled','telemetry_enabled'].includes(s.skey)) v = v === 'true';
-                        else if (['fail2ban_maxretry','fail2ban_findtime','fail2ban_bantime','rate_limit_rpm','rate_limit_burst'].includes(s.skey)) v = parseInt(v) || 0;
+                        if (['auto_whitelist_enabled','rate_limit_enabled','bot_limit_enabled','telemetry_enabled'].includes(s.skey)) v = v === 'true';
+                        else if (['fail2ban_maxretry','fail2ban_findtime','fail2ban_bantime','rate_limit_rpm','rate_limit_burst','bot_limit_rpm','bot_limit_burst'].includes(s.skey)) v = parseInt(v) || 0;
                         map[s.skey] = v;
                     });
+                    if (typeof map.bot_limit_enabled === 'undefined') map.bot_limit_enabled = false;
+                    if (!map.bot_limit_rpm) map.bot_limit_rpm = 30;
+                    if (!map.bot_limit_burst) map.bot_limit_burst = 20;
                     this.settings = map;
                 }
             } catch(e) {}
@@ -332,6 +359,16 @@ function securitySettings() {
                     rate_limit_burst: String(this.settings.rate_limit_burst || 300),
                 } });
                 showToast('限速设置已保存', 'success');
+            } catch(e) { showToast(e.message, 'error'); }
+        },
+        async saveBotLimit() {
+            try {
+                await api('/security/settings', { method: 'PUT', body: {
+                    bot_limit_enabled: this.settings.bot_limit_enabled ? 'true' : 'false',
+                    bot_limit_rpm: String(this.settings.bot_limit_rpm || 30),
+                    bot_limit_burst: String(this.settings.bot_limit_burst || 20),
+                } });
+                showToast('爬虫限速已保存', 'success');
             } catch(e) { showToast(e.message, 'error'); }
         },
         async saveTelemetry() {

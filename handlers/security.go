@@ -117,7 +117,7 @@ func needsFail2banApply(settings map[string]string) bool {
 }
 
 func needsRateLimitApply(settings map[string]string) bool {
-	for _, key := range []string{"rate_limit_enabled", "rate_limit_rpm", "rate_limit_burst"} {
+	for _, key := range []string{"rate_limit_enabled", "rate_limit_rpm", "rate_limit_burst", "bot_limit_enabled", "bot_limit_rpm", "bot_limit_burst"} {
 		if _, ok := settings[key]; ok {
 			return true
 		}
@@ -331,8 +331,7 @@ func normalizeCDNRealIPGroupPayload(name, headerName, rawRanges string, enabled 
 }
 
 func applyRateLimit() error {
-	enabled, rpm, burst := executor.GetRateLimitSettings()
-	return executor.EnsureRateLimit(enabled, rpm, burst)
+	return executor.ApplyRateLimitSettings()
 }
 
 func normalizeSecuritySetting(key string, val interface{}) (string, bool, error) {
@@ -347,7 +346,11 @@ func normalizeSecuritySetting(key string, val interface{}) (string, bool, error)
 		return normalizeRange(key, val, 10, 600)
 	case "rate_limit_burst":
 		return normalizeRange(key, val, 5, 600)
-	case "auto_whitelist_enabled", "rate_limit_enabled":
+	case "bot_limit_rpm":
+		return normalizeRange(key, val, 5, 300)
+	case "bot_limit_burst":
+		return normalizeRange(key, val, 5, 300)
+	case "auto_whitelist_enabled", "rate_limit_enabled", "bot_limit_enabled":
 		v, err := normalizeBool(val)
 		return v, true, err
 	case "whitelist_ips":

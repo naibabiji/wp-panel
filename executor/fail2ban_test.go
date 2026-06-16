@@ -255,6 +255,118 @@ func TestPHPTemplateDoesNotIncludeWordPressSecurityLog(t *testing.T) {
 	}
 }
 
+func TestNginxTemplateUsesGlobalLimitStatusAndBotDefaultOff(t *testing.T) {
+	openTestDB(t)
+	engine := NewTemplateEngine(t.TempDir())
+	config, err := engine.RenderNginxConfig(&NginxSiteData{
+		Domain:        "example.com",
+		ServerNames:   "example.com",
+		WebRoot:       "/www/wwwroot/example.com",
+		PHPProxy:      "unix:/run/php/example.sock",
+		TemplateVer:   "v1.0",
+		AccessLogMode: "error_only",
+		SiteType:      "wordpress",
+	})
+	if err != nil {
+		t.Fatalf("render nginx config: %v", err)
+	}
+	if !strings.Contains(config, "limit_req zone=wp_req_limit burst=300 nodelay;") {
+		t.Fatalf("expected existing IP rate limit in config:\n%s", config)
+	}
+	if strings.Contains(config, "limit_req zone=wp_bot_limit") {
+		t.Fatalf("bot limit should be disabled by default:\n%s", config)
+	}
+	if strings.Contains(config, "limit_req_status 429") {
+		t.Fatalf("limit_req_status must be managed globally, not per site:\n%s", config)
+	}
+}
+
+func TestNginxTemplateIncludesBotLimit(t *testing.T) {
+	openTestDB(t)
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue = 'true' WHERE skey = 'bot_limit_enabled'`); err != nil {
+		t.Fatalf("enable bot limit: %v", err)
+	}
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue = '25' WHERE skey = 'bot_limit_burst'`); err != nil {
+		t.Fatalf("set bot burst: %v", err)
+	}
+
+	engine := NewTemplateEngine(t.TempDir())
+	config, err := engine.RenderNginxConfig(&NginxSiteData{
+		Domain:           "example.com",
+		ServerNames:      "example.com",
+		WebRoot:          "/www/wwwroot/example.com",
+		PHPProxy:         "unix:/run/php/example.sock",
+		TemplateVer:      "v1.0",
+		AccessLogMode:    "error_only",
+		SiteType:         "wordpress",
+		CDNRealIPEnabled: true,
+		CDNRealIPHeader:  "X-Forwarded-For",
+		CDNRealIPCompat:  true,
+	})
+	if err != nil {
+		t.Fatalf("render nginx config: %v", err)
+	}
+	if !strings.Contains(config, "limit_req zone=wp_bot_limit burst=25 nodelay;") {
+		t.Fatalf("expected bot limit in config:\n%s", config)
+	}
+	if strings.Contains(config, "limit_req_status 429") {
+		t.Fatalf("limit_req_status must be managed globally, not per site:\n%s", config)
+	}
+}
+
+func TestRenderVerifiedSearchBotGeoEntries(t *testing.T) {
+	openTestDB(t)
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue = ? WHERE skey = 'googlebot_ips'`, "66.249.64.0/19\n2001:4860:4801::/48\nbad"); err != nil {
+		t.Fatalf("set googlebot ips: %v", err)
+	}
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue = ? WHERE skey = 'bingbot_ips'`, "40.77.167.0/24\n66.249.64.0/19"); err != nil {
+		t.Fatalf("set bingbot ips: %v", err)
+	}
+	entries := renderVerifiedSearchBotGeoEntries()
+	for _, want := range []string{
+		"66.249.64.0/19 1;",
+		"2001:4860:4801::/48 1;",
+		"40.77.167.0/24 1;",
+	} {
+		if !strings.Contains(entries, want) {
+			t.Fatalf("missing %q in geo entries:\n%s", want, entries)
+		}
+	}
+	if strings.Contains(entries, "bad") {
+		t.Fatalf("invalid ranges must not be rendered:\n%s", entries)
+	}
+	if strings.Count(entries, "66.249.64.0/19 1;") != 1 {
+		t.Fatalf("duplicate ranges must be collapsed:\n%s", entries)
+	}
+}
+
+func TestRenderCDNRealIPCompatMapEntries(t *testing.T) {
+	openTestDB(t)
+	db := database.GetDB()
+	if _, err := db.Exec(`INSERT INTO websites
+		(id, name, domain, aliases, system_user, web_root, log_dir, db_name, db_user, php_pool_path, nginx_conf_path, cdn_realip_enabled)
+		VALUES (501, 'Example', 'Example.COM', 'alias.example.com
+bad host', 'wpuser', '/www/wwwroot/example.com', '/www/wwwlogs/example.com', 'db', 'dbu', '/etc/php/example.conf', '/etc/nginx/sites-available/example.conf', 1)`); err != nil {
+		t.Fatalf("insert website: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO website_cdn_realip_groups (website_id, group_id)
+		SELECT 501, id FROM cdn_realip_groups WHERE provider = 'compatible' LIMIT 1`); err != nil {
+		t.Fatalf("insert binding: %v", err)
+	}
+	entries := renderCDNRealIPCompatMapEntries()
+	for _, want := range []string{
+		"example.com 1;",
+		"alias.example.com 1;",
+	} {
+		if !strings.Contains(entries, want) {
+			t.Fatalf("missing %q in compat map entries:\n%s", want, entries)
+		}
+	}
+	if strings.Contains(entries, "bad host") {
+		t.Fatalf("unsafe host must not be rendered:\n%s", entries)
+	}
+}
+
 func TestNormalizeWPSecurityLogWhitelist(t *testing.T) {
 	patterns, err := NormalizeWPSecurityLogWhitelist("/google*.html\n/BingSiteAuth.xml\n/google*.html")
 	if err != nil {

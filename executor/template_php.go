@@ -23,7 +23,9 @@ server {
 
     {{if .RateLimitEnabled}}
     limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
-    limit_req_status 429;
+    {{end}}
+    {{if .BotLimitEnabled}}
+    limit_req zone=wp_bot_limit burst={{.BotLimitBurst}} nodelay;
     {{end}}
 
     set $wp_cache_ver "{{.FCacheKey}}";
@@ -119,7 +121,9 @@ server {
 
     {{if .RateLimitEnabled}}
     limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
-    limit_req_status 429;
+    {{end}}
+    {{if .BotLimitEnabled}}
+    limit_req zone=wp_bot_limit burst={{.BotLimitBurst}} nodelay;
     {{end}}
 
     set $wp_cache_ver "{{.FCacheKey}}";
@@ -149,7 +153,9 @@ server {
 
     {{if .RateLimitEnabled}}
     limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
-    limit_req_status 429;
+    {{end}}
+    {{if .BotLimitEnabled}}
+    limit_req zone=wp_bot_limit burst={{.BotLimitBurst}} nodelay;
     {{end}}
 
     set $wp_cache_ver "{{.FCacheKey}}";

@@ -440,6 +440,8 @@ do_uninstall() {
 
     echo -e "  → 清理 Nginx 面板配置..."
     rm -f /etc/nginx/conf.d/wppanel-ratelimit.conf
+    rm -f /etc/nginx/conf.d/wppanel-botlimit.conf
+    rm -f /etc/nginx/conf.d/wppanel-limit-status.conf
     rm -f /etc/nginx/conf.d/wppanel-cache.conf
     rm -f /etc/nginx/conf.d/wppanel-log.conf
     nginx -s reload 2>/dev/null || true
@@ -742,6 +744,11 @@ map $http_cookie $wp_rate_limit_key {
 
 limit_req_zone $wp_rate_limit_key zone=wp_req_limit:10m rate=60r/m;
 RATELIMITEOF
+
+cat > /etc/nginx/conf.d/wppanel-limit-status.conf << 'LIMITSTATUSEOF'
+# WP Panel Generated - shared limit_req status
+limit_req_status 429;
+LIMITSTATUSEOF
 
 # FastCGI 缓存
 mkdir -p /var/cache/nginx/fastcgi
