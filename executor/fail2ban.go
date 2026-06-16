@@ -327,7 +327,10 @@ func cacheSearchBotIPRanges(key string, ips []string) {
 	if key != "googlebot_ips" && key != "bingbot_ips" {
 		return
 	}
-	database.GetDB().Exec(`UPDATE security_settings SET svalue = ?, updated_at = CURRENT_TIMESTAMP WHERE skey = ?`, strings.Join(ips, "\n"), key)
+	database.GetDB().Exec(`INSERT INTO security_settings (skey, svalue, description, updated_at)
+		VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(skey) DO UPDATE SET svalue = excluded.svalue, updated_at = excluded.updated_at`,
+		key, strings.Join(ips, "\n"), key+"官方IP段缓存")
 }
 
 func ApplyFail2banSettings() error {

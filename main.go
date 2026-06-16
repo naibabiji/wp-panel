@@ -152,13 +152,8 @@ func main() {
 
 	executor.ApplyFail2banSettings()
 	executor.EnsureOperationLogRetention()
-	if err := executor.EnsureLimitReqStatus(); err != nil {
-		log.Printf("Nginx 限速状态码配置跳过: %v", err)
-	}
-	if botEnabled, botRPM, botBurst := executor.GetBotRateLimitSettings(); botEnabled {
-		if err := executor.EnsureBotRateLimit(botEnabled, botRPM, botBurst); err != nil {
-			log.Printf("Nginx Bot 限速配置跳过: %v", err)
-		}
+	if err := executor.ApplyRateLimitSettings(); err != nil {
+		log.Printf("Nginx 限速配置跳过: %v", err)
 	}
 	if err := executor.EnsureLogMap(); err != nil {
 		log.Printf("Nginx 日志 map 配置跳过: %v", err)

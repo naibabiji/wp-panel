@@ -340,30 +340,64 @@ func TestRenderVerifiedSearchBotGeoEntries(t *testing.T) {
 	}
 }
 
-func TestRenderCDNRealIPCompatMapEntries(t *testing.T) {
+func TestWriteBotRateLimitConfigUsesVerifiedSearchBotExemption(t *testing.T) {
 	openTestDB(t)
-	db := database.GetDB()
-	if _, err := db.Exec(`INSERT INTO websites
-		(id, name, domain, aliases, system_user, web_root, log_dir, db_name, db_user, php_pool_path, nginx_conf_path, cdn_realip_enabled)
-		VALUES (501, 'Example', 'Example.COM', 'alias.example.com
-bad host', 'wpuser', '/www/wwwroot/example.com', '/www/wwwlogs/example.com', 'db', 'dbu', '/etc/php/example.conf', '/etc/nginx/sites-available/example.conf', 1)`); err != nil {
-		t.Fatalf("insert website: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO website_cdn_realip_groups (website_id, group_id)
-		SELECT 501, id FROM cdn_realip_groups WHERE provider = 'compatible' LIMIT 1`); err != nil {
-		t.Fatalf("insert binding: %v", err)
-	}
-	entries := renderCDNRealIPCompatMapEntries()
+	config := renderBotRateLimitConfig(30)
 	for _, want := range []string{
-		"example.com 1;",
-		"alias.example.com 1;",
+		`map "$wp_bot_ua:$wp_search_bot_ua:$wp_verified_search_bot_ip" $wp_bot_rate_key`,
+		`"1:1:1" "";`,
 	} {
-		if !strings.Contains(entries, want) {
-			t.Fatalf("missing %q in compat map entries:\n%s", want, entries)
+		if !strings.Contains(config, want) {
+			t.Fatalf("missing %q in bot config:\n%s", want, config)
 		}
 	}
-	if strings.Contains(entries, "bad host") {
-		t.Fatalf("unsafe host must not be rendered:\n%s", entries)
+	if strings.Contains(config, "wp_cdn_realip_compat") {
+		t.Fatalf("verified search bot exemption must not depend on CDN compat mode:\n%s", config)
+	}
+}
+
+func TestRewriteRateLimitDirectivesCombinations(t *testing.T) {
+	base := `server {
+    # server_name ignored.example.com;
+    listen 80;
+    server_name example.com;
+    limit_req zone=wp_req_limit burst=10 nodelay;
+    limit_req zone=wp_bot_limit burst=5 nodelay;
+    limit_req_status 429;
+}`
+	ipLine := "    limit_req zone=wp_req_limit burst=300 nodelay;"
+	botLine := "    limit_req zone=wp_bot_limit burst=20 nodelay;"
+
+	tests := []struct {
+		name      string
+		ip        bool
+		bot       bool
+		wantIP    bool
+		wantBot   bool
+		wantCount int
+	}{
+		{"both on", true, true, true, true, 2},
+		{"ip only", true, false, true, false, 1},
+		{"bot only", false, true, false, true, 1},
+		{"both off", false, false, false, false, 0},
+	}
+	for _, tt := range tests {
+		got := rewriteRateLimitDirectives(base, ipLine, botLine, tt.ip, tt.bot)
+		if strings.Contains(got, "limit_req_status 429") {
+			t.Fatalf("%s: per-site status should be removed:\n%s", tt.name, got)
+		}
+		if strings.Contains(got, "# server_name ignored.example.com;\n    limit_req") {
+			t.Fatalf("%s: must not inject after commented server_name:\n%s", tt.name, got)
+		}
+		if strings.Contains(got, "zone=wp_req_limit") != tt.wantIP {
+			t.Fatalf("%s: IP limit presence mismatch:\n%s", tt.name, got)
+		}
+		if strings.Contains(got, "zone=wp_bot_limit") != tt.wantBot {
+			t.Fatalf("%s: bot limit presence mismatch:\n%s", tt.name, got)
+		}
+		if count := strings.Count(got, "limit_req zone="); count != tt.wantCount {
+			t.Fatalf("%s: limit count = %d, want %d:\n%s", tt.name, count, tt.wantCount, got)
+		}
 	}
 }
 

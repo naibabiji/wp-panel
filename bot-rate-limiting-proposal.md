@@ -335,7 +335,9 @@ limit_req zone=wp_bot_limit burst=20 nodelay;
 
 如果站点启用了 CDN Real IP，Nginx 的 real_ip 模块会在较早阶段改写客户端地址；配置正确时，`geo $wp_verified_search_bot_ip` 看到的 `$remote_addr` 应是真实客户端 IP，而不是 CDN 回源 IP。新增 bot 限速的 key 主要按 `$server_name:bot` 聚合，不依赖单 IP，因此 CDN 场景下仍能发挥作用。
 
-官方搜索引擎 IP 验证应使用 Nginx 实际识别的客户端 IP；需要确保现有 Cloudflare Real IP 配置不会把 Cloudflare 回源 IP 错当成搜索引擎 IP。如果站点 CDN Real IP 配置错误，真 Googlebot/Bingbot 可能无法被识别为官方 IP，从而进入 bot 限速桶。这个结果偏保守，不会绕过防护，但可能降低搜索引擎抓取速度，测试服务器必须覆盖该场景。
+官方搜索引擎 IP 验证使用 Nginx 实际识别的客户端 IP。只要该 IP 命中 Googlebot/Bingbot 官方 IP 段，就豁免新增 Bot 限速；不因 CDN 兼容模式额外进入 bot 桶。
+
+需要注意：通用 CDN 兼容模式会信任请求头中的真实 IP，管理员应只在可信 CDN 场景下启用。若上游 Header 本身不可信，任何基于真实 IP 的判断都可能失真，这属于 CDN Real IP 配置风险，不由 Bot 限速单独解决。
 
 ---
 
@@ -465,7 +467,7 @@ scripts\verify.ps1
 6. 开启 bot 限速后，现有 IP 限速仍正常。
 7. 关闭 IP 限速、仅开启 Bot 限速时，Bot 超限仍通过全局配置返回 429。
 8. IP 限速和 Bot 限速都关闭时，站点配置不保留无用的 `limit_req` 行；全局 `limit_req_status 429;` 可保留且无副作用。
-9. CDN Real IP 正确配置时，`geo` 验证使用真实客户端 IP；配置错误时，真搜索爬虫最多进入 bot 桶，不应绕过防护。
+9. CDN Real IP 正确配置时，`geo` 验证使用真实客户端 IP；命中 Google/Bing 官方 IP 段时不进入 Bot 限速桶。
 10. `nginx -t` 和 reload 成功。
 11. Fail2ban 可继续捕获 429，但不把它作为分布式防御的唯一依据。
 

@@ -287,8 +287,8 @@ function securitySettings() {
                         map[s.skey] = v;
                     });
                     if (typeof map.bot_limit_enabled === 'undefined') map.bot_limit_enabled = false;
-                    if (!map.bot_limit_rpm) map.bot_limit_rpm = 30;
-                    if (!map.bot_limit_burst) map.bot_limit_burst = 20;
+                    if (typeof map.bot_limit_rpm === 'undefined') map.bot_limit_rpm = 30;
+                    if (typeof map.bot_limit_burst === 'undefined') map.bot_limit_burst = 20;
                     this.settings = map;
                 }
             } catch(e) {}

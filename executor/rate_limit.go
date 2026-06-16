@@ -102,10 +102,18 @@ limit_req_zone $wp_rate_limit_key zone=wp_req_limit:10m rate=%dr/m;
 }
 
 func writeBotRateLimitConfig(rpm int) error {
+	content := renderBotRateLimitConfig(rpm)
+	if err := os.MkdirAll(filepath.Dir(botRateLimitConfPath), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(botRateLimitConfPath, []byte(content), 0644)
+}
+
+func renderBotRateLimitConfig(rpm int) string {
 	if rpm <= 0 {
 		rpm = defaultBotRateLimitRPM
 	}
-	content := fmt.Sprintf(`# WP Panel Generated - Bot UA rate limiting
+	return fmt.Sprintf(`# WP Panel Generated - Bot UA rate limiting
 
 geo $wp_verified_search_bot_ip {
     default 0;
@@ -121,25 +129,14 @@ map $http_user_agent $wp_bot_ua {
     default 0;
 }
 
-map $host $wp_cdn_realip_compat {
-    default 0;
-%s}
-
-map "$wp_bot_ua:$wp_search_bot_ua:$wp_verified_search_bot_ip:$wp_cdn_realip_compat" $wp_bot_rate_key {
-    "1:1:1:1" "$server_name:bot";
-    "1:1:1:0" "";
-    "1:1:1:" "";
+map "$wp_bot_ua:$wp_search_bot_ua:$wp_verified_search_bot_ip" $wp_bot_rate_key {
+    "1:1:1" "";
     ~^1: "$server_name:bot";
     default "";
 }
 
 limit_req_zone $wp_bot_rate_key zone=wp_bot_limit:10m rate=%dr/m;
-`, renderVerifiedSearchBotGeoEntries(), renderCDNRealIPCompatMapEntries(), rpm)
-
-	if err := os.MkdirAll(filepath.Dir(botRateLimitConfPath), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(botRateLimitConfPath, []byte(content), 0644)
+`, renderVerifiedSearchBotGeoEntries(), rpm)
 }
 
 func renderVerifiedSearchBotGeoEntries() string {
@@ -166,65 +163,6 @@ func renderVerifiedSearchBotGeoEntries() string {
 		}
 	}
 	return b.String()
-}
-
-func renderCDNRealIPCompatMapEntries() string {
-	db := database.GetDB()
-	if db == nil {
-		return ""
-	}
-	rows, err := db.Query(`SELECT DISTINCT w.domain, w.aliases
-		FROM websites w
-		INNER JOIN website_cdn_realip_groups wg ON wg.website_id = w.id
-		INNER JOIN cdn_realip_groups g ON g.id = wg.group_id
-		WHERE w.cdn_realip_enabled = 1
-		  AND g.enabled = 1
-		  AND (g.provider = 'compatible' OR (g.provider = 'custom' AND TRIM(g.ip_ranges) = ''))`)
-	if err != nil {
-		return ""
-	}
-	defer rows.Close()
-
-	hosts := map[string]bool{}
-	for rows.Next() {
-		var domain, aliases string
-		if err := rows.Scan(&domain, &aliases); err != nil {
-			continue
-		}
-		addNginxMapHost(hosts, domain)
-		for _, alias := range splitAliases(aliases) {
-			addNginxMapHost(hosts, alias)
-		}
-	}
-
-	var b strings.Builder
-	for host := range hosts {
-		b.WriteString("    ")
-		b.WriteString(host)
-		b.WriteString(" 1;\n")
-	}
-	return b.String()
-}
-
-func addNginxMapHost(hosts map[string]bool, host string) {
-	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "" || !isSafeNginxMapHost(host) {
-		return
-	}
-	hosts[host] = true
-}
-
-func isSafeNginxMapHost(host string) bool {
-	if len(host) > 253 {
-		return false
-	}
-	for _, r := range host {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '-' {
-			continue
-		}
-		return false
-	}
-	return true
 }
 
 type rateLimitBackup struct {
@@ -282,14 +220,12 @@ func testAndReloadNginx(backups []rateLimitBackup) error {
 }
 
 func injectRateLimitToSites(burst int) {
-	botEnabled, _, _ := GetBotRateLimitSettings()
-	_, _, botBurst := GetBotRateLimitSettings()
+	botEnabled, _, botBurst := GetBotRateLimitSettings()
 	rewriteRateLimitDirectivesToSites(true, burst, botEnabled, botBurst)
 }
 
 func stripRateLimitFromSites() {
-	botEnabled, _, _ := GetBotRateLimitSettings()
-	_, _, botBurst := GetBotRateLimitSettings()
+	botEnabled, _, botBurst := GetBotRateLimitSettings()
 	rewriteRateLimitDirectivesToSites(false, 0, botEnabled, botBurst)
 }
 
@@ -318,31 +254,45 @@ func rewriteRateLimitDirectivesToSites(ipEnabled bool, ipBurst int, botEnabled b
 		if err != nil {
 			continue
 		}
-		content := string(data)
-
-		lines := strings.Split(content, "\n")
-		var cleaned []string
-		for _, line := range lines {
-			if !strings.Contains(line, "limit_req zone=wp_req_limit") &&
-				!strings.Contains(line, "limit_req zone=wp_bot_limit") &&
-				!strings.Contains(line, "limit_req_status 429") {
-				cleaned = append(cleaned, line)
-			}
-		}
-		var result []string
-		for _, line := range cleaned {
-			result = append(result, line)
-			if strings.Contains(line, "server_name") {
-				if ipEnabled {
-					result = append(result, ipLimitLine)
-				}
-				if botEnabled {
-					result = append(result, botLimitLine)
-				}
-			}
-		}
-		os.WriteFile(configPath, []byte(strings.Join(result, "\n")), 0644)
+		os.WriteFile(configPath, []byte(rewriteRateLimitDirectives(string(data), ipLimitLine, botLimitLine, ipEnabled, botEnabled)), 0644)
 	}
+}
+
+func rewriteRateLimitDirectives(content, ipLimitLine, botLimitLine string, ipEnabled, botEnabled bool) string {
+	lines := strings.Split(content, "\n")
+	var cleaned []string
+	for _, line := range lines {
+		if !strings.Contains(line, "limit_req zone=wp_req_limit") &&
+			!strings.Contains(line, "limit_req zone=wp_bot_limit") &&
+			!strings.Contains(line, "limit_req_status 429") {
+			cleaned = append(cleaned, line)
+		}
+	}
+
+	var result []string
+	inServer := false
+	injected := false
+	for _, line := range cleaned {
+		result = append(result, line)
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "server {") {
+			inServer = true
+			injected = false
+		}
+		if inServer && !injected && strings.HasPrefix(trimmed, "server_name ") {
+			if ipEnabled {
+				result = append(result, ipLimitLine)
+			}
+			if botEnabled {
+				result = append(result, botLimitLine)
+			}
+			injected = true
+		}
+		if inServer && trimmed == "}" {
+			inServer = false
+		}
+	}
+	return strings.Join(result, "\n")
 }
 
 func updateRateLimitLine(path, content, burst string) {
@@ -359,7 +309,7 @@ func updateRateLimitLine(path, content, burst string) {
 func GetRateLimitSettings() (enabled bool, rpm int, burst int) {
 	db := database.GetDB()
 	if db == nil {
-		return true, 60, 300
+		return true, 60, 30
 	}
 
 	var sEnabled, sRPM, sBurst string
