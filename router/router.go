@@ -110,6 +110,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	websiteHandler := &handlers.WebsiteHandler{DB: db}
 	protected.GET("/api/websites", websiteHandler.List)
 	protected.POST("/api/websites", websiteHandler.Create)
+	protected.POST("/api/websites/ssl-preflight", websiteHandler.SSLPreflight)
 	protected.GET("/api/websites/:id", websiteHandler.Get)
 	protected.DELETE("/api/websites/:id", websiteHandler.Delete)
 	protected.PATCH("/api/websites/:id/status", websiteHandler.ToggleStatus)

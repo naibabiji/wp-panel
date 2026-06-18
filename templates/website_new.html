@@ -133,6 +133,17 @@ function createWebsite() {
             for (let i = 0; i < 24; i++) pw += chars[Math.floor(Math.random() * chars.length)];
             this.dbPassword = pw;
         },
+        async confirmSSLPreflight(body) {
+            if (!body.ssl_enabled) return true;
+            const resp = await api('/websites/ssl-preflight', { method: 'POST', body });
+            const warnings = (resp.data && resp.data.warnings) || [];
+            if (warnings.length === 0) return true;
+            return await confirmModal(
+                'SSL 申请前检测到以下风险：\n\n' +
+                warnings.join('\n\n') +
+                '\n\n如果你使用 CDN，请确认 CDN 已正确回源到当前服务器，并放行 /.well-known/acme-challenge/。\n\n是否继续创建网站并尝试申请 SSL？'
+            );
+        },
         async submit() {
             this.loading = true;
             this.error = '';
@@ -153,14 +164,16 @@ function createWebsite() {
                     body.install_themes = this.installThemes;
                     body.install_plugins = this.installPlugins;
                 }
+                if (!await this.confirmSSLPreflight(body)) return;
                 const resp = await api('/websites', { method: 'POST', body });
                 if (resp.success) {
-                    this.success = '网站 ' + this.domain + ' 创建成功！';
+                    const sslWarning = resp.data && resp.data.ssl_warning;
+                    this.success = sslWarning ? ('网站 ' + this.domain + ' 创建成功，但 SSL 未启用：' + sslWarning) : ('网站 ' + this.domain + ' 创建成功！');
                     this.domain = '';
                     this.aliases = '';
                     this.dbPassword = '';
                     this.sslEnabled = false;
-                    setTimeout(() => { window.location.href = '/' + document.body.dataset.panelPrefix.replace('/', '') + '/websites'; }, 2000);
+                    setTimeout(() => { window.location.href = '/' + document.body.dataset.panelPrefix.replace('/', '') + '/websites'; }, sslWarning ? 5000 : 2000);
                 }
             } catch (e) {
                 this.error = e.message;

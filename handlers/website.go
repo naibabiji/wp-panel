@@ -81,6 +81,14 @@ type WebsiteHandler struct {
 	DB *sql.DB
 }
 
+type sslPreflightDomain struct {
+	Domain      string   `json:"domain"`
+	Addresses   []string `json:"addresses"`
+	Matched     bool     `json:"matched"`
+	HasIPv6     bool     `json:"has_ipv6"`
+	MatchedIPv6 bool     `json:"matched_ipv6"`
+}
+
 func normalizeWPSiteURL(raw string) (string, error) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
@@ -94,6 +102,111 @@ func normalizeWPSiteURL(raw string) (string, error) {
 		return "", fmt.Errorf("URL must start with http:// or https://")
 	}
 	return value, nil
+}
+
+func localInterfaceIPs() map[string]bool {
+	result := map[string]bool{}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return result
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() {
+				continue
+			}
+			result[ip.String()] = true
+		}
+	}
+	return result
+}
+
+func uniqueRequestDomains(domain string, aliases []string) []string {
+	seen := map[string]bool{}
+	var domains []string
+	for _, raw := range append([]string{domain}, aliases...) {
+		d := strings.ToLower(strings.TrimSpace(raw))
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		domains = append(domains, d)
+	}
+	return domains
+}
+
+func (h *WebsiteHandler) SSLPreflight(c *gin.Context) {
+	var req models.CreateWebsiteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		return
+	}
+
+	domains := uniqueRequestDomains(req.Domain, req.Aliases)
+	if len(domains) == 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("域名不能为空"))
+		return
+	}
+	for _, domain := range domains {
+		if !executor.IsValidDomain(domain) {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("域名格式不合法: "+domain))
+			return
+		}
+	}
+
+	localIPs := localInterfaceIPs()
+	var result []sslPreflightDomain
+	var warnings []string
+	for _, domain := range domains {
+		ips, err := net.LookupIP(domain)
+		if err != nil || len(ips) == 0 {
+			warnings = append(warnings, domain+" 未解析到 A/AAAA 记录，Let's Encrypt 无法访问验证文件。")
+			result = append(result, sslPreflightDomain{Domain: domain})
+			continue
+		}
+
+		item := sslPreflightDomain{Domain: domain}
+		for _, ip := range ips {
+			ipText := ip.String()
+			item.Addresses = append(item.Addresses, ipText)
+			if ip.To4() == nil {
+				item.HasIPv6 = true
+			}
+			if localIPs[ipText] {
+				item.Matched = true
+				if ip.To4() == nil {
+					item.MatchedIPv6 = true
+				}
+			}
+		}
+		if !item.Matched {
+			warnings = append(warnings, domain+" 没有解析到当前服务器网卡 IP。如果使用 CDN，请确认 CDN 已正确回源到当前服务器，并且未缓存、重写或拦截 /.well-known/acme-challenge/。")
+		}
+		if item.HasIPv6 && !item.MatchedIPv6 {
+			warnings = append(warnings, domain+" 存在 AAAA 记录，但未匹配到当前服务器 IPv6。Let's Encrypt 可能访问 IPv6 并导致验证 404，请删除错误 AAAA 记录或配置正确 IPv6。")
+		}
+		result = append(result, item)
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"ok":       len(warnings) == 0,
+		"warnings": warnings,
+		"domains":  result,
+	}))
 }
 
 func (h *WebsiteHandler) List(c *gin.Context) {

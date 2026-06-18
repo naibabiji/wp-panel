@@ -79,7 +79,7 @@ func executeEnableSSL(task *Task) TaskResult {
 		expiry, applyErr = obtainLegoCert(site.Domain, site.Aliases, site.WebRoot, certDir)
 		if applyErr != nil {
 			log.Printf("申请 Let's Encrypt 证书失败: %v", applyErr)
-			return TaskResult{Success: false, Message: "申请 Let's Encrypt 证书失败: " + applyErr.Error()}
+			return TaskResult{Success: false, Message: FriendlySSLError(applyErr)}
 		}
 	}
 
@@ -92,6 +92,28 @@ func executeEnableSSL(task *Task) TaskResult {
 	return TaskResult{
 		Success: true,
 		Message: fmt.Sprintf("网站 %s SSL 已启用（到期: %s）", site.Domain, expiry.Format("2006-01-02")),
+	}
+}
+
+func FriendlySSLError(err error) string {
+	if err == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(err.Error())
+	lower := strings.ToLower(raw)
+	switch {
+	case strings.Contains(lower, "invalid response from http://") && strings.Contains(lower, ": 404"):
+		return "Let's Encrypt 访问 HTTP-01 验证文件返回 404。请检查域名 A/AAAA 是否指向当前服务器；如果使用 CDN，请确认 CDN 正确回源，并且未缓存、重写或拦截 /.well-known/acme-challenge/。"
+	case strings.Contains(lower, "no valid a records found") || strings.Contains(lower, "no valid aaaa records found") || strings.Contains(lower, "nxdomain"):
+		return "域名解析记录无效或尚未生效。请检查主域名和附加域名的 A/AAAA 记录后重试。"
+	case strings.Contains(lower, "connection refused"):
+		return "Let's Encrypt 无法连接网站 80 端口。请确认域名已指向当前服务器，并且防火墙、CDN、Nginx 没有拦截 HTTP 访问。"
+	case strings.Contains(lower, "timeout") || strings.Contains(lower, "i/o timeout") || strings.Contains(lower, "context deadline exceeded"):
+		return "Let's Encrypt 访问验证文件超时。请检查域名解析、80 端口连通性，以及 CDN 回源配置。"
+	case strings.Contains(lower, "unauthorized"):
+		return "Let's Encrypt 验证未通过。请检查域名是否解析到当前服务器；如果使用 CDN，请确认 CDN 放行 /.well-known/acme-challenge/ 并正确回源。"
+	default:
+		return "申请 Let's Encrypt 证书失败：" + raw
 	}
 }
 

@@ -336,6 +336,7 @@ func executeCreateSite(task *Task) TaskResult {
 
 	sslEnabled := 0
 	var sslExpiry *time.Time
+	sslWarning := ""
 	if payload.SSLEnabled {
 		if sslErr := os.MkdirAll(certDir, 0700); sslErr != nil {
 			rollback()
@@ -348,42 +349,45 @@ func executeCreateSite(task *Task) TaskResult {
 		}})
 		expiry, sslErr := obtainLegoCert(domain, strings.Join(payload.Aliases, "\n"), webRoot, certDir)
 		if sslErr != nil {
-			rollback()
 			log.Printf("申请 Let's Encrypt 证书失败: %v", sslErr)
-			return TaskResult{Success: false, Message: "申请 Let's Encrypt 证书失败: " + sslErr.Error()}
-		}
+			sslWarning = FriendlySSLError(sslErr)
+			os.RemoveAll(certDir)
+		} else {
+			sslData := &NginxSiteData{
+				Domain:        domain,
+				Aliases:       payload.Aliases,
+				ServerNames:   allServerNames,
+				WebRoot:       webRoot,
+				LogDir:        logDir,
+				SystemUser:    systemUser,
+				UseSSL:        true,
+				SSLCertPath:   certPath,
+				SSLKeyPath:    keyPath,
+				PHPProxy:      "unix:" + phpSockPath,
+				SiteType:      payload.SiteType,
+				TemplateVer:   "v1.0",
+				AccessLogMode: "error_only",
+			}
 
-		sslData := &NginxSiteData{
-			Domain:        domain,
-			Aliases:       payload.Aliases,
-			ServerNames:   allServerNames,
-			WebRoot:       webRoot,
-			LogDir:        logDir,
-			SystemUser:    systemUser,
-			UseSSL:        true,
-			SSLCertPath:   certPath,
-			SSLKeyPath:    keyPath,
-			PHPProxy:      "unix:" + phpSockPath,
-			SiteType:      payload.SiteType,
-			TemplateVer:   "v1.0",
-			AccessLogMode: "error_only",
+			httpsConfig, sslErr := engine.RenderNginxConfig(sslData)
+			if sslErr != nil {
+				log.Printf("渲染 HTTPS 配置失败: %v", sslErr)
+				sslWarning = "渲染 HTTPS 配置失败：" + sslErr.Error()
+				os.RemoveAll(certDir)
+			} else if sslErr := engine.ApplyNginxConfig(httpsConfig, nginxConfPath, nginxEnabledPath); sslErr != nil {
+				log.Printf("应用 HTTPS 配置失败: %v", sslErr)
+				os.RemoveAll(certDir)
+				if restoreErr := engine.ApplyNginxConfig(nginxConfig, nginxConfPath, nginxEnabledPath); restoreErr != nil {
+					rollback()
+					log.Printf("恢复 HTTP 配置失败: %v", restoreErr)
+					return taskFailure("应用 HTTPS 配置失败，且恢复 HTTP 配置失败", restoreErr)
+				}
+				sslWarning = "应用 HTTPS 配置失败：" + sslErr.Error()
+			} else {
+				sslEnabled = 1
+				sslExpiry = &expiry
+			}
 		}
-
-		httpsConfig, sslErr := engine.RenderNginxConfig(sslData)
-		if sslErr != nil {
-			rollback()
-			log.Printf("渲染 HTTPS 配置失败: %v", sslErr)
-			return taskFailure("渲染 HTTPS 配置失败", sslErr)
-		}
-
-		if sslErr := engine.ApplyNginxConfig(httpsConfig, nginxConfPath, nginxEnabledPath); sslErr != nil {
-			rollback()
-			log.Printf("应用 HTTPS 配置失败: %v", sslErr)
-			return taskFailure("应用 HTTPS 配置失败", sslErr)
-		}
-
-		sslEnabled = 1
-		sslExpiry = &expiry
 	}
 
 	if payload.SiteType != "php" {
@@ -425,6 +429,8 @@ func executeCreateSite(task *Task) TaskResult {
 	sslMsg := ""
 	if sslEnabled == 1 {
 		sslMsg = fmt.Sprintf("，SSL 已启用（到期: %s）", sslExpiry.Format("2006-01-02"))
+	} else if sslWarning != "" {
+		sslMsg = "，但 SSL 未启用: " + sslWarning
 	}
 
 	return TaskResult{
@@ -438,6 +444,7 @@ func executeCreateSite(task *Task) TaskResult {
 			"web_root":    webRoot,
 			"system_user": systemUser,
 			"ssl_enabled": sslEnabled == 1,
+			"ssl_warning": sslWarning,
 		},
 	}
 }
