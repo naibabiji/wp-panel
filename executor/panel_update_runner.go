@@ -1025,6 +1025,57 @@ func restoreDBFile(cfg *config.Config, backupPath string) error {
 	return nil
 }
 
+func stageLabel(stage string) string {
+	switch stage {
+	case "fetch_release":
+		return "获取版本信息"
+	case "compare_version":
+		return "版本比较"
+	case "resolve_assets":
+		return "解析发布文件"
+	case "waiting_release_delay":
+		return "等待发布延迟"
+	case "waiting_signature":
+		return "等待签名文件"
+	case "version_policy":
+		return "版本策略检查"
+	case "download_binary":
+		return "下载二进制"
+	case "download_sha256":
+		return "下载校验文件"
+	case "download_signature":
+		return "下载签名文件"
+	case "verify_signature":
+		return "校验签名"
+	case "verify_sha256":
+		return "校验完整性"
+	case "preflight":
+		return "预检新版本"
+	case "disk_check":
+		return "磁盘空间检查"
+	case "backup_binary":
+		return "备份旧版本"
+	case "backup_database":
+		return "备份数据库"
+	case "write_rollback_plan":
+		return "写入回滚计划"
+	case "replace_binary":
+		return "替换二进制"
+	case "start_watchdog":
+		return "启动健康检查"
+	case "restart":
+		return "重启面板"
+	case "health_check":
+		return "健康检查"
+	case "rollback_binary":
+		return "回滚二进制"
+	case "rollback_database":
+		return "回滚数据库"
+	default:
+		return stage
+	}
+}
+
 func sendPanelUpdateMail(success bool, targetVersion, stage, message string) {
 	cfg := GetSMTPConfig()
 	if cfg == nil || cfg.Host == "" || cfg.AdminEmail == "" {
@@ -1042,7 +1093,7 @@ func sendPanelUpdateMail(success bool, targetVersion, stage, message string) {
 <p>阶段：%s</p>
 <p>详情：%s</p>
 <p style="font-size: 12px; color: #aaa; margin-top: 20px;">来自 %s 面板</p>
-</body></html>`, status, html.EscapeString(targetVersion), html.EscapeString(stage), html.EscapeString(message), html.EscapeString(getPanelTitle()))
+</body></html>`, status, html.EscapeString(targetVersion), html.EscapeString(stageLabel(stage)), html.EscapeString(message), html.EscapeString(getPanelTitle()))
 	if err := SendMail("", getPanelTitle()+" 自动更新"+status, body); err != nil {
 		log.Printf("自动更新邮件发送失败: %v", err)
 	}
