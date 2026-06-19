@@ -99,7 +99,8 @@
                 try {
                     const resp = await api('/auth/login', {
                         method: 'POST',
-                        body: { username: this.username, password: this.password }
+                        body: { username: this.username, password: this.password },
+                        silent: true
                     });
                     if (resp.success) {
                         this.success = true;
@@ -112,7 +113,7 @@
                         this.loading = false;
                     }
                 } catch (e) {
-                    this.error = e.message || '网络错误';
+                    this.error = e.message || '无法连接面板服务，请刷新后重试';
                     this.loading = false;
                 }
             }

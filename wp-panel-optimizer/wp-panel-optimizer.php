@@ -3,7 +3,7 @@
  * Plugin Name: WP Panel Optimizer
  * Plugin URI:  https://github.com/naibabiji/wp-panel
  * Description: 与 WP Panel 面板配合，管理 FastCGI 缓存、预加载、调试模式、文章修订、内存限制等优化项。发布/更新文章自动清除缓存。
- * Version:     1.1.4
+ * Version:     1.1.5
  * Author:      WP Panel
  * Author URI:  https://blog.naibabiji.com
  * License:     GPL-2.0+
@@ -32,7 +32,7 @@ function wpp_optimizer_uninstall() {
 
 class WP_Panel_Optimizer {
 
-    const VERSION = '1.1.4';
+    const VERSION = '1.1.5';
 
     const OPTION_FCACHE_ENABLED = 'wpp_optimizer_fcache_enabled';
     const OPTION_FCACHE_TTL     = 'wpp_optimizer_fcache_ttl';
@@ -370,6 +370,12 @@ class WP_Panel_Optimizer {
 
             <hr>
             <h2>缓存预加载</h2>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:0 0 12px;">
+                <?php wp_nonce_field('wpp_cache_clear'); ?>
+                <input type="hidden" name="action" value="wpp_cache_clear">
+                <button type="submit" class="button button-primary" <?php disabled($missing); ?>>清除 Nginx 缓存</button>
+                <span class="description">适合手机后台或管理栏不方便操作时手动清理缓存。</span>
+            </form>
             <p>当前状态：<strong><?php echo esc_html($preloadStatus['running'] ? '运行中' : '空闲'); ?></strong>
                 <?php if (!empty($preloadStatus['last_message'])): ?>
                     <span class="description"><?php echo esc_html($preloadStatus['last_message']); ?></span>

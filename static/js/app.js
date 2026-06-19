@@ -1,31 +1,32 @@
 function api(path, options = {}) {
     const prefix = document.body.dataset.panelPrefix || '';
     const url = prefix + '/api' + path;
+    const { silent = false, suppressToast = false, ...fetchOptions } = options;
 
     const headers = {
         'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content || '',
-        ...options.headers,
+        ...fetchOptions.headers,
     };
 
-    if (options.body && typeof options.body === 'object' && !(options.body instanceof FormData)) {
+    if (fetchOptions.body && typeof fetchOptions.body === 'object' && !(fetchOptions.body instanceof FormData)) {
         headers['Content-Type'] = 'application/json';
-        options.body = JSON.stringify(options.body);
+        fetchOptions.body = JSON.stringify(fetchOptions.body);
     }
 
-    return fetch(url, { ...options, headers })
+    return fetch(url, { ...fetchOptions, headers })
         .then(async (resp) => {
-            if (resp.status === 401) {
+            if (resp.status === 401 && path !== '/auth/login') {
                 window.location.href = prefix + '/login';
-                throw new Error('Unauthorized');
+                throw new Error('登录已失效，请重新登录');
             }
             if (resp.status === 503) {
-                throw new Error('Service busy, please retry later');
+                throw new Error('面板服务繁忙，请稍后重试');
             }
             const contentType = resp.headers.get('content-type') || '';
             if (!contentType.includes('application/json')) {
                 const text = await resp.text();
                 console.error('Non-JSON response:', resp.status, text.substring(0, 200));
-                throw new Error('服务器返回异常 (' + resp.status + ')');
+                throw new Error('面板服务返回异常 (' + resp.status + ')，请检查服务是否正在运行或刷新后重试');
             }
             const data = await resp.json();
             if (!resp.ok) {
@@ -42,12 +43,26 @@ function api(path, options = {}) {
             return data;
         })
         .catch(err => {
-            if (err.message !== 'Unauthorized' && !err.conflicts) {
+            const message = friendlyAPIError(err);
+            const displayErr = message === err.message ? err : new Error(message);
+            if (err.conflicts) displayErr.conflicts = err.conflicts;
+            if (message !== '登录已失效，请重新登录' && !displayErr.conflicts && !silent && !suppressToast) {
                 console.error('Fetch failed:', err.message, 'URL:', url);
-                showToast(err.message, 'error');
+                showToast(displayErr.message, 'error');
             }
-            throw err;
+            throw displayErr;
         });
+}
+
+function friendlyAPIError(err) {
+    const message = err && err.message ? err.message : '';
+    if (/Load failed|Failed to fetch|NetworkError|Network request failed|fetch failed/i.test(message)) {
+        return '无法连接面板服务。请检查面板是否正在运行、网络连接、HTTPS 证书或访问入口是否正确，然后刷新重试。';
+    }
+    if (/AbortError|The operation was aborted/i.test(message)) {
+        return '请求已取消，请重试。';
+    }
+    return message || '请求失败，请稍后重试';
 }
 
 function formatBytes(bytes) {
