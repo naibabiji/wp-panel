@@ -107,6 +107,19 @@ func TestValidateRestoreBackupFileAcceptsVeryLongInsertLine(t *testing.T) {
 	}
 }
 
+func TestValidateRestoreBackupFileAllowsDangerousTextInsideData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "backup.sql")
+	sql := "CREATE TABLE `posts` (`content` longtext);\n" +
+		"INSERT INTO `posts` (`content`) VALUES ('CREATE DATABASE example; USE example; DEFINER=not_a_statement;');\n"
+	if err := os.WriteFile(path, []byte(sql), 0600); err != nil {
+		t.Fatalf("write sql: %v", err)
+	}
+
+	if err := validateRestoreBackupFile(path); err != nil {
+		t.Fatalf("validateRestoreBackupFile data text error = %v", err)
+	}
+}
+
 func TestValidateRestoreBackupFileRejectsDangerousSQL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "backup.sql")
 	sql := "CREATE DATABASE other_db;\nCREATE TABLE `nb_options` (`option_id` int);\nINSERT INTO `nb_options` VALUES (1);\n"

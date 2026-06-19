@@ -269,15 +269,40 @@ func validateRestoreSQL(r io.Reader) error {
 	sawCreateTable := false
 	statementPrefix := ""
 	inStatement := false
+	inSingleQuote := false
+	inDoubleQuote := false
+	inBacktick := false
+	escaped := false
 
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
 			chunk := string(buf[:n])
-			if strings.Contains(strings.ToUpper(chunk), "DEFINER=") {
-				return fmt.Errorf("SQL 包含跨数据库或 DEFINER 语句，已拒绝自动恢复")
-			}
 			for _, b := range []byte(chunk) {
+				if inSingleQuote || inDoubleQuote {
+					if escaped {
+						escaped = false
+						continue
+					}
+					if b == '\\' {
+						escaped = true
+						continue
+					}
+					if inSingleQuote && b == '\'' {
+						inSingleQuote = false
+					}
+					if inDoubleQuote && b == '"' {
+						inDoubleQuote = false
+					}
+					continue
+				}
+				if inBacktick {
+					if b == '`' {
+						inBacktick = false
+					}
+					continue
+				}
+
 				if !inStatement {
 					if b == '\r' || b == '\n' || b == '\t' || b == ' ' {
 						continue
@@ -293,6 +318,18 @@ func validateRestoreSQL(r io.Reader) error {
 					if isCreateTableStatement(statementPrefix) {
 						sawCreateTable = true
 					}
+				}
+				if b == '\'' {
+					inSingleQuote = true
+					continue
+				}
+				if b == '"' {
+					inDoubleQuote = true
+					continue
+				}
+				if b == '`' {
+					inBacktick = true
+					continue
 				}
 				if b == ';' {
 					inStatement = false
@@ -315,8 +352,11 @@ func validateRestoreSQL(r io.Reader) error {
 }
 
 func validateRestoreStatementPrefix(prefix string) error {
+	if strings.Contains(strings.ToUpper(prefix), "DEFINER=") {
+		return fmt.Errorf("SQL 包含跨数据库或 DEFINER 语句，已拒绝自动恢复")
+	}
 	normalized := normalizeSQLPrefix(prefix)
-	if strings.HasPrefix(normalized, "CREATE DATABASE") || strings.HasPrefix(normalized, "DROP DATABASE") || normalized == "USE" || strings.HasPrefix(normalized, "USE ") {
+	if strings.HasPrefix(normalized, "CREATE DATABASE") || strings.HasPrefix(normalized, "DROP DATABASE") || normalized == "USE" || strings.HasPrefix(normalized, "USE ") || strings.Contains(normalized, " DEFINER=") || strings.HasPrefix(normalized, "CREATE DEFINER=") {
 		return fmt.Errorf("SQL 包含跨数据库或 DEFINER 语句，已拒绝自动恢复")
 	}
 	return nil
