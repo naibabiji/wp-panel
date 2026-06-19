@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bytes"
 	"compress/gzip"
 	"os"
 	"path/filepath"
@@ -120,7 +121,7 @@ func TestValidateRestoreBackupFileAllowsDangerousTextInsideData(t *testing.T) {
 	}
 }
 
-func TestValidateRestoreBackupFileRejectsDangerousSQL(t *testing.T) {
+func TestValidateRestoreBackupFileAllowsCommonDatabaseDumpStatements(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "backup.sql")
 	sql := "CREATE DATABASE other_db;\nCREATE TABLE `nb_options` (`option_id` int);\nINSERT INTO `nb_options` VALUES (1);\n"
 	if err := os.WriteFile(path, []byte(sql), 0600); err != nil {
@@ -128,15 +129,12 @@ func TestValidateRestoreBackupFileRejectsDangerousSQL(t *testing.T) {
 	}
 
 	err := validateRestoreBackupFile(path)
-	if err == nil {
-		t.Fatal("validateRestoreBackupFile dangerous sql error = nil, want error")
-	}
-	if !strings.Contains(err.Error(), "跨数据库") {
-		t.Fatalf("unexpected error: %v", err)
+	if err != nil {
+		t.Fatalf("validateRestoreBackupFile common dump error = %v", err)
 	}
 }
 
-func TestValidateRestoreBackupFileRejectsDangerousSQLVariants(t *testing.T) {
+func TestWriteSanitizedRestoreSQLSkipsDangerousStatements(t *testing.T) {
 	tests := map[string]string{
 		"double_space":  "CREATE  DATABASE other_db;",
 		"newline":       "CREATE\nDATABASE other_db;",
@@ -147,16 +145,57 @@ func TestValidateRestoreBackupFileRejectsDangerousSQLVariants(t *testing.T) {
 
 	for name, dangerous := range tests {
 		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "backup.sql")
 			sql := dangerous + "\nCREATE TABLE `app_settings` (`id` int);\n"
-			if err := os.WriteFile(path, []byte(sql), 0600); err != nil {
-				t.Fatalf("write sql: %v", err)
+			var out bytes.Buffer
+			if err := writeSanitizedRestoreSQL(&out, strings.NewReader(sql)); err != nil {
+				t.Fatalf("writeSanitizedRestoreSQL error = %v", err)
 			}
-
-			if err := validateRestoreBackupFile(path); err == nil {
-				t.Fatal("validateRestoreBackupFile dangerous variant error = nil, want error")
+			got := out.String()
+			if strings.Contains(strings.ToUpper(got), "CREATE DATABASE") || strings.Contains(strings.ToUpper(got), "DROP DATABASE") || strings.Contains(strings.ToUpper(got), "USE OTHER_DB") || strings.Contains(strings.ToUpper(got), "DEFINER=") {
+				t.Fatalf("sanitized SQL still contains dangerous statement: %q", got)
+			}
+			if !strings.Contains(got, "CREATE TABLE") {
+				t.Fatalf("sanitized SQL missing safe statement: %q", got)
 			}
 		})
+	}
+}
+
+func TestWriteSanitizedRestoreSQLPreservesDangerousTextInsideData(t *testing.T) {
+	sql := "CREATE TABLE `posts` (`content` longtext);\n" +
+		"INSERT INTO `posts` (`content`) VALUES ('CREATE DATABASE example; USE example; DEFINER=not_a_statement;');\n"
+	var out bytes.Buffer
+	if err := writeSanitizedRestoreSQL(&out, strings.NewReader(sql)); err != nil {
+		t.Fatalf("writeSanitizedRestoreSQL error = %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "CREATE DATABASE example") || !strings.Contains(got, "DEFINER=not_a_statement") {
+		t.Fatalf("data text was not preserved: %q", got)
+	}
+}
+
+func TestWriteSanitizedRestoreSQLPreservesSafeSQL(t *testing.T) {
+	sql := "CREATE TABLE `posts` (`content` longtext, `title` varchar(255));\n" +
+		"INSERT INTO `posts` (`content`, `title`) VALUES ('It\\'s a CREATE DATABASE example; text', 'hello; world');\n"
+	var out bytes.Buffer
+	if err := writeSanitizedRestoreSQL(&out, strings.NewReader(sql)); err != nil {
+		t.Fatalf("writeSanitizedRestoreSQL error = %v", err)
+	}
+	if got := out.String(); got != sql {
+		t.Fatalf("safe SQL changed:\ngot:  %q\nwant: %q", got, sql)
+	}
+}
+
+func TestWriteSanitizedRestoreSQLKeepsForeignKeyTables(t *testing.T) {
+	sql := "CREATE TABLE `child` (`parent_id` int, CONSTRAINT `fk_parent` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`));\n" +
+		"CREATE TABLE `parent` (`id` int PRIMARY KEY);\n"
+	var out bytes.Buffer
+	if err := writeSanitizedRestoreSQL(&out, strings.NewReader(sql)); err != nil {
+		t.Fatalf("writeSanitizedRestoreSQL error = %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "FOREIGN KEY") || !strings.Contains(got, "CREATE TABLE `parent`") {
+		t.Fatalf("foreign key SQL was not preserved: %q", got)
 	}
 }
 

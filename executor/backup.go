@@ -117,57 +117,29 @@ func executeRestoreBackup(task *Task) TaskResult {
 }
 
 func restoreFromGz(filePath, dbName, dbPass string) TaskResult {
-	gunzip := exec.Command("gunzip", "-c", filePath)
-	mysql := exec.Command("mysql", "-u", "root", dbName)
-	mysql.Env = append(os.Environ(), "MYSQL_PWD="+dbPass)
-	var gunzipErr, mysqlErr bytes.Buffer
-	gunzip.Stderr = &gunzipErr
-	mysql.Stderr = &mysqlErr
-	var pipeErr error
-	mysql.Stdin, pipeErr = gunzip.StdoutPipe()
-	if pipeErr != nil {
-		return TaskResult{Success: false, Message: fmt.Sprintf("创建管道失败: %v", pipeErr)}
-	}
-	if err := mysql.Start(); err != nil {
-		log.Printf("恢复失败: %v", err)
-		return TaskResult{Success: false, Message: "恢复失败"}
-	}
-	if err := gunzip.Run(); err != nil {
-		mysql.Process.Kill()
-		mysql.Wait()
-		msg := strings.TrimSpace(gunzipErr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		log.Printf("恢复失败 gunzip: %v: %s", err, msg)
-		return TaskResult{Success: false, Message: "恢复失败，gzip 解压错误: " + msg}
-	}
-	if err := mysql.Wait(); err != nil {
-		msg := strings.TrimSpace(mysqlErr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		log.Printf("恢复失败 mysql: %v: %s", err, msg)
-		return TaskResult{Success: false, Message: "恢复失败，mysql 导入错误: " + msg}
-	}
-	return TaskResult{Success: true, Message: "数据库恢复成功"}
-}
-
-func restoreFromSql(filePath, dbName, dbPass string) TaskResult {
-	cmd := exec.Command("mysql", "-u", "root", dbName)
-	cmd.Env = append(os.Environ(), "MYSQL_PWD="+dbPass)
 	f, err := os.Open(filePath)
 	if err != nil {
 		log.Printf("读取备份文件失败: %v", err)
 		return TaskResult{Success: false, Message: "读取备份文件失败"}
 	}
 	defer f.Close()
-	cmd.Stdin = f
-	out, err := cmd.CombinedOutput()
+	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return TaskResult{Success: false, Message: fmt.Sprintf("恢复失败: %s", string(out))}
+		log.Printf("恢复失败 gzip: %v", err)
+		return TaskResult{Success: false, Message: "恢复失败，gzip 文件损坏或格式不正确"}
 	}
-	return TaskResult{Success: true, Message: "数据库恢复成功"}
+	defer gz.Close()
+	return restoreSQLReader(gz, dbName, dbPass)
+}
+
+func restoreFromSql(filePath, dbName, dbPass string) TaskResult {
+	f, err := os.Open(filePath)
+	if err != nil {
+		log.Printf("读取备份文件失败: %v", err)
+		return TaskResult{Success: false, Message: "读取备份文件失败"}
+	}
+	defer f.Close()
+	return restoreSQLReader(f, dbName, dbPass)
 }
 
 func restoreFromZip(filePath, dbName, dbPass string) TaskResult {
@@ -196,12 +168,65 @@ func restoreFromZip(filePath, dbName, dbPass string) TaskResult {
 	}
 	defer rc.Close()
 
+	return restoreSQLReader(rc, dbName, dbPass)
+}
+
+func restoreSQLReader(r io.Reader, dbName, dbPass string) TaskResult {
 	cmd := exec.Command("mysql", "-u", "root", dbName)
 	cmd.Env = append(os.Environ(), "MYSQL_PWD="+dbPass)
-	cmd.Stdin = rc
-	out, err := cmd.CombinedOutput()
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return TaskResult{Success: false, Message: fmt.Sprintf("恢复失败: %s", string(out))}
+		return TaskResult{Success: false, Message: fmt.Sprintf("创建导入管道失败: %v", err)}
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		log.Printf("恢复失败 mysql start: %v", err)
+		return TaskResult{Success: false, Message: "恢复失败，mysql 启动失败"}
+	}
+
+	if _, err := io.WriteString(stdin, "SET FOREIGN_KEY_CHECKS=0;\n"); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return TaskResult{Success: false, Message: "恢复失败，初始化 mysql 导入失败: " + err.Error()}
+	}
+	copyErr := writeSanitizedRestoreSQL(stdin, r)
+	if copyErr == nil {
+		_, copyErr = io.WriteString(stdin, "\nSET FOREIGN_KEY_CHECKS=1;\n")
+	}
+	closeErr := stdin.Close()
+	if copyErr != nil {
+		waitErr := cmd.Wait()
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			log.Printf("恢复失败 mysql pipe: %v; mysql: %s", copyErr, msg)
+			return TaskResult{Success: false, Message: "恢复失败，mysql 导入错误: " + msg}
+		}
+		if waitErr != nil {
+			log.Printf("恢复失败 mysql pipe: %v; wait: %v", copyErr, waitErr)
+			return TaskResult{Success: false, Message: "恢复失败，mysql 导入中断: " + waitErr.Error()}
+		}
+		return TaskResult{Success: false, Message: "恢复失败，写入 mysql 中断: " + copyErr.Error()}
+	}
+	if closeErr != nil {
+		waitErr := cmd.Wait()
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			log.Printf("恢复失败 mysql close: %v; mysql: %s", closeErr, msg)
+			return TaskResult{Success: false, Message: "恢复失败，mysql 导入错误: " + msg}
+		}
+		if waitErr != nil {
+			return TaskResult{Success: false, Message: "恢复失败，mysql 导入中断: " + waitErr.Error()}
+		}
+		return TaskResult{Success: false, Message: "恢复失败，写入 mysql 失败: " + closeErr.Error()}
+	}
+	if err := cmd.Wait(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		log.Printf("恢复失败 mysql: %v: %s", err, msg)
+		return TaskResult{Success: false, Message: "恢复失败，mysql 导入错误: " + msg}
 	}
 	return TaskResult{Success: true, Message: "数据库恢复成功"}
 }
@@ -312,9 +337,6 @@ func validateRestoreSQL(r io.Reader) error {
 				}
 				if len(statementPrefix) < maxStatementPrefix {
 					statementPrefix += string(b)
-					if checkErr := validateRestoreStatementPrefix(statementPrefix); checkErr != nil {
-						return checkErr
-					}
 					if isCreateTableStatement(statementPrefix) {
 						sawCreateTable = true
 					}
@@ -351,15 +373,172 @@ func validateRestoreSQL(r io.Reader) error {
 	return nil
 }
 
-func validateRestoreStatementPrefix(prefix string) error {
+func writeSanitizedRestoreSQL(dst io.Writer, src io.Reader) error {
+	const maxStatementPrefix = 256
+	buf := make([]byte, 32*1024)
+	prefix := ""
+	held := make([]byte, 0, maxStatementPrefix)
+	inStatement := false
+	skipStatement := false
+	decisionMade := false
+	inSingleQuote := false
+	inDoubleQuote := false
+	inBacktick := false
+	escaped := false
+
+	flushHeld := func() error {
+		if len(held) == 0 {
+			return nil
+		}
+		_, err := dst.Write(held)
+		held = held[:0]
+		return err
+	}
+
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			for _, b := range buf[:n] {
+				outsideString := !inSingleQuote && !inDoubleQuote && !inBacktick
+				if outsideString && !inStatement {
+					if b == '\r' || b == '\n' || b == '\t' || b == ' ' {
+						if _, err := dst.Write([]byte{b}); err != nil {
+							return err
+						}
+						continue
+					}
+					inStatement = true
+					skipStatement = false
+					decisionMade = false
+					prefix = ""
+					held = held[:0]
+				}
+
+				if inStatement && outsideString && !decisionMade && len(prefix) < maxStatementPrefix {
+					prefix += string(b)
+					held = append(held, b)
+					if skip, decided := restoreStatementDecision(prefix); decided {
+						decisionMade = true
+						skipStatement = skip
+						if !skipStatement {
+							if err := flushHeld(); err != nil {
+								return err
+							}
+						}
+						if skipStatement && b == ';' {
+							inStatement = false
+							skipStatement = false
+							decisionMade = false
+							prefix = ""
+							held = held[:0]
+						}
+						continue
+					}
+					if len(prefix) >= maxStatementPrefix {
+						decisionMade = true
+						if err := flushHeld(); err != nil {
+							return err
+						}
+					}
+					continue
+				}
+
+				if !skipStatement {
+					if err := flushHeld(); err != nil {
+						return err
+					}
+					if _, err := dst.Write([]byte{b}); err != nil {
+						return err
+					}
+				}
+
+				if inSingleQuote || inDoubleQuote {
+					if escaped {
+						escaped = false
+					} else if b == '\\' {
+						escaped = true
+					} else if inSingleQuote && b == '\'' {
+						inSingleQuote = false
+					} else if inDoubleQuote && b == '"' {
+						inDoubleQuote = false
+					}
+				} else if inBacktick {
+					if b == '`' {
+						inBacktick = false
+					}
+				} else {
+					if b == '\'' {
+						inSingleQuote = true
+					} else if b == '"' {
+						inDoubleQuote = true
+					} else if b == '`' {
+						inBacktick = true
+					} else if b == ';' {
+						inStatement = false
+						skipStatement = false
+						decisionMade = false
+						prefix = ""
+						held = held[:0]
+					}
+				}
+			}
+		}
+		if err == io.EOF {
+			if !skipStatement {
+				if err := flushHeld(); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func restoreStatementDecision(prefix string) (skip, decided bool) {
 	if strings.Contains(strings.ToUpper(prefix), "DEFINER=") {
-		return fmt.Errorf("SQL 包含跨数据库或 DEFINER 语句，已拒绝自动恢复")
+		return true, true
 	}
 	normalized := normalizeSQLPrefix(prefix)
-	if strings.HasPrefix(normalized, "CREATE DATABASE") || strings.HasPrefix(normalized, "DROP DATABASE") || normalized == "USE" || strings.HasPrefix(normalized, "USE ") || strings.Contains(normalized, " DEFINER=") || strings.HasPrefix(normalized, "CREATE DEFINER=") {
-		return fmt.Errorf("SQL 包含跨数据库或 DEFINER 语句，已拒绝自动恢复")
+	if normalized == "" {
+		return false, false
 	}
-	return nil
+	fields := strings.Fields(normalized)
+	if len(fields) == 0 {
+		return false, false
+	}
+	switch fields[0] {
+	case "USE":
+		return true, true
+	case "CREATE":
+		if len(fields) < 2 {
+			return false, false
+		}
+		if fields[1] == "DATABASE" || strings.HasPrefix(fields[1], "DEFINER=") {
+			return true, true
+		}
+		if strings.HasPrefix("DATABASE", fields[1]) || strings.HasPrefix("DEFINER=", fields[1]) {
+			return false, false
+		}
+		return false, true
+	case "DROP":
+		if len(fields) < 2 {
+			return false, false
+		}
+		if strings.HasPrefix("DATABASE", fields[1]) && fields[1] != "DATABASE" {
+			return false, false
+		}
+		return fields[1] == "DATABASE", true
+	default:
+		if !strings.ContainsAny(prefix, " \t\r\n") {
+			if strings.HasPrefix("USE", fields[0]) || strings.HasPrefix("CREATE", fields[0]) || strings.HasPrefix("DROP", fields[0]) {
+				return false, false
+			}
+		}
+		return false, true
+	}
 }
 
 func isCreateTableStatement(prefix string) bool {
