@@ -46,6 +46,8 @@ type Task struct {
 	Payload   interface{}
 	Status    TaskStatus
 	CreatedAt time.Time
+	UpdatedAt time.Time
+	Result    *TaskResult
 	ResultCh  chan TaskResult
 }
 
@@ -135,7 +137,8 @@ type CreateBackupPayload struct {
 }
 
 type RestoreBackupPayload struct {
-	Site     *models.Website `json:"-"`
-	Filename string          `json:"filename"`
-	FilePath string          `json:"file_path"`
+	Site            *models.Website `json:"-"`
+	Filename        string          `json:"filename"`
+	FilePath        string          `json:"file_path"`
+	RemoveFileAfter bool            `json:"remove_file_after"`
 }

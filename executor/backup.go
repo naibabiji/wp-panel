@@ -79,9 +79,6 @@ func executeRestoreBackup(task *Task) TaskResult {
 	if dbPass == "" {
 		return TaskResult{Success: false, Message: "无法读取 MariaDB root 密码"}
 	}
-	if err := ClearDatabaseTables(site.DBName, dbPass); err != nil {
-		return TaskResult{Success: false, Message: "清空数据库失败: " + err.Error()}
-	}
 
 	var filePath string
 	if payload.FilePath != "" {
@@ -94,6 +91,16 @@ func executeRestoreBackup(task *Task) TaskResult {
 		cfg := config.AppConfig
 		backupDir := filepath.Join(cfg.Panel.BackupDir, site.Domain, "db")
 		filePath = filepath.Join(backupDir, payload.Filename)
+	}
+	if payload.RemoveFileAfter {
+		defer os.Remove(filePath)
+	}
+
+	if err := validateRestoreBackupFile(filePath); err != nil {
+		return TaskResult{Success: false, Message: "恢复文件校验失败: " + err.Error()}
+	}
+	if err := ClearDatabaseTables(site.DBName, dbPass); err != nil {
+		return TaskResult{Success: false, Message: "清空数据库失败: " + err.Error()}
 	}
 
 	ext := strings.ToLower(filepath.Ext(filePath))
@@ -113,6 +120,9 @@ func restoreFromGz(filePath, dbName, dbPass string) TaskResult {
 	gunzip := exec.Command("gunzip", "-c", filePath)
 	mysql := exec.Command("mysql", "-u", "root", dbName)
 	mysql.Env = append(os.Environ(), "MYSQL_PWD="+dbPass)
+	var gunzipErr, mysqlErr bytes.Buffer
+	gunzip.Stderr = &gunzipErr
+	mysql.Stderr = &mysqlErr
 	var pipeErr error
 	mysql.Stdin, pipeErr = gunzip.StdoutPipe()
 	if pipeErr != nil {
@@ -125,12 +135,20 @@ func restoreFromGz(filePath, dbName, dbPass string) TaskResult {
 	if err := gunzip.Run(); err != nil {
 		mysql.Process.Kill()
 		mysql.Wait()
-		log.Printf("恢复失败 gunzip: %v", err)
-		return TaskResult{Success: false, Message: "恢复失败，数据库可能已被部分修改，请清空数据库后重新恢复"}
+		msg := strings.TrimSpace(gunzipErr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		log.Printf("恢复失败 gunzip: %v: %s", err, msg)
+		return TaskResult{Success: false, Message: "恢复失败，gzip 解压错误: " + msg}
 	}
 	if err := mysql.Wait(); err != nil {
-		log.Printf("恢复失败 mysql: %v", err)
-		return TaskResult{Success: false, Message: "恢复失败"}
+		msg := strings.TrimSpace(mysqlErr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		log.Printf("恢复失败 mysql: %v: %s", err, msg)
+		return TaskResult{Success: false, Message: "恢复失败，mysql 导入错误: " + msg}
 	}
 	return TaskResult{Success: true, Message: "数据库恢复成功"}
 }
@@ -186,6 +204,168 @@ func restoreFromZip(filePath, dbName, dbPass string) TaskResult {
 		return TaskResult{Success: false, Message: fmt.Sprintf("恢复失败: %s", string(out))}
 	}
 	return TaskResult{Success: true, Message: "数据库恢复成功"}
+}
+
+func validateRestoreBackupFile(filePath string) error {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return fmt.Errorf("文件不存在或不可读取")
+	}
+	if info.IsDir() || info.Size() == 0 {
+		return fmt.Errorf("文件为空或格式不正确")
+	}
+
+	switch ext {
+	case ".sql":
+		f, err := os.Open(filePath)
+		if err != nil {
+			return fmt.Errorf("读取 SQL 文件失败")
+		}
+		defer f.Close()
+		return validateRestoreSQL(f)
+	case ".gz":
+		f, err := os.Open(filePath)
+		if err != nil {
+			return fmt.Errorf("读取 gzip 文件失败")
+		}
+		defer f.Close()
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			return fmt.Errorf("gzip 文件损坏或格式不正确")
+		}
+		defer gz.Close()
+		return validateRestoreSQL(gz)
+	case ".zip":
+		zr, err := zip.OpenReader(filePath)
+		if err != nil {
+			return fmt.Errorf("zip 文件损坏或格式不正确")
+		}
+		defer zr.Close()
+		var sqlFile *zip.File
+		for _, f := range zr.File {
+			if !f.FileInfo().IsDir() && strings.HasSuffix(strings.ToLower(f.Name), ".sql") {
+				sqlFile = f
+				break
+			}
+		}
+		if sqlFile == nil {
+			return fmt.Errorf("zip 文件中未找到 .sql 文件")
+		}
+		rc, err := sqlFile.Open()
+		if err != nil {
+			return fmt.Errorf("读取 zip 内 SQL 文件失败")
+		}
+		defer rc.Close()
+		return validateRestoreSQL(rc)
+	default:
+		return fmt.Errorf("不支持的备份文件格式")
+	}
+}
+
+func validateRestoreSQL(r io.Reader) error {
+	const maxStatementPrefix = 128
+	buf := make([]byte, 32*1024)
+	sawCreateTable := false
+	statementPrefix := ""
+	inStatement := false
+
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			chunk := string(buf[:n])
+			if strings.Contains(strings.ToUpper(chunk), "DEFINER=") {
+				return fmt.Errorf("SQL 包含跨数据库或 DEFINER 语句，已拒绝自动恢复")
+			}
+			for _, b := range []byte(chunk) {
+				if !inStatement {
+					if b == '\r' || b == '\n' || b == '\t' || b == ' ' {
+						continue
+					}
+					inStatement = true
+					statementPrefix = ""
+				}
+				if len(statementPrefix) < maxStatementPrefix {
+					statementPrefix += string(b)
+					if checkErr := validateRestoreStatementPrefix(statementPrefix); checkErr != nil {
+						return checkErr
+					}
+					if isCreateTableStatement(statementPrefix) {
+						sawCreateTable = true
+					}
+				}
+				if b == ';' {
+					inStatement = false
+					statementPrefix = ""
+				}
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("SQL 文件读取失败")
+		}
+	}
+
+	if !sawCreateTable {
+		return fmt.Errorf("未找到建表语句")
+	}
+	return nil
+}
+
+func validateRestoreStatementPrefix(prefix string) error {
+	normalized := normalizeSQLPrefix(prefix)
+	if strings.HasPrefix(normalized, "CREATE DATABASE") || strings.HasPrefix(normalized, "DROP DATABASE") || normalized == "USE" || strings.HasPrefix(normalized, "USE ") {
+		return fmt.Errorf("SQL 包含跨数据库或 DEFINER 语句，已拒绝自动恢复")
+	}
+	return nil
+}
+
+func isCreateTableStatement(prefix string) bool {
+	return strings.HasPrefix(normalizeSQLPrefix(prefix), "CREATE TABLE")
+}
+
+func normalizeSQLPrefix(s string) string {
+	s = strings.ToUpper(s)
+	for {
+		start := strings.Index(s, "/*")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(s[start+2:], "*/")
+		if end < 0 {
+			s = s[:start]
+			break
+		}
+		s = s[:start] + " " + s[start+2+end+2:]
+	}
+	for {
+		start := strings.Index(s, "--")
+		if start < 0 {
+			break
+		}
+		end := strings.IndexByte(s[start:], '\n')
+		if end < 0 {
+			s = s[:start]
+			break
+		}
+		s = s[:start] + " " + s[start+end+1:]
+	}
+	for {
+		start := strings.Index(s, "#")
+		if start < 0 {
+			break
+		}
+		end := strings.IndexByte(s[start:], '\n')
+		if end < 0 {
+			s = s[:start]
+			break
+		}
+		s = s[:start] + " " + s[start+end+1:]
+	}
+	fields := strings.Fields(s)
+	return strings.Join(fields, " ")
 }
 
 // ClearDatabaseTables 清空指定数据库中的所有表（保留数据库本身）

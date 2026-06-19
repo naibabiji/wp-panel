@@ -1,6 +1,6 @@
 {{template "base" .}}
 {{define "websites_detail_content"}}
-<div x-data="websiteDetail()" x-init="fetchDetail()">
+<div x-data="websiteDetail()" x-init="init()">
 
     <div class="flex items-center justify-between mb-6">
         <h2 class="text-xl font-bold text-white">网站详情</h2>
@@ -511,6 +511,7 @@ function websiteDetail() {
         backupKeepCount: 7,
         restoringId: null,
         restoreUploading: false,
+        restorePollingActive: true,
         logType: 'access',
         logContent: '',
         logFullscreen: false,
@@ -552,6 +553,11 @@ function websiteDetail() {
         newSiteURL: '',
         newHomeURL: '',
         siteURLSubmitting: false,
+        init() {
+            this.restorePollingActive = true;
+            window.addEventListener('beforeunload', () => { this.restorePollingActive = false; });
+            this.fetchDetail();
+        },
         async fetchDetail() {
             const id = window.location.pathname.split('/').pop();
             try {
@@ -884,7 +890,10 @@ function websiteDetail() {
             this.restoringId = b.id;
             try {
                 const r = await api("/websites/" + this.site.id + "/backups/" + b.id + "/restore", { method: "POST" });
-                showToast(r.data?.message || "恢复成功", "success");
+                const taskId = r.data?.task_id;
+                if (!taskId) throw new Error("恢复任务创建失败");
+                showToast(r.data?.message || "数据库恢复任务已开始", "info");
+                await this.pollRestoreTask(taskId);
             } catch(e) { showToast(e.message, "error"); }
             this.restoringId = null;
         },
@@ -910,11 +919,31 @@ function websiteDetail() {
             fd.append("file", file);
             try {
                 const r = await api("/websites/" + this.site.id + "/backups/upload-restore", { method: "POST", body: fd, headers: {} });
-                showToast(r.data?.message || "恢复成功", "success");
+                const taskId = r.data?.task_id;
+                if (!taskId) throw new Error("恢复任务创建失败");
+                showToast(r.data?.message || "数据库恢复任务已开始", "info");
+                await this.pollRestoreTask(taskId);
                 await this.fetchBackups();
             } catch(e) { showToast(e.message, "error"); }
             this.restoreUploading = false;
             e.target.value = "";
+        },
+        async pollRestoreTask(taskId) {
+            this.restorePollingActive = true;
+            for (let i = 0; i < 3600 && this.restorePollingActive; i++) {
+                const r = await api("/websites/" + this.site.id + "/backups/restore-tasks/" + encodeURIComponent(taskId));
+                const status = r.data || {};
+                if (status.status === "success") {
+                    showToast(status.message || "数据库恢复成功", "success");
+                    return;
+                }
+                if (status.status === "failed") {
+                    throw new Error(status.message || "数据库恢复失败");
+                }
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            if (!this.restorePollingActive) return;
+            throw new Error("恢复任务仍在执行，请稍后刷新页面查看结果");
         },
         async fetchPluginStatus() {
             try {

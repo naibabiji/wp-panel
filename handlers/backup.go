@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/executor"
@@ -141,12 +142,12 @@ func (h *BackupHandler) Restore(c *gin.Context) {
 
 	payload := &executor.RestoreBackupPayload{Site: site, Filename: filename}
 	task := executor.GlobalQueue.Enqueue(executor.TaskRestoreBackup, payload)
-	result := <-task.ResultCh
-	if result.Success {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": result.Message}))
-	} else {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(result.Message))
-	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"async":   true,
+		"message": "数据库恢复任务已开始",
+		"task_id": task.ID,
+		"status":  task.Status,
+	}))
 }
 
 func (h *BackupHandler) UploadRestore(c *gin.Context) {
@@ -162,7 +163,7 @@ func (h *BackupHandler) UploadRestore(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("请选择备份文件"))
 		return
 	}
-	ext := filepath.Ext(file.Filename)
+	ext := strings.ToLower(filepath.Ext(file.Filename))
 	if ext != ".gz" && ext != ".sql" && ext != ".zip" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("仅支持 .sql / .sql.gz / .zip 格式"))
 		return
@@ -180,16 +181,52 @@ func (h *BackupHandler) UploadRestore(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("上传失败"))
 		return
 	}
-	defer os.Remove(tmpPath)
 
-	payload := &executor.RestoreBackupPayload{Site: site, FilePath: tmpPath}
+	payload := &executor.RestoreBackupPayload{Site: site, FilePath: tmpPath, RemoveFileAfter: true}
 	task := executor.GlobalQueue.Enqueue(executor.TaskRestoreBackup, payload)
-	result := <-task.ResultCh
-	if result.Success {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": result.Message}))
-	} else {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(result.Message))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"async":   true,
+		"message": "数据库恢复任务已开始",
+		"task_id": task.ID,
+		"status":  task.Status,
+	}))
+}
+
+func (h *BackupHandler) RestoreStatus(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
 	}
+
+	taskID := strings.TrimSpace(c.Param("task_id"))
+	task, ok := executor.GlobalQueue.GetTask(taskID)
+	if !ok {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("恢复任务不存在"))
+		return
+	}
+	payload, ok := task.Payload.(*executor.RestoreBackupPayload)
+	if !ok || task.Type != executor.TaskRestoreBackup || payload.Site == nil || payload.Site.ID != site.ID {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("恢复任务不存在"))
+		return
+	}
+
+	message := "数据库恢复等待中"
+	if task.Status == executor.TaskStatusRunning {
+		message = "数据库恢复中"
+	}
+	success := false
+	if task.Result != nil {
+		message = task.Result.Message
+		success = task.Result.Success
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"task_id": task.ID,
+		"status":  task.Status,
+		"success": success,
+		"message": message,
+	}))
 }
 
 func (h *BackupHandler) GetSettings(c *gin.Context) {

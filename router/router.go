@@ -172,6 +172,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/websites/:id/backups/:bid/download", backupHandler.Download)
 	protected.POST("/api/websites/:id/backups/:bid/restore", backupHandler.Restore)
 	protected.POST("/api/websites/:id/backups/upload-restore", backupHandler.UploadRestore)
+	protected.GET("/api/websites/:id/backups/restore-tasks/:task_id", backupHandler.RestoreStatus)
 	protected.GET("/api/websites/:id/backups/settings", backupHandler.GetSettings)
 	protected.PUT("/api/websites/:id/backups/settings", backupHandler.UpdateSettings)
 	protected.POST("/api/websites/:id/backups/clear-database", backupHandler.ClearDatabase)

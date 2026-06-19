@@ -20,6 +20,7 @@ type TaskQueue struct {
 	running   atomic.Bool
 	mu        sync.Mutex
 	taskCount int
+	tasks     map[string]*Task
 }
 
 var GlobalQueue *TaskQueue
@@ -27,6 +28,7 @@ var GlobalQueue *TaskQueue
 func InitQueue(cfg *config.Config) *TaskQueue {
 	q := &TaskQueue{
 		queue: make(chan *Task, 100),
+		tasks: make(map[string]*Task),
 	}
 	GlobalQueue = q
 	go q.worker()
@@ -41,16 +43,34 @@ func (q *TaskQueue) Enqueue(taskType TaskType, payload interface{}) *Task {
 		Payload:   payload,
 		Status:    TaskStatusWaiting,
 		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 		ResultCh:  make(chan TaskResult, 1),
 	}
 
 	q.mu.Lock()
 	q.taskCount++
+	q.tasks[task.ID] = task
 	q.mu.Unlock()
 
 	q.queue <- task
 
 	return task
+}
+
+func (q *TaskQueue) GetTask(id string) (*Task, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	task, ok := q.tasks[id]
+	if !ok {
+		return nil, false
+	}
+	copyTask := *task
+	if task.Result != nil {
+		result := *task.Result
+		copyTask.Result = &result
+	}
+	copyTask.ResultCh = nil
+	return &copyTask, true
 }
 
 func (q *TaskQueue) QueueLength() int {
@@ -67,7 +87,10 @@ func (q *TaskQueue) worker() {
 	for task := range q.queue {
 		func() {
 			q.running.Store(true)
+			q.mu.Lock()
 			task.Status = TaskStatusRunning
+			task.UpdatedAt = time.Now()
+			q.mu.Unlock()
 
 			var result TaskResult
 			finalized := false
@@ -78,7 +101,11 @@ func (q *TaskQueue) worker() {
 						return
 					}
 					result = TaskResult{Success: false, Message: fmt.Sprintf("task execution panic: %v", r)}
+					q.mu.Lock()
 					task.Status = TaskStatusFailed
+					task.UpdatedAt = time.Now()
+					task.Result = &result
+					q.mu.Unlock()
 					task.ResultCh <- result
 					close(task.ResultCh)
 					safeLogOp(task, result)
@@ -132,10 +159,15 @@ func (q *TaskQueue) worker() {
 			}
 
 			if result.Success {
+				q.mu.Lock()
 				task.Status = TaskStatusSuccess
 			} else {
+				q.mu.Lock()
 				task.Status = TaskStatusFailed
 			}
+			task.UpdatedAt = time.Now()
+			task.Result = &result
+			q.mu.Unlock()
 
 			safeLogOp(task, result)
 
@@ -223,6 +255,14 @@ func logOp(task *Task, result TaskResult) {
 	case TaskRunCron:
 		if p, ok := task.Payload.(*RunCronPayload); ok {
 			target = p.Name
+		}
+	case TaskCreateBackup:
+		if p, ok := task.Payload.(*CreateBackupPayload); ok && p.Site != nil {
+			target = p.Site.Domain
+		}
+	case TaskRestoreBackup:
+		if p, ok := task.Payload.(*RestoreBackupPayload); ok && p.Site != nil {
+			target = p.Site.Domain
 		}
 	}
 
