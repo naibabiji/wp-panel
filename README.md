@@ -3,7 +3,16 @@
 WordPress 专用服务器管理面板。一行命令，纯净 Debian 13 变身 WordPress 托管平台。
 
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8.svg)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8.svg)](https://go.dev/)
+
+---
+
+## 官方来源
+
+- 官方网站：<https://wp-panel.org>
+- GitHub 项目地址：<https://github.com/naibabiji/wp-panel>
+
+除 `wp-panel.org` 和本 GitHub 仓库外，其他域名均不是 WP Panel 官方网站，与本项目无关。
 
 ---
 
@@ -248,7 +257,7 @@ systemctl start wp-panel
 ├── input.css             # TailwindCSS 源文件
 ├── install.sh            # 一键安装脚本
 ├── install-cn.sh         # 国内优化版安装脚本
-├── docs/                 # 部署文档
+├── security/             # 安全说明文档
 └── wp-panel-optimizer/   # WordPress 配套插件
 ```
 
