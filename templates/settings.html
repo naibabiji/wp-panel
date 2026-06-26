@@ -311,6 +311,15 @@
 
                 <div x-show="cfg.enabled" class="space-y-3">
                     <div>
+                        <label class="label">备份目标</label>
+                        <select x-model="cfg.backup_type" class="input-field text-sm">
+                            <option value="rsync">SSH / rsync 远程服务器</option>
+                            <option value="s3">S3 兼容对象存储</option>
+                        </select>
+                    </div>
+
+                    <div x-show="cfg.backup_type === 'rsync'" class="space-y-3">
+                    <div>
                         <label class="label">远程服务器地址</label>
                         <input type="text" x-model="cfg.host" class="input-field text-sm" placeholder="192.168.1.100 或域名">
                     </div>
@@ -345,6 +354,37 @@
                         <label class="label">远程备份路径</label>
                         <input type="text" x-model="cfg.remote_path" class="input-field text-sm" :placeholder="'/home/' + cfg.username + '/backup'">
                     </div>
+                    </div>
+
+                    <div x-show="cfg.backup_type === 's3'" class="space-y-3">
+                    <div>
+                        <label class="label">S3 Endpoint</label>
+                        <input type="text" x-model="cfg.s3_endpoint" class="input-field text-sm" placeholder="https://账号ID.r2.cloudflarestorage.com">
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                            <label class="label">Bucket</label>
+                            <input type="text" x-model="cfg.s3_bucket" class="input-field text-sm" placeholder="wp-panel-backups">
+                        </div>
+                        <div>
+                            <label class="label">Region</label>
+                            <input type="text" x-model="cfg.s3_region" class="input-field text-sm" placeholder="auto">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="label">Access Key ID</label>
+                        <input type="text" x-model="cfg.s3_access_key_id" class="input-field text-sm" placeholder="Access Key ID">
+                    </div>
+                    <div>
+                        <label class="label">Secret Access Key</label>
+                        <input type="password" x-model="cfg.s3_secret_key" class="input-field text-sm" placeholder="Secret Access Key">
+                    </div>
+                    <div>
+                        <label class="label">备份路径前缀</label>
+                        <input type="text" x-model="cfg.s3_path_prefix" class="input-field text-sm" placeholder="wp-panel">
+                    </div>
+                    </div>
+
                     <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
                         <input type="checkbox" x-model="cfg.keep_local">
                         <span>保留本地备份</span>
@@ -360,12 +400,12 @@
                 <p x-show="testResult" class="text-sm" :class="testOK ? 'text-green-400' : 'text-red-400'" x-text="testResult"></p>
 
                 <div x-show="!cfg.enabled" class="text-xs text-gray-600 py-4 text-center">
-                    开启后，每次备份完成自动同步到远程服务器
+                    开启后，每次备份完成自动同步到远程位置
                 </div>
             </div>
 
             <!-- 右侧：设置助手 -->
-            <div class="p-4 rounded" style="background-color: #0f172a; border: 1px solid #1e293b;">
+            <div x-show="cfg.backup_type === 'rsync'" class="p-4 rounded" style="background-color: #0f172a; border: 1px solid #1e293b;">
                 <div class="flex items-center justify-between mb-3">
                     <h4 class="text-sm font-medium text-gray-300">远程服务器一键设置</h4>
                     <div class="flex rounded overflow-hidden" style="border: 1px solid #334155;">
@@ -391,6 +431,17 @@
                     <li>· 备份账号无需管理员权限，仅需写入目标目录</li>
                 </ul>
             </div>
+            <div x-show="cfg.backup_type === 's3'" class="p-4 rounded text-xs text-gray-400" style="background-color: #0f172a; border: 1px solid #1e293b;">
+                <h4 class="text-sm font-medium text-gray-300 mb-3">S3 兼容对象存储配置提示</h4>
+                <ul class="space-y-2">
+                    <li>· 支持 Cloudflare R2、AWS S3、MinIO、Backblaze B2 等 S3 兼容服务。</li>
+                    <li>· 在对象存储中创建 Bucket，并创建具有对象读写权限的 Access Key。</li>
+                    <li>· Cloudflare R2 Endpoint 示例：<code class="text-gray-300">https://账号ID.r2.cloudflarestorage.com</code>。</li>
+                    <li>· Cloudflare R2 的 Region 通常填写 <code class="text-gray-300">auto</code>，其他服务按服务商要求填写。</li>
+                    <li>· 路径前缀用于区分不同面板，例如 <code class="text-gray-300">wp-panel/server-1</code>。</li>
+                    <li>· 大备份文件会自动使用 S3 分片上传，恢复时仍是一个完整备份对象。</li>
+                </ul>
+            </div>
         </div>
 
             <!-- 使用说明弹窗 -->
@@ -405,7 +456,7 @@
                             <p class="font-medium text-blue-400 mb-1">工作流程</p>
                             <ol class="text-gray-400 list-decimal list-inside space-y-1">
                                 <li>面板在本地完成数据库或文件备份</li>
-                                <li>自动通过 SSH + rsync 将备份文件传送到远程服务器</li>
+                                <li>自动通过 SSH + rsync 或 S3 兼容 API 将备份文件传送到远程位置</li>
                                 <li>如果关闭「保留本地备份」，传送成功后自动删除本地文件以节省空间</li>
                             </ol>
                         </div>
@@ -422,6 +473,7 @@
                             <ul class="text-gray-400 list-disc list-inside space-y-1">
                                 <li><span class="text-yellow-300">SSH 密钥（推荐）</span>：面板自动生成密钥对，右侧助手生成的一键命令已包含公钥，远程粘贴执行即可。无需安装额外软件。</li>
                                 <li><span class="text-gray-500">密码</span>：面板保存设置时自动安装 sshpass，无需手动操作。</li>
+                                <li><span class="text-yellow-300">S3 兼容对象存储</span>：使用 Access Key 和 Secret Key 签名上传，不需要远程 SSH 账号；大文件会自动分片上传。</li>
                             </ul>
                         </div>
                         <div>
@@ -1039,7 +1091,7 @@ function operationLogs() {
 }
 function remoteBackup() {
     return {
-        cfg: { enabled: false, host: '', port: 22, username: 'wpbackup', auth_type: 'key', password: '', remote_path: '', keep_local: true },
+        cfg: { enabled: false, backup_type: 'rsync', host: '', port: 22, username: 'wpbackup', auth_type: 'key', password: '', remote_path: '', keep_local: true, s3_endpoint: '', s3_bucket: '', s3_region: 'auto', s3_access_key_id: '', s3_secret_key: '', s3_path_prefix: '' },
         publicKey: '',
         testing: false,
         testResult: '',
@@ -1056,7 +1108,9 @@ function remoteBackup() {
                 if (r.success) {
                     Object.assign(this.cfg, r.data);
                 }
-                if (this.cfg.auth_type === 'key') this.loadPublicKey();
+                if (!this.cfg.backup_type) this.cfg.backup_type = 'rsync';
+                if (!this.cfg.s3_region) this.cfg.s3_region = 'auto';
+                if (this.cfg.backup_type === 'rsync' && this.cfg.auth_type === 'key') this.loadPublicKey();
             } catch(e) {}
         },
         async saveRemote() {
@@ -1066,7 +1120,7 @@ function remoteBackup() {
                 const r = await api('/settings/remote-backup', { method: 'PUT', body: this.cfg });
                 this.saveOK = r.success;
                 this.saveMsg = r.data?.message || (r.success ? '设置已保存' : '保存失败');
-                if (r.success && this.cfg.auth_type === 'key') this.loadPublicKey();
+                if (r.success && this.cfg.backup_type === 'rsync' && this.cfg.auth_type === 'key') this.loadPublicKey();
             } catch(e) { this.saveOK = false; this.saveMsg = e.message; }
             this.saving = false;
         },

@@ -365,6 +365,7 @@ var migrations = []string{
 	`CREATE TABLE IF NOT EXISTS remote_backup_settings (
 			id          INTEGER PRIMARY KEY AUTOINCREMENT,
 			enabled     INTEGER NOT NULL DEFAULT 0,
+			backup_type TEXT    NOT NULL DEFAULT 'rsync',
 			host        TEXT    NOT NULL DEFAULT '',
 			port        INTEGER NOT NULL DEFAULT 22,
 			username    TEXT    NOT NULL DEFAULT 'root',
@@ -373,6 +374,12 @@ var migrations = []string{
 			ssh_key     TEXT    NOT NULL DEFAULT '',
 			remote_path TEXT    NOT NULL DEFAULT '',
 			keep_local  INTEGER NOT NULL DEFAULT 1,
+			s3_endpoint      TEXT NOT NULL DEFAULT '',
+			s3_bucket        TEXT NOT NULL DEFAULT '',
+			s3_region        TEXT NOT NULL DEFAULT 'auto',
+			s3_access_key_id TEXT NOT NULL DEFAULT '',
+			s3_secret_key    TEXT NOT NULL DEFAULT '',
+			s3_path_prefix   TEXT NOT NULL DEFAULT '',
 			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,

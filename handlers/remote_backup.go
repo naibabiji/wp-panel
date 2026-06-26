@@ -18,17 +18,25 @@ func GetRemoteBackup(c *gin.Context) {
 	db := database.GetDB()
 	var s models.RemoteBackupSettings
 	var enabled, port, keepLocal int
-	db.QueryRow(`SELECT enabled, host, port, username, auth_type, password, ssh_key, remote_path, keep_local
+	db.QueryRow(`SELECT enabled, backup_type, host, port, username, auth_type, password, ssh_key, remote_path, keep_local,
+			s3_endpoint, s3_bucket, s3_region, s3_access_key_id, s3_secret_key, s3_path_prefix
 		FROM remote_backup_settings WHERE id = 1`).Scan(
-		&enabled, &s.Host, &port, &s.Username, &s.AuthType, &s.Password, &s.SSHKey, &s.RemotePath, &keepLocal)
+		&enabled, &s.BackupType, &s.Host, &port, &s.Username, &s.AuthType, &s.Password, &s.SSHKey, &s.RemotePath, &keepLocal,
+		&s.S3Endpoint, &s.S3Bucket, &s.S3Region, &s.S3AccessKeyID, &s.S3SecretKey, &s.S3PathPrefix)
 	s.Enabled = enabled == 1
 	s.Port = port
 	s.KeepLocal = keepLocal == 1
+	if s.BackupType == "" {
+		s.BackupType = "rsync"
+	}
 	if s.Port == 0 {
 		s.Port = 22
 	}
+	if s.S3Region == "" {
+		s.S3Region = "auto"
+	}
 	// 读取公钥
-	if s.AuthType == "key" {
+	if s.BackupType == "rsync" && s.AuthType == "key" {
 		keyData, err := os.ReadFile("/www/server/panel/remote_backup_key.pub")
 		if err == nil {
 			s.SSHKey = string(keyData)
@@ -36,6 +44,9 @@ func GetRemoteBackup(c *gin.Context) {
 	}
 	if s.Password != "" {
 		s.Password = "已设置"
+	}
+	if s.S3SecretKey != "" {
+		s.S3SecretKey = "已设置"
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(s))
 }
@@ -55,17 +66,44 @@ func SaveRemoteBackup(c *gin.Context) {
 	if req.AuthType == "" {
 		req.AuthType = "password"
 	}
+	if req.BackupType == "" {
+		req.BackupType = "rsync"
+	}
+	if req.S3Region == "" {
+		req.S3Region = "auto"
+	}
 	if req.RemotePath == "" {
 		req.RemotePath = "/home/" + req.Username + "/backup"
 	}
-	if req.Enabled || req.Host != "" {
+	if err := executor.ValidateRemoteBackupType(req.BackupType); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+		return
+	}
+
+	db := database.GetDB()
+	var currentPassword, currentS3Secret string
+	_ = db.QueryRow(`SELECT password, s3_secret_key FROM remote_backup_settings WHERE id = 1`).Scan(&currentPassword, &currentS3Secret)
+	if req.Password == "已设置" {
+		req.Password = currentPassword
+	}
+	if req.S3SecretKey == "已设置" {
+		req.S3SecretKey = currentS3Secret
+	}
+
+	if req.BackupType == "rsync" && (req.Enabled || req.Host != "") {
 		if err := executor.ValidateRemoteBackupSettings(req.Host, req.Port, req.Username, req.AuthType, req.RemotePath); err != nil {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
 			return
 		}
 	}
+	if req.BackupType == "s3" && req.Enabled {
+		if err := executor.ValidateS3BackupSettings(req.S3Endpoint, req.S3Bucket, req.S3Region, req.S3AccessKeyID, req.S3SecretKey, req.S3PathPrefix); err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+			return
+		}
+	}
 
-	if req.AuthType == "key" {
+	if req.BackupType == "rsync" && req.AuthType == "key" {
 		keyPath := "/www/server/panel/remote_backup_key"
 		if _, err := os.Stat(keyPath); err != nil {
 			out, err := exec.Command("ssh-keygen", "-t", "ed25519", "-f", keyPath, "-N", "", "-q").CombinedOutput()
@@ -85,24 +123,35 @@ func SaveRemoteBackup(c *gin.Context) {
 		keepLocalVal = 1
 	}
 
-	db := database.GetDB()
-	if req.Password == "已设置" {
-		db.Exec(`UPDATE remote_backup_settings SET enabled=?, host=?, port=?, username=?, auth_type=?, remote_path=?, keep_local=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`,
-			enabledVal, req.Host, req.Port, req.Username, req.AuthType, req.RemotePath, keepLocalVal)
-	} else {
-		db.Exec(`UPDATE remote_backup_settings SET enabled=?, host=?, port=?, username=?, auth_type=?, password=?, remote_path=?, keep_local=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`,
-			enabledVal, req.Host, req.Port, req.Username, req.AuthType, req.Password, req.RemotePath, keepLocalVal)
-	}
+	db.Exec(`UPDATE remote_backup_settings SET enabled=?, backup_type=?, host=?, port=?, username=?, auth_type=?, password=?, remote_path=?, keep_local=?,
+			s3_endpoint=?, s3_bucket=?, s3_region=?, s3_access_key_id=?, s3_secret_key=?, s3_path_prefix=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`,
+		enabledVal, req.BackupType, req.Host, req.Port, req.Username, req.AuthType, req.Password, req.RemotePath, keepLocalVal,
+		req.S3Endpoint, req.S3Bucket, req.S3Region, req.S3AccessKeyID, req.S3SecretKey, strings.Trim(req.S3PathPrefix, "/"))
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "设置已保存"}))
 }
 
 func TestRemoteBackup(c *gin.Context) {
 	db := database.GetDB()
-	var host, username, authType, password, sshKey, remotePath string
+	var backupType, host, username, authType, password, sshKey, remotePath string
+	var s3Endpoint, s3Bucket, s3Region, s3AccessKeyID, s3SecretKey, s3PathPrefix string
 	var port int
-	db.QueryRow(`SELECT host, port, username, auth_type, password, ssh_key, remote_path FROM remote_backup_settings WHERE id = 1`).Scan(
-		&host, &port, &username, &authType, &password, &sshKey, &remotePath)
+	db.QueryRow(`SELECT backup_type, host, port, username, auth_type, password, ssh_key, remote_path,
+			s3_endpoint, s3_bucket, s3_region, s3_access_key_id, s3_secret_key, s3_path_prefix
+		FROM remote_backup_settings WHERE id = 1`).Scan(
+		&backupType, &host, &port, &username, &authType, &password, &sshKey, &remotePath,
+		&s3Endpoint, &s3Bucket, &s3Region, &s3AccessKeyID, &s3SecretKey, &s3PathPrefix)
+	if backupType == "" {
+		backupType = "rsync"
+	}
+	if backupType == "s3" {
+		if err := executor.ProbeS3BackupConnection(s3Endpoint, s3Bucket, s3Region, s3AccessKeyID, s3SecretKey, s3PathPrefix); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("S3 连接测试失败: "+err.Error()))
+			return
+		}
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "S3 连接测试成功，上传可用"}))
+		return
+	}
 	if port == 0 {
 		port = 22
 	}

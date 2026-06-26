@@ -71,6 +71,15 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 			t.Fatalf("%s exists = %d, want 1", table, exists)
 		}
 	}
+	for _, col := range []string{"backup_type", "s3_endpoint", "s3_bucket", "s3_region", "s3_access_key_id", "s3_secret_key", "s3_path_prefix"} {
+		var exists int
+		if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('remote_backup_settings') WHERE name = ?", col).Scan(&exists); err != nil {
+			t.Fatalf("query remote_backup_settings column %s: %v", col, err)
+		}
+		if exists != 1 {
+			t.Fatalf("remote_backup_settings.%s exists = %d, want 1", col, exists)
+		}
+	}
 	for _, setting := range []struct {
 		key  string
 		want string
@@ -88,6 +97,45 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 		}
 		if got != setting.want {
 			t.Fatalf("%s = %q, want %q", setting.key, got, setting.want)
+		}
+	}
+}
+
+func TestUpgradeAddsS3RemoteBackupColumnsToExistingSchema(t *testing.T) {
+	openTempDB(t)
+
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.19')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+	for _, col := range []string{"backup_type", "s3_endpoint", "s3_bucket", "s3_region", "s3_access_key_id", "s3_secret_key", "s3_path_prefix"} {
+		if _, err := DB.Exec("ALTER TABLE remote_backup_settings DROP COLUMN " + col); err != nil {
+			t.Fatalf("drop %s: %v", col, err)
+		}
+	}
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("second RunUpgrades() error = %v", err)
+	}
+
+	for _, col := range []string{"backup_type", "s3_endpoint", "s3_bucket", "s3_region", "s3_access_key_id", "s3_secret_key", "s3_path_prefix"} {
+		var exists int
+		if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('remote_backup_settings') WHERE name = ?", col).Scan(&exists); err != nil {
+			t.Fatalf("query %s: %v", col, err)
+		}
+		if exists != 1 {
+			t.Fatalf("%s exists = %d, want 1", col, exists)
 		}
 	}
 }
