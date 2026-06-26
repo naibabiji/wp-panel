@@ -563,6 +563,66 @@ func TestBuildAIDiagnosticPromptIncludesPerformanceSummary(t *testing.T) {
 	}
 }
 
+func TestBuildAIDiagnosticPromptForbidsPageCachePluginWhenFastCGIEnabled(t *testing.T) {
+	stubAIHTTPProbe(t, 200, 302)
+
+	oldRunProcessList := aiRunProcessList
+	aiRunProcessList = func() ([]byte, error) {
+		return []byte("USER                              %CPU %MEM COMMAND\nwp_demo                            2.0  1.0 php-fpm8.3\n"), nil
+	}
+	t.Cleanup(func() { aiRunProcessList = oldRunProcessList })
+
+	oldConfig := config.AppConfig
+	config.AppConfig = &config.Config{}
+	t.Cleanup(func() { config.AppConfig = oldConfig })
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "wp-config.php"), []byte("<?php\n$table_prefix = 'wp_';\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	site := &models.Website{
+		ID:            1,
+		Domain:        "demo.com",
+		SiteType:      "wordpress",
+		Status:        "active",
+		SystemUser:    "wp_demo",
+		WebRoot:       root,
+		LogDir:        t.TempDir(),
+		DBName:        "db_example",
+		DBUser:        "user_example",
+		FCacheEnabled: true,
+		FCacheTTL:     300,
+		PHPPoolPath:   filepath.Join(root, "pool.conf"),
+		NginxConfPath: filepath.Join(root, "nginx.conf"),
+	}
+
+	systemPrompt, userPrompt, err := BuildAIDiagnosticPrompt(site, models.AIDiagnosisPerformance)
+	if err != nil {
+		t.Fatalf("BuildAIDiagnosticPrompt() error = %v", err)
+	}
+	for _, want := range []string{
+		"不能建议安装或启用 WordPress 页面缓存插件",
+		"例如 WP Super Cache",
+		"验证 FastCGI 缓存命中",
+	} {
+		if !strings.Contains(systemPrompt, want) {
+			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
+		}
+	}
+	for _, want := range []string{
+		`"fastcgi_cache_enabled": true`,
+		"cache_recommendation_policy",
+		"WP Panel FastCGI 缓存已开启时，不要建议安装或启用 WordPress 页面缓存插件。",
+		"WP Super Cache 页面缓存",
+		"验证 X-FastCGI-Cache 是否命中",
+		"检查 FastCGI 缓存 TTL、清理机制和绕过规则",
+	} {
+		if !strings.Contains(userPrompt, want) {
+			t.Fatalf("user prompt missing %q:\n%s", want, userPrompt)
+		}
+	}
+}
+
 func TestBuildAIDiagnosticPromptIncludesCurrentHTTPChecksOverHistorical5xx(t *testing.T) {
 	stubAIHTTPProbe(t, 200, 302)
 

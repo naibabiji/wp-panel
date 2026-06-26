@@ -166,10 +166,11 @@ func BuildAIDiagnosticPrompt(site *models.Website, symptom string) (systemPrompt
 		CodeSuspects:          aiCodeSuspects(site),
 		RecentPanelOperations: aiRecentPanelOperations(site.Domain, 20),
 		Constraints: map[string]interface{}{
-			"phase":            "readonly_diagnosis",
-			"no_write_actions": true,
-			"no_sql_execution": true,
-			"no_shell":         true,
+			"phase":                       "readonly_diagnosis",
+			"no_write_actions":            true,
+			"no_sql_execution":            true,
+			"no_shell":                    true,
+			"cache_recommendation_policy": aiCacheRecommendationPolicy(site),
 		},
 		OutputSchema: aiOutputSchema(),
 	}
@@ -804,6 +805,7 @@ func aiSystemPrompt() string {
 		"code_suspects 是面板只读扫描当前启用主题、启用插件和少量高价值文件得到的证据。若 code_suspects 中存在 high 且有文件行号，应优先作为可能原因；不要要求用户再手动查同一处证据。",
 		"code_suspects 中 context=conditional_block 的 die/wp_die/exit 表示位于条件代码块内，通常只作为低优先级线索；除非日志或请求条件能直接对应，不要把它写成主要原因。",
 		"当 diagnosis_profile.profile=performance 时，优先分析 performance_summary 中的服务器负载、站点 PHP-FPM 资源占用、WP Panel FastCGI 缓存状态、活跃插件结构和缓存插件冲突；不要把性能问题默认当成 500 或服务宕机。",
+		"如果 site_summary.fastcgi_cache_enabled=true，不能建议安装或启用 WordPress 页面缓存插件，例如 WP Super Cache、W3 Total Cache、WP Fastest Cache、Cache Enabler、WP Rocket 页面缓存等功能；应建议验证 FastCGI 缓存命中、清理机制、绕过规则，并排查对象缓存、主题插件、数据库查询、图片资源和外部请求。",
 		"recent_panel_operations 是面板操作审计线索，不是故障原因结论。只有操作类型、时间和日志证据能直接对应时，才可作为可能原因；不要把 CDN 真实 IP、SSL、备份等无直接证据的近期操作表述为原因。",
 		"不要声称已经修改服务器。不要建议任意 shell 命令。不要输出需要 root 权限的操作。",
 		"不要要求用户提供密码、API Key、SSL 私钥或面板数据库。",
@@ -934,6 +936,7 @@ func aiDiagnosisProfile(symptom string) map[string]interface{} {
 				"先区分服务器资源瓶颈、同机站点资源争抢、当前站点自身优化问题，再给建议。",
 				"没有性能数据时，可以建议用户到“仪表盘”查看已有资源图表，或到“网站详情 -> 网站日志”查看日志；不要建议开启不存在的资源监控设置。",
 				"缓存异常重点分析 FastCGI 缓存、WordPress 缓存插件和多层缓存冲突；网站速度慢重点分析资源、插件、主题和缓存命中。",
+				"如果 fastcgi_cache_enabled=true，不要再建议安装或启用 WordPress 页面缓存插件；如果已存在页面缓存插件，只能建议检查是否与 FastCGI 缓存重复并按需关闭其页面缓存功能。",
 			},
 		}
 	}
@@ -949,6 +952,33 @@ func aiDiagnosisProfile(symptom string) map[string]interface{} {
 
 func aiIsPerformanceSymptom(symptom string) bool {
 	return symptom == models.AIDiagnosisCacheIssue || symptom == models.AIDiagnosisPerformance
+}
+
+func aiCacheRecommendationPolicy(site *models.Website) map[string]interface{} {
+	if site != nil && site.FCacheEnabled {
+		return map[string]interface{}{
+			"fastcgi_cache_enabled": true,
+			"rule":                  "WP Panel FastCGI 缓存已开启时，不要建议安装或启用 WordPress 页面缓存插件。",
+			"avoid_recommending": []string{
+				"WP Super Cache 页面缓存",
+				"W3 Total Cache 页面缓存",
+				"WP Fastest Cache 页面缓存",
+				"Cache Enabler 页面缓存",
+				"WP Rocket 页面缓存",
+				"任何额外的 WordPress 全页/静态 HTML 页面缓存",
+			},
+			"prefer_recommending": []string{
+				"验证 X-FastCGI-Cache 是否命中",
+				"检查 FastCGI 缓存 TTL、清理机制和绕过规则",
+				"检查登录态、后台、购物车、结账页等动态路径是否绕过缓存",
+				"排查对象缓存、慢查询、重型插件、主题代码、图片资源、CDN 和外部 HTTP 请求",
+			},
+		}
+	}
+	return map[string]interface{}{
+		"fastcgi_cache_enabled": false,
+		"rule":                  "WP Panel FastCGI 缓存未开启时，可优先建议使用 WP Panel 的 FastCGI 缓存；不要默认要求同时叠加多个页面缓存插件。",
+	}
 }
 
 func aiOutputSchema() map[string]interface{} {
