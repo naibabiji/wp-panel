@@ -57,6 +57,7 @@
                     <tr>
                         <th class="table-header">域名</th>
                         <th class="table-header">状态</th>
+                        <th class="table-header">文件锁定</th>
                         <th class="table-header">SSL</th>
                         <th class="table-header">监控</th>
                         <th class="table-header">缓存</th>
@@ -76,6 +77,10 @@
                             <td class="table-cell">
                                 <span :class="site.status === 'active' ? 'badge-success' : 'badge-warning'"
                                       x-text="site.status === 'active' ? '运行中' : '已暂停'"></span>
+                            </td>
+                            <td class="table-cell">
+                                <span :class="site.file_lock_enabled ? 'badge-warning' : 'badge-success'"
+                                      x-text="site.file_lock_enabled ? '已锁定' : '未锁定'"></span>
                             </td>
                             <td class="table-cell">
                                 <div class="space-y-1">
@@ -116,7 +121,7 @@
                         </tr>
                     </template>
                     <tr x-show="websites.length === 0">
-                        <td colspan="10" class="table-cell text-center text-gray-500 py-8">暂无网站</td>
+                        <td colspan="11" class="table-cell text-center text-gray-500 py-8">暂无网站</td>
                     </tr>
                 </tbody>
             </table>
