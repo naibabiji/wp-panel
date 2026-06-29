@@ -1,6 +1,6 @@
 {{template "base" .}}
 {{define "firewall_content"}}
-<div x-data="firewallManager()" x-init="fetchBans(); fetchWPSecurityReport()">
+<div x-data="firewallManager()" x-init="fetchBans(); fetchWPSecurityReport(); refreshFileSecurityEvents()">
     <div class="flex items-center justify-between mb-6">
         <h2 class="text-xl font-bold text-white">安全防御</h2>
         <button @click="showRules = true" class="btn-secondary text-sm">防御规则说明</button>
@@ -180,6 +180,61 @@
 
     <div class="card mb-6">
         <div class="flex items-center justify-between mb-4">
+            <div>
+                <h3 class="text-lg font-semibold text-white">文件安全事件</h3>
+                <p class="text-xs text-gray-500 mt-1">记录运行数据目录 PHP 执行尝试和扫描发现的可疑 PHP 文件，仅展示和告警，不自动封禁、不删除文件。</p>
+                <p class="text-xs text-gray-500 mt-1" x-show="fileSecuritySummary" x-text="`本次刷新：扫描 ${fileSecuritySummary.sites_scanned || 0} 个站点，发现 ${fileSecuritySummary.file_events || 0} 个文件事件，导入 ${fileSecuritySummary.access_events || 0} 次访问事件。`"></p>
+            </div>
+            <button @click="refreshFileSecurityEvents()" :disabled="fileSecurityLoading" class="btn-secondary text-xs py-1.5 px-3" x-text="fileSecurityLoading ? '刷新中...' : '刷新事件'"></button>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead class="border-b border-gray-700">
+                    <tr>
+                        <th class="table-header">类型</th>
+                        <th class="table-header">站点</th>
+                        <th class="table-header">风险</th>
+                        <th class="table-header">路径</th>
+                        <th class="table-header">来源</th>
+                        <th class="table-header">次数/发现</th>
+                        <th class="table-header">最近时间</th>
+                        <th class="table-header">状态</th>
+                        <th class="table-header">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="event in fileSecurityEvents" :key="event.id">
+                        <tr class="border-b border-gray-700/50">
+                            <td class="table-cell text-sm" x-text="fileEventTypeLabel(event)"></td>
+                            <td class="table-cell text-sm" x-text="event.domain || '--'"></td>
+                            <td class="table-cell"><span :class="riskClass(event.risk_level)" x-text="riskLabel(event.risk_level)"></span></td>
+                            <td class="table-cell text-xs font-mono max-w-md truncate" :title="event.path" x-text="event.path"></td>
+                            <td class="table-cell text-xs">
+                                <div x-text="fileEventSourceLabel(event)"></div>
+                                <div class="text-gray-500 font-mono" x-show="event.ip_address" x-text="event.ip_address"></div>
+                            </td>
+                            <td class="table-cell" x-text="fileEventCountLabel(event)"></td>
+                            <td class="table-cell text-xs" x-text="formatTime(event.last_seen)"></td>
+                            <td class="table-cell"><span :class="event.resolved_at ? 'badge-info' : 'badge-danger'" x-text="event.resolved_at ? '已处理' : '当前风险'"></span></td>
+                            <td class="table-cell whitespace-nowrap">
+                                <button @click="copyFileSecurityEvent(event)" class="btn-secondary text-xs py-1 px-2">复制信息</button>
+                                <button x-show="event.ip_address" @click="banIP = event.ip_address; showToast('IP已填入手动封禁IP框，请手动选择封禁时长和点击封禁按钮', 'success')" class="btn-danger text-xs py-1 px-2 ml-1">填入封禁</button>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="fileSecurityLoaded && fileSecurityEvents.length === 0">
+                        <td colspan="9" class="table-cell text-center text-gray-500 py-6">暂无文件安全事件</td>
+                    </tr>
+                    <tr x-show="!fileSecurityLoaded">
+                        <td colspan="9" class="table-cell text-center text-gray-500 py-6">正在刷新文件安全事件...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card mb-6">
+        <div class="flex items-center justify-between mb-4">
             <h3 class="text-lg font-semibold text-white">当前封禁列表</h3>
             <div class="flex items-center space-x-2">
                 <input type="text" x-model="searchIP" @keydown.enter="page=1;fetchBans()" class="input-field text-sm py-1.5 w-48" placeholder="搜索 IP 地址...">
@@ -286,6 +341,10 @@ function firewallManager() {
         securityReportItems: [],
         securityReportLoaded: false,
         securityReportLoading: false,
+        fileSecurityEvents: [],
+        fileSecurityLoaded: false,
+        fileSecurityLoading: false,
+        fileSecuritySummary: null,
         searchIP: '',
         page: 1,
         totalPages: 1,
@@ -314,6 +373,18 @@ function firewallManager() {
             } catch(e) { showToast('读取 WordPress 可疑访问分析失败: ' + e.message, 'error'); }
             finally { this.securityReportLoading = false; }
         },
+        async refreshFileSecurityEvents() {
+            this.fileSecurityLoading = true;
+            try {
+                const r = await api('/firewall/file-security-events/refresh', { method: 'POST' });
+                if (r.success) {
+                    this.fileSecurityEvents = r.data?.events || [];
+                    this.fileSecuritySummary = r.data?.summary || null;
+                    this.fileSecurityLoaded = true;
+                }
+            } catch(e) { showToast('刷新文件安全事件失败: ' + e.message, 'error'); }
+            finally { this.fileSecurityLoading = false; }
+        },
         goPage(p) {
             if (p < 1 || p > this.totalPages) return;
             this.page = p;
@@ -332,9 +403,29 @@ function firewallManager() {
         banLevelText(l) { return ['','限速','临时10分钟','临时24小时','临时30天','永久封禁'][l] || '未知'; },
         banLevelClass(l) { return ['','badge-info','badge-warning','badge-danger','badge-danger','badge-danger'][l] || 'badge-info'; },
         riskClass(level) {
-            if (level === '高') return 'badge-danger';
-            if (level === '中') return 'badge-warning';
+            if (level === '高' || level === 'high') return 'badge-danger';
+            if (level === '中' || level === 'medium') return 'badge-warning';
             return 'badge-info';
+        },
+        riskLabel(level) {
+            if (level === 'high') return '高';
+            if (level === 'medium') return '中';
+            if (level === 'low') return '低';
+            return level || '低';
+        },
+        fileEventTypeLabel(event) {
+            if (event.event_type === 'runtime_php_access') return 'PHP 执行尝试';
+            if (event.event_type === 'suspicious_runtime_php_file') return '可疑 PHP 文件';
+            return event.event_type || '--';
+        },
+        fileEventSourceLabel(event) {
+            if (event.source === 'nginx') return event.request_method ? ('Nginx ' + event.request_method) : 'Nginx';
+            if (event.source === 'scanner') return '本机扫描';
+            return event.source || '--';
+        },
+        fileEventCountLabel(event) {
+            if (event.event_type === 'suspicious_runtime_php_file') return '发现';
+            return event.event_count || 0;
         },
         sourceLabel(ban) {
             if (ban.source_jail === 'wppanel') return 'Web防护';
@@ -367,6 +458,24 @@ function firewallManager() {
             try {
                 await navigator.clipboard.writeText(item.copy_text || '');
                 showToast('分析报告已复制', 'success');
+            } catch(e) { showToast('复制失败，请手动选择内容', 'error'); }
+        },
+        async copyFileSecurityEvent(event) {
+            const lines = [
+                '类型: ' + this.fileEventTypeLabel(event),
+                '站点: ' + (event.domain || '--'),
+                '风险: ' + this.riskLabel(event.risk_level),
+                '路径: ' + (event.path || '--'),
+                '来源: ' + this.fileEventSourceLabel(event),
+                'IP: ' + (event.ip_address || '--'),
+                '次数: ' + this.fileEventCountLabel(event),
+                '最近时间: ' + (event.last_seen || '--'),
+                '状态: ' + (event.resolved_at ? '已处理' : '当前风险'),
+                '说明: ' + (event.message || '')
+            ];
+            try {
+                await navigator.clipboard.writeText(lines.join('\n'));
+                showToast('文件安全事件已复制', 'success');
             } catch(e) { showToast('复制失败，请手动选择内容', 'error'); }
         },
         async manualBan() {

@@ -145,11 +145,12 @@ func isPathWithinRoot(rootPath, targetPath string) bool {
 }
 
 func IsWPExecutableFile(path string) bool {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".php", ".phtml", ".phar", ".php3", ".php4", ".php5", ".php7", ".php8":
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".php", ".phtml", ".phar":
 		return true
 	default:
-		return false
+		return len(ext) == len(".php0") && strings.HasPrefix(ext, ".php") && ext[4] >= '0' && ext[4] <= '9'
 	}
 }
 

@@ -70,7 +70,26 @@ func EnsureLogMap() error {
 	if err := os.MkdirAll(confDir, 0755); err != nil {
 		return fmt.Errorf("创建 Nginx 配置目录失败: %w", err)
 	}
-	content := `# WP Panel — 日志条件变量 (勿手动修改)
+	content := nginxGlobalLogMapConfig()
+	oldContent, oldErr := os.ReadFile(confPath)
+	oldExists := oldErr == nil
+
+	if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("写入 Nginx 日志 map 配置失败: %w", err)
+	}
+	if out, err := exec.Command("nginx", "-t").CombinedOutput(); err != nil {
+		restoreLogMapConfig(confPath, oldContent, oldExists)
+		return fmt.Errorf("Nginx 日志 map 配置语法检查失败，已回滚: %s", strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("nginx", "-s", "reload").CombinedOutput(); err != nil {
+		restoreLogMapConfig(confPath, oldContent, oldExists)
+		return fmt.Errorf("Nginx 日志 map 配置重载失败，已回滚: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func nginxGlobalLogMapConfig() string {
+	return `# WP Panel — 日志条件变量 (勿手动修改)
 map $status $wp_loggable {
     ~^[45]  1;
     default 0;
@@ -100,6 +119,7 @@ map $uri $wp_security_loggable {
     /app-ads.txt 0;
     ~^/wp-admin/ 0;
     ~^/wp-includes/ 0;
+` + buildWPSecurityLogWhitelistMapEntries() + `    ~*^/wp-content/(?!plugins/|themes/|mu-plugins/).*\.(php|phtml|phar|php[0-9])$ 1;
     ~^/wp-content/ 0;
     ~^/wp-json(/|$) 0;
     ~^/sitemap.*\.xml$ 0;
@@ -108,7 +128,7 @@ map $uri $wp_security_loggable {
     /BingSiteAuth.xml 0;
     ~^/baidu_verify_[A-Za-z0-9_-]*\.html$ 0;
     ~^/yandex_[A-Za-z0-9_-]*\.html$ 0;
-` + buildWPSecurityLogWhitelistMapEntries() + `    ~*(^|/)(config|settings|database|db|phpinfo|info|test|phptest|configuration|parameters)\.php$ 1;
+    ~*(^|/)(config|settings|database|db|phpinfo|info|test|phptest|configuration|parameters)\.php$ 1;
     ~*(^|/)(next|nuxt|vite)\.config\.js$ 1;
     ~*(^|/)(composer\.(json|lock)|package\.json|yarn\.lock|pnpm-lock\.yaml)$ 1;
     ~*(^|/)(\.env|\.git|\.DS_Store)$ 1;
@@ -117,21 +137,6 @@ map $uri $wp_security_loggable {
     ~*^/(?!index\.php$|wp-login\.php$|wp-cron\.php$|wp-comments-post\.php$|xmlrpc\.php$).+\.php$ 1;
 }
 `
-	oldContent, oldErr := os.ReadFile(confPath)
-	oldExists := oldErr == nil
-
-	if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("写入 Nginx 日志 map 配置失败: %w", err)
-	}
-	if out, err := exec.Command("nginx", "-t").CombinedOutput(); err != nil {
-		restoreLogMapConfig(confPath, oldContent, oldExists)
-		return fmt.Errorf("Nginx 日志 map 配置语法检查失败，已回滚: %s", strings.TrimSpace(string(out)))
-	}
-	if out, err := exec.Command("nginx", "-s", "reload").CombinedOutput(); err != nil {
-		restoreLogMapConfig(confPath, oldContent, oldExists)
-		return fmt.Errorf("Nginx 日志 map 配置重载失败，已回滚: %s", strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 func restoreLogMapConfig(path string, oldContent []byte, oldExists bool) {

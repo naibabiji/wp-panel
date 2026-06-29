@@ -71,6 +71,13 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 			t.Fatalf("%s exists = %d, want 1", table, exists)
 		}
 	}
+	var fileSecurityEventsTable int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'file_security_events'").Scan(&fileSecurityEventsTable); err != nil {
+		t.Fatalf("query file_security_events table: %v", err)
+	}
+	if fileSecurityEventsTable != 1 {
+		t.Fatalf("file_security_events exists = %d, want 1", fileSecurityEventsTable)
+	}
 	for _, col := range []string{"backup_type", "s3_endpoint", "s3_bucket", "s3_region", "s3_access_key_id", "s3_secret_key", "s3_path_prefix"} {
 		var exists int
 		if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('remote_backup_settings') WHERE name = ?", col).Scan(&exists); err != nil {
@@ -172,6 +179,50 @@ func TestUpgradeAddsFileLockEnabledColumnToExistingSchema(t *testing.T) {
 	}
 	if exists != 1 {
 		t.Fatalf("file_lock_enabled exists = %d, want 1", exists)
+	}
+}
+
+func TestUpgradeAddsFileSecurityEventsTableToExistingSchema(t *testing.T) {
+	openTempDB(t)
+
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.21')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+	if _, err := DB.Exec("DROP TABLE IF EXISTS file_security_events"); err != nil {
+		t.Fatalf("drop file_security_events: %v", err)
+	}
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("second RunUpgrades() error = %v", err)
+	}
+
+	var tableExists, uniqueIndexExists, lastSeenIndexExists, siteIndexExists int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'file_security_events'").Scan(&tableExists); err != nil {
+		t.Fatalf("query file_security_events table: %v", err)
+	}
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_file_security_events_unique'").Scan(&uniqueIndexExists); err != nil {
+		t.Fatalf("query file_security_events unique index: %v", err)
+	}
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_file_security_events_last_seen'").Scan(&lastSeenIndexExists); err != nil {
+		t.Fatalf("query file_security_events last_seen index: %v", err)
+	}
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_file_security_events_site'").Scan(&siteIndexExists); err != nil {
+		t.Fatalf("query file_security_events site index: %v", err)
+	}
+	if tableExists != 1 || uniqueIndexExists != 1 || lastSeenIndexExists != 1 || siteIndexExists != 1 {
+		t.Fatalf("file_security_events table/index exists = %d/%d/%d/%d, want 1/1/1/1", tableExists, uniqueIndexExists, lastSeenIndexExists, siteIndexExists)
 	}
 }
 

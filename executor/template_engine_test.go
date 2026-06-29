@@ -118,3 +118,19 @@ func TestWordPressTemplatesBlockRuntimePHPExecution(t *testing.T) {
 		}
 	}
 }
+
+func TestWPSecurityLogMapRecordsRuntimePHPBeforeContentExclusion(t *testing.T) {
+	rule := "~*^/wp-content/(?!plugins/|themes/|mu-plugins/).*\\.(php|phtml|phar|php[0-9])$ 1;"
+	exclusion := "~^/wp-content/ 0;"
+	ruleIndex := strings.Index(nginxGlobalLogMapConfig(), rule)
+	exclusionIndex := strings.Index(nginxGlobalLogMapConfig(), exclusion)
+	if ruleIndex < 0 {
+		t.Fatalf("security log map missing runtime PHP rule")
+	}
+	if exclusionIndex < 0 {
+		t.Fatalf("security log map missing wp-content exclusion")
+	}
+	if ruleIndex > exclusionIndex {
+		t.Fatalf("runtime PHP rule must appear before wp-content exclusion")
+	}
+}

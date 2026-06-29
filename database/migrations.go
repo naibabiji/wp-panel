@@ -156,6 +156,36 @@ var migrations = []string{
 	)`,
 
 	// ============================================================
+	// file_security_events
+	// ============================================================
+	`CREATE TABLE IF NOT EXISTS file_security_events (
+		id             INTEGER PRIMARY KEY AUTOINCREMENT,
+		site_id        INTEGER NOT NULL DEFAULT 0,
+		domain         TEXT    NOT NULL DEFAULT '',
+		event_type     TEXT    NOT NULL DEFAULT '',
+		source         TEXT    NOT NULL DEFAULT '',
+		risk_level     TEXT    NOT NULL DEFAULT 'medium',
+		path           TEXT    NOT NULL DEFAULT '',
+		request_method TEXT    NOT NULL DEFAULT '',
+		ip_address     TEXT    NOT NULL DEFAULT '',
+		user_agent     TEXT    NOT NULL DEFAULT '',
+		status         INTEGER NOT NULL DEFAULT 0,
+		file_size      INTEGER NOT NULL DEFAULT 0,
+		file_mtime     DATETIME,
+		message        TEXT    NOT NULL DEFAULT '',
+		first_seen     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		last_seen      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		event_count    INTEGER NOT NULL DEFAULT 1,
+		resolved_at    DATETIME,
+		created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_file_security_events_unique ON file_security_events(site_id, event_type, path, ip_address, request_method)`,
+	`CREATE INDEX IF NOT EXISTS idx_file_security_events_last_seen ON file_security_events(resolved_at, last_seen)`,
+	`CREATE INDEX IF NOT EXISTS idx_file_security_events_site ON file_security_events(site_id, resolved_at, last_seen)`,
+
+	// ============================================================
 	// ssl_certificates
 	// ============================================================
 	`CREATE TABLE IF NOT EXISTS ssl_certificates (

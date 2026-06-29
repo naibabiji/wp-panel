@@ -103,6 +103,38 @@ func (h *FirewallHandler) WPSecurityReport(c *gin.Context) {
 	}))
 }
 
+func (h *FirewallHandler) ListFileSecurityEvents(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	events, err := executor.ListFileSecurityEvents(limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取文件安全事件失败"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"events": events,
+		"total":  len(events),
+	}))
+}
+
+func (h *FirewallHandler) RefreshFileSecurityEvents(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	summary, err := executor.RefreshFileSecurityEvents()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("刷新文件安全事件失败"))
+		return
+	}
+	events, err := executor.ListFileSecurityEvents(limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取文件安全事件失败"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"summary": summary,
+		"events":  events,
+		"total":   len(events),
+	}))
+}
+
 func (h *FirewallHandler) Unban(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {

@@ -193,6 +193,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	firewallHandler := &handlers.FirewallHandler{}
 	protected.GET("/api/firewall/bans", firewallHandler.ListBans)
 	protected.GET("/api/firewall/wp-security-report", firewallHandler.WPSecurityReport)
+	protected.GET("/api/firewall/file-security-events", firewallHandler.ListFileSecurityEvents)
+	protected.POST("/api/firewall/file-security-events/refresh", firewallHandler.RefreshFileSecurityEvents)
 	protected.POST("/api/firewall/bans", firewallHandler.ManualBan)
 	protected.DELETE("/api/firewall/bans/:id", firewallHandler.Unban)
 	protected.POST("/api/firewall/bans/:id/permanent", firewallHandler.PermanentBan)
