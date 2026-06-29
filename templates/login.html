@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{.CSRFToken}}">
     <title>登录 - {{.PanelTitle}}</title>
-    <link rel="stylesheet" href="{{.AssetPrefix}}/css/main.css">
-    <script defer src="{{.AssetPrefix}}/js/alpine.min.js"></script>
-    <script src="{{.AssetPrefix}}/js/app.js"></script>
+    <link rel="stylesheet" href="{{.AssetPrefix}}/css/main.css?v={{.AssetVersion}}">
+    <script defer src="{{.AssetPrefix}}/js/alpine.min.js?v={{.AssetVersion}}"></script>
+    <script src="{{.AssetPrefix}}/js/app.js?v={{.AssetVersion}}"></script>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen" data-panel-prefix="/{{.RandomSuffix}}">
     <div class="min-h-screen flex items-center justify-center" x-data="loginForm()">

@@ -88,6 +88,7 @@ func renderPage(t *testing.T, page, content string) []byte {
 		"Title":           "Test",
 		"PanelTitle":      "WP Panel",
 		"PanelVersion":    "test",
+		"AssetVersion":    "test",
 		"ContentTemplate": content,
 		"RandomSuffix":    "test",
 		"Active":          "dashboard",

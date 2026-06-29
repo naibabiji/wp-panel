@@ -101,6 +101,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 		c.HTML(http.StatusOK, "login.html", gin.H{
 			"Title":        "登录",
 			"PanelTitle":   handlers.GetPanelTitle(),
+			"PanelVersion": version,
+			"AssetVersion": version,
 			"RandomSuffix": suffix,
 			"Active":       "login",
 			"AssetPrefix":  prefix + "/assets",
@@ -355,6 +357,7 @@ func pageData(suffix string, active string, contentTpl string, c *gin.Context) g
 		"Title":           title,
 		"PanelTitle":      handlers.GetPanelTitle(),
 		"PanelVersion":    panelVersion,
+		"AssetVersion":    panelVersion,
 		"ContentTemplate": contentTpl,
 		"RandomSuffix":    suffix,
 		"Active":          active,
