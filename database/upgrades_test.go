@@ -38,7 +38,7 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 		t.Fatalf("version = %q, want %q", version, LatestVersion())
 	}
 
-	for _, col := range []string{"php_pool_path", "nginx_conf_path", "wp_memory_limit", "cdn_realip_enabled", "ssl_last_error", "ssl_export_enabled", "document_root_subdir"} {
+	for _, col := range []string{"php_pool_path", "nginx_conf_path", "wp_memory_limit", "file_lock_enabled", "cdn_realip_enabled", "ssl_last_error", "ssl_export_enabled", "document_root_subdir"} {
 		var exists int
 		if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('websites') WHERE name = ?", col).Scan(&exists); err != nil {
 			t.Fatalf("query websites column %s: %v", col, err)
@@ -137,6 +137,41 @@ func TestUpgradeAddsS3RemoteBackupColumnsToExistingSchema(t *testing.T) {
 		if exists != 1 {
 			t.Fatalf("%s exists = %d, want 1", col, exists)
 		}
+	}
+}
+
+func TestUpgradeAddsFileLockEnabledColumnToExistingSchema(t *testing.T) {
+	openTempDB(t)
+
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.20')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+	if _, err := DB.Exec("ALTER TABLE websites DROP COLUMN file_lock_enabled"); err != nil {
+		t.Fatalf("drop file_lock_enabled: %v", err)
+	}
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("second RunUpgrades() error = %v", err)
+	}
+
+	var exists int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('websites') WHERE name = 'file_lock_enabled'").Scan(&exists); err != nil {
+		t.Fatalf("query file_lock_enabled: %v", err)
+	}
+	if exists != 1 {
+		t.Fatalf("file_lock_enabled exists = %d, want 1", exists)
 	}
 }
 

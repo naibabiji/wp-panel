@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -81,5 +82,28 @@ func TestCleanupNginxConfigBackupsNoopCases(t *testing.T) {
 	}
 	if removed := cleanupNginxConfigBackups(dir, "/etc/nginx/sites-available/example.com.conf", 2); removed != 0 {
 		t.Fatalf("exact keep count removed = %d, want 0", removed)
+	}
+}
+
+func TestWordPressTemplatesBlockUploadPHPExecution(t *testing.T) {
+	rule := "wp-content/uploads/.*\\.(php|phtml|phar|php[0-9])"
+	for name, tmpl := range map[string]string{
+		"http":  nginxHTTPTemplate,
+		"https": nginxHTTPSTemplate,
+	} {
+		if !strings.Contains(tmpl, rule) {
+			t.Fatalf("%s template missing uploads PHP deny rule", name)
+		}
+		if strings.Index(tmpl, rule) > strings.Index(tmpl, "location ~ \\.php$") {
+			t.Fatalf("%s template deny rule must appear before generic PHP location", name)
+		}
+	}
+	for name, tmpl := range map[string]string{
+		"php-http":  phpHTTPTemplate,
+		"php-https": phpHTTPSTemplate,
+	} {
+		if strings.Contains(tmpl, rule) {
+			t.Fatalf("%s template should not include WordPress uploads rule", name)
+		}
 	}
 }

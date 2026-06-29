@@ -258,6 +258,18 @@ location ^~ /api/ {
 
         <div class="card">
             <h3 class="text-lg font-semibold text-white mb-4">WordPress优化</h3>
+            <div x-show="site.site_type === 'wordpress'" class="pb-4 mb-4 border-b border-gray-700">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div>
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="text-sm font-medium text-white">文件锁定</span>
+                            <span class="text-xs px-2 py-0.5 rounded" :class="site.file_lock_enabled ? 'bg-yellow-900/50 text-yellow-200 border border-yellow-700' : 'bg-green-900/40 text-green-200 border border-green-800'" x-text="site.file_lock_enabled ? '已开启' : '未开启'"></span>
+                        </div>
+                        <p class="text-xs text-gray-500">开启后 WordPress 正常发文章和上传媒体不受影响，插件、主题、核心文件和代码目录修改会被阻止。</p>
+                    </div>
+                    <button @click="toggleFileLock(!site.file_lock_enabled)" :disabled="fileLockSaving" class="text-sm py-1.5 px-3 rounded" :style="site.file_lock_enabled ? 'background-color: #1e3a5f; color: #93c5fd;' : 'background-color: #7f1d1d; color: #fca5a5;'" x-text="fileLockSaving ? '处理中...' : (site.file_lock_enabled ? '解除锁定' : '开启锁定')"></button>
+                </div>
+            </div>
             <div class="flex items-center space-x-3 mb-3">
                 <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
                     <input type="checkbox" x-model="fcacheEnabled">
@@ -311,14 +323,15 @@ location ^~ /api/ {
                 <span class="text-xs text-gray-500">默认关闭，开启后 /xmlrpc.php 可被访问</span>
             </div>
             <div class="flex items-center space-x-3 mb-3">
-                <button @click="saveWPOptimizations()" :disabled="optimizationSaving" class="btn-primary text-sm" x-text="optimizationSaving ? '保存中...' : '保存设置'"></button>
+                <button @click="saveWPOptimizations()" :disabled="optimizationSaving || site.file_lock_enabled" class="btn-primary text-sm" x-text="optimizationSaving ? '保存中...' : '保存设置'"></button>
                 <button x-show="fcacheEnabled" @click="clearFCache()" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">清除缓存</button>
             </div>
             <div x-show="(fcacheEnabled || disableWPUpdates || disableFileEditing || wpDebug) && site.site_type === 'wordpress'" class="flex items-center space-x-3 mb-3">
-                <button x-show="pluginStatus === 'not_installed'" @click="installPlugin()" :disabled="pluginInstalling" class="btn-primary text-sm py-1.5" x-text="pluginInstalling ? '安装中...' : '安装配套插件'"></button>
-                <button x-show="pluginStatus === 'update_available'" @click="installPlugin()" :disabled="pluginInstalling" class="text-sm py-1.5 px-3 rounded" style="background-color: #166534; color: #bbf7d0;" x-text="pluginInstalling ? '更新中...' : '更新配套插件'"></button>
+                <button x-show="pluginStatus === 'not_installed'" @click="installPlugin()" :disabled="pluginInstalling || site.file_lock_enabled" class="btn-primary text-sm py-1.5" x-text="pluginInstalling ? '安装中...' : '安装配套插件'"></button>
+                <button x-show="pluginStatus === 'update_available'" @click="installPlugin()" :disabled="pluginInstalling || site.file_lock_enabled" class="text-sm py-1.5 px-3 rounded" style="background-color: #166534; color: #bbf7d0;" x-text="pluginInstalling ? '更新中...' : '更新配套插件'"></button>
                 <span x-show="pluginStatus === 'installed'" class="text-xs text-green-400">✓ 插件已安装</span>
             </div>
+            <p x-show="site.file_lock_enabled" class="text-xs text-yellow-300 mb-3">当前站点已锁定。如需保存会修改 wp-config.php 的优化项或安装/更新配套插件，请先解除锁定。</p>
             <div class="mt-3 p-3 rounded text-xs" style="background-color: #0f172a;">
                 <p class="text-gray-300 font-medium mb-2">FastCGI 缓存工作原理</p>
                 <ul class="text-gray-400 space-y-1 list-disc list-inside">
@@ -547,6 +560,7 @@ function websiteDetail() {
         wpMemoryLimit: '',
         logRetentionDays: 7,
         optimizationSaving: false,
+        fileLockSaving: false,
         pluginStatus: 'not_installed',
         pluginInstalling: false,
         monitoringEnabled: false,
@@ -1021,6 +1035,24 @@ function websiteDetail() {
                 await this.fetchPluginStatus();
             } catch(e) { showToast(e.message, 'error'); }
             this.pluginInstalling = false;
+        },
+        async toggleFileLock(enabled) {
+            const prompt = enabled
+                ? '开启文件锁定后，WordPress 可继续发文章和上传媒体，但插件、主题、核心文件和代码目录修改会被阻止。确认开启？'
+                : '解除文件锁定后，WordPress 后台和面板文件管理器可再次修改代码文件。确认解除？';
+            if (!await confirmModal(prompt)) return;
+            this.fileLockSaving = true;
+            try {
+                const r = await api('/websites/' + this.site.id + '/file-lock', {
+                    method: 'PUT',
+                    body: { enabled }
+                });
+                this.site.file_lock_enabled = r.data?.file_lock_enabled ?? enabled;
+                showToast(r.data?.message || (enabled ? '文件锁定已开启' : '文件锁定已关闭'), 'success');
+            } catch(e) {
+                showToast(e.message, 'error');
+            }
+            this.fileLockSaving = false;
         },
         async saveMonitoring() {
             this.monitoringSaving = true;

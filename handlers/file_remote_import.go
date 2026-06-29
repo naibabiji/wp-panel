@@ -91,6 +91,10 @@ func (h *FileHandler) RemoteImport(c *gin.Context) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
 		return
 	}
+	if err := checkSiteFileLockWrite(*req.SiteID, destPath, false); err != nil {
+		respondFileWriteError(c, err)
+		return
+	}
 	if info, err := os.Stat(filepath.Dir(destPath)); err != nil || !info.IsDir() {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("目标目录不存在"))
 		return

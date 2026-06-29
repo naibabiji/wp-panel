@@ -65,6 +65,9 @@
                 <option value="0">📦 备份目录</option>
             </select>
         </div>
+        <div x-show="selectedSiteLocked()" class="mb-4 p-3 bg-yellow-900/30 border border-yellow-700 text-yellow-100 rounded text-sm">
+            当前 WordPress 站点已开启文件锁定。发文章和上传媒体不受影响；代码目录修改以及 uploads 下 PHP 文件写入会被阻止。
+        </div>
 
         <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-4">
             <div class="flex items-center space-x-2 text-sm">
@@ -208,6 +211,13 @@ function fileManager() {
         remoteImportTimer: null,
         hasSelectedRoot() {
             return this.selectedSite !== '' && this.selectedSite !== null && typeof this.selectedSite !== 'undefined';
+        },
+        selectedSiteInfo() {
+            return this.sites.find(s => String(s.id) === String(this.selectedSite));
+        },
+        selectedSiteLocked() {
+            const site = this.selectedSiteInfo();
+            return !!(site && site.file_lock_enabled);
         },
         apiMessage(data, fallback) {
             return data?.message || data?.data?.message || fallback;

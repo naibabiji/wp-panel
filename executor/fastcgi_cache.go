@@ -61,7 +61,7 @@ func AutoDeployPluginUpdates(pluginFS embed.FS) {
 	}
 
 	db := database.GetDB()
-	rows, err := db.Query(`SELECT id, web_root, system_user, domain FROM websites
+	rows, err := db.Query(`SELECT id, web_root, system_user, domain, file_lock_enabled FROM websites
 		WHERE site_type = 'wordpress' AND plugin_api_key != ''`)
 	if err != nil {
 		return
@@ -70,9 +70,12 @@ func AutoDeployPluginUpdates(pluginFS embed.FS) {
 
 	var updated int
 	for rows.Next() {
-		var id int
+		var id, fileLockEnabled int
 		var webRoot, systemUser, domain string
-		if err := rows.Scan(&id, &webRoot, &systemUser, &domain); err != nil {
+		if err := rows.Scan(&id, &webRoot, &systemUser, &domain, &fileLockEnabled); err != nil {
+			continue
+		}
+		if fileLockEnabled == 1 {
 			continue
 		}
 

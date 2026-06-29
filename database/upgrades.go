@@ -295,6 +295,30 @@ var upgrades = []Upgrade{
 			`ALTER TABLE remote_backup_settings ADD COLUMN s3_path_prefix TEXT NOT NULL DEFAULT ''`,
 		},
 	},
+	{
+		Version:     "1.0.21",
+		Description: "新增 WordPress 站点文件锁定开关",
+		Func:        ensureFileLockEnabledColumn,
+	},
+}
+
+func ensureFileLockEnabledColumn() error {
+	var tableExists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'websites'`).Scan(&tableExists); err != nil {
+		return err
+	}
+	if tableExists == 0 {
+		return nil
+	}
+	var exists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('websites') WHERE name = 'file_lock_enabled'`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 1 {
+		return nil
+	}
+	_, err := DB.Exec(`ALTER TABLE websites ADD COLUMN file_lock_enabled INTEGER NOT NULL DEFAULT 0`)
+	return err
 }
 
 func ensureDocumentRootSubdirColumn() error {

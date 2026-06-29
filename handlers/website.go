@@ -32,7 +32,9 @@ const websiteCols = `id, name, domain, aliases, status, system_user, web_root, d
 	fastcgi_cache_enabled, fastcgi_cache_ttl, fastcgi_cache_key,
 	monitoring_enabled, monitoring_interval, disable_wp_updates, disable_file_editing,
 		xmlrpc_enabled, wp_debug_enabled, wp_post_revisions, wp_memory_limit,
-		log_retention_days, cdn_realip_enabled, expires_at, created_at, updated_at`
+		file_lock_enabled, log_retention_days, cdn_realip_enabled, expires_at, created_at, updated_at`
+
+const fileLockBlockedMessage = "该站点已开启文件锁定，请先解除文件锁定后再执行此维护操作"
 
 // scanWebsite scans the canonical columns into a Website model.
 // scanner is either row.Scan (for QueryRow) or rows.Scan (for Rows).
@@ -45,6 +47,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 	var wpDebugEnabled int
 	var wpPostRevisions int
 	var wpMemoryLimit string
+	var fileLockEnabled int
 	var logRetentionDays int
 	var cdnRealIPEnabled int
 
@@ -56,7 +59,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 		&fCacheEnabled, &w.FCacheTTL, &w.FCacheKey,
 		&monitoringEnabled, &monitoringInterval, &disableWPUpdates, &disableFileEditing,
 		&xmlrpcEnabled, &wpDebugEnabled, &wpPostRevisions, &wpMemoryLimit,
-		&logRetentionDays, &cdnRealIPEnabled, &w.ExpiresAt,
+		&fileLockEnabled, &logRetentionDays, &cdnRealIPEnabled, &w.ExpiresAt,
 		&w.CreatedAt, &w.UpdatedAt,
 	)
 	if err != nil {
@@ -76,6 +79,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 	w.WPDebugEnabled = wpDebugEnabled == 1
 	w.WPPostRevisions = wpPostRevisions
 	w.WPMemoryLimit = wpMemoryLimit
+	w.FileLockEnabled = fileLockEnabled == 1
 	w.LogRetentionDays = logRetentionDays
 	w.CDNRealIPEnabled = cdnRealIPEnabled == 1
 	return &w, nil
@@ -900,6 +904,10 @@ func (h *WebsiteHandler) ChangeDBPassword(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
+	if site.FileLockEnabled {
+		c.JSON(http.StatusLocked, models.ErrorResponse(fileLockBlockedMessage))
+		return
+	}
 
 	var req struct {
 		NewPassword string `json:"new_password"`
@@ -930,6 +938,10 @@ func (h *WebsiteHandler) FixWPConfig(c *gin.Context) {
 	site := getWebsiteByID(id)
 	if site == nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+	if site.FileLockEnabled {
+		c.JSON(http.StatusLocked, models.ErrorResponse(fileLockBlockedMessage))
 		return
 	}
 
@@ -1393,12 +1405,16 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 		return
 	}
 
-	var domain, webRoot, systemUser string
-	err = database.GetDB().QueryRow("SELECT domain, web_root, system_user FROM websites WHERE id = ?", id).Scan(&domain, &webRoot, &systemUser)
-	if err != nil {
+	site := getWebsiteByID(id)
+	if site == nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
+	if site.FileLockEnabled {
+		c.JSON(http.StatusLocked, models.ErrorResponse(fileLockBlockedMessage))
+		return
+	}
+	domain, webRoot, systemUser := site.Domain, site.WebRoot, site.SystemUser
 
 	src := "/www/server/panel/packages/wp-panel-optimizer.php"
 	pluginDir := filepath.Join(webRoot, "wp-content", "plugins", "wp-panel-optimizer")
@@ -1537,6 +1553,15 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
 		return
 	}
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+	if site.FileLockEnabled {
+		c.JSON(http.StatusLocked, models.ErrorResponse(fileLockBlockedMessage))
+		return
+	}
 
 	var req struct {
 		FCacheEnabled      bool   `json:"fcache_enabled"`
@@ -1632,6 +1657,49 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
 }
 
+func (h *WebsiteHandler) SetFileLock(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
+		return
+	}
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+	if site.SiteType != "wordpress" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("只有 WordPress 站点支持文件锁定"))
+		return
+	}
+
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		return
+	}
+	if site.FileLockEnabled == req.Enabled {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+			"message":           "文件锁定状态未变化",
+			"file_lock_enabled": req.Enabled,
+		}))
+		return
+	}
+
+	task := executor.GlobalQueue.Enqueue(executor.TaskSetFileLock, &executor.SetFileLockPayload{
+		Site:    site,
+		Enabled: req.Enabled,
+	})
+	result := <-task.ResultCh
+	if result.Success {
+		c.JSON(http.StatusOK, models.SuccessResponse(result.Data))
+	} else {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(result.Message))
+	}
+}
+
 func (h *WebsiteHandler) SaveMonitoring(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -1678,9 +1746,10 @@ func (h *WebsiteHandler) ReinstallWordPress(c *gin.Context) {
 	}
 
 	var domain, webRoot, systemUser, dbName, dbUser, siteType string
+	var fileLockEnabled int
 	err = database.GetDB().QueryRow(
-		"SELECT domain, web_root, system_user, db_name, db_user, site_type FROM websites WHERE id = ?", id,
-	).Scan(&domain, &webRoot, &systemUser, &dbName, &dbUser, &siteType)
+		"SELECT domain, web_root, system_user, db_name, db_user, site_type, file_lock_enabled FROM websites WHERE id = ?", id,
+	).Scan(&domain, &webRoot, &systemUser, &dbName, &dbUser, &siteType, &fileLockEnabled)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
@@ -1688,6 +1757,10 @@ func (h *WebsiteHandler) ReinstallWordPress(c *gin.Context) {
 
 	if siteType != "wordpress" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("仅 WordPress 站点支持重装功能"))
+		return
+	}
+	if fileLockEnabled == 1 {
+		c.JSON(http.StatusLocked, models.ErrorResponse(fileLockBlockedMessage))
 		return
 	}
 
@@ -1890,12 +1963,12 @@ func (h *CacheHelperHandler) FindByDomain(c *gin.Context) {
 		return
 	}
 
-	var siteID, fcacheEnabled, fcacheTTL, disableUpdates, disableEditing, xmlrpcEnabled, wpDebugEnabled, wpPostRevisions int
+	var siteID, fcacheEnabled, fcacheTTL, disableUpdates, disableEditing, xmlrpcEnabled, wpDebugEnabled, wpPostRevisions, fileLockEnabled int
 	var wpMemoryLimit string
 	err := database.GetDB().QueryRow(
-		"SELECT id, fastcgi_cache_enabled, fastcgi_cache_ttl, disable_wp_updates, disable_file_editing, xmlrpc_enabled, wp_debug_enabled, wp_post_revisions, wp_memory_limit FROM websites WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%') ESCAPE '\\'",
+		"SELECT id, fastcgi_cache_enabled, fastcgi_cache_ttl, disable_wp_updates, disable_file_editing, xmlrpc_enabled, wp_debug_enabled, wp_post_revisions, wp_memory_limit, file_lock_enabled FROM websites WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%') ESCAPE '\\'",
 		domain, escapeLike(domain),
-	).Scan(&siteID, &fcacheEnabled, &fcacheTTL, &disableUpdates, &disableEditing, &xmlrpcEnabled, &wpDebugEnabled, &wpPostRevisions, &wpMemoryLimit)
+	).Scan(&siteID, &fcacheEnabled, &fcacheTTL, &disableUpdates, &disableEditing, &xmlrpcEnabled, &wpDebugEnabled, &wpPostRevisions, &wpMemoryLimit, &fileLockEnabled)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
@@ -1912,6 +1985,7 @@ func (h *CacheHelperHandler) FindByDomain(c *gin.Context) {
 		"wp_debug_enabled":      wpDebugEnabled == 1,
 		"wp_post_revisions":     wpPostRevisions,
 		"wp_memory_limit":       wpMemoryLimit,
+		"file_lock_enabled":     fileLockEnabled == 1,
 	}))
 }
 
@@ -1961,8 +2035,13 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
-	if !h.checkAPIKey(req.Domain, c) {
+	site, ok := h.pluginSiteByDomain(req.Domain, c)
+	if !ok {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("API Key 无效"))
+		return
+	}
+	if site.FileLockEnabled {
+		c.JSON(http.StatusLocked, models.ErrorResponse(fileLockBlockedMessage))
 		return
 	}
 	if req.TTL < 10 {

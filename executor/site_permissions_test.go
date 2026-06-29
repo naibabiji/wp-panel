@@ -3,6 +3,7 @@ package executor
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -50,5 +51,67 @@ func TestChownSitePathRejectsUnsafeInputs(t *testing.T) {
 				t.Fatal("ChownSitePath error = nil, want rejection")
 			}
 		})
+	}
+}
+
+func TestApplyWPFileModsLockBlockAddsAndRemovesManagedBlock(t *testing.T) {
+	content := "<?php\n" +
+		"define('DB_NAME', 'wordpress');\n" +
+		"/* That's all, stop editing! Happy publishing. */\n" +
+		"require_once ABSPATH . 'wp-settings.php';\n"
+
+	locked, err := applyWPFileModsLockBlock(content, true)
+	if err != nil {
+		t.Fatalf("apply lock: %v", err)
+	}
+	if !strings.Contains(locked, wpPanelFileLockBegin) || !strings.Contains(locked, "define('DISALLOW_FILE_MODS', true);") {
+		t.Fatalf("managed lock block missing:\n%s", locked)
+	}
+	if strings.Index(locked, wpPanelFileLockBegin) > strings.Index(locked, "/* That's all, stop editing!") {
+		t.Fatal("managed lock block should be inserted before wp-config marker")
+	}
+
+	unlocked, err := applyWPFileModsLockBlock(locked, false)
+	if err != nil {
+		t.Fatalf("remove lock: %v", err)
+	}
+	if strings.Contains(unlocked, wpPanelFileLockBegin) || strings.Contains(unlocked, "DISALLOW_FILE_MODS") {
+		t.Fatalf("managed lock block was not removed:\n%s", unlocked)
+	}
+}
+
+func TestApplyWPFileModsLockBlockRejectsExistingFalseConstant(t *testing.T) {
+	content := "<?php\n" +
+		"define('DISALLOW_FILE_MODS', false);\n" +
+		"/* That's all, stop editing! Happy publishing. */\n"
+
+	if _, err := applyWPFileModsLockBlock(content, true); err == nil {
+		t.Fatal("apply lock error = nil, want rejection for existing false constant")
+	}
+}
+
+func TestWPConfigHasUserFileModsLockIgnoresManagedBlock(t *testing.T) {
+	webRoot := t.TempDir()
+	configPath := filepath.Join(webRoot, "wp-config.php")
+	managedOnly := "<?php\n" +
+		wpPanelFileLockBegin + "\n" +
+		"define('DISALLOW_FILE_MODS', true);\n" +
+		wpPanelFileLockEnd + "\n" +
+		"/* That's all, stop editing! Happy publishing. */\n"
+	if err := os.WriteFile(configPath, []byte(managedOnly), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if wpConfigHasUserFileModsLock(webRoot) {
+		t.Fatal("managed lock block should not be treated as a user lock")
+	}
+
+	userDefined := "<?php\n" +
+		"define(\"DISALLOW_FILE_MODS\", true);\n" +
+		"/* That's all, stop editing! Happy publishing. */\n"
+	if err := os.WriteFile(configPath, []byte(userDefined), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !wpConfigHasUserFileModsLock(webRoot) {
+		t.Fatal("user-defined DISALLOW_FILE_MODS=true should be reported")
 	}
 }

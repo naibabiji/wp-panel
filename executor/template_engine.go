@@ -542,6 +542,10 @@ server {
     }
 
     {{end}}
+    location ~* ^/wp-content/uploads/.*\.(php|phtml|phar|php[0-9])$ {
+        return 404;
+    }
+
     location ~ \.php$ {
         try_files $uri =404;
         include /etc/nginx/fastcgi_params;
@@ -725,6 +729,10 @@ server {
     }
 
     {{end}}
+    location ~* ^/wp-content/uploads/.*\.(php|phtml|phar|php[0-9])$ {
+        return 404;
+    }
+
     location ~ \.php$ {
         try_files $uri =404;
         include /etc/nginx/fastcgi_params;

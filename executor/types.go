@@ -30,6 +30,7 @@ const (
 	TaskManualBan        TaskType = "manual_ban"
 	TaskCreateBackup     TaskType = "create_backup"
 	TaskRestoreBackup    TaskType = "restore_backup"
+	TaskSetFileLock      TaskType = "set_file_lock"
 )
 
 type TaskStatus string
@@ -126,6 +127,11 @@ type SetCDNRealIPPayload struct {
 type SetDocumentRootPayload struct {
 	Site               *models.Website `json:"-"`
 	DocumentRootSubdir string          `json:"document_root_subdir"`
+}
+
+type SetFileLockPayload struct {
+	Site    *models.Website `json:"-"`
+	Enabled bool            `json:"enabled"`
 }
 
 type RunCronPayload struct {

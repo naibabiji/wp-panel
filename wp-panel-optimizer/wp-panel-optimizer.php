@@ -3,7 +3,7 @@
  * Plugin Name: WP Panel Optimizer
  * Plugin URI:  https://github.com/naibabiji/wp-panel
  * Description: 与 WP Panel 面板配合，管理 FastCGI 缓存、预加载、调试模式、文章修订、内存限制等优化项。发布/更新文章自动清除缓存。
- * Version:     1.1.5
+ * Version:     1.1.6
  * Author:      WP Panel
  * Author URI:  https://blog.naibabiji.com
  * License:     GPL-2.0+
@@ -23,6 +23,8 @@ function wpp_optimizer_uninstall() {
     delete_option('wpp_optimizer_wp_debug');
     delete_option('wpp_optimizer_post_revisions');
     delete_option('wpp_optimizer_memory_limit');
+    delete_option('wpp_optimizer_file_lock_enabled');
+    delete_transient('wpp_optimizer_file_lock_state');
     delete_option('wpp_optimizer_preload_enabled');
     delete_option('wpp_optimizer_preload_limit');
     delete_option('wpp_optimizer_preload_queue');
@@ -32,7 +34,7 @@ function wpp_optimizer_uninstall() {
 
 class WP_Panel_Optimizer {
 
-    const VERSION = '1.1.5';
+    const VERSION = '1.1.6';
 
     const OPTION_FCACHE_ENABLED = 'wpp_optimizer_fcache_enabled';
     const OPTION_FCACHE_TTL     = 'wpp_optimizer_fcache_ttl';
@@ -44,6 +46,9 @@ class WP_Panel_Optimizer {
     const OPTION_WP_DEBUG       = 'wpp_optimizer_wp_debug';
     const OPTION_POST_REVISIONS = 'wpp_optimizer_post_revisions';
     const OPTION_MEMORY_LIMIT   = 'wpp_optimizer_memory_limit';
+    const OPTION_FILE_LOCK_ENABLED = 'wpp_optimizer_file_lock_enabled';
+    const FILE_LOCK_STATE_TRANSIENT = 'wpp_optimizer_file_lock_state';
+    const FILE_LOCK_STATE_TTL       = 300;
     const OPTION_PRELOAD_ENABLED = 'wpp_optimizer_preload_enabled';
     const OPTION_PRELOAD_LIMIT   = 'wpp_optimizer_preload_limit';
     const OPTION_PRELOAD_QUEUE   = 'wpp_optimizer_preload_queue';
@@ -142,6 +147,7 @@ class WP_Panel_Optimizer {
         add_action('wp_update_comment_count', [__CLASS__, 'auto_comment_clear']);
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), [__CLASS__, 'action_links']);
         add_action('admin_notices', [__CLASS__, 'clear_notice']);
+        add_action('admin_notices', [__CLASS__, 'file_lock_notice']);
         add_action('wp_ajax_wpp_optimizer_check_update', [__CLASS__, 'ajax_check_update']);
         add_action(self::PRELOAD_HOOK, [__CLASS__, 'process_preload_batch']);
         self::maybe_process_preload_tick();
@@ -214,11 +220,15 @@ class WP_Panel_Optimizer {
                 update_option(self::OPTION_WP_DEBUG, !empty($panelState['wp_debug_enabled']) ? '1' : '0');
                 update_option(self::OPTION_POST_REVISIONS, $panelState['wp_post_revisions'] ?? -1);
                 update_option(self::OPTION_MEMORY_LIMIT, $panelState['wp_memory_limit'] ?? '');
+                self::update_file_lock_state_option($panelState);
             }
         }
 
         if ($isPost) {
             check_admin_referer('wpp_optimizer_settings');
+            if (self::sync_file_lock_state(true)) {
+                $notice = '<div class="notice notice-warning"><p><strong>WP Panel 文件锁定已开启。</strong>当前设置未保存。如需修改会写入 wp-config.php 的优化项，请先到 WP Panel 网站详情页解除文件锁定。</p></div>';
+            } else {
             $fcacheEnabled  = !empty($_POST['fcache_enabled'])  ? true : false;
             $fcacheTTL      = isset($_POST['fcache_ttl']) ? intval($_POST['fcache_ttl']) : 300;
             $noUpdates      = !empty($_POST['no_updates'])      ? true : false;
@@ -250,6 +260,7 @@ class WP_Panel_Optimizer {
                 $errMsg = is_wp_error($pushed) ? $pushed->get_error_message() : '未知错误';
                 $notice = '<div class="notice notice-warning is-dismissible"><p><strong>注意：</strong>设置已保存在本地，但同步到面板失败。错误信息：<code>' . esc_html($errMsg) . '</code></p><p>下次进入本页面时将从面板拉取状态，可能覆盖本次修改。请检查插件设置中的「验证连接」是否正常。</p></div>';
             }
+            }
         }
 
         $fcacheEnabled  = get_option(self::OPTION_FCACHE_ENABLED, '0') === '1';
@@ -263,6 +274,7 @@ class WP_Panel_Optimizer {
         $preloadEnabled = get_option(self::OPTION_PRELOAD_ENABLED, '0') === '1';
         $preloadLimit   = self::normalize_preload_limit(get_option(self::OPTION_PRELOAD_LIMIT, 100));
         $preloadStatus  = self::get_preload_status();
+        $fileLockEnabled = get_option(self::OPTION_FILE_LOCK_ENABLED, '0') === '1';
         ?>
         <div class="wrap">
             <?php $pluginVersion = WP_Panel_Optimizer::VERSION; ?>
@@ -275,6 +287,9 @@ class WP_Panel_Optimizer {
             <?php echo wp_kses_post($notice); ?>
             <?php if ($missing): ?>
                 <div class="notice notice-error"><p><strong>配置文件缺失</strong> — 请在 WP Panel 面板中进入该网站详情页，点击 WordPress 优化卡片的「安装配套插件」按钮完成初始化。</p></div>
+            <?php endif; ?>
+            <?php if ($fileLockEnabled): ?>
+                <div class="notice notice-warning"><p><strong>WP Panel 文件锁定已开启。</strong>发文章、编辑页面、上传图片不受影响；安装、更新、删除插件或主题，以及修改代码文件会被阻止。如需维护代码，请先到 WP Panel 网站详情页解除文件锁定。</p></div>
             <?php endif; ?>
             <div id="wpp-verify-msg"></div>
             <hr>
@@ -363,7 +378,7 @@ class WP_Panel_Optimizer {
                     </tr>
                 </table>
                 <p>
-                    <button type="submit" name="wpp_save" class="button button-primary">保存设置</button>
+                    <button type="submit" name="wpp_save" class="button button-primary" <?php disabled($fileLockEnabled); ?>>保存设置</button>
                     <button type="button" id="wpp-verify-btn" class="button">验证连接</button>
                 </p>
             </form>
@@ -500,6 +515,20 @@ class WP_Panel_Optimizer {
                 echo '<div class="notice notice-error is-dismissible"><p>缓存预加载启动失败，请确认 FastCGI 缓存已开启。</p></div>';
             }
         }
+    }
+
+    public static function file_lock_notice() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+        $screen = function_exists('get_current_screen') ? get_current_screen() : null;
+        if ($screen && $screen->id === 'settings_page_wp-panel-optimizer') {
+            return;
+        }
+        if (!self::sync_file_lock_state()) {
+            return;
+        }
+        echo '<div class="notice notice-warning"><p><strong>WP Panel 文件锁定已开启。</strong>发文章、编辑页面、上传图片不受影响；安装、更新、删除插件或主题，以及修改代码文件会被阻止。如需维护代码，请先到 WP Panel 网站详情页解除文件锁定。</p></div>';
     }
 
     public static function admin_bar_button($bar) {
@@ -917,6 +946,29 @@ class WP_Panel_Optimizer {
         if (!$resp || is_wp_error($resp)) return null;
         $data = json_decode($resp, true);
         return !empty($data['success']) ? ($data['data'] ?? null) : null;
+    }
+
+    private static function sync_file_lock_state($force = false) {
+        if (!$force) {
+            $cached = get_transient(self::FILE_LOCK_STATE_TRANSIENT);
+            if ($cached !== false) {
+                return $cached === '1';
+            }
+        }
+        $panelState = self::fetch_panel_state();
+        if (is_array($panelState)) {
+            return self::update_file_lock_state_option($panelState) === '1';
+        }
+        $current = get_option(self::OPTION_FILE_LOCK_ENABLED, '0') === '1' ? '1' : '0';
+        set_transient(self::FILE_LOCK_STATE_TRANSIENT, $current, self::FILE_LOCK_STATE_TTL);
+        return $current === '1';
+    }
+
+    private static function update_file_lock_state_option($panelState) {
+        $value = !empty($panelState['file_lock_enabled']) ? '1' : '0';
+        update_option(self::OPTION_FILE_LOCK_ENABLED, $value);
+        set_transient(self::FILE_LOCK_STATE_TRANSIENT, $value, self::FILE_LOCK_STATE_TTL);
+        return $value;
     }
 
     private static function push_optimizer_settings($fcacheEnabled, $fcacheTTL, $noUpdates, $noFileEdit, $wpDebug = false, $postRevisions = -1, $memoryLimit = '') {

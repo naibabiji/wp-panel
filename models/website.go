@@ -47,6 +47,7 @@ type Website struct {
 	WPDebugEnabled     bool             `json:"wp_debug_enabled"`
 	WPPostRevisions    int              `json:"wp_post_revisions"`
 	WPMemoryLimit      string           `json:"wp_memory_limit"`
+	FileLockEnabled    bool             `json:"file_lock_enabled"`
 	LogRetentionDays   int              `json:"log_retention_days"`
 	CDNRealIPEnabled   bool             `json:"cdn_realip_enabled"`
 	CDNRealIPGroups    []CDNRealIPGroup `json:"cdn_realip_groups,omitempty"`

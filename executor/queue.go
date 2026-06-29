@@ -156,6 +156,8 @@ func (q *TaskQueue) worker() {
 				result = executeCreateBackup(task)
 			case TaskRestoreBackup:
 				result = executeRestoreBackup(task)
+			case TaskSetFileLock:
+				result = executeSetFileLock(task)
 			default:
 				result = TaskResult{Success: false, Message: "未知任务类型: " + string(task.Type)}
 			}
@@ -268,6 +270,10 @@ func logOp(task *Task, result TaskResult) {
 		}
 	case TaskRestoreBackup:
 		if p, ok := task.Payload.(*RestoreBackupPayload); ok && p.Site != nil {
+			target = p.Site.Domain
+		}
+	case TaskSetFileLock:
+		if p, ok := task.Payload.(*SetFileLockPayload); ok && p.Site != nil {
 			target = p.Site.Domain
 		}
 	}

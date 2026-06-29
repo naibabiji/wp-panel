@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/naibabiji/wp-panel/config"
+	"github.com/naibabiji/wp-panel/models"
 )
 
 func TestUploadSessionIDIsStableForResume(t *testing.T) {
@@ -179,7 +180,7 @@ func TestExtractTarGzArchive(t *testing.T) {
 		"wp-content/uploads/readme.txt": "ok",
 	})
 
-	conflicts, err := checkTarArchive(archivePath, "tar.gz", base, base, false)
+	conflicts, err := checkTarArchive(archivePath, "tar.gz", base, base, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +188,7 @@ func TestExtractTarGzArchive(t *testing.T) {
 		t.Fatalf("conflicts = %v, want none", conflicts)
 	}
 
-	if err := extractTarArchive(archivePath, "tar.gz", base, base); err != nil {
+	if err := extractTarArchive(archivePath, "tar.gz", base, base, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(base, "wp-content", "uploads", "readme.txt"))
@@ -198,7 +199,7 @@ func TestExtractTarGzArchive(t *testing.T) {
 		t.Fatalf("extracted content = %q, want ok", string(data))
 	}
 
-	conflicts, err = checkTarArchive(archivePath, "tar.gz", base, base, false)
+	conflicts, err = checkTarArchive(archivePath, "tar.gz", base, base, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,8 +215,59 @@ func TestTarArchiveRejectsPathTraversal(t *testing.T) {
 		"../escape.txt": "bad",
 	})
 
-	if _, err := checkTarArchive(archivePath, "tar.gz", base, base, false); err == nil {
+	if _, err := checkTarArchive(archivePath, "tar.gz", base, base, false, nil); err == nil {
 		t.Fatal("expected path traversal archive to be rejected")
+	}
+}
+
+func TestFileLockWriteGuardAllowsUploadsMediaAndBlocksCode(t *testing.T) {
+	root := t.TempDir()
+	uploads := filepath.Join(root, "wp-content", "uploads")
+	if err := os.MkdirAll(uploads, 0755); err != nil {
+		t.Fatal(err)
+	}
+	site := &models.Website{
+		WebRoot:         root,
+		SiteType:        "wordpress",
+		FileLockEnabled: true,
+	}
+
+	if err := checkFileLockWrite(site, filepath.Join(uploads, "photo.jpg"), false); err != nil {
+		t.Fatalf("uploads media should be allowed: %v", err)
+	}
+	if err := checkFileLockWrite(site, filepath.Join(uploads, "shell.php"), false); !isFileLockWriteError(err) {
+		t.Fatalf("uploads PHP error = %v, want file lock rejection", err)
+	}
+	if err := checkFileLockWrite(site, filepath.Join(root, "wp-content", "plugins", "plugin.php"), false); !isFileLockWriteError(err) {
+		t.Fatalf("code directory write error = %v, want file lock rejection", err)
+	}
+	if err := checkFileLockWrite(site, filepath.Join(uploads, "shell.php"), true); err != nil {
+		t.Fatalf("uploads PHP deletion should be allowed: %v", err)
+	}
+}
+
+func TestFileLockWriteGuardRejectsUploadsSymlinkEscape(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior differs on Windows")
+	}
+	root := t.TempDir()
+	uploads := filepath.Join(root, "wp-content", "uploads")
+	if err := os.MkdirAll(uploads, 0755); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(uploads, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	site := &models.Website{
+		WebRoot:         root,
+		SiteType:        "wordpress",
+		FileLockEnabled: true,
+	}
+
+	target := filepath.Join(uploads, "linked", "photo.jpg")
+	if err := checkFileLockWrite(site, target, false); !isFileLockWriteError(err) {
+		t.Fatalf("symlink escape error = %v, want file lock rejection", err)
 	}
 }
 

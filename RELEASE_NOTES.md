@@ -1,39 +1,42 @@
 # 更新说明
 
-## v1.2.24
+## v1.2.25
 
-### 新增：S3 兼容对象存储远程备份
+### 新增：WordPress 文件锁定
 
-- 远程备份新增「S3 兼容对象存储」后端，可用于 Cloudflare R2、AWS S3、MinIO、Backblaze B2 等兼容服务。
-- 保留原有 SSH / rsync 远程备份方式，已配置 rsync 的服务器升级后默认行为不变。
-- 设置页新增备份目标选择，可在 SSH / rsync 与 S3 兼容对象存储之间切换。
-- S3 配置支持 Endpoint、Bucket、Region、Access Key ID、Secret Access Key 和路径前缀。
-- Cloudflare R2 可使用 `auto` 作为 Region，并使用账号专属 R2 Endpoint。
+- WordPress 站点详情页新增「文件锁定」开关，可一键锁定站点代码目录。
+- 开启后，站点仍可正常发布文章、编辑页面、上传图片和媒体文件。
+- 插件、主题、核心文件、`wp-config.php` 等代码和配置文件修改会被阻止。
+- 解锁时会自动移除面板托管的 `DISALLOW_FILE_MODS` 设置，并恢复常规站点权限。
+- 如果用户自己在 `wp-config.php` 中定义了 `DISALLOW_FILE_MODS=true`，解锁后会明确提示仍存在用户自定义限制。
 
-### 改进：大文件备份上传
+### 安全基线
 
-- S3 后端支持 multipart upload，大文件会自动分片上传，上传完成后在对象存储中仍显示为一个完整备份对象。
-- 单次分片上传失败时会自动 abort multipart upload，减少远程未完成分片残留。
-- 小文件继续使用单次 PUT 上传，避免不必要的分片流程。
-- S3 文件上传超时调整为更适合备份场景的长超时，连接测试仍保持短超时。
+- WordPress 默认 Nginx 模板新增 uploads 目录 PHP 执行拦截，阻止 `wp-content/uploads` 下的 `.php`、`.phtml`、`.phar`、`php数字后缀` 文件被执行。
+- 该规则作为 WordPress 默认安全基线生效，不依赖是否开启文件锁定。
+- 面板启动时会重建全部站点 Nginx 配置，升级后已有 WordPress 站点也会获得该规则。
 
-### 安全与兼容
+### 面板文件操作防护
 
-- S3 Endpoint 必须使用 HTTPS。
-- Bucket、Region、Access Key ID、路径前缀等配置均增加格式校验。
-- Secret Access Key 和 SSH 密码在接口返回时继续脱敏显示。
-- 本地上传路径仍限制在面板备份目录下，避免任意文件被同步。
-- S3 上传使用标准 SigV4 签名，不依赖 rclone 或额外系统命令。
+- 文件管理器、远程导入、上传、删除、重命名、压缩、解压、复制、移动等写入操作增加锁定校验。
+- 锁定状态下仅允许 `wp-content/uploads` 下的非 PHP 媒体文件写入。
+- 面板安装/更新配套优化插件、保存会写入 `wp-config.php` 的 WordPress 优化项、重装 WordPress、同步数据库配置等维护操作会要求先解除锁定。
+- 已开启文件锁定的站点会跳过面板启动时的配套优化插件自动更新，避免自动写入插件代码。
 
-### 数据库升级
+### 配套 WordPress 插件
 
-- `remote_backup_settings` 新增 S3 远程备份配置字段。
-- 新装数据库和老版本升级路径均已处理。
-- 老用户升级后默认 `backup_type` 为 `rsync`，不会自动切换备份后端。
+- `WP Panel Optimizer` 升级到 `1.1.6`。
+- 插件后台会显示醒目的文件锁定提示，避免管理员误以为无法安装或修改插件主题是网站故障。
+- 普通后台页面的锁定状态同步增加 5 分钟缓存，避免每个后台页面加载都实时请求面板。
+- 插件设置页仍会强制刷新锁定状态，确保保存前判断准确。
 
-### 测试
+### 数据库升级与兼容
 
-- 增加远程备份类型和 S3 参数校验测试。
-- 增加新装和老版本升级的数据库字段测试。
-- 增加 mock S3 服务测试，覆盖连接探测、multipart 成功上传和失败 abort。
-- 增加 S3 XML complete 请求测试，确认 `Content-Type: application/xml` 和 ETag XML 格式。
+- `websites` 表新增 `file_lock_enabled` 字段。
+- 新安装和老用户升级路径均已处理，已有站点默认不启用文件锁定。
+- 文件锁定仅支持 WordPress 站点，不影响通用 PHP 站点。
+
+### 验证
+
+- 新增 Linux / WSL 验证脚本 `scripts/verify.sh`，作为 `scripts\verify.ps1` 的等价脚本。
+- 已覆盖数据库升级、Nginx 模板、`wp-config.php` 托管块、文件锁定写入守卫等测试。

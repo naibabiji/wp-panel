@@ -158,6 +158,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.PUT("/api/websites/:id/cache", websiteHandler.UpdateCache)
 	protected.DELETE("/api/websites/:id/cache", websiteHandler.ClearCache)
 	protected.PUT("/api/websites/:id/wp-optimizations", websiteHandler.SaveWPOptimizations)
+	protected.PUT("/api/websites/:id/file-lock", websiteHandler.SetFileLock)
 	protected.PUT("/api/websites/:id/monitoring", websiteHandler.SaveMonitoring)
 	protected.POST("/api/websites/:id/install-plugin", websiteHandler.InstallPlugin)
 	protected.GET("/api/websites/:id/install-plugin/status", websiteHandler.InstallPluginStatus)
