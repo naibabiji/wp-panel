@@ -212,6 +212,58 @@ func isPathWithin(basePath, targetPath string) bool {
 - 上传、下载、删除、解压等操作都会先经过 `isPathWithin()` 检查，**越权直接返回 403**
 - 符号链接会被 `EvalSymlinks` 解析到真实路径，**无法用软链接绕过目录限制**
 
+### 3.3.1 文件锁定（File Lock）
+
+文件锁定是在网站级别启用的“文件写保护增强”。它要求 WordPress 站点满足 `site_type = wordpress`，并在数据库 `websites` 表写入 `file_lock_enabled` 与 `file_lock_enabled_at`。
+
+#### 锁定时写入范围（运行时）
+
+启用锁定后，路径写入不仅要通过 `isPathWithin()` 根目录判断，还要满足额外规则：
+
+- 允许写入：`/www/wwwroot/<site>/wp-content/...` 下的运行目录数据
+- 禁止写入：
+  - `wp-content/plugins`
+  - `wp-content/themes`
+  - `wp-content/mu-plugins`
+  - `wp-content/upgrade`
+  - `wp-content/upgrade-temp-backup`
+- 禁止改写配置文件：`wp-config.php`、`.user.ini`、`.htaccess`（站点根目录）以及 `php.ini`、`wordfence-waf.php`
+- 默认禁止新建/修改 PHP 可执行类文件（`.php`、`.phtml`、`.phar`）
+- 文件锁定设置时会拒绝 `wp-config.php` 已存在 `DISALLOW_FILE_MODS = false` 的站点手工配置，避免和面板行为冲突
+
+#### 文件锁定对接口的直接拦截
+
+锁定后会拒绝 `423 (Locked)` 的维护入口包括：
+
+- `POST /websites/:id/db-password`
+- `POST /websites/:id/fix-wp-config`
+- `POST /websites/:id/install-plugin`
+- `POST /websites/:id/wp-optimizations`
+- `POST /websites/:id/reinstall`
+- `POST /api/cache/helper/optimizer-settings`
+
+返回文案与前端文案一致：
+
+> 该站点已开启文件锁定，请先解除文件锁定后再执行此维护操作
+
+#### 文件管理的联动
+
+锁定状态下，文件管理写动作（上传、上传分片完成、删除、重命名、建目录、压缩、解压、复制、移动、归档导入等）会统一走 `checkFileLockWrite`。
+
+当目标写路径不满足规则时，返回：
+
+> 该站点已开启文件锁定，仅允许写入 wp-content 下的运行数据目录，且禁止写入 PHP 可执行文件
+
+这意味着：文件锁定是对“路径隔离”之外的**写行为再加一层限制**，不是替代。
+
+#### 代码层实现
+
+- 启用时在 `wp-config.php` 写入托管块（`WP Panel File Lock`）
+  - `define('DISALLOW_FILE_MODS', true);`
+  - `define('FS_METHOD', 'direct');`
+- 关闭时移除托管块并恢复正常权限模型
+- 启用/关闭同时触发网站权限重刷，并校验关键路径（如 `wp-config.php`、`wp-content/{plugins,themes,mu-plugins}`）不存在可疑符号链接
+
 ### 3.4 下载来源被锁死
 
 面板中所有涉及下载的地方（WordPress 核心、插件、主题、更新包），URL 都被限制在**白名单域名**：
