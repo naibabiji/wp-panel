@@ -84,7 +84,7 @@ func TestParseFileLockEnabledTime(t *testing.T) {
 
 func TestImportSiteRuntimePHPAccessEventsAggregatesLogEntries(t *testing.T) {
 	openTestDB(t)
-	lockAt := "2026-06-30 10:00:30"
+	lockAt := "2026-06-30T10:00:30+08:00"
 
 	logDir := t.TempDir()
 	logContent := strings.Join([]string{
