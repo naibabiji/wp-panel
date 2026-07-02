@@ -92,14 +92,14 @@ function extensionConfig() {
             const all = [...this.themes, ...this.plugins];
             try {
                 const resp = await api('/extensions', { method: 'PUT', body: all });
-                if (resp.success) { this.showMsg('已保存', false); await this.load(); }
+                if (resp.success) { this.showMsg(t('extension.saved'), false); await this.load(); }
             } catch(e) { this.showMsg(e.message, true); }
         },
         async reset() {
-            if (!confirm('将恢复为默认主题和插件列表，当前配置将被覆盖。确认？')) return;
+            if (!confirm(t('extension.reset_confirm'))) return;
             try {
                 const resp = await api('/extensions/reset', { method: 'POST' });
-                if (resp.success) { this.showMsg('已恢复默认配置', false); await this.load(); }
+                if (resp.success) { this.showMsg(t('extension.restored_default'), false); await this.load(); }
             } catch(e) { this.showMsg(e.message, true); }
         },
         showMsg(msg, err) {

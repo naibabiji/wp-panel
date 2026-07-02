@@ -421,17 +421,17 @@ location ^~ /api/ {
     <div x-show="logFullscreen" class="fixed inset-0 bg-black bg-opacity-90 flex flex-col z-50" @keydown.escape.window="logFullscreen = false">
         <div class="flex items-center justify-between px-6 py-3 border-b border-gray-700">
             <div class="flex items-center space-x-4 text-sm">
-                <span class="text-white font-semibold" x-text="logType === 'access' ? '访问日志' : (logType === 'security' ? '安全日志' : '错误日志')"></span>
-                <button @click="selectLogType('access')" :class="logType === 'access' ? 'text-white border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-3 py-1 text-sm font-medium">访问日志</button>
-                <button @click="selectLogType('error')" :class="logType === 'error' ? 'text-white border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-3 py-1 text-sm font-medium">错误日志</button>
-                <button x-show="site.site_type === 'wordpress'" @click="selectLogType('security')" :class="logType === 'security' ? 'text-white border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-3 py-1 text-sm font-medium">安全日志</button>
-                <button @click="fetchLogs()" class="text-sm py-1 px-3 rounded text-gray-400 hover:text-white" style="background-color: #1e293b; border: 1px solid #334155;">刷新</button>
+                <span class="text-white font-semibold" x-text="logType === 'access' ? t('website.log_type_access') : (logType === 'security' ? t('website.log_type_security') : t('website.log_type_error'))"></span>
+                <button @click="selectLogType('access')" :class="logType === 'access' ? 'text-white border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-3 py-1 text-sm font-medium">{{t .Lang "website.log_type_access"}}</button>
+                <button @click="selectLogType('error')" :class="logType === 'error' ? 'text-white border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-3 py-1 text-sm font-medium">{{t .Lang "website.log_type_error"}}</button>
+                <button x-show="site.site_type === 'wordpress'" @click="selectLogType('security')" :class="logType === 'security' ? 'text-white border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-3 py-1 text-sm font-medium">{{t .Lang "website.log_type_security"}}</button>
+                <button @click="fetchLogs()" class="text-sm py-1 px-3 rounded text-gray-400 hover:text-white" style="background-color: #1e293b; border: 1px solid #334155;">{{t .Lang "website.refresh"}}</button>
                 <select x-model.number="logLineLimit" @change="fetchLogs()" class="input-field w-28 text-sm py-1">
-                    <option value="200">最近 200 行</option>
-                    <option value="1000">最近 1000 行</option>
-                    <option value="5000">最近 5000 行</option>
+                    <option value="200">{{t .Lang "website.log_last_200"}}</option>
+                    <option value="1000">{{t .Lang "website.log_last_1000"}}</option>
+                    <option value="5000">{{t .Lang "website.log_last_5000"}}</option>
                 </select>
-                <button @click="downloadLogFile(currentLogFilename())" class="text-sm py-1 px-3 rounded text-gray-400 hover:text-white" style="background-color: #1e293b; border: 1px solid #334155;">下载当前完整日志</button>
+                <button @click="downloadLogFile(currentLogFilename())" class="text-sm py-1 px-3 rounded text-gray-400 hover:text-white" style="background-color: #1e293b; border: 1px solid #334155;">{{t .Lang "website.download_current_log"}}</button>
             </div>
             <button @click="logFullscreen = false" class="text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
         </div>
@@ -446,19 +446,19 @@ location ^~ /api/ {
     <div x-show="dbPasswordModal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50" @click.self="dbPasswordModal = false">
         <div class="rounded-lg shadow-xl w-full max-w-md p-6" style="background-color: #1e293b; border: 1px solid #334155;">
             <div class="flex items-center justify-between mb-4">
-                <h3 class="text-lg font-semibold text-white">修改数据库密码</h3>
+                <h3 class="text-lg font-semibold text-white">{{t .Lang "website.change_db_password"}}</h3>
                 <button @click="dbPasswordModal = false" class="text-gray-400 hover:text-white text-xl">&times;</button>
             </div>
-            <p class="text-gray-400 text-sm mb-3">数据库 <span class="text-white font-mono" x-text="site.db_name"></span> / 用户 <span class="text-white font-mono" x-text="site.db_user"></span></p>
+            <p class="text-gray-400 text-sm mb-3">{{t .Lang "website.database_label"}} <span class="text-white font-mono" x-text="site.db_name"></span> / {{t .Lang "website.user_label"}} <span class="text-white font-mono" x-text="site.db_user"></span></p>
             <div class="mb-4">
-                <label class="block text-sm text-gray-300 mb-1">新密码（留空则随机生成）</label>
-                <input type="text" x-model="newDBPassword" class="w-full rounded p-2 text-sm font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0;" placeholder="留空自动生成24位随机密码">
+                <label class="block text-sm text-gray-300 mb-1">{{t .Lang "website.new_password_label"}}</label>
+                <input type="text" x-model="newDBPassword" class="w-full rounded p-2 text-sm font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0;" :placeholder="t('website.new_password_placeholder')">
             </div>
             <p class="text-gray-500 text-xs mb-4" x-show="site.site_type === 'wordpress'">修改后会自动更新 wp-config.php 中的密码，无需手动修改。</p>
             <p class="text-gray-500 text-xs mb-4" x-show="site.site_type === 'php'">修改后请将新密码更新到网站代码的数据库配置中。</p>
             <div class="flex justify-end space-x-3">
-                <button @click="dbPasswordModal = false" class="btn-secondary">取消</button>
-                <button @click="changeDBPassword()" :disabled="dbSubmitting" class="btn-primary" x-text="dbSubmitting ? '处理中...' : '确认修改'"></button>
+                <button @click="dbPasswordModal = false" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
+                <button @click="changeDBPassword()" :disabled="dbSubmitting" class="btn-primary" x-text="dbSubmitting ? t('website.processing') : t('website.confirm_change')"></button>
             </div>
         </div>
     </div>
@@ -467,15 +467,15 @@ location ^~ /api/ {
     <div x-show="domainModalOpen" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50" @click.self="domainModalOpen = false">
         <div class="rounded-lg shadow-xl w-full max-w-md p-6" style="background-color: #1e293b; border: 1px solid #334155;">
             <div class="flex items-center justify-between mb-4">
-                <h3 class="text-lg font-semibold text-white">编辑域名</h3>
+                <h3 class="text-lg font-semibold text-white">{{t .Lang "website.edit_domain"}}</h3>
                 <button @click="domainModalOpen = false" class="text-gray-400 hover:text-white text-xl">&times;</button>
             </div>
             <div class="mb-3">
-                <label class="block text-sm text-gray-300 mb-1">主域名</label>
+                <label class="block text-sm text-gray-300 mb-1">{{t .Lang "website.main_domain"}}</label>
                 <input type="text" x-model="editDomain" class="w-full rounded p-2 text-sm font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0;">
             </div>
             <div class="mb-3">
-                <label class="block text-sm text-gray-300 mb-1">别名（一行一个，不含主域名）</label>
+                <label class="block text-sm text-gray-300 mb-1">{{t .Lang "website.aliases_one_per_line"}}</label>
                 <textarea x-model="editAliasesStr" rows="4" class="w-full rounded p-2 text-sm font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;" placeholder="www.aaa.com&#10;blog.aaa.com"></textarea>
             </div>
             <div x-show="editDomain !== site.domain" class="mb-3 p-3 rounded text-sm" style="background-color: #422006; border: 1px solid #78350f; color: #fbbf24;">
@@ -483,8 +483,8 @@ location ^~ /api/ {
             </div>
             <p x-show="site.ssl_enabled" class="text-yellow-400 text-xs mb-3">修改域名后需重新申请 SSL 证书以匹配新域名。</p>
             <div class="flex justify-end space-x-3">
-                <button @click="domainModalOpen = false" class="btn-secondary">取消</button>
-                <button @click="updateDomains()" :disabled="domainSubmitting" class="btn-primary" x-text="domainSubmitting ? '处理中...' : '保存'"></button>
+                <button @click="domainModalOpen = false" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
+                <button @click="updateDomains()" :disabled="domainSubmitting" class="btn-primary" x-text="domainSubmitting ? t('website.processing') : t('common.save')"></button>
             </div>
         </div>
     </div>
@@ -494,36 +494,36 @@ location ^~ /api/ {
         <div class="rounded-lg shadow-xl w-full max-w-2xl p-6" style="background-color: #1e293b; border: 1px solid #334155;">
             <div class="flex items-center justify-between mb-4">
                 <h3 class="text-lg font-semibold text-white">
-                    <span x-show="!site.ssl_enabled">为 <span x-text="site.domain"></span> 启用 SSL</span>
-                    <span x-show="site.ssl_enabled && sslMode === 'auto'">为 <span x-text="site.domain"></span> 重新申请证书</span>
-                    <span x-show="site.ssl_enabled && sslMode === 'manual'">为 <span x-text="site.domain"></span> 替换证书</span>
+                    <span x-show="!site.ssl_enabled">{{t .Lang "website.enable_ssl_for"}} <span x-text="site.domain"></span></span>
+                    <span x-show="site.ssl_enabled && sslMode === 'auto'">{{t .Lang "website.reissue_ssl_for"}} <span x-text="site.domain"></span></span>
+                    <span x-show="site.ssl_enabled && sslMode === 'manual'">{{t .Lang "website.replace_ssl_for"}} <span x-text="site.domain"></span></span>
                 </h3>
                 <button @click="sslModalOpen = false" class="text-gray-400 hover:text-white text-xl">&times;</button>
             </div>
 
             <div class="flex border-b border-gray-600 mb-4">
-                <button @click="sslMode = 'auto'" :class="sslMode === 'auto' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-4 py-2 text-sm font-medium">自动申请免费证书</button>
-                <button @click="sslMode = 'manual'" :class="sslMode === 'manual' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-4 py-2 text-sm font-medium">手动填入证书</button>
+                <button @click="sslMode = 'auto'" :class="sslMode === 'auto' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-4 py-2 text-sm font-medium">{{t .Lang "website.auto_ssl"}}</button>
+                <button @click="sslMode = 'manual'" :class="sslMode === 'manual' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'" class="px-4 py-2 text-sm font-medium">{{t .Lang "website.manual_ssl"}}</button>
             </div>
 
             <div x-show="sslMode === 'auto'">
-                <p class="text-gray-400 text-sm mb-4">将通过 Let's Encrypt 自动申请免费 SSL 证书。请确保域名已正确解析到本服务器。</p>
+                <p class="text-gray-400 text-sm mb-4">{{t .Lang "website.auto_ssl_help"}}</p>
             </div>
 
             <div x-show="sslMode === 'manual'">
                 <div class="mb-4">
-                    <label class="block text-sm text-gray-300 mb-1">证书内容（fullchain.pem）</label>
+                    <label class="block text-sm text-gray-300 mb-1">{{t .Lang "website.ssl_cert_content"}}</label>
                     <textarea x-model="sslCert" rows="6" class="w-full rounded p-3 text-sm font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"></textarea>
                 </div>
                 <div class="mb-4">
-                    <label class="block text-sm text-gray-300 mb-1">私钥内容（privkey.pem）</label>
+                    <label class="block text-sm text-gray-300 mb-1">{{t .Lang "website.ssl_key_content"}}</label>
                     <textarea x-model="sslKey" rows="6" class="w-full rounded p-3 text-sm font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"></textarea>
                 </div>
             </div>
 
             <div class="flex justify-end space-x-3 mt-4">
-                <button @click="sslModalOpen = false" class="btn-secondary">取消</button>
-                <button @click="enableSSL()" :disabled="sslSubmitting" class="btn-primary" x-text="sslSubmitting ? '处理中...' : '确认'"></button>
+                <button @click="sslModalOpen = false" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
+                <button @click="enableSSL()" :disabled="sslSubmitting" class="btn-primary" x-text="sslSubmitting ? t('website.processing') : t('common.confirm')"></button>
             </div>
         </div>
     </div>
@@ -534,31 +534,31 @@ location ^~ /api/ {
     <div x-show="siteURLModal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50" @click.self="siteURLModal = false">
         <div class="rounded-lg shadow-xl w-full max-w-md p-6" style="background-color: #1e293b; border: 1px solid #334155;">
             <div class="flex items-center justify-between mb-4">
-                <h3 class="text-lg font-semibold text-white">修改站点 URL</h3>
+                <h3 class="text-lg font-semibold text-white">{{t .Lang "website.change_site_urls"}}</h3>
                 <button @click="siteURLModal = false" class="text-gray-400 hover:text-white text-xl">&times;</button>
             </div>
             <div class="space-y-3 mb-4">
                 <div>
-                    <label class="block text-sm text-gray-300 mb-1">当前 siteurl</label>
-                    <div class="text-sm font-mono text-gray-400" x-text="currentSiteURL || '（读取中...）'"></div>
+                    <label class="block text-sm text-gray-300 mb-1">{{t .Lang "website.current_siteurl"}}</label>
+                    <div class="text-sm font-mono text-gray-400" x-text="currentSiteURL || t('website.reading')"></div>
                 </div>
                 <div>
-                    <label class="block text-sm text-gray-300 mb-1">当前 home</label>
-                    <div class="text-sm font-mono text-gray-400" x-text="currentHomeURL || '（读取中...）'"></div>
+                    <label class="block text-sm text-gray-300 mb-1">{{t .Lang "website.current_home"}}</label>
+                    <div class="text-sm font-mono text-gray-400" x-text="currentHomeURL || t('website.reading')"></div>
                 </div>
                 <hr class="border-gray-700">
                 <div>
-                    <label class="block text-sm text-gray-300 mb-1">新 siteurl</label>
+                    <label class="block text-sm text-gray-300 mb-1">{{t .Lang "website.new_siteurl"}}</label>
                     <input type="text" x-model="newSiteURL" class="w-full rounded p-2 text-sm font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0;" placeholder="https://example.com">
                 </div>
                 <div>
-                    <label class="block text-sm text-gray-300 mb-1">新 home</label>
+                    <label class="block text-sm text-gray-300 mb-1">{{t .Lang "website.new_home"}}</label>
                     <input type="text" x-model="newHomeURL" class="w-full rounded p-2 text-sm font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0;" placeholder="https://example.com">
                 </div>
-                <button @click="autoFillSiteURL()" type="button" class="text-xs py-1 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">自动填入面板域名</button>
+                <button @click="autoFillSiteURL()" type="button" class="text-xs py-1 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">{{t .Lang "website.auto_fill_panel_domain"}}</button>
             </div>
             <div class="p-3 rounded text-xs mb-4" style="background-color: #422006; border: 1px solid #78350f; color: #fbbf24;">
-                <p class="font-medium mb-1">注意事项</p>
+                <p class="font-medium mb-1">{{t .Lang "website.notices"}}</p>
                 <ul class="space-y-1 list-disc list-inside">
                     <li>此操作仅修改 wp_options 中的 siteurl 和 home，不替换文章/媒体中的旧域名</li>
                     <li>文章内容中的旧域名需在 WP 后台使用 Better Search Replace 等插件替换</li>
@@ -567,8 +567,8 @@ location ^~ /api/ {
                 </ul>
             </div>
             <div class="flex justify-end space-x-3">
-                <button @click="siteURLModal = false" class="btn-secondary">取消</button>
-                <button @click="updateSiteURLs()" :disabled="siteURLSubmitting" class="btn-primary" x-text="siteURLSubmitting ? '更新中...' : '确认更新'"></button>
+                <button @click="siteURLModal = false" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
+                <button @click="updateSiteURLs()" :disabled="siteURLSubmitting" class="btn-primary" x-text="siteURLSubmitting ? t('website.processing_update') : t('website.confirm_update')"></button>
             </div>
         </div>
     </div>
@@ -670,7 +670,7 @@ function websiteDetail() {
                     this.editTablePrefix = r.data.table_prefix || '';
                     this.sslExportEnabled = r.data.ssl_export_enabled || false;
                 }
-            } catch(e) { showToast('加载失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.load_failed_with_error', { error: e.message }), 'error'); }
             this.loading = false;
             this.fetchNginxCustom();
             this.fetchPluginStatus();
@@ -705,34 +705,34 @@ function websiteDetail() {
             if (!this.cdnRealIPEnabled) return '';
             const currentIDs = this.cdnRealIPGroupIDs.map(id => parseInt(id));
             const selected = this.selectableCDNGroups().filter(g => currentIDs.includes(g.id));
-            if (selected.length === 0) return '请选择至少一个非 Cloudflare CDN 配置组。Cloudflare 已由系统自动处理。';
+            if (selected.length === 0) return t('website.cdn_select_non_cloudflare_help');
             const headers = [...new Set(selected.map(g => (g.header_name || '').toLowerCase()))];
-            if (headers.length > 1) return '所选配置组 Header 不一致，保存时会被拒绝。';
+            if (headers.length > 1) return t('website.cdn_header_mismatch');
             if (selected.some(g => !(g.ip_ranges || '').trim())) {
-                return '兼容模式：未填写可信回源 IP 段，将信任所有来源的真实 IP Header。';
+                return t('website.cdn_compatible_no_origin_ips');
             }
-            return '可信 CDN 模式：仅信任所选配置组的回源 IP 段。';
+            return t('website.cdn_strict_origin_ips');
         },
         async saveCDNRealIP() {
             this.cdnRealIPSaving = true;
             try {
                 const groupIDs = this.cdnRealIPGroupIDs.map(id => parseInt(id)).filter(id => this.selectableCDNGroups().some(g => g.id === id));
                 if (this.cdnRealIPEnabled && groupIDs.length === 0) {
-                    showToast('请选择至少一个非 Cloudflare CDN 配置组；Cloudflare 已由系统自动处理，无需保存。', 'error');
+                    showToast(t('website.cdn_select_non_cloudflare_required'), 'error');
                     return;
                 }
                 const r = await api('/websites/' + this.site.id + '/cdn-realip', {
                     method: 'PUT',
                     body: { enabled: this.cdnRealIPEnabled, group_ids: groupIDs }
                 });
-                showToast(r.data?.message || 'CDN 真实 IP 已保存', 'success');
+                showToast(r.data?.message || t('website.cdn_realip_saved'), 'success');
                 await this.fetchDetail();
             } catch(e) { showToast(e.message, 'error'); }
             finally { this.cdnRealIPSaving = false; }
         },
         async enableSSL() {
             if (this.sslMode === 'manual' && (!this.sslCert || !this.sslKey)) {
-                showToast('请填写证书内容和私钥', 'error');
+                showToast(t('website.ssl_manual_required'), 'error');
                 return;
             }
             this.sslSubmitting = true;
@@ -744,13 +744,13 @@ function websiteDetail() {
                 }
                 const r = await api('/websites/' + this.site.id + '/ssl', { method: 'POST', body });
                 if (r.success) {
-                    showToast(r.data?.message || '操作成功', 'success');
+                    showToast(r.data?.message || t('common.operation_success'), 'success');
                     this.sslModalOpen = false;
                     await this.fetchDetail();
                 } else {
-                    showToast(r.data?.message || '操作失败', 'error');
+                    showToast(r.data?.message || t('common.operation_failed'), 'error');
                 }
-            } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.operation_failed_with_error', { error: e.message }), 'error'); }
             this.sslSubmitting = false;
         },
         downloadSSLPackage() {
@@ -766,7 +766,7 @@ function websiteDetail() {
                     method: 'PUT',
                     body: { enabled: this.sslExportEnabled }
                 });
-                showToast(r.data?.message || 'SSL 证书导出权限已保存', 'success');
+                showToast(r.data?.message || t('website.ssl_export_saved'), 'success');
                 await this.fetchDetail();
             } catch(e) {
                 this.sslExportEnabled = !this.sslExportEnabled;
@@ -779,31 +779,31 @@ function websiteDetail() {
             this.domainSubmitting = true;
             try {
                 const newDomain = this.editDomain.trim();
-                if (!newDomain) { showToast('域名不能为空', 'error'); this.domainSubmitting = false; return; }
+                if (!newDomain) { showToast(t('website.domain_required'), 'error'); this.domainSubmitting = false; return; }
                 const aliases = this.editAliasesStr.split('\n').map(a => a.trim()).filter(a => a);
                 const body = { new_domain: newDomain, aliases };
                 const r = await api('/websites/' + this.site.id + '/domains', { method: 'PUT', body });
                 if (r.success) {
-                    showToast(r.data?.message || '已更新', 'success');
+                    showToast(r.data?.message || t('website.updated'), 'success');
                     this.domainModalOpen = false;
                     await this.fetchDetail();
                 } else {
-                    showToast(r.data?.message || '操作失败', 'error');
+                    showToast(r.data?.message || t('common.operation_failed'), 'error');
                 }
-            } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.operation_failed_with_error', { error: e.message }), 'error'); }
             this.domainSubmitting = false;
         },
         async removeSSL() {
-            if (!await confirmModal('确认删除 ' + this.site.domain + ' 的SSL证书？删除后将恢复为HTTP访问。')) return;
+            if (!await confirmModal(t('website.confirm_delete_ssl', { domain: this.site.domain }))) return;
             try {
                 const r = await api('/websites/' + this.site.id + '/ssl', { method: 'DELETE' });
                 if (r.success) {
-                    showToast(r.data?.message || '证书已删除', 'success');
+                    showToast(r.data?.message || t('website.ssl_deleted'), 'success');
                     await this.fetchDetail();
                 } else {
-                    showToast(r.data?.message || '操作失败', 'error');
+                    showToast(r.data?.message || t('common.operation_failed'), 'error');
                 }
-            } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.operation_failed_with_error', { error: e.message }), 'error'); }
         },
         async changeDBPassword() {
             this.dbSubmitting = true;
@@ -812,21 +812,21 @@ function websiteDetail() {
                 if (this.newDBPassword) body.new_password = this.newDBPassword;
                 const r = await api('/websites/' + this.site.id + '/db-password', { method: 'PUT', body });
                 if (r.success) {
-                    showToast('密码已更新: ' + (r.data ? r.data.new_password : '****'), 'success');
+                    showToast(t('website.password_updated', { password: r.data ? r.data.new_password : '****' }), 'success');
                     this.dbPasswordModal = false;
                     this.newDBPassword = '';
                 } else {
-                    showToast(r.data?.message || '操作失败', 'error');
+                    showToast(r.data?.message || t('common.operation_failed'), 'error');
                 }
-            } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.operation_failed_with_error', { error: e.message }), 'error'); }
             this.dbSubmitting = false;
         },
         async fixWPConfig() {
-            const parts = ['将使用当前数据库名和用户名覆盖 wp-config.php 中的 DB_NAME 和 DB_USER'];
+            const parts = [t('website.sync_wp_config_base')];
             if (this.editTablePrefix) {
-                parts.push('同时更新 $table_prefix 为 ' + this.editTablePrefix);
+                parts.push(t('website.sync_wp_config_prefix', { prefix: this.editTablePrefix }));
             }
-            if (!await confirmModal(parts.join('，') + '，确认继续？')) return;
+            if (!await confirmModal(parts.join('') + t('website.confirm_continue'))) return;
             this.dbSubmitting = true;
             try {
                 const body = {};
@@ -835,12 +835,12 @@ function websiteDetail() {
                 }
                 const r = await api('/websites/' + this.site.id + '/fix-wp-config', { method: 'POST', body });
                 if (r.success) {
-                    showToast(r.data?.message || '已更新', 'success');
+                    showToast(r.data?.message || t('website.updated'), 'success');
                     await this.fetchDetail();
                 } else {
-                    showToast(r.data?.message || '操作失败', 'error');
+                    showToast(r.data?.message || t('common.operation_failed'), 'error');
                 }
-            } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.operation_failed_with_error', { error: e.message }), 'error'); }
             this.dbSubmitting = false;
         },
         async detectTablePrefix() {
@@ -851,14 +851,14 @@ function websiteDetail() {
                     this.editTablePrefix = r.data.prefix;
                     const candidates = r.data.candidates || [];
                     if (candidates.length > 1) {
-                        showToast('检测到多个可能前缀：' + candidates.join('、') + '。已预选「' + r.data.prefix + '」，如不准确请手动修改', 'warning');
+                        showToast(t('website.detect_multiple_prefixes', { candidates: candidates.join('、'), prefix: r.data.prefix }), 'warning');
                     } else {
-                        showToast('检测到表前缀: ' + r.data.prefix + '，请点击「同步数据库信息」保存', 'success');
+                        showToast(t('website.detect_prefix_found', { prefix: r.data.prefix }), 'success');
                     }
                 } else {
-                    showToast(r.data?.message || '未检测到表前缀', 'error');
+                    showToast(r.data?.message || t('website.detect_prefix_missing'), 'error');
                 }
-            } catch(e) { showToast('检测失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.detect_failed', { error: e.message }), 'error'); }
             this.detectingPrefix = false;
         },
         async openSiteURLModal() {
@@ -873,7 +873,7 @@ function websiteDetail() {
                     this.currentSiteURL = r.data.siteurl || '';
                     this.currentHomeURL = r.data.home || '';
                 }
-            } catch(e) { showToast('读取当前 URL 失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.load_current_url_failed', { error: e.message }), 'error'); }
         },
         autoFillSiteURL() {
             const proto = this.site.ssl_enabled ? 'https' : 'http';
@@ -883,10 +883,10 @@ function websiteDetail() {
         },
         async updateSiteURLs() {
             if (!this.newSiteURL && !this.newHomeURL) {
-                showToast('至少填写一个 URL', 'error');
+                showToast(t('website.at_least_one_url'), 'error');
                 return;
             }
-            if (!await confirmModal('确认将站点 URL 更新为：\nsiteurl: ' + (this.newSiteURL || '（不变）') + '\nhome: ' + (this.newHomeURL || '（不变）'))) return;
+            if (!await confirmModal(t('website.confirm_update_site_urls', { siteurl: this.newSiteURL || t('website.unchanged'), home: this.newHomeURL || t('website.unchanged') }))) return;
             this.siteURLSubmitting = true;
             try {
                 const body = {};
@@ -894,25 +894,25 @@ function websiteDetail() {
                 if (this.newHomeURL) body.home = this.newHomeURL;
                 const r = await api('/websites/' + this.site.id + '/wp-site-urls', { method: 'PUT', body });
                 if (r.success) {
-                    showToast('站点 URL 已更新', 'success');
+                    showToast(t('website.site_urls_updated'), 'success');
                     this.siteURLModal = false;
                 } else {
-                    showToast(r.data?.message || '更新失败', 'error');
+                    showToast(r.data?.message || t('website.update_failed'), 'error');
                 }
-            } catch(e) { showToast('更新失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.update_failed_with_error', { error: e.message }), 'error'); }
             this.siteURLSubmitting = false;
         },
         async clearDatabase() {
-            if (!await confirmModal('确认清空数据库「' + this.site.db_name + '」？此操作将删除所有表，不可撤销！')) return;
+            if (!await confirmModal(t('website.confirm_clear_database', { db: this.site.db_name }))) return;
             this.dbSubmitting = true;
             try {
                 const r = await api('/websites/' + this.site.id + '/backups/clear-database', { method: 'POST' });
                 if (r.success) {
-                    showToast(r.data?.message || '数据库已清空', 'success');
+                    showToast(r.data?.message || t('website.database_cleared'), 'success');
                 } else {
-                    showToast(r.data?.message || '操作失败', 'error');
+                    showToast(r.data?.message || t('common.operation_failed'), 'error');
                 }
-            } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.operation_failed_with_error', { error: e.message }), 'error'); }
             this.dbSubmitting = false;
         },
         async fetchNginxCustom() {
@@ -934,12 +934,12 @@ function websiteDetail() {
                     body: { document_root_subdir: this.documentRootSubdir }
                 });
                 if (r.success) {
-                    showToast(r.data?.message || 'Web 入口目录已保存', 'success');
+                    showToast(r.data?.message || t('website.document_root_saved'), 'success');
                     await this.fetchDetail();
                 } else {
-                    showToast(r.data?.message || '保存失败', 'error');
+                    showToast(r.data?.message || t('website.save_failed'), 'error');
                 }
-            } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.operation_failed_with_error', { error: e.message }), 'error'); }
             this.documentRootSaving = false;
         },
         async saveNginxCustom() {
@@ -950,11 +950,11 @@ function websiteDetail() {
                     body: { pre_content: this.nginxPreContent, content: this.nginxContent }
                 });
                 if (r.success) {
-                    showToast(r.data?.message || '已保存', 'success');
+                    showToast(r.data?.message || t('common.saved'), 'success');
                 } else {
-                    showToast(r.data?.message || '保存失败', 'error');
+                    showToast(r.data?.message || t('website.save_failed'), 'error');
                 }
-            } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.operation_failed_with_error', { error: e.message }), 'error'); }
             this.nginxSubmitting = false;
         },
         async fetchLogs() {
@@ -965,7 +965,7 @@ function websiteDetail() {
                 if (r.success) {
                     this.logContent = r.data.content;
                 }
-            } catch(e) { showToast('加载日志失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.load_logs_failed', { error: e.message }), 'error'); }
         },
         async fetchLogFiles() {
             if (!this.site) return;
@@ -974,7 +974,7 @@ function websiteDetail() {
                 if (r.success) {
                     this.logFiles = r.data.files || [];
                 }
-            } catch(e) { showToast('加载日志文件列表失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.load_log_files_failed', { error: e.message }), 'error'); }
         },
         selectLogType(type) {
             this.logType = type;
@@ -1001,21 +1001,21 @@ function websiteDetail() {
                     }
                     showToast(r.data?.message, 'success');
                 } else {
-                    showToast(r.data?.message || '操作失败', 'error');
+                    showToast(r.data?.message || t('common.operation_failed'), 'error');
                 }
-            } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.operation_failed_with_error', { error: e.message }), 'error'); }
         },
         async clearLogs() {
-            const label = this.logType === 'error' ? '错误' : (this.logType === 'security' ? '安全' : '访问');
-            if (!await confirmModal('确认清空 ' + label + '日志？')) return;
+            const label = this.logType === 'error' ? t('website.log_type_error') : (this.logType === 'security' ? t('website.log_type_security') : t('website.log_type_access'));
+            if (!await confirmModal(t('website.confirm_clear_logs', { label }))) return;
             try {
                 const r = await api('/websites/' + this.site.id + '/logs?type=' + this.logType, { method: 'DELETE' });
                 if (r.success) {
-                    showToast('日志已清空', 'success');
-                    this.logContent = '（日志为空或文件不存在）';
+                    showToast(t('website.logs_cleared'), 'success');
+                    this.logContent = t('website.log_empty_or_missing');
                     this.fetchLogFiles();
                 }
-            } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('website.operation_failed_with_error', { error: e.message }), 'error'); }
         },
         async fetchBackups() {
             try {
@@ -1033,7 +1033,7 @@ function websiteDetail() {
             this.backupSubmitting = true;
             try {
                 const r = await api("/websites/" + this.site.id + "/backups", { method: "POST" });
-                showToast(r.data?.message || "备份完成", "success");
+                showToast(r.data?.message || t('website.backup_completed'), "success");
                 await this.fetchBackups();
             } catch(e) { showToast(e.message, "error"); }
             this.backupSubmitting = false;
@@ -1043,23 +1043,23 @@ function websiteDetail() {
             window.open(prefix + "/api/websites/" + this.site.id + "/backups/" + b.id + "/download");
         },
         async restoreBackup(b) {
-            if (!await confirmModal("将用 " + b.filename + " 覆盖当前数据库，此操作不可撤销，确认恢复？")) return;
+            if (!await confirmModal(t('website.confirm_restore_backup', { filename: b.filename }))) return;
             this.restoringId = b.id;
             try {
                 const r = await api("/websites/" + this.site.id + "/backups/" + b.id + "/restore", { method: "POST" });
                 const taskId = r.data?.task_id;
-                if (!taskId) throw new Error("恢复任务创建失败");
-                showToast(r.data?.message || "数据库恢复任务已开始", "info");
+                if (!taskId) throw new Error(t("website.restore_task_failed"));
+                showToast(r.data?.message || t("website.restore_started"), "info");
                 await this.pollRestoreTask(taskId);
             } catch(e) { showToast(e.message, "error"); }
             this.restoringId = null;
         },
         async deleteBackup(b) {
-            if (!await confirmModal("确认删除备份 " + b.filename + "？")) return;
+            if (!await confirmModal(t('website.confirm_delete_backup', { filename: b.filename }))) return;
             try {
                 await api("/websites/" + this.site.id + "/backups/" + b.id, { method: "DELETE" });
                 await this.fetchBackups();
-                showToast("已删除", "success");
+                showToast(t('website.deleted'), "success");
             } catch(e) { showToast(e.message, "error"); }
         },
         uploadRestore() { document.getElementById("restoreFileInput").click(); },
@@ -1068,17 +1068,17 @@ function websiteDetail() {
             if (!file) return;
             const validExts = [".sql", ".sql.gz", ".gz", ".zip"];
             if (!validExts.some(ext => file.name.endsWith(ext))) {
-                showToast("仅支持 .sql / .sql.gz / .zip 格式", "error"); return;
+                showToast(t("website.restore_file_invalid"), "error"); return;
             }
-            if (!await confirmModal("将用 " + file.name + " 覆盖当前数据库，确认恢复？")) { e.target.value = ""; return; }
+            if (!await confirmModal(t("website.confirm_restore_upload", { filename: file.name }))) { e.target.value = ""; return; }
             this.restoreUploading = true;
             const fd = new FormData();
             fd.append("file", file);
             try {
                 const r = await api("/websites/" + this.site.id + "/backups/upload-restore", { method: "POST", body: fd, headers: {} });
                 const taskId = r.data?.task_id;
-                if (!taskId) throw new Error("恢复任务创建失败");
-                showToast(r.data?.message || "数据库恢复任务已开始", "info");
+                if (!taskId) throw new Error(t("website.restore_task_failed"));
+                showToast(r.data?.message || t("website.restore_started"), "info");
                 await this.pollRestoreTask(taskId);
                 await this.fetchBackups();
             } catch(e) { showToast(e.message, "error"); }
@@ -1091,16 +1091,16 @@ function websiteDetail() {
                 const r = await api("/websites/" + this.site.id + "/backups/restore-tasks/" + encodeURIComponent(taskId));
                 const status = r.data || {};
                 if (status.status === "success") {
-                    showToast(status.message || "数据库恢复成功", "success");
+                    showToast(status.message || t("website.restore_success"), "success");
                     return;
                 }
                 if (status.status === "failed") {
-                    throw new Error(status.message || "数据库恢复失败");
+                    throw new Error(status.message || t("website.restore_failed"));
                 }
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
             if (!this.restorePollingActive) return;
-            throw new Error("恢复任务仍在执行，请稍后刷新页面查看结果");
+            throw new Error(t("website.restore_still_running"));
         },
         async fetchPluginStatus() {
             try {
@@ -1112,15 +1112,13 @@ function websiteDetail() {
             this.pluginInstalling = true;
             try {
                 const r = await api('/websites/' + this.site.id + '/install-plugin', { method: 'POST' });
-                showToast(r.data?.message || '已安装', 'success');
+                showToast(r.data?.message || t('website.installed'), 'success');
                 await this.fetchPluginStatus();
             } catch(e) { showToast(e.message, 'error'); }
             this.pluginInstalling = false;
         },
         async toggleFileLock(enabled) {
-            const prompt = enabled
-                ? '开启文件锁定后，WordPress 可继续发文章、上传媒体、生成缓存和写入插件运行日志，但核心、插件、主题和站点配置修改会被阻止。安装/更新插件主题或首次配置安全/缓存插件前请临时解除锁定。确认开启？'
-                : '解除文件锁定后，WordPress 后台和面板文件管理器可再次修改代码与站点配置。确认解除？';
+            const prompt = enabled ? t('website.file_lock_enable_confirm') : t('website.file_lock_disable_confirm');
             if (!await confirmModal(prompt)) return;
             this.fileLockSaving = true;
             try {
@@ -1129,7 +1127,7 @@ function websiteDetail() {
                     body: { enabled }
                 });
                 this.site.file_lock_enabled = r.data?.file_lock_enabled ?? enabled;
-                showToast(r.data?.message || (enabled ? '文件锁定已开启' : '文件锁定已关闭'), 'success');
+                showToast(r.data?.message || (enabled ? t('website.file_lock_enabled') : t('website.file_lock_disabled')), 'success');
             } catch(e) {
                 showToast(e.message, 'error');
             }
@@ -1142,8 +1140,8 @@ function websiteDetail() {
                     method: 'PUT',
                     body: { enabled: this.monitoringEnabled, interval: parseInt(this.monitoringInterval) || 5 }
                 });
-                showToast('监控设置已保存', 'success');
-            } catch(e) { showToast('保存失败: ' + e.message, 'error'); }
+                showToast(t('website.monitoring_saved'), 'success');
+            } catch(e) { showToast(t('website.save_failed_with_error', { error: e.message }), 'error'); }
             this.monitoringSaving = false;
         },
         async saveExpiry() {
@@ -1155,8 +1153,8 @@ function websiteDetail() {
                 });
                 this.site.expires_at = this.expiresAtInput || null;
                 this.editingExpiry = false;
-                showToast('到期时间已保存', 'success');
-            } catch(e) { showToast('保存失败: ' + e.message, 'error'); }
+                showToast(t('website.expiry_saved'), 'success');
+            } catch(e) { showToast(t('website.save_failed_with_error', { error: e.message }), 'error'); }
             this.expirySaving = false;
         },
         async saveWPOptimizations() {
@@ -1175,8 +1173,8 @@ function websiteDetail() {
                         wp_memory_limit: this.wpMemoryLimit
                     }
                 });
-                showToast('保存成功', 'success');
-            } catch(e) { showToast('保存失败: ' + e.message, 'error'); }
+                showToast(t('website.optimization_saved'), 'success');
+            } catch(e) { showToast(t('website.save_failed_with_error', { error: e.message }), 'error'); }
             this.optimizationSaving = false;
         },
         async saveLogRetention() {
@@ -1188,10 +1186,10 @@ function websiteDetail() {
             } catch(e) {}
         },
         async clearFCache() {
-            if (!await confirmModal('确认清除 FastCGI 缓存？')) return;
+            if (!await confirmModal(t('website.confirm_clear_cache'))) return;
             try {
                 await api('/websites/' + this.site.id + '/cache', { method: 'DELETE' });
-                showToast('缓存已清除', 'success');
+                showToast(t('website.cache_cleared'), 'success');
             } catch(e) { showToast(e.message, 'error'); }
         },
         async saveBackupSettings() {
@@ -1200,7 +1198,7 @@ function websiteDetail() {
                     method: "PUT",
                     body: { enabled: this.backupEnabled, keep_count: parseInt(this.backupKeepCount) || 7 }
                 });
-                showToast('备份设置已保存', 'success');
+                showToast(t('website.backup_settings_saved'), 'success');
             } catch(e) { showToast(e.message, "error"); }
         },
     }

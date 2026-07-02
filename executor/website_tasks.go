@@ -514,7 +514,11 @@ func executeDeleteSite(task *Task) TaskResult {
 	// Clean up logrotate config
 	os.Remove(logrotatePath)
 
-	_ = dropMariaDBDatabase(site.DBName, site.DBUser, cfg)
+	dbCleanupWarning := ""
+	if err := dropMariaDBDatabase(site.DBName, site.DBUser, cfg); err != nil {
+		log.Printf("删除数据库失败 domain=%s db=%s: %v", site.Domain, site.DBName, err)
+		dbCleanupWarning = "，但数据库清理失败，请检查 MariaDB 后手动清理"
+	}
 
 	os.Remove(phpPoolPath)
 	os.Remove(enabledPath)
@@ -530,7 +534,7 @@ func executeDeleteSite(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "清理数据库记录失败: " + err.Error()}
 	}
 
-	return TaskResult{Success: true, Message: "网站 " + site.Domain + " 已删除"}
+	return TaskResult{Success: true, Message: "网站 " + site.Domain + " 已删除" + dbCleanupWarning}
 }
 
 func executePauseSite(task *Task) TaskResult {

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+
+	"github.com/naibabiji/wp-panel/i18n"
 )
 
 func TestValidateRemoteImportURLRejectsUnsafeInputs(t *testing.T) {
@@ -18,7 +20,7 @@ func TestValidateRemoteImportURLRejectsUnsafeInputs(t *testing.T) {
 		"https://[::1]/backup.zip",
 	}
 	for _, raw := range tests {
-		if _, err := validateRemoteImportURL(raw); err == nil {
+		if _, err := validateRemoteImportURL(raw, i18n.DefaultLang); err == nil {
 			t.Fatalf("validateRemoteImportURL(%q) error = nil, want error", raw)
 		}
 	}

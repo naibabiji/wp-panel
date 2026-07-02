@@ -4,7 +4,7 @@
     <h2 class="text-xl font-bold text-white mb-6">{{t .Lang "nav.files"}}</h2>
 
     <div x-show="selected.length > 0" class="flex flex-wrap items-center gap-2 mb-3 p-3 bg-blue-900/30 rounded border border-blue-800">
-        <span class="text-sm text-gray-300" x-text="'当前页已选 ' + selected.length + ' 项'"></span>
+        <span class="text-sm text-gray-300" x-text="t('files.current_selection', { count: selected.length })"></span>
         <button @click="batchCompress()" :disabled="archiveBusy" class="btn-secondary text-sm py-1">{{t .Lang "files.batch_compress"}}</button>
         <button @click="cutItems()" class="btn-secondary text-sm py-1">{{t .Lang "files.cut"}}</button>
         <button @click="copyItems()" class="btn-secondary text-sm py-1">{{t .Lang "files.copy"}}</button>
@@ -14,7 +14,7 @@
 
     <template x-if="clipboard">
     <div class="flex flex-wrap items-center gap-2 mb-3 p-3 bg-green-900/30 rounded border border-green-800">
-        <span class="text-sm text-gray-300" x-text="'剪贴板: ' + clipboard.names.length + ' 个项目 (' + (clipboard.action === 'cut' ? '剪切' : '复制') + ')'"></span>
+        <span class="text-sm text-gray-300" x-text="t('files.clipboard_label', { count: clipboard.names.length, action: clipboard.action === 'cut' ? t('files.clipboard_cut') : t('files.clipboard_copy') })"></span>
         <button @click="pasteItems()" class="btn-primary text-sm py-1">{{t .Lang "files.paste"}}</button>
         <button @click="clipboard = null" class="text-sm text-gray-400 hover:text-white py-1">{{t .Lang "files.clear"}}</button>
     </div>
@@ -27,19 +27,19 @@
 
     <div x-show="showRemoteImport" class="modal-overlay" x-cloak>
         <div class="modal-content max-w-xl">
-            <h3 class="text-lg font-semibold text-white mb-4">远程导入</h3>
+            <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "files.remote_import_title"}}</h3>
             <div class="space-y-3">
                 <div>
-                    <label class="label">HTTPS URL</label>
-                    <input type="url" x-model="remoteImportUrl" class="input-field text-sm" placeholder="https://example.com/backup.zip">
+                    <label class="label">{{t .Lang "files.remote_import_url_label"}}</label>
+                    <input type="url" x-model="remoteImportUrl" class="input-field text-sm" :placeholder="t('files.remote_import_url_placeholder')">
                 </div>
                 <div class="flex items-start gap-2">
                     <input type="checkbox" x-model="remoteImportAllowInsecureTLS" class="mt-1">
-                    <label class="text-sm text-gray-300">允许自签名或不受信任的 HTTPS 证书</label>
+                    <label class="text-sm text-gray-300">{{t .Lang "files.remote_import_allow_insecure_tls"}}</label>
                 </div>
                 <div x-show="remoteImportStatus" class="p-3 rounded bg-gray-700/50">
                     <div class="flex justify-between text-sm text-gray-300 mb-2">
-                        <span x-text="remoteImportStatus?.message || '准备下载'"></span>
+                        <span x-text="remoteImportStatus?.message || t('files.remote_import_preparing')"></span>
                         <span x-text="(remoteImportStatus?.percent || 0) + '%'"></span>
                     </div>
                     <div class="h-2 bg-gray-800 rounded overflow-hidden">
@@ -49,8 +49,8 @@
                 </div>
             </div>
             <div class="flex justify-end gap-2 mt-5">
-                <button @click="closeRemoteImport()" class="btn-secondary text-sm" :disabled="remoteImporting">取消</button>
-                <button @click="startRemoteImport()" class="btn-primary text-sm" :disabled="remoteImporting || !remoteImportUrl.trim()" x-text="remoteImporting ? '导入中...' : '开始导入'"></button>
+                <button @click="closeRemoteImport()" class="btn-secondary text-sm" :disabled="remoteImporting">{{t .Lang "files.cancel"}}</button>
+                <button @click="startRemoteImport()" class="btn-primary text-sm" :disabled="remoteImporting || !remoteImportUrl.trim()" x-text="remoteImporting ? t('files.remote_import_in_progress') : t('files.remote_import_start')"></button>
             </div>
         </div>
     </div>
@@ -80,7 +80,7 @@
                 </template>
             </div>
             <div class="flex flex-wrap items-center gap-2">
-                <button @click="showMkdir = true" :disabled="!selectedSite" class="btn-secondary text-sm">{{t .Lang "files.new_directory"}}</button>
+                    <button @click="showMkdir = true" :disabled="!selectedSite" class="btn-secondary text-sm">{{t .Lang "files.new_directory"}}</button>
                 <button @click="fixPermissions()" :disabled="!selectedSite || selectedSite == '0' || fixingPerms" class="btn-secondary text-sm">
                     <span x-show="fixingPerms">{{t .Lang "files.fixing_permissions"}}</span>
                     <span x-show="!fixingPerms">{{t .Lang "files.fix_permissions"}}</span>
@@ -88,7 +88,7 @@
                 <button @click="openRemoteImport()" :disabled="!hasSelectedRoot() || remoteImporting" class="btn-secondary text-sm">{{t .Lang "files.remote_import"}}</button>
                 <form @submit.prevent="uploadFile" class="flex items-center gap-2">
                     <input type="file" @change="fileSelected($event)" :disabled="!hasSelectedRoot() || uploading" class="input-field w-32 sm:w-48 md:w-64 text-sm">
-                    <button type="submit" class="btn-primary text-sm" :disabled="!hasSelectedRoot() || !uploadTarget || uploading" x-text="uploading ? '上传中 ' + uploadProgress + '%' : '上传'"></button>
+                    <button type="submit" class="btn-primary text-sm" :disabled="!hasSelectedRoot() || !uploadTarget || uploading" x-text="uploading ? t('files.uploading', { progress: uploadProgress }) : t('files.upload')"></button>
                 </form>
             </div>
         </div>
@@ -133,7 +133,7 @@
                                 <span x-show="f.is_dir" class="cursor-pointer hover:text-blue-400" @click="enterDir(f.name)" x-text="'📁 ' + f.name"></span>
                                 <span x-show="!f.is_dir" x-text="'📄 ' + f.name"></span>
                             </td>
-                            <td class="table-cell text-sm" x-text="f.is_dir ? '目录' : '文件'"></td>
+                            <td class="table-cell text-sm" x-text="f.is_dir ? t('files.file_type_dir') : t('files.file_type_file')"></td>
                             <td class="table-cell text-sm" x-text="f.is_dir ? '--' : formatBytes(f.size)"></td>
                             <td class="table-cell font-mono text-xs" x-text="f.mode"></td>
                             <td class="table-cell text-xs" x-text="f.mod_time"></td>
@@ -141,7 +141,7 @@
                                 <div class="flex flex-wrap gap-1">
                                     <button x-show="!f.is_dir" @click="downloadFile(f.name)" class="btn-primary text-xs py-1 px-2">{{t .Lang "files.download"}}</button>
                                     <button @click="startRename(f.name)" class="btn-secondary text-xs py-1 px-2">{{t .Lang "files.rename"}}</button>
-                                    <button @click="compressItems([f.name])" :disabled="archiveBusy" class="btn-secondary text-xs py-1 px-2" :title="f.is_dir ? '压缩目录' : '压缩文件'">{{t .Lang "files.compress"}}</button>
+                                    <button @click="compressItems([f.name])" :disabled="archiveBusy" class="btn-secondary text-xs py-1 px-2" :title="f.is_dir ? t('files.compress_directory_title') : t('files.compress_file_title')">{{t .Lang "files.compress"}}</button>
                                     <button x-show="isArchive(f.name)" @click="decompressFile(f.name)" :disabled="archiveBusy" class="btn-secondary text-xs py-1 px-2">{{t .Lang "files.extract"}}</button>
                                     <button @click="deleteItems([f.name])" class="btn-danger text-xs py-1 px-2">{{t .Lang "files.delete"}}</button>
                                 </div>
@@ -158,7 +158,7 @@
             </table>
         </div>
         <div x-show="selectedSite && totalPages > 1" class="flex items-center justify-between mt-4 pt-3 border-t border-gray-700/50">
-            <span class="text-sm text-gray-400" x-text="'共 ' + total + ' 项，每页 ' + perPage + ' 项'"></span>
+            <span class="text-sm text-gray-400" x-text="t('files.pagination_summary', { total: total, perPage: perPage })"></span>
             <div class="flex items-center space-x-1">
                 <button @click="goPage(page - 1)" :disabled="page <= 1" class="px-3 py-1 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed">{{t .Lang "files.prev_page"}}</button>
                 <template x-for="p in pageNumbers" :key="p">
@@ -326,7 +326,7 @@ function fileManager() {
         fileSelected(e) { this.uploadTarget = e.target.files[0]; },
         openRemoteImport() {
             if (!this.hasSelectedRoot()) {
-                showToast('请先选择网站或备份目录', 'error');
+                showToast(t('files.select_website_first'), 'error');
                 return;
             }
             this.remoteImportUrl = '';
@@ -343,17 +343,17 @@ function fileManager() {
         remoteImportBytesText() {
             if (!this.remoteImportStatus) return '';
             const downloaded = formatBytes(this.remoteImportStatus.downloaded || 0);
-            const total = this.remoteImportStatus.total > 0 ? formatBytes(this.remoteImportStatus.total) : '未知大小';
+            const total = this.remoteImportStatus.total > 0 ? formatBytes(this.remoteImportStatus.total) : t('files.unknown_size');
             return downloaded + ' / ' + total;
         },
         async startRemoteImport() {
             if (!this.hasSelectedRoot()) {
-                showToast('请先选择网站或备份目录', 'error');
+                showToast(t('files.select_website_first'), 'error');
                 return;
             }
             const siteID = Number(this.selectedSite);
             if (!Number.isInteger(siteID)) {
-                showToast('请先选择网站或备份目录', 'error');
+                showToast(t('files.select_website_first'), 'error');
                 return;
             }
             this.remoteImporting = true;
@@ -380,12 +380,12 @@ function fileManager() {
                 if (r.data?.status === 'success') {
                     this.remoteImporting = false;
                     this.loadFiles();
-                    showToast(r.data.message || '远程导入完成', 'success');
+                    showToast(r.data.message || t('files.remote_import_completed'), 'success');
                     return;
                 }
                 if (r.data?.status === 'failed') {
                     this.remoteImporting = false;
-                    showToast(r.data.error || r.data.message || '远程导入失败', 'error');
+                    showToast(r.data.error || r.data.message || t('files.remote_import_failed'), 'error');
                     return;
                 }
             } catch(e) {
@@ -397,13 +397,13 @@ function fileManager() {
         async uploadFile() {
             if (!this.uploadTarget) return;
             if (!this.hasSelectedRoot()) {
-                showToast('请先选择网站或备份目录', 'error');
+                showToast(t('files.select_website_first'), 'error');
                 return;
             }
             const file = this.uploadTarget;
             const name = file.name;
             const exists = this.files.some(f => !f.is_dir && f.name === name);
-            if (exists && !await confirmModal(name + ' 已存在，确认覆盖？')) return;
+            if (exists && !await confirmModal(t('files.confirm_overwrite_existing', { name }))) return;
 
             const prefix = document.body.dataset.panelPrefix || '';
             const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
@@ -411,7 +411,7 @@ function fileManager() {
             const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
             const siteID = Number(this.selectedSite);
             if (!Number.isInteger(siteID)) {
-                showToast('请先选择网站或备份目录', 'error');
+                showToast(t('files.select_website_first'), 'error');
                 return;
             }
 
@@ -432,7 +432,7 @@ function fileManager() {
                     })
                 });
                 const initData = await initRes.json();
-                if (!initData.success) { showToast(this.apiMessage(initData, '初始化上传失败'), 'error'); this.uploading = false; return; }
+                if (!initData.success) { showToast(this.apiMessage(initData, t('files.upload_init_failed')), 'error'); this.uploading = false; return; }
 
                 const uploadID = initData.data.upload_id;
                 const completedChunks = new Set(initData.data.completed_chunks || []);
@@ -471,7 +471,7 @@ function fileManager() {
                         }
                     }
                     if (!success) {
-                        showToast('分片 ' + (i + 1) + '/' + totalChunks + ' 上传失败' + (lastError ? ': ' + lastError : ''), 'error');
+                        showToast(t('files.chunk_upload_failed', { current: i + 1, total: totalChunks, error: lastError ? ': ' + lastError : '' }), 'error');
                         this.uploading = false;
                         return;
                     }
@@ -488,22 +488,22 @@ function fileManager() {
                     this.uploadTarget = null;
                     document.querySelector('input[type="file"]').value = '';
                     this.loadFiles();
-                    showToast('上传完成', 'success');
+                    showToast(t('files.upload_completed'), 'success');
                 } else {
-                    showToast(this.apiMessage(completeData, '合并文件失败'), 'error');
+                    showToast(this.apiMessage(completeData, t('files.upload_merge_failed')), 'error');
                 }
             } catch(e) {
-                showToast('上传失败: ' + e.message, 'error');
+                showToast(t('files.upload_failed_with_error', { error: e.message }), 'error');
             }
             this.uploading = false;
         },
         async fixPermissions() {
-            if (!await confirmModal('确认修复 ' + (this.sites.find(s => s.id == this.selectedSite)?.domain || '') + ' 的文件权限？\n\n目录将设为 755，文件将设为 644，敏感文件将收紧权限，所有者为站点用户:站点用户')) return;
+            if (!await confirmModal(t('files.confirm_fix_permissions', { domain: this.sites.find(s => s.id == this.selectedSite)?.domain || '' }))) return;
             this.fixingPerms = true;
             try {
                 const r = await api('/files/fix-permissions?site_id=' + this.selectedSite, { method: 'POST' });
-                if (r.success) showToast(r.data?.message || '权限修复完成', 'success');
-                else showToast(r.data?.message || '操作失败', 'error');
+                if (r.success) showToast(r.data?.message || t('files.permissions_fixed'), 'success');
+                else showToast(r.data?.message || t('common.operation_failed'), 'error');
             } catch(e) { showToast(e.message, 'error'); }
             this.fixingPerms = false;
         },
@@ -531,7 +531,7 @@ function fileManager() {
                 });
                 this.showRename = false;
                 this.loadFiles();
-                showToast('重命名成功', 'success');
+                showToast(t('files.rename_success'), 'success');
             } catch(e) { showToast(e.message, 'error'); }
         },
         async createDir() {
@@ -544,7 +544,7 @@ function fileManager() {
                 this.showMkdir = false;
                 this.mkdirName = '';
                 this.loadFiles();
-                showToast('目录创建成功', 'success');
+                showToast(t('files.mkdir_success'), 'success');
             } catch(e) { showToast(e.message, 'error'); }
         },
         pathFor(name) { return this.currentPath === '/' ? '/' + name : this.currentPath + '/' + name; },
@@ -553,31 +553,31 @@ function fileManager() {
             return lower.endsWith('.zip') || lower.endsWith('.tar') || lower.endsWith('.tar.gz') || lower.endsWith('.tgz') || lower.endsWith('.tar.bz2') || lower.endsWith('.tbz2');
         },
         async deleteItems(names) {
-            const label = names.length === 1 ? names[0] : names.length + ' 个项目';
-            if (!await confirmModal('确认删除 ' + label + '？')) return;
+            const label = names.length === 1 ? names[0] : t('files.item_count', { count: names.length });
+            if (!await confirmModal(t('files.confirm_delete_items', { label }))) return;
             for (let i = 0; i < names.length; i++) {
                 const name = names[i];
                 try {
                     await api('/files/delete?site_id=' + this.selectedSite + '&path=' + encodeURIComponent(this.pathFor(name)), { method: 'DELETE' });
-                    if (names.length > 1) showToast('已删除 ' + name + ' (' + (i + 1) + '/' + names.length + ')', 'info');
-                } catch(e) { showToast('删除 ' + name + ' 失败: ' + e.message, 'error'); return; }
+                    if (names.length > 1) showToast(t('files.deleted_item', { name, current: i + 1, total: names.length }), 'info');
+                } catch(e) { showToast(t('files.delete_failed', { name, error: e.message }), 'error'); return; }
             }
-            this.loadFiles(); showToast('删除完成', 'success');
+            this.loadFiles(); showToast(t('files.delete_completed'), 'success');
         },
         batchDelete() { this.deleteItems([...this.selected]); },
         cutItems() {
             this.clipboard = { action: 'cut', site_id: this.selectedSite, src_path: this.currentPath, names: [...this.selected] };
-            showToast('已剪切 ' + this.selected.length + ' 个项目到剪贴板', 'info');
+            showToast(t('files.cut_to_clipboard', { count: this.selected.length }), 'info');
             this.selected = [];
         },
         copyItems() {
             this.clipboard = { action: 'copy', site_id: this.selectedSite, src_path: this.currentPath, names: [...this.selected] };
-            showToast('已复制 ' + this.selected.length + ' 个项目到剪贴板', 'info');
+            showToast(t('files.copied_to_clipboard', { count: this.selected.length }), 'info');
             this.selected = [];
         },
         async pasteItems() {
             if (!this.clipboard) return;
-            if (!this.selectedSite) { showToast('请先选择目标网站或目录', 'error'); return; }
+            if (!this.selectedSite) { showToast(t('files.paste_target_required'), 'error'); return; }
             const cb = this.clipboard;
             const apiPath = cb.action === 'cut' ? '/files/move' : '/files/copy';
             const pasteRequest = async (conflictPolicy = '') => {
@@ -595,26 +595,25 @@ function fileManager() {
             };
             try {
                 const r = await pasteRequest();
-                showToast(r.data?.message || '操作完成', 'success');
+                showToast(r.data?.message || t('common.operation_success'), 'success');
                 this.clipboard = null;
                 this.loadFiles();
             } catch(e) {
                 if (e.conflicts) {
-                    const msg = '以下项目已存在：\n\n' + e.conflicts.join('\n')
-                        + '\n\n选择“确认”将合并目录并覆盖同名文件；选择“取消”后可继续选择跳过。';
+                    const msg = t('files.existing_items_conflict', { items: e.conflicts.join('\n') });
                     if (await confirmModal(msg)) {
                         try {
                             const r = await pasteRequest('overwrite');
-                            showToast(r.data?.message || '操作完成', 'success');
+                            showToast(r.data?.message || t('common.operation_success'), 'success');
                             this.clipboard = null;
                             this.loadFiles();
                         } catch(e2) { showToast(e2.message, 'error'); }
                         return;
                     }
-                    if (await confirmModal('是否跳过已存在项目，并继续粘贴其他项目？')) {
+                    if (await confirmModal(t('files.skip_existing_prompt'))) {
                         try {
                             const r = await pasteRequest('skip');
-                            showToast(r.data?.message || '操作完成', 'success');
+                            showToast(r.data?.message || t('common.operation_success'), 'success');
                             this.clipboard = null;
                             this.loadFiles();
                         } catch(e2) { showToast(e2.message, 'error'); }
@@ -627,10 +626,10 @@ function fileManager() {
         async compressItems(names) {
             if (names.length === 1) {
                 this.archiveBusy = true;
-                this.archiveBusyText = '压缩中，文件较大时可能需要一段时间，请等待完成通知';
+                this.archiveBusyText = t('files.compression_busy');
                 try {
                     const r = await api('/files/zip?site_id=' + this.selectedSite + '&path=' + encodeURIComponent(this.pathFor(names[0])), { method: 'POST' });
-                    if (r.success) { this.loadFiles(); showToast(r.data?.message || '压缩完成', 'success'); }
+                    if (r.success) { this.loadFiles(); showToast(r.data?.message || t('files.compress_completed'), 'success'); }
                 } catch(e) { showToast(e.message, 'error'); }
                 finally { this.archiveBusy = false; this.archiveBusyText = ''; }
             } else {
@@ -640,10 +639,10 @@ function fileManager() {
         async batchCompress() {
             if (this.selected.length === 0) return;
             const defaultName = 'archive_' + new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '') + '.zip';
-            const archiveName = prompt('请输入压缩文件名：', defaultName);
+            const archiveName = prompt(t('files.prompt_archive_name'), defaultName);
             if (!archiveName) return;
             this.archiveBusy = true;
-            this.archiveBusyText = '压缩中，文件较大时可能需要一段时间，请等待完成通知';
+            this.archiveBusyText = t('files.compression_busy');
             try {
                 const r = await api('/files/batch-zip', {
                     method: 'POST',
@@ -654,29 +653,29 @@ function fileManager() {
                         archive_name: archiveName.trim()
                     }
                 });
-                if (r.success) { this.loadFiles(); showToast(r.data?.message || '压缩完成', 'success'); }
+                if (r.success) { this.loadFiles(); showToast(r.data?.message || t('files.compress_completed'), 'success'); }
             } catch(e) { showToast(e.message, 'error'); }
             finally { this.archiveBusy = false; this.archiveBusyText = ''; }
         },
         async decompressFile(name) {
-            if (!await confirmModal('确认解压 ' + name + ' 到当前目录？')) return;
+            if (!await confirmModal(t('files.confirm_extract', { name }))) return;
             const path = this.pathFor(name);
             this.archiveBusy = true;
-            this.archiveBusyText = '解压中，文件较大时可能需要一段时间，请等待完成通知';
+            this.archiveBusyText = t('files.decompression_busy');
             try {
                 const r = await api('/files/unzip?site_id=' + this.selectedSite + '&path=' + encodeURIComponent(path), { method: 'POST' });
-                if (r.success) { this.loadFiles(); showToast(r.data?.message || '解压完成', 'success'); }
+                if (r.success) { this.loadFiles(); showToast(r.data?.message || t('files.extract_completed'), 'success'); }
             } catch(e) {
                 if (e.conflicts) {
                     this.archiveBusy = false;
                     this.archiveBusyText = '';
-                    const msg = '以下文件将被覆盖，确认继续？\n\n' + e.conflicts.join('\n');
+                    const msg = t('files.extract_overwrite_conflict', { items: e.conflicts.join('\n') });
                     if (await confirmModal(msg)) {
                         this.archiveBusy = true;
-                        this.archiveBusyText = '解压中，文件较大时可能需要一段时间，请等待完成通知';
+                        this.archiveBusyText = t('files.decompression_busy');
                         try {
                             await api('/files/unzip?site_id=' + this.selectedSite + '&path=' + encodeURIComponent(path) + '&overwrite=1', { method: 'POST' });
-                            this.loadFiles(); showToast('解压完成', 'success');
+                            this.loadFiles(); showToast(t('files.extract_completed'), 'success');
                         } catch(e2) { showToast(e2.message, 'error'); }
                         finally { this.archiveBusy = false; this.archiveBusyText = ''; }
                     }

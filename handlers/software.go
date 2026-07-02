@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/naibabiji/wp-panel/executor"
+	"github.com/naibabiji/wp-panel/i18n"
 	"github.com/naibabiji/wp-panel/models"
 
 	"github.com/gin-gonic/gin"
@@ -52,17 +53,22 @@ type softwareConfig struct {
 	Options []string `json:"options,omitempty"` // kept for backward compat, no longer used in UI
 }
 
+func softwareLang(c *gin.Context) string {
+	return i18n.LangFromRequest(c.Request)
+}
+
 func (h *SoftwareHandler) List(c *gin.Context) {
+	lang := softwareLang(c)
 	items := []softwareItem{
-		getPHPInfo(),
-		getNginxInfo(),
-		getMariaDBInfo(),
-		getRedisInfo(),
+		getPHPInfo(lang),
+		getNginxInfo(lang),
+		getMariaDBInfo(lang),
+		getRedisInfo(lang),
 	}
 	items[0].Configs = append(items[0].Configs, softwareConfig{
 		Key:   "max_input_time",
-		Label: "max_input_time - 最大输入解析时间(秒)",
-		Hint:  "PHP 解析 POST/上传输入的最长时间。面板默认 300 秒，大文件上传或导入建议与 max_execution_time 保持一致",
+		Label: i18n.T(lang, "software.max_input_time_label"),
+		Hint:  i18n.T(lang, "software.max_input_time_hint"),
 	})
 	for i := range items {
 		populateConfigValues(&items[i])
@@ -112,10 +118,11 @@ var softwareLogPaths = map[string]string{
 }
 
 func (h *SoftwareHandler) ViewLog(c *gin.Context) {
+	lang := softwareLang(c)
 	name := c.Query("name")
 	path, ok := softwareLogPaths[name]
 	if !ok {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("未知软件"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "software.unknown_software")))
 		return
 	}
 	lines := 200
@@ -124,25 +131,26 @@ func (h *SoftwareHandler) ViewLog(c *gin.Context) {
 	}
 	content := tailFile(path, lines)
 	if content == "" {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"content": "（日志文件为空或不可读）"}))
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"content": i18n.T(lang, "software.log_empty_or_unreadable")}))
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"content": content}))
 }
 
 func (h *SoftwareHandler) ClearLog(c *gin.Context) {
+	lang := softwareLang(c)
 	name := c.Query("name")
 	path, ok := softwareLogPaths[name]
 	if !ok {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("未知软件"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "software.unknown_software")))
 		return
 	}
 	if err := os.WriteFile(path, []byte{}, 0644); err != nil {
 		log.Printf("清空软件日志失败 name=%s: %v", name, err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("清空失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.clear_failed")))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": name + " 日志已清空"}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.T(lang, "software.log_cleared", i18n.P{"name": name})}))
 }
 
 func (h *SoftwareHandler) GetGuardStatus(c *gin.Context) {
@@ -163,24 +171,25 @@ func (h *SoftwareHandler) GetGuardStatus(c *gin.Context) {
 }
 
 func (h *SoftwareHandler) GuardAction(c *gin.Context) {
+	lang := softwareLang(c)
 	var req struct {
 		Service string `json:"service"`
 		Action  string `json:"action"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "common.invalid_params")))
 		return
 	}
 	if req.Action != "start" && req.Action != "stop" && req.Action != "restart" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效操作，仅支持 start/stop/restart"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "software.invalid_action")))
 		return
 	}
 	if err := executor.SetServiceState(req.Service, req.Action); err != nil {
 		log.Printf("守护操作失败 service=%s action=%s: %v", req.Service, req.Action, err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("操作失败: "+err.Error()))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.operation_failed_with_error", i18n.P{"error": err.Error()})))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": req.Service + " " + req.Action + " 成功"}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.T(lang, "software.action_success", i18n.P{"service": req.Service, "action": req.Action})}))
 }
 
 var softConfigAllowed = map[string]map[string]bool{
@@ -198,18 +207,18 @@ var (
 	phpIntValueRe  = regexp.MustCompile(`^[0-9]+$`)
 )
 
-func validateSoftwareConfigValue(name, key, value string) string {
+func validateSoftwareConfigValue(lang, name, key, value string) string {
 	if name != "PHP" {
 		return ""
 	}
 	switch key {
 	case "memory_limit", "upload_max_filesize", "post_max_size":
 		if !phpSizeValueRe.MatchString(value) {
-			return "PHP 容量配置仅支持数字，或数字加 K/M/G，例如 128M"
+			return i18n.T(lang, "software.php_size_invalid")
 		}
 	case "max_execution_time", "max_input_time", "max_input_vars":
 		if !phpIntValueRe.MatchString(value) {
-			return "PHP 时间和变量数量配置仅支持非负整数"
+			return i18n.T(lang, "software.php_int_invalid")
 		}
 	}
 	return ""
@@ -225,13 +234,14 @@ func phpConfigRequiresPoolRebuild(key string) bool {
 }
 
 func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
+	lang := softwareLang(c)
 	var req struct {
 		Name  string `json:"name"`
 		Key   string `json:"key"`
 		Value string `json:"value"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "common.invalid_params")))
 		return
 	}
 
@@ -257,26 +267,26 @@ func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 		serviceName = "redis-server"
 		reloadCmd = "systemctl restart redis-server"
 	default:
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("未知软件"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "software.unknown_software")))
 		return
 	}
 
 	// Validate key against per-service allowlist
 	if allowed, ok := softConfigAllowed[req.Name]; !ok || !allowed[req.Key] {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("不支持的配置项: "+req.Key))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "software.unsupported_config_item", i18n.P{"key": req.Key})))
 		return
 	}
 	// Reject value containing newlines or directive-terminating characters
 	if hasLineBreak(req.Value) {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("配置值不能包含换行"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "software.value_no_newline")))
 		return
 	}
 	if req.Name == "Nginx" && strings.Contains(req.Value, ";") {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Nginx 配置值不能包含分号"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "software.nginx_value_no_semicolon")))
 		return
 	}
 
-	if errMsg := validateSoftwareConfigValue(req.Name, req.Key, req.Value); errMsg != "" {
+	if errMsg := validateSoftwareConfigValue(lang, req.Name, req.Key, req.Value); errMsg != "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(errMsg))
 		return
 	}
@@ -286,7 +296,7 @@ func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 		if req.Name == "PHP" {
 			if _, err := executor.EnsurePHPRuntimeConfigFile(); err != nil {
 				log.Printf("创建 PHP 配置文件失败: %v", err)
-				c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建 PHP 配置文件失败"))
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.create_php_config_failed")))
 				return
 			}
 		} else if req.Name == "Nginx" {
@@ -299,7 +309,7 @@ func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 	// Read config file
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取配置文件失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.read_config_failed")))
 		return
 	}
 
@@ -332,11 +342,11 @@ func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 
 	if newContent != content {
 		if err := os.WriteFile(configPath, []byte(newContent), 0644); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("写入配置文件失败"))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.write_config_failed")))
 			return
 		}
 	} else if oldValue == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("未找到配置项: "+req.Key))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "software.config_not_found", i18n.P{"key": req.Key})))
 		return
 	}
 
@@ -345,7 +355,7 @@ func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 		out, err := exec.Command("bash", "-c", checkCmd).CombinedOutput()
 		if err != nil {
 			os.WriteFile(configPath, data, 0644)
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("语法检查失败，已回滚:\n"+string(out)))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.syntax_check_failed_with_rollback", i18n.P{"output": strings.TrimSpace(string(out))})))
 			return
 		}
 	}
@@ -354,65 +364,65 @@ func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 	if req.Name == "PHP" && phpConfigRequiresPoolRebuild(req.Key) {
 		if err := executor.RegenerateAllSitesFPM(); err != nil {
 			log.Printf("PHP 配置已写入，但部分站点 PHP-FPM Pool 重建失败: %v", err)
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("PHP 配置已写入，但部分站点 PHP-FPM Pool 重建失败: "+err.Error()))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.php_pool_rebuild_failed", i18n.P{"error": err.Error()})))
 			return
 		}
 	} else {
 		exec.Command("bash", "-c", reloadCmd).Run()
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "配置已更新，" + serviceName + " 已重载"}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.T(lang, "software.config_updated_reloaded", i18n.P{"service": serviceName})}))
 }
 
-func getPHPInfo() softwareItem {
+func getPHPInfo(lang string) softwareItem {
 	ver := runCmd("php -v 2>/dev/null | head -1 | awk '{print $2}'")
 	extCount := runCmd("php -m 2>/dev/null | wc -l")
 	return softwareItem{
 		Name:       "PHP",
 		Version:    strings.TrimSpace(ver),
-		Status:     "已安装 " + strings.TrimSpace(extCount) + " 个扩展",
+		Status:     i18n.T(lang, "software.php_installed_extensions", i18n.P{"count": strings.TrimSpace(extCount)}),
 		ConfigPath: executor.PHPRuntimeConfigPath(),
 		Configs: []softwareConfig{
-			{Key: "memory_limit", Label: "memory_limit — PHP 内存限制", Hint: "单个 PHP 进程最大内存。简单博客 128M，多插件站 256M，WooCommerce/Elementor 512M"},
-			{Key: "upload_max_filesize", Label: "upload_max_filesize — 上传大小上限", Hint: "主题/插件/媒体上传限制。需与 Nginx client_max_body_size 一致"},
-			{Key: "post_max_size", Label: "post_max_size — POST 数据上限", Hint: "应 ≥ upload_max_filesize，否则大文件上传会被 POST 限制拦截"},
-			{Key: "max_execution_time", Label: "max_execution_time — 最大执行时间(秒)", Hint: "PHP 脚本最长运行时间。导入演示数据/批量处理建议 300+"},
-			{Key: "max_input_vars", Label: "max_input_vars — 最大输入变量数", Hint: "菜单数量多或使用 Elementor/Divi 建议 2000+，大型站点 5000"},
+			{Key: "memory_limit", Label: i18n.T(lang, "software.memory_limit_label"), Hint: i18n.T(lang, "software.memory_limit_hint")},
+			{Key: "upload_max_filesize", Label: i18n.T(lang, "software.upload_max_filesize_label"), Hint: i18n.T(lang, "software.upload_max_filesize_hint")},
+			{Key: "post_max_size", Label: i18n.T(lang, "software.post_max_size_label"), Hint: i18n.T(lang, "software.post_max_size_hint")},
+			{Key: "max_execution_time", Label: i18n.T(lang, "software.max_execution_time_label"), Hint: i18n.T(lang, "software.max_execution_time_hint")},
+			{Key: "max_input_vars", Label: i18n.T(lang, "software.max_input_vars_label"), Hint: i18n.T(lang, "software.max_input_vars_hint")},
 		},
 	}
 }
 
-func getNginxInfo() softwareItem {
+func getNginxInfo(lang string) softwareItem {
 	ver := runCmd("nginx -v 2>&1 | awk -F/ '{print $2}'")
 	return softwareItem{
 		Name:       "Nginx",
 		Version:    strings.TrimSpace(ver),
-		Status:     "已安装",
+		Status:     i18n.T(lang, "software.installed"),
 		ConfigPath: "/etc/nginx/conf.d/wppanel.conf",
 		Configs: []softwareConfig{
-			{Key: "client_max_body_size", Label: "client_max_body_size — 请求体大小上限", Hint: "需与 PHP upload_max_filesize 一致。导入大型主题或备份时调大"},
+			{Key: "client_max_body_size", Label: i18n.T(lang, "software.client_max_body_size_label"), Hint: i18n.T(lang, "software.client_max_body_size_hint")},
 		},
 	}
 }
 
-func getMariaDBInfo() softwareItem {
+func getMariaDBInfo(lang string) softwareItem {
 	ver := runCmd("mariadb --version 2>/dev/null | awk '{print $3}' | cut -d, -f1")
 	return softwareItem{
 		Name:       "MariaDB",
 		Version:    strings.TrimSpace(ver),
-		Status:     "已安装",
+		Status:     i18n.T(lang, "software.installed"),
 		ConfigPath: "/etc/mysql/mariadb.conf.d/99-wppanel.cnf",
 		Configs: []softwareConfig{
-			{Key: "innodb_buffer_pool_size", Label: "innodb_buffer_pool_size — InnoDB 缓冲池", Hint: "保守建议物理内存的 10%~25%。1G 设 128M，2G 设 256M，4G 设 512M，8G+ 设 1G+"},
+			{Key: "innodb_buffer_pool_size", Label: i18n.T(lang, "software.innodb_buffer_pool_size_label"), Hint: i18n.T(lang, "software.innodb_buffer_pool_size_hint")},
 		},
 	}
 }
 
-func getRedisInfo() softwareItem {
+func getRedisInfo(lang string) softwareItem {
 	ver := runCmd("redis-server --version 2>/dev/null | awk '{print $3}' | cut -d= -f2")
-	status := "运行中"
+	status := i18n.T(lang, "software.running")
 	if runCmd("systemctl is-active redis-server 2>/dev/null") != "active" {
-		status = "未运行"
+		status = i18n.T(lang, "software.stopped")
 	}
 	return softwareItem{
 		Name:       "Redis",
@@ -420,7 +430,7 @@ func getRedisInfo() softwareItem {
 		Status:     status,
 		ConfigPath: "/etc/redis/redis.conf",
 		Configs: []softwareConfig{
-			{Key: "maxmemory", Label: "maxmemory — 最大内存", Hint: "Redis 对象缓存上限。WordPress 单站 128mb，多站或高流量 256mb+"},
+			{Key: "maxmemory", Label: i18n.T(lang, "software.maxmemory_label"), Hint: i18n.T(lang, "software.maxmemory_hint")},
 		},
 	}
 }

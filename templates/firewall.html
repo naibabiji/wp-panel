@@ -101,7 +101,7 @@
                 </div>
             </div>
             <div class="mt-5 text-right">
-                <button @click="showRules = false" class="btn-primary text-sm">知道了</button>
+                <button @click="showRules = false" class="btn-primary text-sm">{{t .Lang "firewall.got_it"}}</button>
             </div>
         </div>
     </div>
@@ -122,7 +122,7 @@
                     <option value="0">{{t .Lang "firewall.permanent"}}</option>
                 </select>
             </div>
-            <button @click="manualBan()" :disabled="banSubmitting" class="btn-danger" x-text="banSubmitting ? '封禁中...' : '封禁'"></button>
+            <button @click="manualBan()" :disabled="banSubmitting" class="btn-danger" x-text="banSubmitting ? t('firewall.banning') : t('firewall.ban')"></button>
         </div>
     </div>
 
@@ -133,7 +133,7 @@
                 <p class="text-xs text-gray-500 mt-1">{{t .Lang "firewall.wp_suspicious_access_help"}}</p>
                 <p class="text-xs text-gray-500 mt-1">{{t .Lang "firewall.wp_suspicious_access_cache_help"}}</p>
             </div>
-            <button @click="fetchWPSecurityReport()" :disabled="securityReportLoading" class="btn-secondary text-xs py-1.5 px-3" x-text="securityReportLoading ? '分析中...' : '刷新分析'"></button>
+            <button @click="fetchWPSecurityReport()" :disabled="securityReportLoading" class="btn-secondary text-xs py-1.5 px-3" x-text="securityReportLoading ? t('firewall.analyzing') : t('firewall.refresh_analysis')"></button>
         </div>
         <div class="overflow-x-auto">
             <table class="w-full">
@@ -163,7 +163,7 @@
                             </td>
                             <td class="table-cell whitespace-nowrap">
                                 <button @click="copySecurityReport(item)" class="btn-secondary text-xs py-1 px-2">{{t .Lang "firewall.copy_report"}}</button>
-                                <button @click="banIP = item.ip_address; showToast('IP已填入手动封禁IP框，请手动选择封禁时长和点击封禁按钮', 'success')" class="btn-danger text-xs py-1 px-2 ml-1">{{t .Lang "firewall.fill_ban"}}</button>
+                                <button @click="banIP = item.ip_address; showToast(t('firewall.ip_filled_notice'), 'success')" class="btn-danger text-xs py-1 px-2 ml-1">{{t .Lang "firewall.fill_ban"}}</button>
                             </td>
                         </tr>
                     </template>
@@ -183,11 +183,11 @@
             <div>
                 <h3 class="text-lg font-semibold text-white">{{t .Lang "firewall.file_security_events"}}</h3>
                 <p class="text-xs text-gray-500 mt-1">{{t .Lang "firewall.file_security_events_help"}}</p>
-                <p class="text-xs text-gray-500 mt-1" x-show="fileSecuritySummary" x-text="`本次刷新：扫描 ${fileSecuritySummary.sites_scanned || 0} 个站点，发现 ${fileSecuritySummary.file_events || 0} 个文件事件，导入 ${fileSecuritySummary.access_events || 0} 次访问事件。`"></p>
+                <p class="text-xs text-gray-500 mt-1" x-show="fileSecuritySummary" x-text="t('firewall.file_security_summary', { sites: fileSecuritySummary.sites_scanned || 0, files: fileSecuritySummary.file_events || 0, access: fileSecuritySummary.access_events || 0 })"></p>
             </div>
                 <div class="flex items-center space-x-2">
-                    <button @click="refreshFileSecurityEvents(false)" :disabled="fileSecurityLoading" class="btn-secondary text-xs py-1.5 px-3" x-text="fileSecurityLoading ? '刷新中...' : '增量刷新'"></button>
-                    <button @click="refreshFileSecurityEvents(true)" :disabled="fileSecurityLoading" class="btn-danger text-xs py-1.5 px-3" x-text="fileSecurityLoading ? '扫描中...' : '清除并重新扫描'"></button>
+                    <button @click="refreshFileSecurityEvents(false)" :disabled="fileSecurityLoading" class="btn-secondary text-xs py-1.5 px-3" x-text="fileSecurityLoading ? t('firewall.refreshing') : t('firewall.incremental_refresh')"></button>
+                    <button @click="refreshFileSecurityEvents(true)" :disabled="fileSecurityLoading" class="btn-danger text-xs py-1.5 px-3" x-text="fileSecurityLoading ? t('firewall.scanning') : t('firewall.clear_rescan')"></button>
                 </div>
         </div>
         <div class="overflow-x-auto">
@@ -218,10 +218,10 @@
                             </td>
                             <td class="table-cell" x-text="fileEventCountLabel(event)"></td>
                             <td class="table-cell text-xs" x-text="formatTime(event.last_seen)"></td>
-                            <td class="table-cell"><span :class="event.resolved_at ? 'badge-info' : 'badge-danger'" x-text="event.resolved_at ? '已处理' : '当前风险'"></span></td>
+                            <td class="table-cell"><span :class="event.resolved_at ? 'badge-info' : 'badge-danger'" x-text="event.resolved_at ? t('firewall.status_handled') : t('firewall.status_current_risk')"></span></td>
                             <td class="table-cell whitespace-nowrap">
                                 <button @click="copyFileSecurityEvent(event)" class="btn-secondary text-xs py-1 px-2">{{t .Lang "firewall.copy_info"}}</button>
-                                <button x-show="event.ip_address" @click="banIP = event.ip_address; showToast('IP已填入手动封禁IP框，请手动选择封禁时长和点击封禁按钮', 'success')" class="btn-danger text-xs py-1 px-2 ml-1">{{t .Lang "firewall.fill_ban"}}</button>
+                                <button x-show="event.ip_address" @click="banIP = event.ip_address; showToast(t('firewall.ip_filled_notice'), 'success')" class="btn-danger text-xs py-1 px-2 ml-1">{{t .Lang "firewall.fill_ban"}}</button>
                             </td>
                         </tr>
                     </template>
@@ -270,10 +270,10 @@
                                 <span :class="sourceClass(ban)" class="text-xs" x-text="sourceLabel(ban)"></span>
                             </td>
                             <td class="table-cell text-xs" x-text="formatTime(ban.banned_at)"></td>
-                            <td class="table-cell text-xs" x-text="ban.expires_at ? formatTime(ban.expires_at) : '永久'"></td>
+                            <td class="table-cell text-xs" x-text="ban.expires_at ? formatTime(ban.expires_at) : t('firewall.permanent')"></td>
                             <td class="table-cell" x-text="ban.ban_count"></td>
                             <td class="table-cell">
-                                <button @click="unban(ban)" class="btn-success text-xs py-1 px-2">{{t .Lang "firewall.unban"}}</button>
+                <button @click="unban(ban)" class="btn-success text-xs py-1 px-2">{{t .Lang "firewall.unban"}}</button>
                                 <button x-show="ban.ban_level < 5" @click="permanentBan(ban)" class="btn-danger text-xs py-1 px-2 ml-1">{{t .Lang "firewall.permanent_ban"}}</button>
                             </td>
                         </tr>
@@ -285,7 +285,7 @@
             </table>
         </div>
         <div x-show="totalPages > 1" class="flex items-center justify-between mt-4 pt-3 border-t border-gray-700/50">
-            <span class="text-sm text-gray-400" x-text="`共 ${total} 条记录`"></span>
+            <span class="text-sm text-gray-400" x-text="t('firewall.total_records', { count: total })"></span>
             <div class="flex items-center space-x-1">
                 <button @click="goPage(page-1)" :disabled="page <= 1" class="px-3 py-1 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed">{{t .Lang "firewall.prev_page"}}</button>
                 <template x-for="p in pageNumbers" :key="p">
@@ -315,14 +315,14 @@
                         <tr class="border-b border-gray-700/50">
                             <td class="table-cell font-mono text-sm" x-text="h.ip_address"></td>
                             <td class="table-cell">
-                                <span :class="['','badge-info','badge-warning','badge-danger','badge-danger','badge-danger'][h.ban_level]" x-text="['','限速','临时10分钟','临时24小时','临时30天','永久封禁'][h.ban_level]"></span>
+                                <span :class="['','badge-info','badge-warning','badge-danger','badge-danger','badge-danger'][h.ban_level]" x-text="banLevelText(h.ban_level)"></span>
                             </td>
                             <td class="table-cell text-sm" x-text="h.reason || '--'"></td>
                             <td class="table-cell">
                                 <span :class="sourceClass(h)" class="text-xs" x-text="sourceLabel(h)"></span>
                             </td>
                             <td class="table-cell text-xs" x-text="formatTime(h.banned_at)"></td>
-                            <td class="table-cell text-xs" x-text="h.unbanned_at ? formatTime(h.unbanned_at) : (h.ban_level >= 5 ? '永久' : (h.expires_at ? formatTime(h.expires_at) : '--'))"></td>
+                            <td class="table-cell text-xs" x-text="h.unbanned_at ? formatTime(h.unbanned_at) : (h.ban_level >= 5 ? t('firewall.permanent') : (h.expires_at ? formatTime(h.expires_at) : '--'))"></td>
                         </tr>
                     </template>
                     <tr x-show="history.length === 0">
@@ -373,11 +373,11 @@ function firewallManager() {
                     this.securityReportItems = r.data?.items || [];
                     this.securityReportLoaded = true;
                 }
-            } catch(e) { showToast('读取 WordPress 可疑访问分析失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('firewall.load_wp_report_failed', { error: e.message }), 'error'); }
             finally { this.securityReportLoading = false; }
         },
         async refreshFileSecurityEvents(clearFirst = false) {
-            if (clearFirst && !(await confirmModal('确认清空历史事件并重新扫描？'))) return;
+            if (clearFirst && !(await confirmModal(t('firewall.confirm_clear_history')))) return;
             this.fileSecurityLoading = true;
             try {
                 const url = '/firewall/file-security-events/refresh' + (clearFirst ? '?clear=1' : '');
@@ -387,7 +387,7 @@ function firewallManager() {
                     this.fileSecuritySummary = r.data?.summary || null;
                     this.fileSecurityLoaded = true;
                 }
-            } catch(e) { showToast('刷新文件安全事件失败: ' + e.message, 'error'); }
+            } catch(e) { showToast(t('firewall.refresh_file_security_failed', { error: e.message }), 'error'); }
             finally { this.fileSecurityLoading = false; }
         },
         goPage(p) {
@@ -405,7 +405,7 @@ function firewallManager() {
             for (let i = start; i <= end; i++) pages.push(i);
             return pages;
         },
-        banLevelText(l) { return ['','限速','临时10分钟','临时24小时','临时30天','永久封禁'][l] || '未知'; },
+        banLevelText(l) { return [t('firewall.ban_level_empty'), t('firewall.ban_level_rate_limit'), t('firewall.ban_level_10m'), t('firewall.ban_level_24h'), t('firewall.ban_level_30d'), t('firewall.ban_level_permanent')][l] || t('firewall.unknown'); },
         banLevelClass(l) { return ['','badge-info','badge-warning','badge-danger','badge-danger','badge-danger'][l] || 'badge-info'; },
         riskClass(level) {
             if (level === '高' || level === 'high') return 'badge-danger';
@@ -413,33 +413,33 @@ function firewallManager() {
             return 'badge-info';
         },
         riskLabel(level) {
-            if (level === 'high') return '高';
-            if (level === 'medium') return '中';
-            if (level === 'low') return '低';
-            return level || '低';
+            if (level === 'high') return t('firewall.risk_high');
+            if (level === 'medium') return t('firewall.risk_medium');
+            if (level === 'low') return t('firewall.risk_low');
+            return level || t('firewall.risk_low');
         },
         fileEventTypeLabel(event) {
-            if (event.event_type === 'runtime_php_access') return 'PHP 执行尝试';
-            if (event.event_type === 'suspicious_runtime_php_file') return '可疑 PHP 文件';
+            if (event.event_type === 'runtime_php_access') return t('firewall.event_runtime_php_access');
+            if (event.event_type === 'suspicious_runtime_php_file') return t('firewall.event_suspicious_php_file');
             return event.event_type || '--';
         },
         fileEventSourceLabel(event) {
-            if (event.source === 'nginx') return event.request_method ? ('Nginx ' + event.request_method) : 'Nginx';
-            if (event.source === 'scanner') return '本机扫描';
+            if (event.source === 'nginx') return event.request_method ? (t('firewall.source_nginx') + ' ' + event.request_method) : t('firewall.source_nginx');
+            if (event.source === 'scanner') return t('firewall.source_scanner');
             return event.source || '--';
         },
         fileEventCountLabel(event) {
-            if (event.event_type === 'suspicious_runtime_php_file') return '发现';
+            if (event.event_type === 'suspicious_runtime_php_file') return t('firewall.found');
             return event.event_count || 0;
         },
         sourceLabel(ban) {
-            if (ban.source_jail === 'wppanel') return 'Web防护';
-            if (ban.source_jail === 'wppanel-404') return '404防御';
-            if (ban.source_jail === 'wppanel-sshd') return 'SSH防护';
-            if (ban.source_jail === 'panel') return '面板';
-            if (ban.source_jail === 'panel_scan') return '扫描防御';
-            if (ban.source_jail === 'manual') return '手动封禁';
-            if (ban.ban_level >= 5) return 'Nftables 持久';
+            if (ban.source_jail === 'wppanel') return t('firewall.source_web_protect');
+            if (ban.source_jail === 'wppanel-404') return t('firewall.source_404');
+            if (ban.source_jail === 'wppanel-sshd') return t('firewall.source_ssh');
+            if (ban.source_jail === 'panel') return t('firewall.source_panel');
+            if (ban.source_jail === 'panel_scan') return t('firewall.source_scan');
+            if (ban.source_jail === 'manual') return t('firewall.source_manual');
+            if (ban.ban_level >= 5) return t('firewall.source_nftables');
             return ban.source_jail || '--';
         },
         sourceClass(ban) {
@@ -450,45 +450,45 @@ function firewallManager() {
             if (ban.ban_level >= 4) return 'text-purple-400';
             return 'text-gray-400';
         },
-        formatTime(t) { return t ? new Date(t).toLocaleString('zh-CN') : '--'; },
+        formatTime(t) { return t ? new Date(t).toLocaleString(currentLocale()) : '--'; },
         async unban(ban) {
-            if (!await confirmModal('确认解封 ' + ban.ip_address + '？')) return;
-            try { await api('/firewall/bans/' + ban.id, { method: 'DELETE' }); await this.fetchBans(); showToast('已解封', 'success'); } catch(e) { showToast(e.message, 'error'); }
+            if (!await confirmModal(t('firewall.confirm_unban', { ip: ban.ip_address }))) return;
+            try { await api('/firewall/bans/' + ban.id, { method: 'DELETE' }); await this.fetchBans(); showToast(t('firewall.unbanned'), 'success'); } catch(e) { showToast(e.message, 'error'); }
         },
         async permanentBan(ban) {
-            if (!await confirmModal('确认将 ' + ban.ip_address + ' 永久封禁？')) return;
-            try { await api('/firewall/bans/' + ban.id + '/permanent', { method: 'POST' }); await this.fetchBans(); showToast('已加入黑名单', 'success'); } catch(e) { showToast(e.message, 'error'); }
+            if (!await confirmModal(t('firewall.confirm_permanent_ban', { ip: ban.ip_address }))) return;
+            try { await api('/firewall/bans/' + ban.id + '/permanent', { method: 'POST' }); await this.fetchBans(); showToast(t('firewall.added_to_blacklist'), 'success'); } catch(e) { showToast(e.message, 'error'); }
         },
         async copySecurityReport(item) {
             try {
                 await navigator.clipboard.writeText(item.copy_text || '');
-                showToast('分析报告已复制', 'success');
-            } catch(e) { showToast('复制失败，请手动选择内容', 'error'); }
+                showToast(t('firewall.report_copied'), 'success');
+            } catch(e) { showToast(t('firewall.copy_failed_manual'), 'error'); }
         },
         async copyFileSecurityEvent(event) {
             const lines = [
-                '类型: ' + this.fileEventTypeLabel(event),
-                '站点: ' + (event.domain || '--'),
-                '风险: ' + this.riskLabel(event.risk_level),
-                '路径: ' + (event.path || '--'),
-                '来源: ' + this.fileEventSourceLabel(event),
-                'IP: ' + (event.ip_address || '--'),
-                '次数: ' + this.fileEventCountLabel(event),
-                '最近时间: ' + (event.last_seen || '--'),
-                '状态: ' + (event.resolved_at ? '已处理' : '当前风险'),
-                '说明: ' + (event.message || '')
+                t('firewall.copy_line_type') + this.fileEventTypeLabel(event),
+                t('firewall.copy_line_site') + (event.domain || '--'),
+                t('firewall.copy_line_risk') + this.riskLabel(event.risk_level),
+                t('firewall.copy_line_path') + (event.path || '--'),
+                t('firewall.copy_line_source') + this.fileEventSourceLabel(event),
+                t('firewall.copy_line_ip') + (event.ip_address || '--'),
+                t('firewall.copy_line_count') + this.fileEventCountLabel(event),
+                t('firewall.copy_line_last_seen') + (event.last_seen || '--'),
+                t('firewall.copy_line_status') + (event.resolved_at ? t('firewall.status_handled') : t('firewall.status_current_risk')),
+                t('firewall.copy_line_note') + (event.message || '')
             ];
             try {
                 await navigator.clipboard.writeText(lines.join('\n'));
-                showToast('文件安全事件已复制', 'success');
-            } catch(e) { showToast('复制失败，请手动选择内容', 'error'); }
+                showToast(t('firewall.file_event_copied'), 'success');
+            } catch(e) { showToast(t('firewall.copy_failed_manual'), 'error'); }
         },
         async manualBan() {
-            if (!this.banIP.trim()) { showToast('请输入IP地址', 'error'); return; }
+            if (!this.banIP.trim()) { showToast(t('firewall.enter_ip'), 'error'); return; }
             this.banSubmitting = true;
             try {
                 const r = await api('/firewall/bans', { method: 'POST', body: { ip: this.banIP.trim(), duration: parseInt(this.banDuration) } });
-                showToast(r.data?.message || '封禁成功', 'success');
+                showToast(r.data?.message || t('firewall.ban_success'), 'success');
                 this.banIP = '';
                 await this.fetchBans();
             } catch(e) { showToast(e.message, 'error'); }

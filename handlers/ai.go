@@ -12,6 +12,7 @@ import (
 
 	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/executor"
+	"github.com/naibabiji/wp-panel/i18n"
 	"github.com/naibabiji/wp-panel/models"
 
 	"github.com/gin-gonic/gin"
@@ -33,7 +34,7 @@ type AIHandler struct{}
 func (h *AIHandler) GetSettings(c *gin.Context) {
 	settings, err := loadAISettings()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取 AI 设置失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_settings.load_failed")))
 		return
 	}
 	settings.APIKey = ""
@@ -44,16 +45,16 @@ func (h *AIHandler) GetSettings(c *gin.Context) {
 func (h *AIHandler) SaveSettings(c *gin.Context) {
 	var req models.AISettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "common.invalid_params")))
 		return
 	}
-	settings, err := normalizeAISettingsRequest(req, true)
+	settings, err := normalizeAISettingsRequest(req, true, i18n.LangFromRequest(c.Request))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
 		return
 	}
 	if err := saveAISettings(settings); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存 AI 设置失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_settings.save_failed")))
 		return
 	}
 	settings.APIKey = ""
@@ -64,12 +65,12 @@ func (h *AIHandler) SaveSettings(c *gin.Context) {
 func (h *AIHandler) Test(c *gin.Context) {
 	var req models.AITestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "common.invalid_params")))
 		return
 	}
 	settings, err := loadAISettings()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取 AI 设置失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_settings.load_failed")))
 		return
 	}
 	if strings.TrimSpace(req.Provider) != "" || strings.TrimSpace(req.BaseURL) != "" || strings.TrimSpace(req.Model) != "" || strings.TrimSpace(req.APIKey) != "" || req.TimeoutSeconds > 0 {
@@ -81,7 +82,7 @@ func (h *AIHandler) Test(c *gin.Context) {
 			APIKey:         req.APIKey,
 			TimeoutSeconds: req.TimeoutSeconds,
 		}
-		normalized, err := normalizeAISettingsRequest(tmp, false)
+			normalized, err := normalizeAISettingsRequest(tmp, false, i18n.LangFromRequest(c.Request))
 		if err != nil {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
 			return
@@ -100,7 +101,7 @@ func (h *AIHandler) Test(c *gin.Context) {
 			"provider":   settings.Provider,
 			"model":      settings.Model,
 			"latency_ms": elapsed,
-			"message":    aiUserError(err),
+			"message":    aiUserError(i18n.LangFromRequest(c.Request), err),
 		}))
 		return
 	}
@@ -116,65 +117,65 @@ func (h *AIHandler) Test(c *gin.Context) {
 func (h *AIHandler) Diagnose(c *gin.Context) {
 	id, err := parseSiteID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.invalid_site_id")))
 		return
 	}
 	var req models.AIDiagnoseRequest
 	if err := c.ShouldBindJSON(&req); err != nil || !models.IsValidAIDiagnosisSymptom(req.Symptom) {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("诊断类型无效"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.invalid_symptom")))
 		return
 	}
 
 	site := getWebsiteByID(id)
 	if site == nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "website.not_found")))
 		return
 	}
 
 	settings, err := loadAISettings()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取 AI 设置失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_settings.load_failed")))
 		return
 	}
 	if !settings.Enabled {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("AI 诊断未启用，请先在面板设置中配置"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.not_enabled")))
 		return
 	}
 	if strings.TrimSpace(settings.APIKey) == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("请先配置 AI API Key"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.api_key_required")))
 		return
 	}
 
 	// Mark sessions left in 'running' by a previous process restart as failed.
 	_, _ = database.GetDB().Exec(
 		`UPDATE ai_sessions SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
-		 WHERE site_id = ? AND status = ? AND updated_at <= datetime('now', '-10 minutes')`,
-		models.AISessionFailed, "进程重启，会话已中断", site.ID, models.AISessionRunning,
-	)
+			 WHERE site_id = ? AND status = ? AND updated_at <= datetime('now', '-10 minutes')`,
+			models.AISessionFailed, i18n.TE(c.Request, "ai_diagnostics.session_interrupted"), site.ID, models.AISessionRunning,
+		)
 
 	// Prevent concurrent diagnoses for the same site within this process.
-	if _, loaded := aiDiagnosisMu.LoadOrStore(site.ID, struct{}{}); loaded {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-			"status":  models.AISessionRunning,
-			"message": "该网站已有 AI 诊断正在进行，请稍后刷新历史记录",
-		}))
-		return
-	}
+		if _, loaded := aiDiagnosisMu.LoadOrStore(site.ID, struct{}{}); loaded {
+			c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+				"status":  models.AISessionRunning,
+				"message": i18n.TE(c.Request, "ai_diagnostics.already_running"),
+			}))
+			return
+		}
 	defer aiDiagnosisMu.Delete(site.ID)
 
 	// Also block if a running session exists from a different process.
-	if running, ok := activeAISession(site.ID); ok {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-			"session_id": running.ID,
-			"status":     running.Status,
-			"message":    "该网站已有 AI 诊断正在进行，请稍后刷新历史记录",
-		}))
-		return
-	}
+		if running, ok := activeAISession(site.ID); ok {
+			c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+				"session_id": running.ID,
+				"status":     running.Status,
+				"message":    i18n.TE(c.Request, "ai_diagnostics.already_running"),
+			}))
+			return
+		}
 
 	sessionID, err := createAISession(site.ID, req.Symptom)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建诊断记录失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.create_session_failed")))
 		return
 	}
 	updateAISessionStatus(sessionID, models.AISessionRunning, "")
@@ -182,7 +183,7 @@ func (h *AIHandler) Diagnose(c *gin.Context) {
 	systemPrompt, userPrompt, err := executor.BuildAIDiagnosticPrompt(site, req.Symptom)
 	if err != nil {
 		failAISession(sessionID, err.Error(), len(userPrompt), 0)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("诊断上下文收集失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.collect_context_failed")))
 		return
 	}
 
@@ -192,7 +193,7 @@ func (h *AIHandler) Diagnose(c *gin.Context) {
 	defer cancel()
 	content, _, err := executor.CallAIChat(ctx, settings, systemPrompt, userPrompt)
 	if err != nil {
-		msg := aiUserError(err)
+			msg := aiUserError(i18n.LangFromRequest(c.Request), err)
 		failAISession(sessionID, msg, len(userPrompt), 0)
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"session_id":    sessionID,
@@ -216,10 +217,10 @@ func (h *AIHandler) Diagnose(c *gin.Context) {
 		summary = excerpt(content, 500)
 	}
 	if summary == "" {
-		summary = "AI 已返回诊断结果"
+		summary = i18n.TE(c.Request, "ai_diagnostics.result_ready")
 	}
 	if err := completeAISession(sessionID, riskLevel, summary, reportJSON, rawText, len(userPrompt), len(content)); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存诊断结果失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.save_result_failed")))
 		return
 	}
 	pruneAISessions(site.ID, aiSessionKeepLimit)
@@ -235,17 +236,17 @@ func (h *AIHandler) Diagnose(c *gin.Context) {
 func (h *AIHandler) ListSessions(c *gin.Context) {
 	id, err := parseSiteID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.invalid_site_id")))
 		return
 	}
 	if getWebsiteByID(id) == nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "website.not_found")))
 		return
 	}
 	rows, err := database.GetDB().Query(`SELECT id, site_id, symptom, status, risk_level, summary, error_message, created_at, updated_at
-		FROM ai_sessions WHERE site_id = ? ORDER BY created_at DESC LIMIT ?`, id, aiSessionKeepLimit)
+			FROM ai_sessions WHERE site_id = ? ORDER BY created_at DESC LIMIT ?`, id, aiSessionKeepLimit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询 AI 诊断记录失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.load_sessions_failed")))
 		return
 	}
 	defer rows.Close()
@@ -268,21 +269,21 @@ func (h *AIHandler) ListSessions(c *gin.Context) {
 func (h *AIHandler) GetSession(c *gin.Context) {
 	siteID, err := parseSiteID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.invalid_site_id")))
 		return
 	}
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的诊断记录ID"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.invalid_session_id")))
 		return
 	}
 	detail, err := loadAISessionDetail(siteID, sessionID)
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("诊断记录不存在"))
+		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.session_not_found")))
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询 AI 诊断记录失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.load_sessions_failed")))
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(detail))
@@ -294,15 +295,15 @@ func (h *AIHandler) ListMessages(c *gin.Context) {
 		return
 	}
 	if _, err := loadAISessionDetail(siteID, sessionID); err == sql.ErrNoRows {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("诊断记录不存在"))
+		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.session_not_found")))
 		return
 	} else if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询 AI 诊断记录失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.load_sessions_failed")))
 		return
 	}
 	messages, err := listAIMessages(sessionID, aiMessageKeepLimit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询 AI 对话记录失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.load_messages_failed")))
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(messages))
@@ -315,78 +316,78 @@ func (h *AIHandler) SendMessage(c *gin.Context) {
 	}
 	var req models.AIMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "common.invalid_params")))
 		return
 	}
 	content := strings.TrimSpace(req.Content)
 	if content == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("请输入追问内容"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.followup_required")))
 		return
 	}
 	if len([]rune(content)) > aiMessageMaxChars {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("追问内容过长，请精简后再发送"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.followup_too_long")))
 		return
 	}
 	site := getWebsiteByID(siteID)
 	if site == nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "website.not_found")))
 		return
 	}
 	session, err := loadAISessionDetail(siteID, sessionID)
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("诊断记录不存在"))
+		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.session_not_found")))
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询 AI 诊断记录失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.load_sessions_failed")))
 		return
 	}
 	if session.Status == models.AISessionRunning || session.Status == models.AISessionPending {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("诊断尚未完成，请等待诊断结束后再追问"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.followup_wait")))
 		return
 	}
 	settings, err := loadAISettings()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取 AI 设置失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_settings.load_failed")))
 		return
 	}
 	if !settings.Enabled {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("AI 诊断未启用，请先在面板设置中配置"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.not_enabled")))
 		return
 	}
 	if strings.TrimSpace(settings.APIKey) == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("请先配置 AI API Key"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.api_key_required")))
 		return
 	}
 
-	if _, loaded := aiDiagnosisMu.LoadOrStore(site.ID, struct{}{}); loaded {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-			"status":  models.AISessionRunning,
-			"message": "该网站已有 AI 诊断或追问正在进行，请稍后再试",
-		}))
-		return
-	}
+		if _, loaded := aiDiagnosisMu.LoadOrStore(site.ID, struct{}{}); loaded {
+			c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+				"status":  models.AISessionRunning,
+				"message": i18n.TE(c.Request, "ai_diagnostics.already_running_followup"),
+			}))
+			return
+		}
 	defer aiDiagnosisMu.Delete(site.ID)
 
 	if _, err := createAIMessage(sessionID, "user", content, 0, 0, ""); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存追问内容失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.save_followup_failed")))
 		return
 	}
 	messages, err := listAIMessages(sessionID, aiFollowupContextLimit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取会话上下文失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.load_context_failed")))
 		return
 	}
 	systemPrompt, userPrompt, err := executor.BuildAIFollowupPrompt(site, &session, messages, content)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("构建追问上下文失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.build_context_failed")))
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(settings.TimeoutSeconds)*time.Second)
 	defer cancel()
 	reply, _, err := executor.CallAIChat(ctx, settings, systemPrompt, userPrompt)
 	if err != nil {
-		msg := aiUserError(err)
+			msg := aiUserError(i18n.LangFromRequest(c.Request), err)
 		_, _ = createAIMessage(sessionID, "assistant", "", len(userPrompt), 0, msg)
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"status":        models.AISessionFailed,
@@ -395,13 +396,13 @@ func (h *AIHandler) SendMessage(c *gin.Context) {
 		return
 	}
 	if _, err := createAIMessage(sessionID, "assistant", reply, len(userPrompt), len(reply), ""); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存 AI 回复失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.save_reply_failed")))
 		return
 	}
 	pruneAIMessages(sessionID, aiMessageKeepLimit)
 	allMessages, err := listAIMessages(sessionID, aiMessageKeepLimit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询 AI 对话记录失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.load_messages_failed")))
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
@@ -421,12 +422,12 @@ func parseSessionID(c *gin.Context) (int, error) {
 func parseAIMessageScope(c *gin.Context) (siteID, sessionID int, ok bool) {
 	siteID, err := parseSiteID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.invalid_site_id")))
 		return 0, 0, false
 	}
 	sessionID, err = parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的诊断记录ID"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.invalid_session_id")))
 		return 0, 0, false
 	}
 	return siteID, sessionID, true
@@ -468,13 +469,13 @@ func loadAISettings() (*models.AISettings, error) {
 	return &settings, nil
 }
 
-func normalizeAISettingsRequest(req models.AISettingsRequest, preserveExistingKey bool) (*models.AISettings, error) {
+func normalizeAISettingsRequest(req models.AISettingsRequest, preserveExistingKey bool, lang string) (*models.AISettings, error) {
 	provider := strings.TrimSpace(req.Provider)
 	if provider == "" {
 		provider = "deepseek"
 	}
 	if provider != "deepseek" && provider != "openai" && provider != "openai_compatible" {
-		return nil, errors.New("AI 服务商无效")
+		return nil, errors.New(i18n.T(lang, "ai_settings.invalid_provider"))
 	}
 	baseURL := strings.TrimRight(strings.TrimSpace(req.BaseURL), "/")
 	if baseURL == "" {
@@ -677,25 +678,25 @@ func excerpt(s string, max int) string {
 	return string(runes[:max]) + "..."
 }
 
-func aiUserError(err error) string {
+func aiUserError(lang string, err error) string {
 	var providerErr *executor.AIProviderError
 	if errors.As(err, &providerErr) {
 		switch providerErr.Type {
 		case "unauthorized":
-			return "AI 服务认证失败，请检查 API Key 和模型权限"
+			return i18n.T(lang, "ai_diagnostics.user_error_unauthorized")
 		case "rate_limited":
-			return "AI 服务返回请求过多或额度限制，请稍后重试或检查服务商后台"
+			return i18n.T(lang, "ai_diagnostics.user_error_rate_limited")
 		case "timeout":
-			return "AI 服务请求超时，请稍后重试或调大超时时间"
+			return i18n.T(lang, "ai_diagnostics.user_error_timeout")
 		case "network_error":
-			return "无法连接 AI 服务，请检查服务器网络或 Base URL"
+			return i18n.T(lang, "ai_diagnostics.user_error_network")
 		case "bad_response":
 			if strings.TrimSpace(providerErr.Message) != "" {
 				return providerErr.Message
 			}
-			return "AI 服务返回格式异常，请检查 Provider 是否兼容 OpenAI Chat Completions"
+			return i18n.T(lang, "ai_diagnostics.user_error_bad_response")
 		case "empty_response":
-			return "AI 服务返回空内容"
+			return i18n.T(lang, "ai_diagnostics.user_error_empty_response")
 		}
 	}
 	if err == nil {

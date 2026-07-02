@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/naibabiji/wp-panel/database"
+	"github.com/naibabiji/wp-panel/i18n"
 	"github.com/naibabiji/wp-panel/models"
 
 	"github.com/gin-gonic/gin"
@@ -15,7 +16,7 @@ func (h *ExtensionHandler) List(c *gin.Context) {
 	db := database.GetDB()
 	rows, err := db.Query("SELECT id, etype, slug, name, enabled FROM wp_extension_config ORDER BY etype, id")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询失败"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "extension.query_failed")))
 		return
 	}
 	defer rows.Close()
@@ -40,7 +41,7 @@ func (h *ExtensionHandler) List(c *gin.Context) {
 func (h *ExtensionHandler) Save(c *gin.Context) {
 	var req []models.WPExtension
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "common.invalid_params")))
 		return
 	}
 
@@ -62,14 +63,14 @@ func (h *ExtensionHandler) Save(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.TE(c.Request, "extension.saved")}))
 }
 
 func (h *ExtensionHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 	db := database.GetDB()
 	db.Exec("DELETE FROM wp_extension_config WHERE id = ?", id)
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已删除"}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.TE(c.Request, "extension.deleted")}))
 }
 
 func (h *ExtensionHandler) Reset(c *gin.Context) {
@@ -86,5 +87,5 @@ func (h *ExtensionHandler) Reset(c *gin.Context) {
 		('plugin', 'woocommerce',       'WooCommerce',      1),
 		('plugin', 'naibabiji-b2b-product-showcase', 'B2B Product Catalog', 1),
 		('plugin', 'redis-cache',          'Redis Cache',      1)`)
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已恢复默认配置"}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.TE(c.Request, "extension.restored_default")}))
 }

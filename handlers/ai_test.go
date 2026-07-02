@@ -13,7 +13,7 @@ import (
 func TestNormalizeAISettingsDefaultsDeepSeekV4Pro(t *testing.T) {
 	settings, err := normalizeAISettingsRequest(models.AISettingsRequest{
 		Enabled: true,
-	}, false)
+	}, false, "zh-CN")
 	if err != nil {
 		t.Fatalf("normalizeAISettingsRequest() error = %v", err)
 	}
@@ -32,14 +32,14 @@ func TestNormalizeAISettingsDefaultsDeepSeekV4Pro(t *testing.T) {
 }
 
 func TestNormalizeAISettingsRejectsUnknownProvider(t *testing.T) {
-	_, err := normalizeAISettingsRequest(models.AISettingsRequest{Provider: "bad"}, false)
+	_, err := normalizeAISettingsRequest(models.AISettingsRequest{Provider: "bad"}, false, "zh-CN")
 	if err == nil {
 		t.Fatal("expected unknown provider to be rejected")
 	}
 }
 
 func TestNormalizeAISettingsCapsTimeout(t *testing.T) {
-	settings, err := normalizeAISettingsRequest(models.AISettingsRequest{TimeoutSeconds: 999}, false)
+	settings, err := normalizeAISettingsRequest(models.AISettingsRequest{TimeoutSeconds: 999}, false, "zh-CN")
 	if err != nil {
 		t.Fatalf("normalizeAISettingsRequest() error = %v", err)
 	}
