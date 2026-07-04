@@ -287,6 +287,37 @@ func (e *TemplateEngine) RenderPHPFPMPool(data *PHPFPMPoolData) (string, error) 
 }
 
 func (e *TemplateEngine) ApplyNginxConfig(configContent string, targetPath string, enabledPath string) error {
+	if err := e.writeNginxConfigFile(configContent, targetPath); err != nil {
+		return err
+	}
+
+	_ = os.Remove(enabledPath)
+	if err := os.Symlink(targetPath, enabledPath); err != nil {
+		return fmt.Errorf("创建软链接失败: %w", err)
+	}
+
+	reloadCmd := exec.Command("nginx", "-s", "reload")
+	reloadOut, err := reloadCmd.CombinedOutput()
+	if err != nil {
+		// Reload failed — remove the config and symlink so Nginx can restart cleanly
+		_ = os.Remove(enabledPath)
+		_ = os.Remove(targetPath)
+		return fmt.Errorf("Nginx 重载失败: %s", string(reloadOut))
+	}
+
+	return nil
+}
+
+// ApplyNginxConfigKeepDisabled 校验并写入 Nginx 配置文件内容（含旧配置备份），
+// 但不创建/恢复 sites-enabled 软链接，也不触发 reload。
+// 用于刷新已暂停网站的配置模板，避免把暂停中的站点重新暴露为可访问。
+func (e *TemplateEngine) ApplyNginxConfigKeepDisabled(configContent string, targetPath string) error {
+	return e.writeNginxConfigFile(configContent, targetPath)
+}
+
+// writeNginxConfigFile 校验 Nginx 配置语法，备份旧文件后写入 targetPath。
+// 不涉及 sites-enabled 软链接和 nginx reload，由调用方决定是否启用。
+func (e *TemplateEngine) writeNginxConfigFile(configContent string, targetPath string) error {
 	ts := fmt.Sprintf("%d", time.Now().UnixNano())
 	serverTmp := "/tmp/nginx_server_" + ts + ".conf"
 	mainTmp := "/tmp/nginx_main_" + ts + ".conf"
@@ -334,20 +365,6 @@ func (e *TemplateEngine) ApplyNginxConfig(configContent string, targetPath strin
 
 	if err := os.WriteFile(targetPath, []byte(configContent), 0644); err != nil {
 		return fmt.Errorf("写入配置文件失败: %w", err)
-	}
-
-	_ = os.Remove(enabledPath)
-	if err := os.Symlink(targetPath, enabledPath); err != nil {
-		return fmt.Errorf("创建软链接失败: %w", err)
-	}
-
-	reloadCmd := exec.Command("nginx", "-s", "reload")
-	reloadOut, err := reloadCmd.CombinedOutput()
-	if err != nil {
-		// Reload failed — remove the config and symlink so Nginx can restart cleanly
-		_ = os.Remove(enabledPath)
-		_ = os.Remove(targetPath)
-		return fmt.Errorf("Nginx 重载失败: %s", string(reloadOut))
 	}
 
 	return nil

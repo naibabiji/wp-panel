@@ -214,14 +214,14 @@ func RegenerateSiteNginx(siteID int) error {
 	var phpPoolPath, nginxConfPath string
 	var sslEnabled, fCacheEnabled, xmlrpcEnabled, cdnRealIPEnabled int
 	var fCacheTTL int
-	var sslCertPath, sslKeyPath string
+	var sslCertPath, sslKeyPath, status string
 
 	err := db.QueryRow(
 		`SELECT domain, aliases, site_type, system_user, web_root, document_root_subdir, log_dir, ssl_enabled,
 		        access_log_mode, fastcgi_cache_enabled, fastcgi_cache_ttl, fastcgi_cache_key,
-		        ssl_cert_path, ssl_key_path, template_version, xmlrpc_enabled, php_pool_path, nginx_conf_path, cdn_realip_enabled
+		        ssl_cert_path, ssl_key_path, template_version, xmlrpc_enabled, php_pool_path, nginx_conf_path, cdn_realip_enabled, status
 		 FROM websites WHERE id = ?`, siteID,
-	).Scan(&domain, &aliases, &siteType, &systemUser, &webRoot, &documentRootSubdir, &logDir, &sslEnabled, &accessLogMode, &fCacheEnabled, &fCacheTTL, &cacheKey, &sslCertPath, &sslKeyPath, &templateVer, &xmlrpcEnabled, &phpPoolPath, &nginxConfPath, &cdnRealIPEnabled)
+	).Scan(&domain, &aliases, &siteType, &systemUser, &webRoot, &documentRootSubdir, &logDir, &sslEnabled, &accessLogMode, &fCacheEnabled, &fCacheTTL, &cacheKey, &sslCertPath, &sslKeyPath, &templateVer, &xmlrpcEnabled, &phpPoolPath, &nginxConfPath, &cdnRealIPEnabled, &status)
 	if err != nil || domain == "" {
 		if err != nil {
 			return fmt.Errorf("查询站点失败(site %d): %w", siteID, err)
@@ -283,6 +283,15 @@ func RegenerateSiteNginx(siteID int) error {
 	config, err := engine.RenderNginxConfig(data)
 	if err != nil {
 		return fmt.Errorf("渲染 Nginx 配置失败(site %d): %w", siteID, err)
+	}
+
+	if status == string(models.StatusPaused) {
+		// 站点已暂停：只刷新磁盘上的配置内容，不恢复 sites-enabled 软链接、不 reload，
+		// 避免批量模板刷新时把已暂停的站点重新暴露为可访问。
+		if err := engine.ApplyNginxConfigKeepDisabled(config, nginxConfPath); err != nil {
+			return fmt.Errorf("应用 Nginx 配置失败(site %d): %w", siteID, err)
+		}
+		return nil
 	}
 
 	if err := engine.ApplyNginxConfig(config, nginxConfPath, nginxEnabledPath(cfg, nginxConfPath, domain)); err != nil {
