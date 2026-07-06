@@ -183,10 +183,12 @@ function backupsOverview() {
             window.location.href = this.siteDetailUrl(siteId);
         },
         expandAll() {
-            this.$el.querySelectorAll('details.site-backup-card').forEach(d => { d.open = true; });
+            // 用 document 而不是 this.$el：在方法体内 this.$el 指向触发这次调用的元素（这里是
+            // 按钮本身），不是 x-data 根节点，用 this.$el 会在按钮内部找、永远找不到任何 <details>。
+            document.querySelectorAll('details.site-backup-card').forEach(d => { d.open = true; });
         },
         collapseAll() {
-            this.$el.querySelectorAll('details.site-backup-card').forEach(d => { d.open = false; });
+            document.querySelectorAll('details.site-backup-card').forEach(d => { d.open = false; });
         }
     }
 }
