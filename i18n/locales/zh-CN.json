@@ -1225,7 +1225,13 @@
     "mode_full": "全量",
     "mode_incremental": "增量",
     "transport_local": "仅本地",
-    "transport_synced": "已同步远程",
-    "transport_failed": "远程同步失败"
+    "transport_synced": "已同步远程（本地保留）",
+    "transport_synced_remote_only": "仅远程（本地已清理）",
+    "transport_failed": "远程同步失败",
+    "transport_missing": "本地文件缺失",
+    "expand_all": "全部展开",
+    "collapse_all": "全部收起",
+    "summary_db_count": "数据库备份 {{count}}",
+    "summary_file_count": "文件备份 {{count}}"
   }
 }

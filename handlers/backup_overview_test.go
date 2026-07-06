@@ -109,6 +109,88 @@ func TestGetBackupOverviewReturnsSitesAndPanelBackups(t *testing.T) {
 	}
 }
 
+func TestGetBackupOverviewReportsLocalFileExistence(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupBackupOverviewTestDB(t)
+
+	db := database.GetDB()
+	if _, err := db.Exec(`INSERT INTO websites (id, name, domain, system_user, web_root, log_dir, db_name, db_user, php_pool_path, nginx_conf_path)
+		VALUES (1, 'site', 'localcheck.example.com', 'u1', '/www/wwwroot/localcheck.example.com', '/www/wwwlogs/localcheck.example.com', 'db1', 'u1', '/p', '/n')`); err != nil {
+		t.Fatalf("insert website: %v", err)
+	}
+	// db_backups: 'present.sql.gz' 本地文件真实存在；'gone.sql.gz' 标记 synced 但本地文件已被
+	// keep_local=0 清理（数据库记录仍保留，只是磁盘上没有对应文件了）。
+	if _, err := db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, transport_status) VALUES (1, 'present.sql.gz', 10, 'db1', 'local')`); err != nil {
+		t.Fatalf("insert db_backups present: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, transport_status) VALUES (1, 'gone.sql.gz', 10, 'db1', 'synced')`); err != nil {
+		t.Fatalf("insert db_backups gone: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO file_backups (site_id, filename, file_size, mode, transport_status) VALUES (1, 'file_full_present.tar.gz', 20, 'full', 'local')`); err != nil {
+		t.Fatalf("insert file_backups present: %v", err)
+	}
+
+	backupRoot := t.TempDir()
+	dbDir := filepath.Join(backupRoot, "localcheck.example.com", "db")
+	filesDir := filepath.Join(backupRoot, "localcheck.example.com", "files")
+	if err := os.MkdirAll(dbDir, 0700); err != nil {
+		t.Fatalf("mkdir db dir: %v", err)
+	}
+	if err := os.MkdirAll(filesDir, 0700); err != nil {
+		t.Fatalf("mkdir files dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dbDir, "present.sql.gz"), []byte("x"), 0600); err != nil {
+		t.Fatalf("write present.sql.gz: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(filesDir, "file_full_present.tar.gz"), []byte("x"), 0600); err != nil {
+		t.Fatalf("write file_full_present.tar.gz: %v", err)
+	}
+	// 注意：'gone.sql.gz' 故意不在磁盘上创建，模拟已被清理的情况。
+
+	oldConfig := config.AppConfig
+	config.AppConfig = &config.Config{Panel: config.PanelConfig{BackupDir: backupRoot}}
+	t.Cleanup(func() { config.AppConfig = oldConfig })
+
+	router := gin.New()
+	router.GET("/api/backups/overview", GetBackupOverview)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/backups/overview", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var resp overviewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v; body=%s", err, rec.Body.String())
+	}
+	if len(resp.Data.Sites) != 1 {
+		t.Fatalf("sites count = %d, want 1", len(resp.Data.Sites))
+	}
+	dbBackups := resp.Data.Sites[0].DBBackups
+	var present, gone map[string]any
+	for _, b := range dbBackups {
+		switch b["filename"] {
+		case "present.sql.gz":
+			present = b
+		case "gone.sql.gz":
+			gone = b
+		}
+	}
+	if present == nil || present["local_exists"] != true {
+		t.Fatalf("present.sql.gz local_exists = %+v, want true", present)
+	}
+	if gone == nil || gone["local_exists"] != false {
+		t.Fatalf("gone.sql.gz local_exists = %+v, want false", gone)
+	}
+
+	fileBackups := resp.Data.Sites[0].FileBackups
+	if len(fileBackups) != 1 || fileBackups[0]["local_exists"] != true {
+		t.Fatalf("file_backups = %+v, want one entry with local_exists=true", fileBackups)
+	}
+}
+
 func TestGetBackupOverviewSurfacesQueryErrors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupBackupOverviewTestDB(t)

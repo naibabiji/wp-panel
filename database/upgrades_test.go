@@ -1,7 +1,9 @@
 package database
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -333,6 +335,142 @@ func TestFreshInstallHasFileBackupsTable(t *testing.T) {
 	}
 	if tableExists != 1 {
 		t.Fatalf("file_backups table exists = %d, want 1 on fresh install", tableExists)
+	}
+}
+
+func insertMinimalWebsiteForBackfill(t *testing.T, id int, domain string) {
+	t.Helper()
+	if _, err := DB.Exec(`INSERT INTO websites (id, name, domain, system_user, web_root, log_dir, db_name, db_user, php_pool_path, nginx_conf_path)
+		VALUES (?, 'site', ?, 'u1', ?, ?, 'db1', 'u1', '/p', '/n')`,
+		id, domain, "/www/wwwroot/"+domain, "/www/wwwlogs/"+domain); err != nil {
+		t.Fatalf("insert website: %v", err)
+	}
+}
+
+func TestBackfillFileBackupsFromRootInsertsUntrackedFiles(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	insertMinimalWebsiteForBackfill(t, 1, "backfill.example.com")
+
+	root := t.TempDir()
+	filesDir := filepath.Join(root, "backfill.example.com", "files")
+	if err := os.MkdirAll(filesDir, 0755); err != nil {
+		t.Fatalf("mkdir files dir: %v", err)
+	}
+	full := "file_full_20260101_020000.tar.gz"
+	inc := "file_inc_20260102_020000.tar.gz"
+	if err := os.WriteFile(filepath.Join(filesDir, full), []byte("full-backup-bytes"), 0644); err != nil {
+		t.Fatalf("write full backup fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(filesDir, inc), []byte("inc"), 0644); err != nil {
+		t.Fatalf("write incremental backup fixture: %v", err)
+	}
+	// 不相关的文件（命名不匹配）应该被忽略
+	if err := os.WriteFile(filepath.Join(filesDir, "notes.txt"), []byte("irrelevant"), 0644); err != nil {
+		t.Fatalf("write unrelated fixture: %v", err)
+	}
+
+	if err := backfillFileBackupsFromRoot(root); err != nil {
+		t.Fatalf("backfillFileBackupsFromRoot() error = %v", err)
+	}
+
+	var count int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM file_backups WHERE site_id = 1`).Scan(&count); err != nil {
+		t.Fatalf("count file_backups: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("file_backups count = %d, want 2 (unrelated file must be ignored)", count)
+	}
+
+	var mode, transportStatus string
+	var fileSize int64
+	var createdAt string
+	if err := DB.QueryRow(`SELECT mode, file_size, transport_status, created_at FROM file_backups WHERE site_id = 1 AND filename = ?`, full).
+		Scan(&mode, &fileSize, &transportStatus, &createdAt); err != nil {
+		t.Fatalf("query backfilled full backup row: %v", err)
+	}
+	if mode != "full" {
+		t.Fatalf("mode = %q, want %q", mode, "full")
+	}
+	if fileSize != int64(len("full-backup-bytes")) {
+		t.Fatalf("file_size = %d, want %d", fileSize, len("full-backup-bytes"))
+	}
+	if transportStatus != "local" {
+		t.Fatalf("transport_status = %q, want %q", transportStatus, "local")
+	}
+	if !strings.HasPrefix(createdAt, "2026-01-01") {
+		t.Fatalf("created_at = %q, want parsed from filename timestamp (2026-01-01...)", createdAt)
+	}
+
+	var incMode string
+	if err := DB.QueryRow(`SELECT mode FROM file_backups WHERE site_id = 1 AND filename = ?`, inc).Scan(&incMode); err != nil {
+		t.Fatalf("query backfilled incremental backup row: %v", err)
+	}
+	if incMode != "incremental" {
+		t.Fatalf("mode = %q, want %q", incMode, "incremental")
+	}
+}
+
+func TestBackfillFileBackupsFromRootIsIdempotent(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	insertMinimalWebsiteForBackfill(t, 1, "idempotent.example.com")
+
+	root := t.TempDir()
+	filesDir := filepath.Join(root, "idempotent.example.com", "files")
+	if err := os.MkdirAll(filesDir, 0755); err != nil {
+		t.Fatalf("mkdir files dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(filesDir, "file_full_20260101_020000.tar.gz"), []byte("x"), 0644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		if err := backfillFileBackupsFromRoot(root); err != nil {
+			t.Fatalf("backfillFileBackupsFromRoot() call %d error = %v", i, err)
+		}
+	}
+
+	var count int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM file_backups WHERE site_id = 1`).Scan(&count); err != nil {
+		t.Fatalf("count file_backups: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("file_backups count after running twice = %d, want 1 (must not duplicate)", count)
+	}
+}
+
+func TestBackfillFileBackupsFromRootSkipsSitesWithoutBackupDir(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	insertMinimalWebsiteForBackfill(t, 1, "no-backups.example.com")
+
+	root := t.TempDir()
+	if err := backfillFileBackupsFromRoot(root); err != nil {
+		t.Fatalf("backfillFileBackupsFromRoot() error = %v, want nil when a site has no backup directory at all", err)
+	}
+
+	var count int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM file_backups`).Scan(&count); err != nil {
+		t.Fatalf("count file_backups: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("file_backups count = %d, want 0", count)
+	}
+}
+
+func TestBackfillFileBackupsFromRootToleratesMissingTables(t *testing.T) {
+	openTempDB(t)
+	// 不建 websites / file_backups 表，模拟老得多的 schema_version 起点跑升级链的场景
+	// （真实场景见 TestUpgradeAddsBotRateLimitSettingsToExistingSchema，从 1.0.12 开始跑）。
+	if err := backfillFileBackupsFromRoot(t.TempDir()); err != nil {
+		t.Fatalf("backfillFileBackupsFromRoot() error = %v, want nil when websites/file_backups tables don't exist yet", err)
 	}
 }
 

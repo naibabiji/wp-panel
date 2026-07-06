@@ -29,7 +29,10 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Upgrade 定义一次版本升级需要执行的数据库变更。
@@ -355,6 +358,11 @@ var upgrades = []Upgrade{
 			`CREATE INDEX IF NOT EXISTS idx_file_backups_site ON file_backups(site_id, created_at)`,
 		},
 	},
+	{
+		Version:     "1.0.25",
+		Description: "回填升级前已存在的网站文件备份到 file_backups 表",
+		Func:        backfillFileBackupsFromDisk,
+	},
 }
 
 func ensureFileLockEnabledColumn() error {
@@ -402,6 +410,105 @@ func ensureFileLockEnabledAtColumn() error {
 			AND COALESCE(file_lock_enabled_at, '') = ''
 	`)
 	return err
+}
+
+// backfillFileBackupsFromDisk 把升级前已经生成、但 file_backups 表还没有记录的
+// 网站文件备份（file_full_*.tar.gz / file_inc_*.tar.gz）补录进 file_backups 表。
+// 历史文件无法确认是否曾经同步到远程，统一记为 transport_status='local'。
+// 按 (site_id, filename) 查重，重复执行不会重复插入；目录不存在/不可读的网站直接跳过。
+func backfillFileBackupsFromDisk() error {
+	return backfillFileBackupsFromRoot("/www/server/panel/backups")
+}
+
+// backfillFileBackupsFromRoot 是 backfillFileBackupsFromDisk 的可测试实现，backupsRoot 参数
+// 便于单元测试注入临时目录，生产代码固定传入真实的面板备份根目录。
+func backfillFileBackupsFromRoot(backupsRoot string) error {
+	var fileBackupsExists, websitesExists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'file_backups'`).Scan(&fileBackupsExists); err != nil {
+		return err
+	}
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'websites'`).Scan(&websitesExists); err != nil {
+		return err
+	}
+	if fileBackupsExists == 0 || websitesExists == 0 {
+		return nil
+	}
+
+	rows, err := DB.Query(`SELECT id, domain FROM websites`)
+	if err != nil {
+		return err
+	}
+	type site struct {
+		id     int
+		domain string
+	}
+	var sites []site
+	for rows.Next() {
+		var s site
+		if rows.Scan(&s.id, &s.domain) == nil {
+			sites = append(sites, s)
+		}
+	}
+	rows.Close()
+
+	for _, s := range sites {
+		dir := filepath.Join(backupsRoot, s.domain, "files")
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			var mode string
+			switch {
+			case strings.HasPrefix(name, "file_full_") && strings.HasSuffix(name, ".tar.gz"):
+				mode = "full"
+			case strings.HasPrefix(name, "file_inc_") && strings.HasSuffix(name, ".tar.gz"):
+				mode = "incremental"
+			default:
+				continue
+			}
+
+			var exists int
+			if err := DB.QueryRow(`SELECT COUNT(*) FROM file_backups WHERE site_id = ? AND filename = ?`, s.id, name).Scan(&exists); err != nil || exists > 0 {
+				continue
+			}
+
+			info, err := e.Info()
+			var size int64
+			createdAt := time.Now()
+			if err == nil {
+				size = info.Size()
+				createdAt = info.ModTime()
+			}
+			if ts := parseFileBackupTimestamp(name); !ts.IsZero() {
+				createdAt = ts
+			}
+
+			if _, err := DB.Exec(`INSERT INTO file_backups (site_id, filename, file_size, mode, transport_status, created_at)
+				VALUES (?, ?, ?, ?, 'local', ?)`,
+				s.id, name, size, mode, createdAt.Format("2006-01-02 15:04:05")); err != nil {
+				log.Printf("回填文件备份记录失败 site=%d file=%s: %v", s.id, name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// parseFileBackupTimestamp 从 file_full_<ts>.tar.gz / file_inc_<ts>.tar.gz 文件名中解析出
+// ExecuteFileBackup 生成时使用的时间戳（20060102_150405），解析失败返回零值。
+func parseFileBackupTimestamp(name string) time.Time {
+	base := strings.TrimSuffix(name, ".tar.gz")
+	base = strings.TrimPrefix(base, "file_full_")
+	base = strings.TrimPrefix(base, "file_inc_")
+	t, err := time.Parse("20060102_150405", base)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 func ensureDocumentRootSubdirColumn() error {

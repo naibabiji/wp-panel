@@ -3,6 +3,7 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 
 	"github.com/naibabiji/wp-panel/config"
@@ -12,18 +13,33 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// OverviewDBBackup 在共享的 models.DBBackup 基础上附加本地文件是否仍然存在的信息。
+// transport_status 记录的是"上次同步尝试的结果"，不代表本地文件现在是否还在
+// （keep_local=0 时同步成功后会删除本地文件），两者要结合起来才能看出完整状态。
+type OverviewDBBackup struct {
+	models.DBBackup
+	LocalExists bool `json:"local_exists"`
+}
+
+// OverviewFileBackup 同上，针对网站文件备份。
+type OverviewFileBackup struct {
+	models.FileBackup
+	LocalExists bool `json:"local_exists"`
+}
+
 // SiteBackupOverview 汇总单个网站的数据库备份和文件备份列表，供备份总览页面展示。
 type SiteBackupOverview struct {
-	SiteID      int                 `json:"site_id"`
-	Domain      string              `json:"domain"`
-	DBBackups   []models.DBBackup   `json:"db_backups"`
-	FileBackups []models.FileBackup `json:"file_backups"`
+	SiteID      int                  `json:"site_id"`
+	Domain      string               `json:"domain"`
+	DBBackups   []OverviewDBBackup   `json:"db_backups"`
+	FileBackups []OverviewFileBackup `json:"file_backups"`
 }
 
 // GetBackupOverview 返回所有网站的备份总览（数据库备份 + 文件备份）以及面板自身数据库备份列表。
 // 只读接口，不提供下载/删除，跳转到具体操作请前往对应网站详情页。
 func GetBackupOverview(c *gin.Context) {
 	db := database.GetDB()
+	cfg := config.AppConfig
 
 	sites := []SiteBackupOverview{}
 	siteIndex := map[int]int{}
@@ -44,8 +60,8 @@ func GetBackupOverview(c *gin.Context) {
 		sites = append(sites, SiteBackupOverview{
 			SiteID:      id,
 			Domain:      domain,
-			DBBackups:   []models.DBBackup{},
-			FileBackups: []models.FileBackup{},
+			DBBackups:   []OverviewDBBackup{},
+			FileBackups: []OverviewFileBackup{},
 		})
 	}
 	rows.Close()
@@ -57,7 +73,7 @@ func GetBackupOverview(c *gin.Context) {
 		return
 	}
 	for dbRows.Next() {
-		var b models.DBBackup
+		var b OverviewDBBackup
 		var auto int
 		if err := dbRows.Scan(&b.ID, &b.SiteID, &b.Filename, &b.FileSize, &b.DBName, &auto,
 			&b.TransportStatus, &b.TransportMessage, &b.CreatedAt); err != nil {
@@ -66,6 +82,8 @@ func GetBackupOverview(c *gin.Context) {
 		}
 		b.Auto = auto == 1
 		if idx, ok := siteIndex[b.SiteID]; ok {
+			localPath := filepath.Join(cfg.Panel.BackupDir, sites[idx].Domain, "db", b.Filename)
+			b.LocalExists = localFileExists(localPath)
 			sites[idx].DBBackups = append(sites[idx].DBBackups, b)
 		}
 	}
@@ -78,19 +96,20 @@ func GetBackupOverview(c *gin.Context) {
 		return
 	}
 	for fileRows.Next() {
-		var b models.FileBackup
+		var b OverviewFileBackup
 		if err := fileRows.Scan(&b.ID, &b.SiteID, &b.Filename, &b.FileSize, &b.Mode,
 			&b.TransportStatus, &b.TransportMessage, &b.CreatedAt); err != nil {
 			log.Printf("备份总览: 扫描文件备份行失败: %v", err)
 			continue
 		}
 		if idx, ok := siteIndex[b.SiteID]; ok {
+			localPath := filepath.Join(cfg.Panel.BackupDir, sites[idx].Domain, "files", b.Filename)
+			b.LocalExists = localFileExists(localPath)
 			sites[idx].FileBackups = append(sites[idx].FileBackups, b)
 		}
 	}
 	fileRows.Close()
 
-	cfg := config.AppConfig
 	panelBackupDir := filepath.Join(cfg.Panel.BackupDir, "panel-db")
 	panelBackups, err := database.ListDBBackups(panelBackupDir)
 	if err != nil {
@@ -101,4 +120,10 @@ func GetBackupOverview(c *gin.Context) {
 		"sites":            sites,
 		"panel_db_backups": panelBackups,
 	}))
+}
+
+// localFileExists 只做一次本地文件系统 stat，不涉及远程网络请求，性能开销可忽略。
+func localFileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

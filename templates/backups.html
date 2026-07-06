@@ -3,6 +3,10 @@
 <div x-data="backupsOverview()" x-init="fetchOverview()">
     <div class="flex items-center justify-between mb-6">
         <h2 class="text-xl font-bold text-white">{{t .Lang "nav.backups"}}</h2>
+        <div class="flex space-x-3">
+            <button @click="expandAll()" class="btn-secondary text-xs py-1 px-3">{{t .Lang "backups.expand_all"}}</button>
+            <button @click="collapseAll()" class="btn-secondary text-xs py-1 px-3">{{t .Lang "backups.collapse_all"}}</button>
+        </div>
     </div>
 
     <div class="card mb-6">
@@ -37,13 +41,16 @@
     <div x-show="loading" class="text-center text-gray-500 py-8">{{t .Lang "backups.loading"}}</div>
 
     <template x-for="site in sites" :key="site.site_id">
-        <div class="card mb-6">
-            <div class="flex items-center justify-between mb-4">
-                <h3 class="text-lg font-semibold text-white" x-text="site.domain"></h3>
-                <a :href="siteDetailUrl(site.site_id)" class="btn-secondary text-xs py-1 px-3">{{t .Lang "backups.view_website"}}</a>
-            </div>
+        <details class="card mb-4 site-backup-card">
+            <summary class="cursor-pointer flex items-center justify-between select-none">
+                <span class="flex items-center gap-3 min-w-0">
+                    <span class="text-lg font-semibold text-white truncate" x-text="site.domain"></span>
+                    <span class="text-xs text-gray-400 whitespace-nowrap" x-text="siteSummaryText(site)"></span>
+                </span>
+                <button type="button" @click.stop.prevent="goToSite(site.site_id)" class="btn-secondary text-xs py-1 px-3 flex-shrink-0">{{t .Lang "backups.view_website"}}</button>
+            </summary>
 
-            <div class="mb-4">
+            <div class="mb-4 mt-4">
                 <div class="text-xs text-gray-400 mb-2">{{t .Lang "backups.db_section_title"}}</div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-sm">
@@ -63,7 +70,7 @@
                                     <td class="py-2 text-xs whitespace-nowrap" x-text="formatBytes(b.file_size)"></td>
                                     <td class="py-2 text-xs whitespace-nowrap" x-text="fmtTime(b.created_at)"></td>
                                     <td class="py-2 whitespace-nowrap"><span :class="b.auto ? 'badge-info' : 'badge-success'" class="text-xs" x-text="b.auto ? t('backups.backup_auto') : t('backups.backup_manual')"></span></td>
-                                    <td class="py-2 whitespace-nowrap"><span :class="transportBadgeClass(b.transport_status)" class="text-xs" x-text="transportLabel(b.transport_status)"></span></td>
+                                    <td class="py-2 whitespace-nowrap"><span :class="transportBadgeClass(b)" class="text-xs" x-text="transportLabel(b)"></span></td>
                                 </tr>
                             </template>
                             <tr x-show="site.db_backups.length === 0">
@@ -94,7 +101,7 @@
                                     <td class="py-2 text-xs whitespace-nowrap" x-text="formatBytes(b.file_size)"></td>
                                     <td class="py-2 text-xs whitespace-nowrap" x-text="fmtTime(b.created_at)"></td>
                                     <td class="py-2 whitespace-nowrap"><span :class="b.mode === 'full' ? 'badge-success' : 'badge-info'" class="text-xs" x-text="b.mode === 'full' ? t('backups.mode_full') : t('backups.mode_incremental')"></span></td>
-                                    <td class="py-2 whitespace-nowrap"><span :class="transportBadgeClass(b.transport_status)" class="text-xs" x-text="transportLabel(b.transport_status)"></span></td>
+                                    <td class="py-2 whitespace-nowrap"><span :class="transportBadgeClass(b)" class="text-xs" x-text="transportLabel(b)"></span></td>
                                 </tr>
                             </template>
                             <tr x-show="site.file_backups.length === 0">
@@ -104,7 +111,7 @@
                     </table>
                 </div>
             </div>
-        </div>
+        </details>
     </template>
 
     <div x-show="!loading && sites.length === 0" class="card text-center text-gray-500 py-8">{{t .Lang "backups.no_websites"}}</div>
@@ -127,19 +134,35 @@ function backupsOverview() {
             } catch (e) {}
             this.loading = false;
         },
-        transportBadgeClass(status) {
-            if (status === 'synced') return 'badge-success';
-            if (status === 'failed') return 'badge-danger';
+        siteSummaryText(site) {
+            const parts = [];
+            if (site.db_backups && site.db_backups.length) parts.push(t('backups.summary_db_count', { count: site.db_backups.length }));
+            if (site.file_backups && site.file_backups.length) parts.push(t('backups.summary_file_count', { count: site.file_backups.length }));
+            return parts.length ? parts.join(' · ') : t('backups.no_backups');
+        },
+        transportBadgeClass(b) {
+            if (b.transport_status === 'synced') return 'badge-success';
+            if (b.transport_status === 'failed') return 'badge-danger';
+            if (!b.local_exists) return 'badge-warning';
             return 'badge-info';
         },
-        transportLabel(status) {
-            if (status === 'synced') return t('backups.transport_synced');
-            if (status === 'failed') return t('backups.transport_failed');
-            return t('backups.transport_local');
+        transportLabel(b) {
+            if (b.transport_status === 'synced') return b.local_exists ? t('backups.transport_synced') : t('backups.transport_synced_remote_only');
+            if (b.transport_status === 'failed') return t('backups.transport_failed');
+            return b.local_exists ? t('backups.transport_local') : t('backups.transport_missing');
         },
         siteDetailUrl(siteId) {
             const prefix = document.body.dataset.panelPrefix || '';
             return prefix + '/websites/' + siteId;
+        },
+        goToSite(siteId) {
+            window.location.href = this.siteDetailUrl(siteId);
+        },
+        expandAll() {
+            this.$el.querySelectorAll('details.site-backup-card').forEach(d => { d.open = true; });
+        },
+        collapseAll() {
+            this.$el.querySelectorAll('details.site-backup-card').forEach(d => { d.open = false; });
         }
     }
 }
