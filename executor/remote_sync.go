@@ -249,6 +249,9 @@ func RemoteHasFullFileBackup(domain string) (bool, error) {
 	if backupType == "" {
 		backupType = "rsync"
 	}
+	if err := ValidateRemoteBackupType(backupType); err != nil {
+		return false, err
+	}
 	if backupType == "s3" {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()

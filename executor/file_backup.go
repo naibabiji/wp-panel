@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -146,7 +147,7 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 	os.WriteFile(stampFile, []byte(time.Now().Format(time.RFC3339)), 0644)
 
 	if isFull {
-		cleanOldBackups(backupDir, keepCount)
+		cleanOldBackups(backupDir, keepCount, siteID)
 	}
 
 	info, _ := os.Stat(fullPath)
@@ -158,8 +159,7 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 	if isFull {
 		modeLabel = "full"
 	}
-	db.Exec(`INSERT INTO file_backups (site_id, filename, file_size, mode) VALUES (?, ?, ?, ?)`,
-		siteID, tarName, size, modeLabel)
+	recordFileBackup(siteID, tarName, size, modeLabel, domain)
 
 	SyncBackupToRemote(fullPath, BackupSourceFile, siteID, tarName)
 	logMsg := fmt.Sprintf("%s 文件备份成功: %s (%s)", domain, tarName, map[bool]string{true: "全量", false: "增量"}[isFull])
@@ -170,7 +170,7 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 	return logMsg, nil
 }
 
-func cleanOldBackups(dir string, keep int) {
+func cleanOldBackups(dir string, keep int, siteID int) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -194,8 +194,11 @@ func cleanOldBackups(dir string, keep int) {
 		return
 	}
 	sort.Slice(tars, func(i, j int) bool { return tars[i].modTime.Before(tars[j].modTime) })
+	db := database.GetDB()
 	for i := 0; i < len(tars)-keep; i++ {
 		os.Remove(filepath.Join(dir, tars[i].name))
+		// 保持 file_backups 表和磁盘一致，避免备份总览页面展示已被轮转清理的记录。
+		db.Exec(`DELETE FROM file_backups WHERE site_id = ? AND filename = ?`, siteID, tars[i].name)
 	}
 }
 
@@ -214,6 +217,17 @@ func checkDiskSpace(backupDir string, minFree int64) bool {
 	}
 	free, _ := strconv.ParseInt(fields[3], 10, 64)
 	return free >= minFree
+}
+
+// recordFileBackup 把生成的文件备份写入 file_backups 表，供备份总览页面展示。
+// 写入失败不影响已经生成的备份文件（文件备份成本较高，不因记录写入失败而丢弃），
+// 但必须可见地记录下来，避免总览页面缺记录却无人知晓。
+func recordFileBackup(siteID int, filename string, size int64, mode, domain string) {
+	if _, err := database.GetDB().Exec(`INSERT INTO file_backups (site_id, filename, file_size, mode) VALUES (?, ?, ?, ?)`,
+		siteID, filename, size, mode); err != nil {
+		log.Printf("文件备份记录写入 file_backups 失败 [%s]: %v", domain, err)
+		appendCronLog(fmt.Sprintf("%s 文件备份记录写入失败: %v", domain, err))
+	}
 }
 
 func appendCronLog(msg string) {

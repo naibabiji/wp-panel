@@ -48,37 +48,43 @@ func GetBackupOverview(c *gin.Context) {
 	}
 	rows.Close()
 
-	if dbRows, err := db.Query(`SELECT id, site_id, filename, file_size, db_name, auto, transport_status, transport_message, created_at
-		FROM db_backups ORDER BY created_at DESC`); err == nil {
-		for dbRows.Next() {
-			var b models.DBBackup
-			var auto int
-			if dbRows.Scan(&b.ID, &b.SiteID, &b.Filename, &b.FileSize, &b.DBName, &auto,
-				&b.TransportStatus, &b.TransportMessage, &b.CreatedAt) != nil {
-				continue
-			}
-			b.Auto = auto == 1
-			if idx, ok := siteIndex[b.SiteID]; ok {
-				sites[idx].DBBackups = append(sites[idx].DBBackups, b)
-			}
-		}
-		dbRows.Close()
+	dbRows, err := db.Query(`SELECT id, site_id, filename, file_size, db_name, auto, transport_status, transport_message, created_at
+		FROM db_backups ORDER BY created_at DESC`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询数据库备份列表失败"))
+		return
 	}
+	for dbRows.Next() {
+		var b models.DBBackup
+		var auto int
+		if dbRows.Scan(&b.ID, &b.SiteID, &b.Filename, &b.FileSize, &b.DBName, &auto,
+			&b.TransportStatus, &b.TransportMessage, &b.CreatedAt) != nil {
+			continue
+		}
+		b.Auto = auto == 1
+		if idx, ok := siteIndex[b.SiteID]; ok {
+			sites[idx].DBBackups = append(sites[idx].DBBackups, b)
+		}
+	}
+	dbRows.Close()
 
-	if fileRows, err := db.Query(`SELECT id, site_id, filename, file_size, mode, transport_status, transport_message, created_at
-		FROM file_backups ORDER BY created_at DESC`); err == nil {
-		for fileRows.Next() {
-			var b models.FileBackup
-			if fileRows.Scan(&b.ID, &b.SiteID, &b.Filename, &b.FileSize, &b.Mode,
-				&b.TransportStatus, &b.TransportMessage, &b.CreatedAt) != nil {
-				continue
-			}
-			if idx, ok := siteIndex[b.SiteID]; ok {
-				sites[idx].FileBackups = append(sites[idx].FileBackups, b)
-			}
-		}
-		fileRows.Close()
+	fileRows, err := db.Query(`SELECT id, site_id, filename, file_size, mode, transport_status, transport_message, created_at
+		FROM file_backups ORDER BY created_at DESC`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询文件备份列表失败"))
+		return
 	}
+	for fileRows.Next() {
+		var b models.FileBackup
+		if fileRows.Scan(&b.ID, &b.SiteID, &b.Filename, &b.FileSize, &b.Mode,
+			&b.TransportStatus, &b.TransportMessage, &b.CreatedAt) != nil {
+			continue
+		}
+		if idx, ok := siteIndex[b.SiteID]; ok {
+			sites[idx].FileBackups = append(sites[idx].FileBackups, b)
+		}
+	}
+	fileRows.Close()
 
 	cfg := config.AppConfig
 	panelBackupDir := filepath.Join(cfg.Panel.BackupDir, "panel-db")

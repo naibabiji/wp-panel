@@ -303,6 +303,23 @@ func TestRemoteHasFullFileBackupRsyncMissingHostReturnsError(t *testing.T) {
 	}
 }
 
+func TestRemoteHasFullFileBackupRejectsInvalidBackupType(t *testing.T) {
+	openTestDB(t)
+	db := database.GetDB()
+	if _, err := db.Exec(`UPDATE remote_backup_settings SET enabled = 1, backup_type = 'ftp', host = 'backup.example.com' WHERE id = 1`); err != nil {
+		t.Fatalf("update remote_backup_settings: %v", err)
+	}
+
+	// 无效 backup_type 不应静默落入 rsync 分支，应和 SyncBackupToRemote 一样拒绝并返回 error。
+	hasFull, err := RemoteHasFullFileBackup("example.com")
+	if err == nil {
+		t.Fatal("RemoteHasFullFileBackup error = nil, want error for invalid backup_type")
+	}
+	if hasFull {
+		t.Fatal("RemoteHasFullFileBackup = true, want false alongside the error")
+	}
+}
+
 func TestRemoteHasFullFileBackupS3InvalidSettingsReturnsError(t *testing.T) {
 	openTestDB(t)
 	db := database.GetDB()
