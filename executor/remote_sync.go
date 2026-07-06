@@ -293,6 +293,10 @@ func loadPendingTransportStatusRows() ([]pendingTransportStatusRow, error) {
 			pending = append(pending, p)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("遍历待核对的数据库备份失败: %w", err)
+	}
 	rows.Close()
 
 	fileRows, err := db.Query(`SELECT file_backups.id, websites.domain, file_backups.filename
@@ -308,6 +312,10 @@ func loadPendingTransportStatusRows() ([]pendingTransportStatusRow, error) {
 			p.subdir = "files"
 			pending = append(pending, p)
 		}
+	}
+	if err := fileRows.Err(); err != nil {
+		fileRows.Close()
+		return nil, fmt.Errorf("遍历待核对的文件备份失败: %w", err)
 	}
 	fileRows.Close()
 

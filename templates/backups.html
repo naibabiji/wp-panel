@@ -150,7 +150,7 @@ function backupsOverview() {
         async reconcileRemoteStatus() {
             this.reconciling = true;
             try {
-                const r = await api('/backups/reconcile-status', { method: 'POST' });
+                const r = await api('/backups/reconcile-status', { method: 'POST', suppressToast: true });
                 if (r.success) {
                     showToast(t('backups.reconcile_success', { count: r.data.updated || 0 }), 'success');
                     await this.fetchOverview();
