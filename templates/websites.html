@@ -210,8 +210,12 @@ function websiteList() {
                     if (items.length) {
                         confirmMsg = t('website.delete_has_backups_warning', { domain: site.domain, items: items.join('\n') });
                     }
+                } else {
+                    confirmMsg = t('website.delete_backup_check_failed_warning', { domain: site.domain });
                 }
-            } catch (e) {}
+            } catch (e) {
+                confirmMsg = t('website.delete_backup_check_failed_warning', { domain: site.domain });
+            }
             if (!await confirmModal(confirmMsg)) return;
             try {
                 const resp = await api('/websites/' + site.id, { method: 'DELETE' });

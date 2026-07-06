@@ -204,6 +204,7 @@ var i18nKeys = []string{
 	"website.delete_confirm",
 	"website.delete_success",
 	"website.delete_has_backups_warning",
+	"website.delete_backup_check_failed_warning",
 	"website.backup_conflict_db_count",
 	"website.backup_conflict_file_count",
 	"website.backup_conflict_auto_enabled",

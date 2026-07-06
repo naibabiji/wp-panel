@@ -128,6 +128,52 @@ func TestBackupUsageReportsExistingBackupData(t *testing.T) {
 	}
 }
 
+func TestBackupUsageListsMultipleAndDisabledCronJobs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupBackupUsageTestDB(t)
+	db := database.GetDB()
+
+	if _, err := db.Exec(`INSERT INTO cron_jobs (name, cron_expression, command, task_type, backup_mode, site_id, enabled)
+		VALUES ('nightly backup', '0 2 * * *', 'wp-panel file backup', 'file_backup', 'incremental', 1, 1)`); err != nil {
+		t.Fatalf("insert cron_jobs: %v", err)
+	}
+	// 已经被禁用的备份计划任务（例如上一次删除流程里被自动禁用过）也应该出现在列表里，
+	// 因为它仍然需要管理员自行去删除，不是"已经处理完了"。
+	if _, err := db.Exec(`INSERT INTO cron_jobs (name, cron_expression, command, task_type, backup_mode, site_id, enabled)
+		VALUES ('weekly full backup', '0 3 * * 0', 'wp-panel file backup', 'file_backup', 'full', 1, 0)`); err != nil {
+		t.Fatalf("insert cron_jobs: %v", err)
+	}
+
+	router := gin.New()
+	handler := &WebsiteHandler{}
+	router.GET("/api/websites/:id/backup-usage", handler.BackupUsage)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/websites/1/backup-usage", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var resp backupUsageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v; body=%s", err, rec.Body.String())
+	}
+	names := map[string]bool{}
+	for _, j := range resp.Data.CronJobs {
+		names[j.Name] = true
+	}
+	if len(resp.Data.CronJobs) != 2 {
+		t.Fatalf("cron_jobs count = %d, want 2; got %+v", len(resp.Data.CronJobs), resp.Data.CronJobs)
+	}
+	if !names["nightly backup"] || !names["weekly full backup"] {
+		t.Fatalf("cron_jobs = %+v, want both nightly backup and weekly full backup listed regardless of enabled state", resp.Data.CronJobs)
+	}
+	if !resp.Data.HasBackupData() {
+		t.Fatal("HasBackupData() = false, want true")
+	}
+}
+
 func TestBackupUsageRejectsMissingWebsite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupBackupUsageTestDB(t)

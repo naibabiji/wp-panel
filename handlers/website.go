@@ -514,7 +514,8 @@ func (h *WebsiteHandler) BackupUsage(c *gin.Context) {
 	}
 	for rows.Next() {
 		var ref models.BackupCronJobRef
-		if rows.Scan(&ref.ID, &ref.Name) != nil {
+		if err := rows.Scan(&ref.ID, &ref.Name); err != nil {
+			log.Printf("备份使用量检查: 扫描计划任务行失败 site=%d: %v", id, err)
 			continue
 		}
 		usage.CronJobs = append(usage.CronJobs, ref)
