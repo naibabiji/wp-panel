@@ -1,0 +1,147 @@
+{{template "base" .}}
+{{define "backups_content"}}
+<div x-data="backupsOverview()" x-init="fetchOverview()">
+    <div class="flex items-center justify-between mb-6">
+        <h2 class="text-xl font-bold text-white">{{t .Lang "nav.backups"}}</h2>
+    </div>
+
+    <div class="card mb-6">
+        <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "backups.panel_section_title"}}</h3>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="border-b border-gray-700 text-gray-400">
+                    <tr>
+                        <th class="py-2 text-left">{{t .Lang "backups.filename"}}</th>
+                        <th class="py-2 text-left">{{t .Lang "backups.size"}}</th>
+                        <th class="py-2 text-left">{{t .Lang "backups.time"}}</th>
+                        <th class="py-2 text-left">{{t .Lang "backups.location"}}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="b in panelBackups" :key="b.filename">
+                        <tr class="border-b border-gray-700/50">
+                            <td class="py-2 font-mono text-xs whitespace-nowrap" x-text="b.filename"></td>
+                            <td class="py-2 text-xs whitespace-nowrap" x-text="b.size_text"></td>
+                            <td class="py-2 text-xs whitespace-nowrap" x-text="b.created_at"></td>
+                            <td class="py-2 whitespace-nowrap"><span class="badge-info text-xs" x-text="t('backups.transport_local')"></span></td>
+                        </tr>
+                    </template>
+                    <tr x-show="!loading && panelBackups.length === 0">
+                        <td colspan="4" class="py-4 text-center text-gray-500">{{t .Lang "backups.no_backups"}}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div x-show="loading" class="text-center text-gray-500 py-8">{{t .Lang "backups.loading"}}</div>
+
+    <template x-for="site in sites" :key="site.site_id">
+        <div class="card mb-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-white" x-text="site.domain"></h3>
+                <a :href="siteDetailUrl(site.site_id)" class="btn-secondary text-xs py-1 px-3">{{t .Lang "backups.view_website"}}</a>
+            </div>
+
+            <div class="mb-4">
+                <div class="text-xs text-gray-400 mb-2">{{t .Lang "backups.db_section_title"}}</div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="border-b border-gray-700 text-gray-400">
+                            <tr>
+                                <th class="py-2 text-left">{{t .Lang "backups.filename"}}</th>
+                                <th class="py-2 text-left">{{t .Lang "backups.size"}}</th>
+                                <th class="py-2 text-left">{{t .Lang "backups.time"}}</th>
+                                <th class="py-2 text-left">{{t .Lang "backups.mode"}}</th>
+                                <th class="py-2 text-left">{{t .Lang "backups.transport"}}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="b in site.db_backups" :key="b.id">
+                                <tr class="border-b border-gray-700/50">
+                                    <td class="py-2 font-mono text-xs whitespace-nowrap" x-text="b.filename"></td>
+                                    <td class="py-2 text-xs whitespace-nowrap" x-text="formatBytes(b.file_size)"></td>
+                                    <td class="py-2 text-xs whitespace-nowrap" x-text="fmtTime(b.created_at)"></td>
+                                    <td class="py-2 whitespace-nowrap"><span :class="b.auto ? 'badge-info' : 'badge-success'" class="text-xs" x-text="b.auto ? t('backups.backup_auto') : t('backups.backup_manual')"></span></td>
+                                    <td class="py-2 whitespace-nowrap"><span :class="transportBadgeClass(b.transport_status)" class="text-xs" x-text="transportLabel(b.transport_status)"></span></td>
+                                </tr>
+                            </template>
+                            <tr x-show="site.db_backups.length === 0">
+                                <td colspan="5" class="py-3 text-center text-gray-500">{{t .Lang "backups.no_backups"}}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div>
+                <div class="text-xs text-gray-400 mb-2">{{t .Lang "backups.file_section_title"}}</div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="border-b border-gray-700 text-gray-400">
+                            <tr>
+                                <th class="py-2 text-left">{{t .Lang "backups.filename"}}</th>
+                                <th class="py-2 text-left">{{t .Lang "backups.size"}}</th>
+                                <th class="py-2 text-left">{{t .Lang "backups.time"}}</th>
+                                <th class="py-2 text-left">{{t .Lang "backups.mode"}}</th>
+                                <th class="py-2 text-left">{{t .Lang "backups.transport"}}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="b in site.file_backups" :key="b.id">
+                                <tr class="border-b border-gray-700/50">
+                                    <td class="py-2 font-mono text-xs whitespace-nowrap" x-text="b.filename"></td>
+                                    <td class="py-2 text-xs whitespace-nowrap" x-text="formatBytes(b.file_size)"></td>
+                                    <td class="py-2 text-xs whitespace-nowrap" x-text="fmtTime(b.created_at)"></td>
+                                    <td class="py-2 whitespace-nowrap"><span :class="b.mode === 'full' ? 'badge-success' : 'badge-info'" class="text-xs" x-text="b.mode === 'full' ? t('backups.mode_full') : t('backups.mode_incremental')"></span></td>
+                                    <td class="py-2 whitespace-nowrap"><span :class="transportBadgeClass(b.transport_status)" class="text-xs" x-text="transportLabel(b.transport_status)"></span></td>
+                                </tr>
+                            </template>
+                            <tr x-show="site.file_backups.length === 0">
+                                <td colspan="5" class="py-3 text-center text-gray-500">{{t .Lang "backups.no_backups"}}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <div x-show="!loading && sites.length === 0" class="card text-center text-gray-500 py-8">{{t .Lang "backups.no_websites"}}</div>
+</div>
+
+<script>
+function backupsOverview() {
+    return {
+        loading: true,
+        sites: [],
+        panelBackups: [],
+        async fetchOverview() {
+            this.loading = true;
+            try {
+                const r = await api('/backups/overview');
+                if (r.success) {
+                    this.sites = r.data.sites || [];
+                    this.panelBackups = r.data.panel_db_backups || [];
+                }
+            } catch (e) {}
+            this.loading = false;
+        },
+        transportBadgeClass(status) {
+            if (status === 'synced') return 'badge-success';
+            if (status === 'failed') return 'badge-danger';
+            return 'badge-info';
+        },
+        transportLabel(status) {
+            if (status === 'synced') return t('backups.transport_synced');
+            if (status === 'failed') return t('backups.transport_failed');
+            return t('backups.transport_local');
+        },
+        siteDetailUrl(siteId) {
+            const prefix = document.body.dataset.panelPrefix || '';
+            return prefix + '/websites/' + siteId;
+        }
+    }
+}
+</script>
+{{end}}

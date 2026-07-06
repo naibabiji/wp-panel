@@ -23,6 +23,13 @@ var i18nKeys = []string{
 	"auth.login_failed",
 	"auth.missing_credentials",
 	"auth.session_expired",
+	"backups.backup_auto",
+	"backups.backup_manual",
+	"backups.mode_full",
+	"backups.mode_incremental",
+	"backups.transport_failed",
+	"backups.transport_local",
+	"backups.transport_synced",
 	"common.cancel",
 	"common.confirm",
 	"common.none",
@@ -732,6 +739,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/websites/:id/backups/settings", backupHandler.GetSettings)
 	protected.PUT("/api/websites/:id/backups/settings", backupHandler.UpdateSettings)
 	protected.POST("/api/websites/:id/backups/clear-database", backupHandler.ClearDatabase)
+	protected.GET("/api/backups/overview", handlers.GetBackupOverview)
 
 	dashboardHandler := &handlers.DashboardHandler{}
 	protected.GET("/api/dashboard/stats", dashboardHandler.GetStats)
@@ -844,6 +852,9 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/cron", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "cron.html", pageData(suffix, "cron", "cron_content", c))
 	})
+	protected.GET("/backups", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "backups.html", pageData(suffix, "backups", "backups_content", c))
+	})
 	protected.GET("/firewall", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "firewall.html", pageData(suffix, "firewall", "firewall_content", c))
 	})
@@ -892,6 +903,7 @@ var pageTitleKeys = map[string]string{
 	"websites":       "nav.websites",
 	"ai-diagnostics": "nav.ai_diagnostics",
 	"cron":           "nav.cron",
+	"backups":        "nav.backups",
 	"firewall":       "nav.firewall",
 	"security":       "nav.security",
 	"files":          "nav.files",

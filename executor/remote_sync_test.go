@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/naibabiji/wp-panel/database"
 )
 
 func TestValidateRemoteBackupSettingsRejectsUnsafeValues(t *testing.T) {
@@ -265,4 +267,151 @@ func seedS3TestFile(t *testing.T, size int64) string {
 		t.Fatalf("truncate test file: %v", err)
 	}
 	return path
+}
+
+// ------------------------------------------------------------------
+// 远程全量基线探测（RemoteHasFullFileBackup 及底层 remoteHasFullBackup/s3HasFullBackup）
+// ------------------------------------------------------------------
+
+func TestRemoteHasFullFileBackupDisabledReturnsTrue(t *testing.T) {
+	openTestDB(t)
+
+	hasFull, err := RemoteHasFullFileBackup("example.com")
+	if err != nil {
+		t.Fatalf("RemoteHasFullFileBackup error = %v, want nil when remote backup disabled", err)
+	}
+	if !hasFull {
+		t.Fatal("RemoteHasFullFileBackup = false, want true when remote backup disabled (no completeness constraint)")
+	}
+}
+
+func TestRemoteHasFullFileBackupRsyncMissingHostReturnsError(t *testing.T) {
+	openTestDB(t)
+	db := database.GetDB()
+	if _, err := db.Exec(`UPDATE remote_backup_settings SET enabled = 1, backup_type = 'rsync', host = '' WHERE id = 1`); err != nil {
+		t.Fatalf("update remote_backup_settings: %v", err)
+	}
+
+	// host 为空时应返回 error（未确认远程状态），调用方据此强制走全量备份，
+	// 而不是静默当作"远程已有全量基线"处理。
+	hasFull, err := RemoteHasFullFileBackup("example.com")
+	if err == nil {
+		t.Fatal("RemoteHasFullFileBackup error = nil, want error when remote enabled but host is empty")
+	}
+	if hasFull {
+		t.Fatal("RemoteHasFullFileBackup = true, want false alongside the error")
+	}
+}
+
+func TestRemoteHasFullFileBackupS3InvalidSettingsReturnsError(t *testing.T) {
+	openTestDB(t)
+	db := database.GetDB()
+	if _, err := db.Exec(`UPDATE remote_backup_settings SET enabled = 1, backup_type = 's3', s3_endpoint = '', s3_bucket = '' WHERE id = 1`); err != nil {
+		t.Fatalf("update remote_backup_settings: %v", err)
+	}
+
+	hasFull, err := RemoteHasFullFileBackup("example.com")
+	if err == nil {
+		t.Fatal("RemoteHasFullFileBackup error = nil, want error for invalid S3 settings")
+	}
+	if hasFull {
+		t.Fatal("RemoteHasFullFileBackup = true, want false alongside the error")
+	}
+}
+
+func TestS3HasFullBackupParsesKeyCount(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.RawQuery, "prefix=wp-panel%2Fexample.com%2Ffiles%2Ffile_full_") {
+			t.Errorf("unexpected list query: %s", r.URL.RawQuery)
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`<ListBucketResult><KeyCount>1</KeyCount></ListBucketResult>`))
+	}))
+	defer server.Close()
+	withS3TestClient(t, server)
+
+	hasFull, err := s3HasFullBackup(t.Context(), server.URL, "wp-panel-backups", "auto", "access-key_123", "secret", "wp-panel", "example.com")
+	if err != nil {
+		t.Fatalf("s3HasFullBackup() error = %v", err)
+	}
+	if !hasFull {
+		t.Fatal("s3HasFullBackup() = false, want true when KeyCount > 0")
+	}
+}
+
+func TestS3HasFullBackupNoResultsReturnsFalse(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`<ListBucketResult><KeyCount>0</KeyCount></ListBucketResult>`))
+	}))
+	defer server.Close()
+	withS3TestClient(t, server)
+
+	hasFull, err := s3HasFullBackup(t.Context(), server.URL, "wp-panel-backups", "auto", "access-key_123", "secret", "wp-panel", "example.com")
+	if err != nil {
+		t.Fatalf("s3HasFullBackup() error = %v", err)
+	}
+	if hasFull {
+		t.Fatal("s3HasFullBackup() = true, want false when bucket has no matching full-backup objects")
+	}
+}
+
+// ------------------------------------------------------------------
+// updateBackupTransportStatus 回写 db_backups / file_backups 的 transport_status
+// ------------------------------------------------------------------
+
+func insertMinimalWebsite(t *testing.T, domain string) {
+	t.Helper()
+	mustExec(t, database.GetDB(), `INSERT INTO websites (id, name, domain, system_user, web_root, log_dir, db_name, db_user, php_pool_path, nginx_conf_path)
+		VALUES (1, 'site', '`+domain+`', 'u1', '/www/wwwroot/`+domain+`', '/www/wwwlogs/`+domain+`', 'db1', 'u1', '/p', '/n')`)
+}
+
+func TestUpdateBackupTransportStatusWritesDBBackups(t *testing.T) {
+	openTestDB(t)
+	db := database.GetDB()
+	insertMinimalWebsite(t, "db.example.com")
+	if _, err := db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name) VALUES (1, 'backup.sql.gz', 100, 'db1')`); err != nil {
+		t.Fatalf("insert db_backups: %v", err)
+	}
+
+	updateBackupTransportStatus(BackupSourceDB, 1, "backup.sql.gz", "synced", "")
+
+	var status, message string
+	if err := db.QueryRow(`SELECT transport_status, transport_message FROM db_backups WHERE site_id = 1 AND filename = 'backup.sql.gz'`).Scan(&status, &message); err != nil {
+		t.Fatalf("query db_backups: %v", err)
+	}
+	if status != "synced" {
+		t.Fatalf("transport_status = %q, want %q", status, "synced")
+	}
+	if message != "" {
+		t.Fatalf("transport_message = %q, want empty", message)
+	}
+}
+
+func TestUpdateBackupTransportStatusWritesFileBackups(t *testing.T) {
+	openTestDB(t)
+	db := database.GetDB()
+	insertMinimalWebsite(t, "file.example.com")
+	if _, err := db.Exec(`INSERT INTO file_backups (site_id, filename, file_size, mode) VALUES (1, 'file_full_20260101_000000.tar.gz', 200, 'full')`); err != nil {
+		t.Fatalf("insert file_backups: %v", err)
+	}
+
+	updateBackupTransportStatus(BackupSourceFile, 1, "file_full_20260101_000000.tar.gz", "failed", "连接超时")
+
+	var status, message string
+	if err := db.QueryRow(`SELECT transport_status, transport_message FROM file_backups WHERE site_id = 1 AND filename = 'file_full_20260101_000000.tar.gz'`).Scan(&status, &message); err != nil {
+		t.Fatalf("query file_backups: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("transport_status = %q, want %q", status, "failed")
+	}
+	if message != "连接超时" {
+		t.Fatalf("transport_message = %q, want %q", message, "连接超时")
+	}
+}
+
+func TestUpdateBackupTransportStatusIgnoresZeroSiteID(t *testing.T) {
+	openTestDB(t)
+	// 不应 panic：siteID 为 0（未落库的记录）时直接跳过写入。
+	updateBackupTransportStatus(BackupSourceDB, 0, "whatever.sql.gz", "synced", "")
 }

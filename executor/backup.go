@@ -61,7 +61,7 @@ func executeCreateBackup(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "备份记录保存失败: " + err.Error()}
 	}
 
-	SyncBackupToRemote(filePath)
+	SyncBackupToRemote(filePath, BackupSourceDB, site.ID, filename)
 
 	cleanupOldBackups(site.ID, site.Domain, getKeepCount(site.ID))
 
@@ -698,7 +698,7 @@ func executeAutoBackups() {
 			continue
 		}
 
-		SyncBackupToRemote(filePath)
+		SyncBackupToRemote(filePath, BackupSourceDB, siteID, filename)
 		if keepCount <= 0 {
 			keepCount = 7
 		}

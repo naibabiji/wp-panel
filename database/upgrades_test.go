@@ -282,6 +282,60 @@ func TestUpgradeAddsFileSecurityEventsTableToExistingSchema(t *testing.T) {
 	}
 }
 
+func TestUpgradeAddsFileBackupsTableToExistingSchema(t *testing.T) {
+	openTempDB(t)
+
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.23')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+	if _, err := DB.Exec("DROP TABLE IF EXISTS file_backups"); err != nil {
+		t.Fatalf("drop file_backups: %v", err)
+	}
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("second RunUpgrades() error = %v", err)
+	}
+
+	var tableExists, indexExists int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'file_backups'").Scan(&tableExists); err != nil {
+		t.Fatalf("query file_backups table: %v", err)
+	}
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_file_backups_site'").Scan(&indexExists); err != nil {
+		t.Fatalf("query file_backups index: %v", err)
+	}
+	if tableExists != 1 || indexExists != 1 {
+		t.Fatalf("file_backups table/index exists = %d/%d, want 1/1", tableExists, indexExists)
+	}
+}
+
+func TestFreshInstallHasFileBackupsTable(t *testing.T) {
+	openTempDB(t)
+
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+
+	var tableExists int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'file_backups'").Scan(&tableExists); err != nil {
+		t.Fatalf("query file_backups table: %v", err)
+	}
+	if tableExists != 1 {
+		t.Fatalf("file_backups table exists = %d, want 1 on fresh install", tableExists)
+	}
+}
+
 func TestUpgradeAddsDocumentRootSubdirColumnToExistingSchema(t *testing.T) {
 	openTempDB(t)
 

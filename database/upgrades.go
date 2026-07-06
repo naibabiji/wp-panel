@@ -337,6 +337,24 @@ var upgrades = []Upgrade{
 		Description: "补充 WordPress 文件锁定开启时间字段",
 		Func:        ensureFileLockEnabledAtColumn,
 	},
+	{
+		Version:     "1.0.24",
+		Description: "新增网站文件备份记录表，支撑备份总览页面",
+		SQL: []string{
+			`CREATE TABLE IF NOT EXISTS file_backups (
+				id                INTEGER PRIMARY KEY AUTOINCREMENT,
+				site_id           INTEGER NOT NULL,
+				filename          TEXT    NOT NULL,
+				file_size         INTEGER DEFAULT 0,
+				mode              TEXT    NOT NULL DEFAULT 'full',
+				transport_status  TEXT    DEFAULT 'local',
+				transport_message TEXT    DEFAULT '',
+				created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_file_backups_site ON file_backups(site_id, created_at)`,
+		},
+	},
 }
 
 func ensureFileLockEnabledColumn() error {

@@ -335,6 +335,22 @@ var migrations = []string{
 	`CREATE INDEX IF NOT EXISTS idx_backups_site ON db_backups(site_id, created_at)`,
 
 	// ============================================================
+	// file_backups（网站文件备份记录）
+	// ============================================================
+	`CREATE TABLE IF NOT EXISTS file_backups (
+		id                INTEGER PRIMARY KEY AUTOINCREMENT,
+		site_id           INTEGER NOT NULL,
+		filename          TEXT    NOT NULL,
+		file_size         INTEGER DEFAULT 0,
+		mode              TEXT    NOT NULL DEFAULT 'full',
+		transport_status  TEXT    DEFAULT 'local',
+		transport_message TEXT    DEFAULT '',
+		created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_file_backups_site ON file_backups(site_id, created_at)`,
+
+	// ============================================================
 	// backup_settings
 	// ============================================================
 	`CREATE TABLE IF NOT EXISTS backup_settings (

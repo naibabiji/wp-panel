@@ -82,6 +82,7 @@
     "websites": "网站管理",
     "ai_diagnostics": "AI 诊断",
     "cron": "计划任务",
+    "backups": "备份总览",
     "firewall": "安全防御",
     "security": "安全设置",
     "files": "文件管理",
@@ -1198,5 +1199,27 @@
     "load_failed": "加载失败",
     "save_failed": "保存失败"
   },
-  "session_username": "会话用户名"
+  "session_username": "会话用户名",
+  "backups": {
+    "panel_section_title": "面板自身数据库备份",
+    "db_section_title": "数据库备份",
+    "file_section_title": "文件备份",
+    "filename": "文件名",
+    "size": "大小",
+    "time": "时间",
+    "mode": "类型",
+    "transport": "远程状态",
+    "location": "位置",
+    "view_website": "查看网站详情",
+    "no_backups": "暂无备份",
+    "no_websites": "暂无网站",
+    "loading": "加载中...",
+    "backup_auto": "自动",
+    "backup_manual": "手动",
+    "mode_full": "全量",
+    "mode_incremental": "增量",
+    "transport_local": "仅本地",
+    "transport_synced": "已同步远程",
+    "transport_failed": "远程同步失败"
+  }
 }

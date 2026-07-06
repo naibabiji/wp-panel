@@ -21,6 +21,7 @@ var pageTemplates = map[string]string{
 	"website_detail.html": "websites_detail_content",
 	"ai_diagnostics.html": "ai_diagnostics_content",
 	"cron.html":           "cron_content",
+	"backups.html":        "backups_content",
 	"firewall.html":       "firewall_content",
 	"files.html":          "files_content",
 	"security.html":       "security_content",
@@ -43,7 +44,7 @@ func TestPageTemplatesRender(t *testing.T) {
 func TestContentTemplatesRender(t *testing.T) {
 	contents := []string{
 		"dashboard_content", "websites_content", "websites_new_content",
-		"websites_detail_content", "ai_diagnostics_content", "cron_content", "firewall_content",
+		"websites_detail_content", "ai_diagnostics_content", "cron_content", "backups_content", "firewall_content",
 		"files_content", "security_content", "settings_content",
 		"alert_content", "extensions_content", "software_content",
 	}

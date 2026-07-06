@@ -82,6 +82,7 @@
     "websites": "Websites",
     "ai_diagnostics": "AI Diagnostics",
     "cron": "Cron Jobs",
+    "backups": "Backups Overview",
     "firewall": "Firewall",
     "security": "Security",
     "files": "Files",
@@ -1198,5 +1199,27 @@
     "load_failed": "Load failed",
     "save_failed": "Save failed"
   },
-  "session_username": "Session username"
+  "session_username": "Session username",
+  "backups": {
+    "panel_section_title": "Panel database backups",
+    "db_section_title": "Database backups",
+    "file_section_title": "File backups",
+    "filename": "Filename",
+    "size": "Size",
+    "time": "Time",
+    "mode": "Type",
+    "transport": "Remote status",
+    "location": "Location",
+    "view_website": "View website",
+    "no_backups": "No backups",
+    "no_websites": "No websites",
+    "loading": "Loading...",
+    "backup_auto": "Auto",
+    "backup_manual": "Manual",
+    "mode_full": "Full",
+    "mode_incremental": "Incremental",
+    "transport_local": "Local only",
+    "transport_synced": "Synced to remote",
+    "transport_failed": "Remote sync failed"
+  }
 }

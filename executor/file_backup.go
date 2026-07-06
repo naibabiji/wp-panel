@@ -74,6 +74,17 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 		}
 	}
 
+	// 增量备份前确认远程是否已有全量基线：远程服务器被更换或远程数据被清空时，
+	// 本地 stamp 文件依然存在，但远程可能只剩增量数据，此时强制转为全量重建基线。
+	// 探测失败（连接失败/配置无效）同样按"未确认完整"处理，强制全量。
+	forcedFullByRemote := false
+	if !isFull {
+		if hasFull, err := RemoteHasFullFileBackup(domain); err != nil || !hasFull {
+			isFull = true
+			forcedFullByRemote = true
+		}
+	}
+
 	tarExcludes := []string{
 		"--exclude=wp-content/cache",
 		"--exclude=wp-content/upgrade",
@@ -138,8 +149,23 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 		cleanOldBackups(backupDir, keepCount)
 	}
 
-	SyncBackupToRemote(fullPath)
+	info, _ := os.Stat(fullPath)
+	size := int64(0)
+	if info != nil {
+		size = info.Size()
+	}
+	modeLabel := "incremental"
+	if isFull {
+		modeLabel = "full"
+	}
+	db.Exec(`INSERT INTO file_backups (site_id, filename, file_size, mode) VALUES (?, ?, ?, ?)`,
+		siteID, tarName, size, modeLabel)
+
+	SyncBackupToRemote(fullPath, BackupSourceFile, siteID, tarName)
 	logMsg := fmt.Sprintf("%s 文件备份成功: %s (%s)", domain, tarName, map[bool]string{true: "全量", false: "增量"}[isFull])
+	if forcedFullByRemote {
+		logMsg += "；检测到远程无全量基线，已自动转为全量备份"
+	}
 	appendCronLog(logMsg)
 	return logMsg, nil
 }
