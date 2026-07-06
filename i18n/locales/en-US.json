@@ -1232,6 +1232,7 @@
     "expand_all": "Expand all",
     "collapse_all": "Collapse all",
     "summary_db_count": "{{count}} database backup(s)",
-    "summary_file_count": "{{count}} file backup(s)"
+    "summary_file_count": "{{count}} file backup(s)",
+    "toggle_hint": "Click to expand/collapse"
   }
 }

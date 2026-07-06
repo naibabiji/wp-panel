@@ -42,10 +42,14 @@
 
     <template x-for="site in sites" :key="site.site_id">
         <details class="card mb-4 site-backup-card">
-            <summary class="cursor-pointer flex items-center justify-between select-none">
+            <summary class="cursor-pointer flex items-center justify-between select-none hover:bg-gray-800/50 transition-colors">
                 <span class="flex items-center gap-3 min-w-0">
+                    <svg class="chevron-icon w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                    </svg>
                     <span class="text-lg font-semibold text-white truncate" x-text="site.domain"></span>
                     <span class="text-xs text-gray-400 whitespace-nowrap" x-text="siteSummaryText(site)"></span>
+                    <span class="text-xs text-gray-500 whitespace-nowrap hidden sm:inline">{{t .Lang "backups.toggle_hint"}}</span>
                 </span>
                 <button type="button" @click.stop.prevent="goToSite(site.site_id)" class="btn-secondary text-xs py-1 px-3 flex-shrink-0">{{t .Lang "backups.view_website"}}</button>
             </summary>
@@ -116,6 +120,13 @@
 
     <div x-show="!loading && sites.length === 0" class="card text-center text-gray-500 py-8">{{t .Lang "backups.no_websites"}}</div>
 </div>
+
+<style>
+    .site-backup-card > summary { list-style: none; }
+    .site-backup-card > summary::-webkit-details-marker { display: none; }
+    .site-backup-card .chevron-icon { transition: transform 0.15s ease; }
+    .site-backup-card[open] > summary .chevron-icon { transform: rotate(90deg); }
+</style>
 
 <script>
 function backupsOverview() {
