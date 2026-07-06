@@ -132,20 +132,19 @@ func TestGetBackupOverviewReportsLocalFileExistence(t *testing.T) {
 
 	backupRoot := t.TempDir()
 	dbDir := filepath.Join(backupRoot, "localcheck.example.com", "db")
-	filesDir := filepath.Join(backupRoot, "localcheck.example.com", "files")
 	if err := os.MkdirAll(dbDir, 0700); err != nil {
 		t.Fatalf("mkdir db dir: %v", err)
-	}
-	if err := os.MkdirAll(filesDir, 0700); err != nil {
-		t.Fatalf("mkdir files dir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dbDir, "present.sql.gz"), []byte("x"), 0600); err != nil {
 		t.Fatalf("write present.sql.gz: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(filesDir, "file_full_present.tar.gz"), []byte("x"), 0600); err != nil {
-		t.Fatalf("write file_full_present.tar.gz: %v", err)
-	}
 	// 注意：'gone.sql.gz' 故意不在磁盘上创建，模拟已被清理的情况。
+	//
+	// 数据库备份的本地路径读取可注入的 cfg.Panel.BackupDir（backupRoot），这里能真实覆盖
+	// 本地文件存在/不存在两种情况。文件备份的本地路径固定读取 config.DefaultBackupDir
+	// （生产环境和 executor/file_backup.go 的生成路径保持一致，不受这里注入的 backupRoot
+	// 影响），所以此处不再构造文件备份的本地文件——那部分逻辑由
+	// TestFileBackupLocalExistsFromRoot 单独覆盖，用可注入的 root 验证同样的判定逻辑。
 
 	oldConfig := config.AppConfig
 	config.AppConfig = &config.Config{Panel: config.PanelConfig{BackupDir: backupRoot}}
@@ -185,9 +184,11 @@ func TestGetBackupOverviewReportsLocalFileExistence(t *testing.T) {
 		t.Fatalf("gone.sql.gz local_exists = %+v, want false", gone)
 	}
 
+	// config.DefaultBackupDir（固定的 /www/server/panel/backups）在测试环境里不存在，
+	// 所以这里 local_exists 必然是 false——这本身就是"目录不存在时不崩溃、如实报告"的有效断言。
 	fileBackups := resp.Data.Sites[0].FileBackups
-	if len(fileBackups) != 1 || fileBackups[0]["local_exists"] != true {
-		t.Fatalf("file_backups = %+v, want one entry with local_exists=true", fileBackups)
+	if len(fileBackups) != 1 || fileBackups[0]["local_exists"] != false {
+		t.Fatalf("file_backups = %+v, want one entry with local_exists=false (config.DefaultBackupDir does not exist in test env)", fileBackups)
 	}
 }
 
@@ -222,5 +223,52 @@ func TestGetBackupOverviewSurfacesQueryErrors(t *testing.T) {
 	}
 	if resp.Success {
 		t.Fatal("success = true, want false when db_backups query fails")
+	}
+}
+
+func TestFileBackupLocalExistsFromRoot(t *testing.T) {
+	root := t.TempDir()
+	filesDir := filepath.Join(root, "present.example.com", "files")
+	if err := os.MkdirAll(filesDir, 0755); err != nil {
+		t.Fatalf("mkdir files dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(filesDir, "file_full_x.tar.gz"), []byte("x"), 0644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	if !fileBackupLocalExistsFromRoot(root, "present.example.com", "file_full_x.tar.gz") {
+		t.Fatal("fileBackupLocalExistsFromRoot() = false, want true for a file that exists on disk")
+	}
+	if fileBackupLocalExistsFromRoot(root, "present.example.com", "file_full_missing.tar.gz") {
+		t.Fatal("fileBackupLocalExistsFromRoot() = true, want false for a filename that was never created")
+	}
+	if fileBackupLocalExistsFromRoot(root, "no-such-site.example.com", "file_full_x.tar.gz") {
+		t.Fatal("fileBackupLocalExistsFromRoot() = true, want false when the site's backup directory doesn't exist at all")
+	}
+}
+
+func TestLocalFileExistsTreatsUnknownStatErrorsAsExisting(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sub", "backup.sql.gz")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("x"), 0644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	if os.Geteuid() == 0 {
+		t.Skip("running as root; permission-based stat failure cannot be simulated")
+	}
+
+	// 去掉父目录的执行权限，让 os.Stat(path) 因权限不足失败，而不是"文件不存在"。
+	if err := os.Chmod(filepath.Dir(path), 0644); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(filepath.Dir(path), 0755) })
+
+	// 权限不足这类"无法确认"的错误不能被当成"文件不存在"，否则会误报"本地文件缺失"。
+	if !localFileExists(path) {
+		t.Fatal("localFileExists() = false, want true when stat fails for a reason other than not-exist")
 	}
 }

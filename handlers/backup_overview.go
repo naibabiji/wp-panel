@@ -103,8 +103,7 @@ func GetBackupOverview(c *gin.Context) {
 			continue
 		}
 		if idx, ok := siteIndex[b.SiteID]; ok {
-			localPath := filepath.Join(cfg.Panel.BackupDir, sites[idx].Domain, "files", b.Filename)
-			b.LocalExists = localFileExists(localPath)
+			b.LocalExists = fileBackupLocalExists(sites[idx].Domain, b.Filename)
 			sites[idx].FileBackups = append(sites[idx].FileBackups, b)
 		}
 	}
@@ -123,7 +122,30 @@ func GetBackupOverview(c *gin.Context) {
 }
 
 // localFileExists 只做一次本地文件系统 stat，不涉及远程网络请求，性能开销可忽略。
+// 只有明确确认文件不存在（os.IsNotExist）才判定为不存在；权限不足、IO 错误等无法确认的情况
+// 一律当作"存在"处理，避免把"查不了"误报成"本地文件缺失"这种更容易引起恐慌的结论。
 func localFileExists(path string) bool {
 	_, err := os.Stat(path)
-	return err == nil
+	if err == nil {
+		return true
+	}
+	if os.IsNotExist(err) {
+		return false
+	}
+	log.Printf("备份总览: 检查本地文件状态失败 %s: %v", path, err)
+	return true
+}
+
+// fileBackupLocalExists 检查网站文件备份对应的本地文件是否还在。文件备份固定存放在
+// config.DefaultBackupDir（与 executor/file_backup.go 的生成路径、executor/remote_sync.go
+// 的远程同步根目录保持一致），不是 cfg.Panel.BackupDir——两者在正常安装下值相同，
+// 但文件备份的落盘路径从来没有真正读取过 Panel.BackupDir，用错会导致误报"本地文件缺失"。
+func fileBackupLocalExists(domain, filename string) bool {
+	return fileBackupLocalExistsFromRoot(config.DefaultBackupDir, domain, filename)
+}
+
+// fileBackupLocalExistsFromRoot 是 fileBackupLocalExists 的可测试实现，root 参数便于单元测试
+// 注入临时目录；生产代码固定通过 fileBackupLocalExists 传入 config.DefaultBackupDir。
+func fileBackupLocalExistsFromRoot(root, domain, filename string) bool {
+	return localFileExists(filepath.Join(root, domain, "files", filename))
 }

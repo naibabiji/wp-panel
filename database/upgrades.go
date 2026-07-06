@@ -33,6 +33,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/naibabiji/wp-panel/config"
 )
 
 // Upgrade 定义一次版本升级需要执行的数据库变更。
@@ -417,7 +419,7 @@ func ensureFileLockEnabledAtColumn() error {
 // 历史文件无法确认是否曾经同步到远程，统一记为 transport_status='local'。
 // 按 (site_id, filename) 查重，重复执行不会重复插入；目录不存在/不可读的网站直接跳过。
 func backfillFileBackupsFromDisk() error {
-	return backfillFileBackupsFromRoot("/www/server/panel/backups")
+	return backfillFileBackupsFromRoot(config.DefaultBackupDir)
 }
 
 // backfillFileBackupsFromRoot 是 backfillFileBackupsFromDisk 的可测试实现，backupsRoot 参数

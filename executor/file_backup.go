@@ -53,7 +53,7 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 		return "", fmt.Errorf("网站不存在")
 	}
 
-	backupDir := filepath.Join("/www/server/panel/backups", domain, "files")
+	backupDir := filepath.Join(backupsRoot, domain, "files")
 	os.MkdirAll(backupDir, 0755)
 	stampFile := filepath.Join(backupDir, ".last_backup.stamp")
 

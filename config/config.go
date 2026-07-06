@@ -6,6 +6,12 @@ import (
 	"os"
 )
 
+// DefaultBackupDir 是面板备份根目录的固定值（install.sh 写入 config.json 的 backup_dir 也是这个值）。
+// 网站文件备份（executor/file_backup.go）、远程同步相对路径计算（executor/remote_sync.go）、
+// 文件备份历史数据回填（database/upgrades.go）目前都直接写死这个路径而不是读取 Panel.BackupDir，
+// 统一引用这个常量，避免同一个路径散落成多份字面量、后续改一处漏改一处。
+const DefaultBackupDir = "/www/server/panel/backups"
+
 type PanelConfig struct {
 	Version      string `json:"version"`
 	Port         int    `json:"port"`

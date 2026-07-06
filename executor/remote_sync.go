@@ -20,10 +20,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
 )
 
-const backupsRoot = "/www/server/panel/backups"
+const backupsRoot = config.DefaultBackupDir
 
 // BackupSource 标识一次远程同步对应的备份记录来源表，用于同步完成后回写 transport_status。
 type BackupSource string

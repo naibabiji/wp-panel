@@ -322,6 +322,48 @@ func TestUpgradeAddsFileBackupsTableToExistingSchema(t *testing.T) {
 	}
 }
 
+func TestUpgradeChainReachesFileBackupsBackfillFromExistingSchema(t *testing.T) {
+	openTempDB(t)
+
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.24')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+	insertMinimalWebsiteForBackfill(t, 1, "chain.example.com")
+
+	// 走真实入口 RunUpgrades()，而不是直接调用 backfillFileBackupsFromRoot，
+	// 确保 1.0.25 这一步真的会被执行到（生产环境正是通过这条链路触发回填）。
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() from 1.0.24 error = %v", err)
+	}
+
+	var version string
+	if err := DB.QueryRow("SELECT version FROM schema_version ORDER BY updated_at DESC, rowid DESC LIMIT 1").Scan(&version); err != nil {
+		t.Fatalf("query schema_version: %v", err)
+	}
+	if version != "1.0.25" {
+		t.Fatalf("schema_version = %q, want %q (RunUpgrades must actually execute the 1.0.25 backfill step)", version, "1.0.25")
+	}
+
+	// 生产环境的 backfillFileBackupsFromDisk 固定读取 config.DefaultBackupDir，测试环境里这个
+	// 目录不存在，所以升级步骤应该安全跳过（不报错、不插入任何记录），而不是失败。
+	var count int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM file_backups`).Scan(&count); err != nil {
+		t.Fatalf("count file_backups: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("file_backups count = %d, want 0 (config.DefaultBackupDir does not exist in test env)", count)
+	}
+}
+
 func TestFreshInstallHasFileBackupsTable(t *testing.T) {
 	openTempDB(t)
 
