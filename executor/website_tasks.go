@@ -530,11 +530,32 @@ func executeDeleteSite(task *Task) TaskResult {
 	os.RemoveAll(certDir)
 
 	db := database.GetDB()
+
+	// 面板不自动删除备份文件或备份计划任务，需要管理员自行清理；这里只是先禁用该网站关联的
+	// 备份计划任务，避免网站删除后 site_id 被级联置空，任务继续按计划静默执行失败。
+	if disabled, err := disableSiteBackupCronJobs(db, site.ID); err != nil {
+		log.Printf("禁用网站关联备份计划任务失败 domain=%s: %v", site.Domain, err)
+	} else if disabled {
+		renderTask := GlobalQueue.Enqueue(TaskRenderCron, nil)
+		<-renderTask.ResultCh
+	}
+
 	if _, err := db.Exec("DELETE FROM websites WHERE id = ?", site.ID); err != nil {
 		return TaskResult{Success: false, Message: "清理数据库记录失败: " + err.Error()}
 	}
 
 	return TaskResult{Success: true, Message: "网站 " + site.Domain + " 已删除" + dbCleanupWarning}
+}
+
+// disableSiteBackupCronJobs 禁用（不删除）指定网站的“备份网站文件”计划任务。
+// 返回是否有任务被禁用，供调用方决定是否需要重新生成系统 crontab。
+func disableSiteBackupCronJobs(db *sql.DB, siteID int) (bool, error) {
+	res, err := db.Exec(`UPDATE cron_jobs SET enabled = 0 WHERE site_id = ? AND task_type = 'file_backup' AND enabled = 1`, siteID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 func executePauseSite(task *Task) TaskResult {

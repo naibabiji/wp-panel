@@ -203,6 +203,11 @@ var i18nKeys = []string{
 	"website.never_expires",
 	"website.delete_confirm",
 	"website.delete_success",
+	"website.delete_has_backups_warning",
+	"website.backup_conflict_db_count",
+	"website.backup_conflict_file_count",
+	"website.backup_conflict_auto_enabled",
+	"website.backup_conflict_cron_jobs",
 	"website.site_pause",
 	"website.site_enable",
 	"website.reinstall",
@@ -698,6 +703,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/websites/ssl-preflight", websiteHandler.SSLPreflight)
 	protected.GET("/api/websites/:id", websiteHandler.Get)
 	protected.DELETE("/api/websites/:id", websiteHandler.Delete)
+	protected.GET("/api/websites/:id/backup-usage", websiteHandler.BackupUsage)
 	protected.PATCH("/api/websites/:id/status", websiteHandler.ToggleStatus)
 	protected.POST("/api/websites/:id/ssl", websiteHandler.EnableSSL)
 	protected.GET("/api/websites/:id/ssl/download", websiteHandler.DownloadSSLPackage)

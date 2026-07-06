@@ -195,7 +195,24 @@ function websiteList() {
             this.reinstallingId = null;
         },
         async deleteSite(site) {
-            if (!await confirmModal(t('website.delete_confirm', { domain: site.domain }))) return;
+            let confirmMsg = t('website.delete_confirm', { domain: site.domain });
+            try {
+                const usageResp = await api('/websites/' + site.id + '/backup-usage', { silent: true });
+                if (usageResp.success) {
+                    const usage = usageResp.data;
+                    const items = [];
+                    if (usage.db_backup_count > 0) items.push(t('website.backup_conflict_db_count', { count: usage.db_backup_count }));
+                    if (usage.file_backup_count > 0) items.push(t('website.backup_conflict_file_count', { count: usage.file_backup_count }));
+                    if (usage.auto_backup_enabled) items.push(t('website.backup_conflict_auto_enabled'));
+                    if (usage.cron_jobs && usage.cron_jobs.length) {
+                        items.push(t('website.backup_conflict_cron_jobs', { names: usage.cron_jobs.map(j => j.name).join('、') }));
+                    }
+                    if (items.length) {
+                        confirmMsg = t('website.delete_has_backups_warning', { domain: site.domain, items: items.join('\n') });
+                    }
+                }
+            } catch (e) {}
+            if (!await confirmModal(confirmMsg)) return;
             try {
                 const resp = await api('/websites/' + site.id, { method: 'DELETE' });
                 if (resp.success) {

@@ -476,6 +476,54 @@ func (h *WebsiteHandler) Delete(c *gin.Context) {
 	}
 }
 
+// BackupUsage 返回网站当前的备份数据规模（数据库备份数、文件备份数、是否启用自动备份、
+// 关联的备份计划任务），供前端在删除网站前提醒管理员：面板不会自动删除这些备份或计划任务。
+func (h *WebsiteHandler) BackupUsage(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
+		return
+	}
+	if getWebsiteByID(id) == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+
+	db := database.GetDB()
+	usage := models.WebsiteBackupUsage{CronJobs: []models.BackupCronJobRef{}}
+
+	if err := db.QueryRow(`SELECT COUNT(*) FROM db_backups WHERE site_id = ?`, id).Scan(&usage.DBBackupCount); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询数据库备份数量失败"))
+		return
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM file_backups WHERE site_id = ?`, id).Scan(&usage.FileBackupCount); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询文件备份数量失败"))
+		return
+	}
+	var enabled int
+	if err := db.QueryRow(`SELECT enabled FROM backup_settings WHERE site_id = ?`, id).Scan(&enabled); err != nil && err != sql.ErrNoRows {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询自动备份设置失败"))
+		return
+	}
+	usage.AutoBackupEnabled = enabled == 1
+
+	rows, err := db.Query(`SELECT id, name FROM cron_jobs WHERE site_id = ? AND task_type = 'file_backup'`, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询关联计划任务失败"))
+		return
+	}
+	for rows.Next() {
+		var ref models.BackupCronJobRef
+		if rows.Scan(&ref.ID, &ref.Name) != nil {
+			continue
+		}
+		usage.CronJobs = append(usage.CronJobs, ref)
+	}
+	rows.Close()
+
+	c.JSON(http.StatusOK, models.SuccessResponse(usage))
+}
+
 func (h *WebsiteHandler) ToggleStatus(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {

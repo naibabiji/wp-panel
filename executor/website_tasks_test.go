@@ -4,7 +4,60 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/naibabiji/wp-panel/database"
 )
+
+func TestDisableSiteBackupCronJobsDisablesOnlyMatchingSite(t *testing.T) {
+	openTestDB(t)
+	db := database.GetDB()
+	insertMinimalWebsite(t, "site-a.example.com")
+	mustExec(t, db, `INSERT INTO websites (id, name, domain, system_user, web_root, log_dir, db_name, db_user, php_pool_path, nginx_conf_path)
+		VALUES (2, 'site-b', 'site-b.example.com', 'u2', '/www/wwwroot/site-b.example.com', '/www/wwwlogs/site-b.example.com', 'db2', 'u2', '/p2', '/n2')`)
+	mustExec(t, db, `INSERT INTO cron_jobs (id, name, cron_expression, command, task_type, backup_mode, site_id, enabled)
+		VALUES (1, 'site-a backup', '0 2 * * *', 'wp-panel file backup', 'file_backup', 'incremental', 1, 1)`)
+	mustExec(t, db, `INSERT INTO cron_jobs (id, name, cron_expression, command, task_type, backup_mode, site_id, enabled)
+		VALUES (2, 'site-b backup', '0 2 * * *', 'wp-panel file backup', 'file_backup', 'incremental', 2, 1)`)
+	mustExec(t, db, `INSERT INTO cron_jobs (id, name, cron_expression, command, task_type, site_id, enabled)
+		VALUES (3, 'unrelated command', '0 3 * * *', 'echo hi', 'command', NULL, 1)`)
+
+	disabled, err := disableSiteBackupCronJobs(db, 1)
+	if err != nil {
+		t.Fatalf("disableSiteBackupCronJobs error = %v", err)
+	}
+	if !disabled {
+		t.Fatal("disableSiteBackupCronJobs = false, want true when a matching job was disabled")
+	}
+
+	var enabledA, enabledB, enabledOther int
+	if err := db.QueryRow(`SELECT enabled FROM cron_jobs WHERE id = 1`).Scan(&enabledA); err != nil {
+		t.Fatalf("query job 1: %v", err)
+	}
+	if err := db.QueryRow(`SELECT enabled FROM cron_jobs WHERE id = 2`).Scan(&enabledB); err != nil {
+		t.Fatalf("query job 2: %v", err)
+	}
+	if err := db.QueryRow(`SELECT enabled FROM cron_jobs WHERE id = 3`).Scan(&enabledOther); err != nil {
+		t.Fatalf("query job 3: %v", err)
+	}
+	if enabledA != 0 {
+		t.Fatal("site-a's file_backup cron job should be disabled")
+	}
+	if enabledB != 1 {
+		t.Fatal("site-b's file_backup cron job should NOT be affected by site-a's deletion")
+	}
+	if enabledOther != 1 {
+		t.Fatal("unrelated non-file_backup cron job should NOT be disabled")
+	}
+
+	// 幂等：再次调用不应报错，且因为已经没有 enabled=1 的匹配任务，应返回 false。
+	disabledAgain, err := disableSiteBackupCronJobs(db, 1)
+	if err != nil {
+		t.Fatalf("second disableSiteBackupCronJobs error = %v", err)
+	}
+	if disabledAgain {
+		t.Fatal("disableSiteBackupCronJobs = true on second call, want false (nothing left to disable)")
+	}
+}
 
 func TestMoveSiteLogDirRemovesEmptyTargetCreatedByPoolApply(t *testing.T) {
 	root := t.TempDir()
