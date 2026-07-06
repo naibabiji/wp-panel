@@ -261,6 +261,128 @@ func RemoteHasFullFileBackup(domain string) (bool, error) {
 	return remoteHasFullBackup(domain, host, port, username, authType, password, remotePath)
 }
 
+// pendingTransportStatusRow 是一条 transport_status 还停留在默认值 local、需要核对是否其实
+// 已经同步过远程的备份记录。
+type pendingTransportStatusRow struct {
+	table    string // "db_backups" 或 "file_backups"
+	id       int
+	domain   string
+	filename string
+	subdir   string // "db" 或 "files"，用于拼出和 SyncBackupToRemote 一致的相对路径
+}
+
+// loadPendingTransportStatusRows 查出 db_backups/file_backups 里 transport_status='local' 的记录，
+// JOIN websites 取 domain。这些是"还没被新回写机制确认过"的记录（要么真的没同步，要么是升级前
+// 用旧代码同步的历史数据，回写机制当时还不存在）。
+func loadPendingTransportStatusRows() []pendingTransportStatusRow {
+	db := database.GetDB()
+	var pending []pendingTransportStatusRow
+
+	if rows, err := db.Query(`SELECT db_backups.id, websites.domain, db_backups.filename
+		FROM db_backups JOIN websites ON websites.id = db_backups.site_id
+		WHERE db_backups.transport_status = 'local'`); err == nil {
+		for rows.Next() {
+			var p pendingTransportStatusRow
+			if rows.Scan(&p.id, &p.domain, &p.filename) == nil {
+				p.table = "db_backups"
+				p.subdir = "db"
+				pending = append(pending, p)
+			}
+		}
+		rows.Close()
+	}
+
+	if rows, err := db.Query(`SELECT file_backups.id, websites.domain, file_backups.filename
+		FROM file_backups JOIN websites ON websites.id = file_backups.site_id
+		WHERE file_backups.transport_status = 'local'`); err == nil {
+		for rows.Next() {
+			var p pendingTransportStatusRow
+			if rows.Scan(&p.id, &p.domain, &p.filename) == nil {
+				p.table = "file_backups"
+				p.subdir = "files"
+				pending = append(pending, p)
+			}
+		}
+		rows.Close()
+	}
+
+	return pending
+}
+
+// applyReconciledTransportStatus 把 pending 记录逐条和远程已有的 key/文件集合比对，命中的
+// 回写为 synced。纯逻辑、不发网络请求，方便单独测试。
+func applyReconciledTransportStatus(pending []pendingTransportStatusRow, remoteKeys map[string]bool, backupType, s3PathPrefix string) {
+	if len(pending) == 0 || len(remoteKeys) == 0 {
+		return
+	}
+	db := database.GetDB()
+	for _, p := range pending {
+		relPath := p.domain + "/" + p.subdir + "/" + p.filename
+		key := relPath
+		if backupType == "s3" {
+			key = s3ObjectKey(s3PathPrefix, relPath)
+		}
+		if !remoteKeys[key] {
+			continue
+		}
+		switch p.table {
+		case "db_backups":
+			db.Exec(`UPDATE db_backups SET transport_status = 'synced' WHERE id = ?`, p.id)
+		case "file_backups":
+			db.Exec(`UPDATE file_backups SET transport_status = 'synced' WHERE id = ?`, p.id)
+		}
+	}
+}
+
+// ReconcileBackupTransportStatus 核对历史备份记录（transport_status 停留在默认值 local）是否
+// 其实已经同步到远程，命中的回写为 synced。只在有 transport_status='local' 的记录时才会真正
+// 发远程列表请求（一次，不是逐条查），修正完成后后续调用会因为查不到待核对记录而直接跳过，
+// 不再产生网络开销。远程连不上/核对失败时返回 error，调用方应当把它当作提示性信息展示，
+// 不应阻断页面正常渲染——此时已有的 local/synced/failed 状态维持不变。
+func ReconcileBackupTransportStatus() error {
+	db := database.GetDB()
+	var enabled, port int
+	var backupType, host, username, authType, password, remotePath string
+	var s3Endpoint, s3Bucket, s3Region, s3AccessKeyID, s3SecretKey, s3PathPrefix string
+	err := db.QueryRow(`SELECT enabled, backup_type, host, port, username, auth_type, password, remote_path,
+			s3_endpoint, s3_bucket, s3_region, s3_access_key_id, s3_secret_key, s3_path_prefix
+		FROM remote_backup_settings WHERE id = 1`).Scan(
+		&enabled, &backupType, &host, &port, &username, &authType, &password, &remotePath,
+		&s3Endpoint, &s3Bucket, &s3Region, &s3AccessKeyID, &s3SecretKey, &s3PathPrefix)
+	if err != nil {
+		return fmt.Errorf("读取远程备份设置失败: %w", err)
+	}
+	if enabled == 0 {
+		return nil
+	}
+	if backupType == "" {
+		backupType = "rsync"
+	}
+	if err := ValidateRemoteBackupType(backupType); err != nil {
+		return err
+	}
+
+	pending := loadPendingTransportStatusRows()
+	if len(pending) == 0 {
+		return nil
+	}
+
+	var remoteKeys map[string]bool
+	if backupType == "s3" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		remoteKeys, err = listS3ObjectKeys(ctx, s3Endpoint, s3Bucket, s3Region, s3AccessKeyID, s3SecretKey, s3PathPrefix)
+	} else {
+		remoteKeys, err = listRsyncRemoteFiles(host, port, username, authType, password, remotePath)
+	}
+	if err != nil {
+		return fmt.Errorf("核对远程备份状态失败: %w", err)
+	}
+
+	applyReconciledTransportStatus(pending, remoteKeys, backupType, s3PathPrefix)
+	return nil
+}
+
 // remoteHasFullBackup 通过只读 SSH 命令探测 rsync 远程目标 domain/files 目录下是否已有
 // file_full_*.tar.gz 全量基线。命令参数沿用 syncBackupToRsync 的连接方式（已校验过的
 // host/port/username/remotePath），远程目录路径做 shell 单引号转义，不拼接未校验输入。
@@ -322,6 +444,90 @@ func remoteHasFullBackup(domain, host string, port int, username, authType, pass
 	return strings.TrimSpace(string(out)) != "", nil
 }
 
+// listRsyncRemoteFiles 通过一次只读 ssh find 命令列出 rsync 远程目标下的全部文件（相对路径），
+// 用于核对历史备份记录（transport_status 还停留在默认值 local）是否其实已经同步到远程。
+func listRsyncRemoteFiles(host string, port int, username, authType, password, remotePath string) (map[string]bool, error) {
+	if host == "" {
+		return nil, fmt.Errorf("远程服务器地址为空")
+	}
+	if port == 0 {
+		port = 22
+	}
+	if username == "" {
+		username = "root"
+	}
+	if authType == "" {
+		authType = "password"
+	}
+	remotePath = remoteBackupPath(username, remotePath)
+	if err := ValidateRemoteBackupSettings(host, port, username, authType, remotePath); err != nil {
+		return nil, err
+	}
+
+	quoted := "'" + strings.ReplaceAll(remotePath, "'", "'\\''") + "'"
+	findCmd := fmt.Sprintf("find %s -type f 2>/dev/null", quoted)
+
+	commonArgs := []string{
+		"-o", "UserKnownHostsFile=/www/server/panel/remote_backup_known_hosts",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ConnectTimeout=10",
+		"-p", fmt.Sprintf("%d", port),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var cmd *exec.Cmd
+	if authType == "key" {
+		keyPath := "/www/server/panel/remote_backup_key"
+		if _, err := os.Stat(keyPath); err != nil {
+			return nil, fmt.Errorf("SSH 密钥不存在: %s", keyPath)
+		}
+		args := append([]string{"-i", keyPath}, commonArgs...)
+		args = append(args, username+"@"+host, findCmd)
+		cmd = exec.CommandContext(ctx, "ssh", args...)
+	} else {
+		if _, err := exec.LookPath("sshpass"); err != nil {
+			return nil, fmt.Errorf("sshpass 未安装")
+		}
+		args := append([]string{"-e", "ssh"}, commonArgs...)
+		args = append(args, username+"@"+host, findCmd)
+		cmd = exec.CommandContext(ctx, "sshpass", args...)
+		cmd.Env = append(os.Environ(), "SSHPASS="+password)
+	}
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("列出远程备份文件失败: %s", strings.TrimSpace(string(out)))
+	}
+	return parseRemoteFileList(out, remotePath), nil
+}
+
+// parseRemoteFileList 把 `find <remotePath> -type f` 的输出解析成相对于 remotePath 的路径集合，
+// 和 localBackupRelPath 算出来的相对路径格式（domain/db|files/filename）保持一致。
+// 拆成独立函数是为了在不连真实 SSH 的情况下也能单独测试解析逻辑。
+func parseRemoteFileList(output []byte, remotePath string) map[string]bool {
+	base := strings.TrimRight(remotePath, "/") + "/"
+	files := map[string]bool{}
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// 必须严格以 remotePath + "/" 为前缀，避免像 base=/home/backup 却误配
+		// /home/backup2/x 这类同前缀但不是子目录的路径。
+		if !strings.HasPrefix(line, base) {
+			continue
+		}
+		rel := strings.TrimPrefix(line, base)
+		if rel == "" {
+			continue
+		}
+		files[rel] = true
+	}
+	return files
+}
+
 // s3HasFullBackup 通过只读 ListObjectsV2 请求探测 S3 远程目标下是否已有该站点的全量文件备份基线。
 // 复用现有 SigV4 签名请求基础设施，不引入新的第三方 SDK。
 func s3HasFullBackup(ctx context.Context, endpoint, bucket, region, accessKeyID, secretKey, pathPrefix, domain string) (bool, error) {
@@ -349,6 +555,60 @@ func s3HasFullBackup(ctx context.Context, endpoint, bucket, region, accessKeyID,
 		return false, fmt.Errorf("解析 S3 ListObjectsV2 响应失败: %w", err)
 	}
 	return out.KeyCount > 0 || len(out.Contents) > 0, nil
+}
+
+const (
+	s3ListMaxPages = 50
+	s3ListPageSize = 1000
+)
+
+// listS3ObjectKeys 列出 S3 兼容存储里 pathPrefix 前缀下的全部对象 key，用于核对历史备份记录
+// （transport_status 还停留在默认值 local）是否其实已经同步到远程。翻页上限 s3ListMaxPages，
+// 超过后停止并返回已收集到的部分结果，不报错、不无限翻页。
+func listS3ObjectKeys(ctx context.Context, endpoint, bucket, region, accessKeyID, secretKey, pathPrefix string) (map[string]bool, error) {
+	if region == "" {
+		region = "auto"
+	}
+	if err := ValidateS3BackupSettings(endpoint, bucket, region, accessKeyID, secretKey, pathPrefix); err != nil {
+		return nil, err
+	}
+	prefix := strings.Trim(strings.TrimSpace(pathPrefix), "/")
+	emptyHash := sha256.Sum256(nil)
+	keys := map[string]bool{}
+	continuationToken := ""
+	for page := 0; page < s3ListMaxPages; page++ {
+		query := fmt.Sprintf("list-type=2&max-keys=%d", s3ListPageSize)
+		if prefix != "" {
+			query += "&prefix=" + awsQueryEscape(prefix)
+		}
+		if continuationToken != "" {
+			query += "&continuation-token=" + awsQueryEscape(continuationToken)
+		}
+		resp, err := doS3RequestRaw(ctx, http.MethodGet, endpoint, bucket, region, accessKeyID, secretKey, "", query, http.NoBody, 0, hex.EncodeToString(emptyHash[:]))
+		if err != nil {
+			return keys, fmt.Errorf("列出远程备份对象失败: %w", err)
+		}
+		var out struct {
+			Contents []struct {
+				Key string `xml:"Key"`
+			} `xml:"Contents"`
+			IsTruncated           bool   `xml:"IsTruncated"`
+			NextContinuationToken string `xml:"NextContinuationToken"`
+		}
+		decodeErr := xml.NewDecoder(io.LimitReader(resp.Body, 8*1024*1024)).Decode(&out)
+		resp.Body.Close()
+		if decodeErr != nil {
+			return keys, fmt.Errorf("解析 S3 ListObjectsV2 响应失败: %w", decodeErr)
+		}
+		for _, c := range out.Contents {
+			keys[c.Key] = true
+		}
+		if !out.IsTruncated || out.NextContinuationToken == "" {
+			break
+		}
+		continuationToken = out.NextContinuationToken
+	}
+	return keys, nil
 }
 
 func syncBackupToRsync(localFile string, source BackupSource, siteID int, filename string, host string, port int, username string, authType string, password string, remotePath string, keepLocal int) {

@@ -36,6 +36,7 @@ var i18nKeys = []string{
 	"backups.transport_local",
 	"backups.transport_missing",
 	"backups.transport_synced",
+	"backups.remote_reconcile_warning",
 	"backups.transport_synced_remote_only",
 	"common.cancel",
 	"common.confirm",

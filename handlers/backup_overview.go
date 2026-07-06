@@ -8,6 +8,7 @@ import (
 
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
+	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/models"
 
 	"github.com/gin-gonic/gin"
@@ -40,6 +41,14 @@ type SiteBackupOverview struct {
 func GetBackupOverview(c *gin.Context) {
 	db := database.GetDB()
 	cfg := config.AppConfig
+
+	// 核对历史记录（transport_status 还停留在默认值 local，但可能升级前就已经同步过远程）。
+	// 只有存在待核对记录时才会真正发远程请求；失败不阻断页面渲染，只作为提示透传给前端。
+	var remoteReconcileWarning string
+	if err := executor.ReconcileBackupTransportStatus(); err != nil {
+		log.Printf("备份总览: 核对远程备份状态失败: %v", err)
+		remoteReconcileWarning = err.Error()
+	}
 
 	sites := []SiteBackupOverview{}
 	siteIndex := map[int]int{}
@@ -116,8 +125,9 @@ func GetBackupOverview(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"sites":            sites,
-		"panel_db_backups": panelBackups,
+		"sites":                    sites,
+		"panel_db_backups":         panelBackups,
+		"remote_reconcile_warning": remoteReconcileWarning,
 	}))
 }
 

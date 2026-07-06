@@ -432,3 +432,165 @@ func TestUpdateBackupTransportStatusIgnoresZeroSiteID(t *testing.T) {
 	// 不应 panic：siteID 为 0（未落库的记录）时直接跳过写入。
 	updateBackupTransportStatus(BackupSourceDB, 0, "whatever.sql.gz", "synced", "")
 }
+
+// ------------------------------------------------------------------
+// 历史备份远程状态核对（ReconcileBackupTransportStatus 及其辅助函数）
+// ------------------------------------------------------------------
+
+func TestParseRemoteFileListStripsRemotePathPrefix(t *testing.T) {
+	output := []byte("/home/backup/example.com/db/a.sql.gz\n/home/backup/example.com/files/file_full_x.tar.gz\n\n")
+	files := parseRemoteFileList(output, "/home/backup")
+	if len(files) != 2 {
+		t.Fatalf("files = %+v, want 2 entries", files)
+	}
+	if !files["example.com/db/a.sql.gz"] || !files["example.com/files/file_full_x.tar.gz"] {
+		t.Fatalf("files = %+v, want both relative paths present", files)
+	}
+}
+
+func TestParseRemoteFileListSkipsLinesNotUnderRemotePath(t *testing.T) {
+	output := []byte("/tmp/unrelated.txt\n/home/backup/example.com/db/a.sql.gz\n")
+	files := parseRemoteFileList(output, "/home/backup")
+	if len(files) != 1 || !files["example.com/db/a.sql.gz"] {
+		t.Fatalf("files = %+v, want only the entry under remotePath", files)
+	}
+}
+
+func TestParseRemoteFileListRejectsSiblingDirectoryWithSamePrefix(t *testing.T) {
+	// /home/backup2/x 文本前缀和 /home/backup 相同，但不是它的子目录，不应该被误配进去。
+	output := []byte("/home/backup2/x.tar.gz\n/home/backup/example.com/db/a.sql.gz\n")
+	files := parseRemoteFileList(output, "/home/backup")
+	if len(files) != 1 || !files["example.com/db/a.sql.gz"] {
+		t.Fatalf("files = %+v, want only the true subdirectory entry, not the sibling /home/backup2", files)
+	}
+}
+
+func TestListS3ObjectKeysPaginatesUntilNotTruncated(t *testing.T) {
+	var mu sync.Mutex
+	var requests []string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests = append(requests, r.URL.RawQuery)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		if !strings.Contains(r.URL.RawQuery, "continuation-token=") {
+			w.Write([]byte(`<ListBucketResult><Contents><Key>wp-panel/a.tar.gz</Key></Contents><IsTruncated>true</IsTruncated><NextContinuationToken>token-1</NextContinuationToken></ListBucketResult>`))
+			return
+		}
+		w.Write([]byte(`<ListBucketResult><Contents><Key>wp-panel/b.tar.gz</Key></Contents><IsTruncated>false</IsTruncated></ListBucketResult>`))
+	}))
+	defer server.Close()
+	withS3TestClient(t, server)
+
+	keys, err := listS3ObjectKeys(t.Context(), server.URL, "wp-panel-backups", "auto", "access-key_123", "secret", "wp-panel")
+	if err != nil {
+		t.Fatalf("listS3ObjectKeys() error = %v", err)
+	}
+	if len(keys) != 2 || !keys["wp-panel/a.tar.gz"] || !keys["wp-panel/b.tar.gz"] {
+		t.Fatalf("keys = %+v, want both pages' keys", keys)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("requests = %d, want 2 (one per page)", len(requests))
+	}
+	if !strings.Contains(requests[1], "continuation-token=token-1") {
+		t.Fatalf("second request query = %q, want continuation-token=token-1", requests[1])
+	}
+}
+
+func TestApplyReconciledTransportStatusOnlyUpdatesMatchedLocalRows(t *testing.T) {
+	openTestDB(t)
+	insertMinimalWebsite(t, "reconcile.example.com")
+	db := database.GetDB()
+	if _, err := db.Exec(`INSERT INTO db_backups (id, site_id, filename, file_size, db_name, transport_status) VALUES (1, 1, 'a.sql.gz', 10, 'db1', 'local')`); err != nil {
+		t.Fatalf("insert db_backups a: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO db_backups (id, site_id, filename, file_size, db_name, transport_status) VALUES (2, 1, 'b.sql.gz', 10, 'db1', 'failed')`); err != nil {
+		t.Fatalf("insert db_backups b: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO file_backups (id, site_id, filename, file_size, mode, transport_status) VALUES (1, 1, 'file_full_c.tar.gz', 10, 'full', 'local')`); err != nil {
+		t.Fatalf("insert file_backups: %v", err)
+	}
+
+	pending := []pendingTransportStatusRow{
+		{table: "db_backups", id: 1, domain: "reconcile.example.com", filename: "a.sql.gz", subdir: "db"},
+		{table: "file_backups", id: 1, domain: "reconcile.example.com", filename: "file_full_c.tar.gz", subdir: "files"},
+	}
+	remoteKeys := map[string]bool{
+		"wp-panel/reconcile.example.com/db/a.sql.gz": true,
+		// file_full_c.tar.gz 故意不在远程 key 集合里，模拟"确实还没同步"的情况。
+	}
+
+	applyReconciledTransportStatus(pending, remoteKeys, "s3", "wp-panel")
+
+	var dbStatus1, dbStatus2, fileStatus string
+	if err := db.QueryRow(`SELECT transport_status FROM db_backups WHERE id = 1`).Scan(&dbStatus1); err != nil {
+		t.Fatalf("query db_backups id=1: %v", err)
+	}
+	if err := db.QueryRow(`SELECT transport_status FROM db_backups WHERE id = 2`).Scan(&dbStatus2); err != nil {
+		t.Fatalf("query db_backups id=2: %v", err)
+	}
+	if err := db.QueryRow(`SELECT transport_status FROM file_backups WHERE id = 1`).Scan(&fileStatus); err != nil {
+		t.Fatalf("query file_backups id=1: %v", err)
+	}
+	if dbStatus1 != "synced" {
+		t.Fatalf("db_backups id=1 transport_status = %q, want synced (matched remote key)", dbStatus1)
+	}
+	if dbStatus2 != "failed" {
+		t.Fatalf("db_backups id=2 transport_status = %q, want unchanged failed (was never in the pending list)", dbStatus2)
+	}
+	if fileStatus != "local" {
+		t.Fatalf("file_backups id=1 transport_status = %q, want unchanged local (not found in remote key set)", fileStatus)
+	}
+}
+
+func TestLoadPendingTransportStatusRowsOnlyReturnsLocalRows(t *testing.T) {
+	openTestDB(t)
+	insertMinimalWebsite(t, "pending.example.com")
+	db := database.GetDB()
+	if _, err := db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, transport_status) VALUES (1, 'a.sql.gz', 10, 'db1', 'local')`); err != nil {
+		t.Fatalf("insert db_backups a: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, transport_status) VALUES (1, 'b.sql.gz', 10, 'db1', 'synced')`); err != nil {
+		t.Fatalf("insert db_backups b: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO file_backups (site_id, filename, file_size, mode, transport_status) VALUES (1, 'file_full_c.tar.gz', 10, 'full', 'local')`); err != nil {
+		t.Fatalf("insert file_backups: %v", err)
+	}
+
+	pending := loadPendingTransportStatusRows()
+	if len(pending) != 2 {
+		t.Fatalf("pending = %+v, want 2 rows (only transport_status='local')", pending)
+	}
+	var sawDB, sawFile bool
+	for _, p := range pending {
+		if p.table == "db_backups" && p.filename == "a.sql.gz" && p.domain == "pending.example.com" && p.subdir == "db" {
+			sawDB = true
+		}
+		if p.table == "file_backups" && p.filename == "file_full_c.tar.gz" && p.domain == "pending.example.com" && p.subdir == "files" {
+			sawFile = true
+		}
+	}
+	if !sawDB || !sawFile {
+		t.Fatalf("pending = %+v, missing expected rows", pending)
+	}
+}
+
+func TestReconcileBackupTransportStatusNoOpWhenDisabled(t *testing.T) {
+	openTestDB(t)
+	if err := ReconcileBackupTransportStatus(); err != nil {
+		t.Fatalf("ReconcileBackupTransportStatus() error = %v, want nil when remote backup disabled", err)
+	}
+}
+
+func TestReconcileBackupTransportStatusSkipsRemoteCallWhenNothingPending(t *testing.T) {
+	openTestDB(t)
+	db := database.GetDB()
+	if _, err := db.Exec(`UPDATE remote_backup_settings SET enabled = 1, backup_type = 's3', s3_endpoint = 'https://invalid.example.invalid', s3_bucket = 'x', s3_access_key_id = 'k', s3_secret_key = 'secret' WHERE id = 1`); err != nil {
+		t.Fatalf("update remote_backup_settings: %v", err)
+	}
+	// 没有任何 transport_status='local' 的记录时，函数应该在发起任何远程请求之前就直接返回；
+	// 如果它真的尝试连了 https://invalid.example.invalid 就会报网络错误，err==nil 证明短路生效。
+	if err := ReconcileBackupTransportStatus(); err != nil {
+		t.Fatalf("ReconcileBackupTransportStatus() error = %v, want nil (no remote call should be attempted)", err)
+	}
+}

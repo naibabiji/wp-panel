@@ -1233,6 +1233,7 @@
     "collapse_all": "全部收起",
     "summary_db_count": "数据库备份 {{count}}",
     "summary_file_count": "文件备份 {{count}}",
-    "toggle_hint": "点击展开/收起"
+    "toggle_hint": "点击展开/收起",
+    "remote_reconcile_warning": "远程备份状态核对失败：{{error}}；下方“仅本地”的记录可能只是暂时无法确认，不代表远程一定没有备份"
   }
 }

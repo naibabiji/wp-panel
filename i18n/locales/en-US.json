@@ -1233,6 +1233,7 @@
     "collapse_all": "Collapse all",
     "summary_db_count": "{{count}} database backup(s)",
     "summary_file_count": "{{count}} file backup(s)",
-    "toggle_hint": "Click to expand/collapse"
+    "toggle_hint": "Click to expand/collapse",
+    "remote_reconcile_warning": "Failed to reconcile remote backup status: {{error}}; \"Local only\" entries below may just be unconfirmed for now, not necessarily missing on the remote"
   }
 }

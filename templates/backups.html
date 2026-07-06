@@ -9,6 +9,8 @@
         </div>
     </div>
 
+    <div x-show="remoteReconcileWarning" class="mb-6 text-xs text-yellow-500/80" x-text="t('backups.remote_reconcile_warning', { error: remoteReconcileWarning })"></div>
+
     <div class="card mb-6">
         <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "backups.panel_section_title"}}</h3>
         <div class="overflow-x-auto">
@@ -134,6 +136,7 @@ function backupsOverview() {
         loading: true,
         sites: [],
         panelBackups: [],
+        remoteReconcileWarning: '',
         async fetchOverview() {
             this.loading = true;
             try {
@@ -141,6 +144,7 @@ function backupsOverview() {
                 if (r.success) {
                     this.sites = r.data.sites || [];
                     this.panelBackups = r.data.panel_db_backups || [];
+                    this.remoteReconcileWarning = r.data.remote_reconcile_warning || '';
                 }
             } catch (e) {}
             this.loading = false;
