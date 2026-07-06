@@ -42,14 +42,6 @@ func GetBackupOverview(c *gin.Context) {
 	db := database.GetDB()
 	cfg := config.AppConfig
 
-	// 核对历史记录（transport_status 还停留在默认值 local，但可能升级前就已经同步过远程）。
-	// 只有存在待核对记录时才会真正发远程请求；失败不阻断页面渲染，只作为提示透传给前端。
-	var remoteReconcileWarning string
-	if err := executor.ReconcileBackupTransportStatus(); err != nil {
-		log.Printf("备份总览: 核对远程备份状态失败: %v", err)
-		remoteReconcileWarning = err.Error()
-	}
-
 	sites := []SiteBackupOverview{}
 	siteIndex := map[int]int{}
 
@@ -125,10 +117,22 @@ func GetBackupOverview(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"sites":                    sites,
-		"panel_db_backups":         panelBackups,
-		"remote_reconcile_warning": remoteReconcileWarning,
+		"sites":            sites,
+		"panel_db_backups": panelBackups,
 	}))
+}
+
+// ReconcileBackupStatus 由管理员在备份总览页面显式点击"核对远程状态"触发：核对历史备份记录
+// （transport_status 还停留在默认值 local）是否其实已经同步到远程，命中的回写为 synced。
+// 不放在 GetBackupOverview 里自动触发——远程慢或不可达时会拖慢一个本该只读、快速的列表接口，
+// 而且确实从未同步过远程的记录会一直停在 local，等于每次打开页面都重新发一次远程列表请求。
+func ReconcileBackupStatus(c *gin.Context) {
+	updated, err := executor.ReconcileBackupTransportStatus()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"updated": updated}))
 }
 
 // localFileExists 只做一次本地文件系统 stat，不涉及远程网络请求，性能开销可忽略。

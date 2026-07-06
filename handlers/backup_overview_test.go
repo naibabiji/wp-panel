@@ -272,3 +272,69 @@ func TestLocalFileExistsTreatsUnknownStatErrorsAsExisting(t *testing.T) {
 		t.Fatal("localFileExists() = false, want true when stat fails for a reason other than not-exist")
 	}
 }
+
+func TestReconcileBackupStatusReturnsErrorWhenRemoteBackupDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupBackupOverviewTestDB(t)
+
+	router := gin.New()
+	router.POST("/api/backups/reconcile-status", ReconcileBackupStatus)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/backups/reconcile-status", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	// 远程备份未启用时，管理员点了"核对远程状态"按钮应该看到明确的错误提示，
+	// 而不是静默返回"成功，修正 0 条"让人误以为核对真的执行过了。
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	var resp struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v; body=%s", err, rec.Body.String())
+	}
+	if resp.Success {
+		t.Fatal("success = true, want false when remote backup is disabled")
+	}
+}
+
+func TestReconcileBackupStatusReturnsUpdatedCountWhenNothingPending(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupBackupOverviewTestDB(t)
+	db := database.GetDB()
+	// 启用远程备份，但没有任何 transport_status='local' 的记录：应该在不发远程请求的情况下
+	// 直接返回 updated=0。
+	if _, err := db.Exec(`UPDATE remote_backup_settings SET enabled = 1, backup_type = 's3',
+		s3_endpoint = 'https://invalid.example.invalid', s3_bucket = 'x', s3_access_key_id = 'k', s3_secret_key = 'secret' WHERE id = 1`); err != nil {
+		t.Fatalf("update remote_backup_settings: %v", err)
+	}
+
+	router := gin.New()
+	router.POST("/api/backups/reconcile-status", ReconcileBackupStatus)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/backups/reconcile-status", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var resp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Updated int `json:"updated"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v; body=%s", err, rec.Body.String())
+	}
+	if !resp.Success {
+		t.Fatal("success = false, want true")
+	}
+	if resp.Data.Updated != 0 {
+		t.Fatalf("updated = %d, want 0", resp.Data.Updated)
+	}
+}

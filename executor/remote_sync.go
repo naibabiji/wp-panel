@@ -9,6 +9,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -273,49 +274,54 @@ type pendingTransportStatusRow struct {
 
 // loadPendingTransportStatusRows 查出 db_backups/file_backups 里 transport_status='local' 的记录，
 // JOIN websites 取 domain。这些是"还没被新回写机制确认过"的记录（要么真的没同步，要么是升级前
-// 用旧代码同步的历史数据，回写机制当时还不存在）。
-func loadPendingTransportStatusRows() []pendingTransportStatusRow {
+// 用旧代码同步的历史数据，回写机制当时还不存在）。查询失败时返回 error，不静默丢弃结果。
+func loadPendingTransportStatusRows() ([]pendingTransportStatusRow, error) {
 	db := database.GetDB()
 	var pending []pendingTransportStatusRow
 
-	if rows, err := db.Query(`SELECT db_backups.id, websites.domain, db_backups.filename
+	rows, err := db.Query(`SELECT db_backups.id, websites.domain, db_backups.filename
 		FROM db_backups JOIN websites ON websites.id = db_backups.site_id
-		WHERE db_backups.transport_status = 'local'`); err == nil {
-		for rows.Next() {
-			var p pendingTransportStatusRow
-			if rows.Scan(&p.id, &p.domain, &p.filename) == nil {
-				p.table = "db_backups"
-				p.subdir = "db"
-				pending = append(pending, p)
-			}
-		}
-		rows.Close()
+		WHERE db_backups.transport_status = 'local'`)
+	if err != nil {
+		return nil, fmt.Errorf("查询待核对的数据库备份失败: %w", err)
 	}
+	for rows.Next() {
+		var p pendingTransportStatusRow
+		if rows.Scan(&p.id, &p.domain, &p.filename) == nil {
+			p.table = "db_backups"
+			p.subdir = "db"
+			pending = append(pending, p)
+		}
+	}
+	rows.Close()
 
-	if rows, err := db.Query(`SELECT file_backups.id, websites.domain, file_backups.filename
+	fileRows, err := db.Query(`SELECT file_backups.id, websites.domain, file_backups.filename
 		FROM file_backups JOIN websites ON websites.id = file_backups.site_id
-		WHERE file_backups.transport_status = 'local'`); err == nil {
-		for rows.Next() {
-			var p pendingTransportStatusRow
-			if rows.Scan(&p.id, &p.domain, &p.filename) == nil {
-				p.table = "file_backups"
-				p.subdir = "files"
-				pending = append(pending, p)
-			}
-		}
-		rows.Close()
+		WHERE file_backups.transport_status = 'local'`)
+	if err != nil {
+		return nil, fmt.Errorf("查询待核对的文件备份失败: %w", err)
 	}
+	for fileRows.Next() {
+		var p pendingTransportStatusRow
+		if fileRows.Scan(&p.id, &p.domain, &p.filename) == nil {
+			p.table = "file_backups"
+			p.subdir = "files"
+			pending = append(pending, p)
+		}
+	}
+	fileRows.Close()
 
-	return pending
+	return pending, nil
 }
 
 // applyReconciledTransportStatus 把 pending 记录逐条和远程已有的 key/文件集合比对，命中的
-// 回写为 synced。纯逻辑、不发网络请求，方便单独测试。
-func applyReconciledTransportStatus(pending []pendingTransportStatusRow, remoteKeys map[string]bool, backupType, s3PathPrefix string) {
+// 回写为 synced，返回实际成功回写的条数。纯逻辑、不发网络请求，方便单独测试。
+func applyReconciledTransportStatus(pending []pendingTransportStatusRow, remoteKeys map[string]bool, backupType, s3PathPrefix string) int {
 	if len(pending) == 0 || len(remoteKeys) == 0 {
-		return
+		return 0
 	}
 	db := database.GetDB()
+	updated := 0
 	for _, p := range pending {
 		relPath := p.domain + "/" + p.subdir + "/" + p.filename
 		key := relPath
@@ -325,21 +331,29 @@ func applyReconciledTransportStatus(pending []pendingTransportStatusRow, remoteK
 		if !remoteKeys[key] {
 			continue
 		}
+		var execErr error
 		switch p.table {
 		case "db_backups":
-			db.Exec(`UPDATE db_backups SET transport_status = 'synced' WHERE id = ?`, p.id)
+			_, execErr = db.Exec(`UPDATE db_backups SET transport_status = 'synced' WHERE id = ?`, p.id)
 		case "file_backups":
-			db.Exec(`UPDATE file_backups SET transport_status = 'synced' WHERE id = ?`, p.id)
+			_, execErr = db.Exec(`UPDATE file_backups SET transport_status = 'synced' WHERE id = ?`, p.id)
 		}
+		if execErr != nil {
+			log.Printf("核对远程备份状态: 回写记录失败 table=%s id=%d: %v", p.table, p.id, execErr)
+			continue
+		}
+		updated++
 	}
+	return updated
 }
 
 // ReconcileBackupTransportStatus 核对历史备份记录（transport_status 停留在默认值 local）是否
-// 其实已经同步到远程，命中的回写为 synced。只在有 transport_status='local' 的记录时才会真正
-// 发远程列表请求（一次，不是逐条查），修正完成后后续调用会因为查不到待核对记录而直接跳过，
-// 不再产生网络开销。远程连不上/核对失败时返回 error，调用方应当把它当作提示性信息展示，
-// 不应阻断页面正常渲染——此时已有的 local/synced/failed 状态维持不变。
-func ReconcileBackupTransportStatus() error {
+// 其实已经同步到远程，命中的回写为 synced，返回本次实际修正的条数。只在有 transport_status='local'
+// 的记录时才会真正发远程列表请求（一次，不是逐条查）。注意：如果确实存在从未同步过远程的记录
+// （比如远程备份本来就没启用过、或者同步一直失败），这些记录会一直停留在 local，每次调用都会
+// 重新发远程请求——所以这个函数只应该由用户显式触发（面板上的"核对远程状态"按钮），不要挂在
+// 页面加载路径上自动调用，否则慢/不可达的远程会拖慢一个本该是只读的列表接口。
+func ReconcileBackupTransportStatus() (int, error) {
 	db := database.GetDB()
 	var enabled, port int
 	var backupType, host, username, authType, password, remotePath string
@@ -350,21 +364,24 @@ func ReconcileBackupTransportStatus() error {
 		&enabled, &backupType, &host, &port, &username, &authType, &password, &remotePath,
 		&s3Endpoint, &s3Bucket, &s3Region, &s3AccessKeyID, &s3SecretKey, &s3PathPrefix)
 	if err != nil {
-		return fmt.Errorf("读取远程备份设置失败: %w", err)
+		return 0, fmt.Errorf("读取远程备份设置失败: %w", err)
 	}
 	if enabled == 0 {
-		return nil
+		return 0, fmt.Errorf("远程备份未启用")
 	}
 	if backupType == "" {
 		backupType = "rsync"
 	}
 	if err := ValidateRemoteBackupType(backupType); err != nil {
-		return err
+		return 0, err
 	}
 
-	pending := loadPendingTransportStatusRows()
+	pending, err := loadPendingTransportStatusRows()
+	if err != nil {
+		return 0, err
+	}
 	if len(pending) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	var remoteKeys map[string]bool
@@ -376,11 +393,10 @@ func ReconcileBackupTransportStatus() error {
 		remoteKeys, err = listRsyncRemoteFiles(host, port, username, authType, password, remotePath)
 	}
 	if err != nil {
-		return fmt.Errorf("核对远程备份状态失败: %w", err)
+		return 0, fmt.Errorf("核对远程备份状态失败: %w", err)
 	}
 
-	applyReconciledTransportStatus(pending, remoteKeys, backupType, s3PathPrefix)
-	return nil
+	return applyReconciledTransportStatus(pending, remoteKeys, backupType, s3PathPrefix), nil
 }
 
 // remoteHasFullBackup 通过只读 SSH 命令探测 rsync 远程目标 domain/files 目录下是否已有

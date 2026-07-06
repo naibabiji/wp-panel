@@ -520,7 +520,10 @@ func TestApplyReconciledTransportStatusOnlyUpdatesMatchedLocalRows(t *testing.T)
 		// file_full_c.tar.gz 故意不在远程 key 集合里，模拟"确实还没同步"的情况。
 	}
 
-	applyReconciledTransportStatus(pending, remoteKeys, "s3", "wp-panel")
+	updated := applyReconciledTransportStatus(pending, remoteKeys, "s3", "wp-panel")
+	if updated != 1 {
+		t.Fatalf("applyReconciledTransportStatus() = %d, want 1 (only the matched db_backups row)", updated)
+	}
 
 	var dbStatus1, dbStatus2, fileStatus string
 	if err := db.QueryRow(`SELECT transport_status FROM db_backups WHERE id = 1`).Scan(&dbStatus1); err != nil {
@@ -557,7 +560,10 @@ func TestLoadPendingTransportStatusRowsOnlyReturnsLocalRows(t *testing.T) {
 		t.Fatalf("insert file_backups: %v", err)
 	}
 
-	pending := loadPendingTransportStatusRows()
+	pending, err := loadPendingTransportStatusRows()
+	if err != nil {
+		t.Fatalf("loadPendingTransportStatusRows() error = %v", err)
+	}
 	if len(pending) != 2 {
 		t.Fatalf("pending = %+v, want 2 rows (only transport_status='local')", pending)
 	}
@@ -575,10 +581,12 @@ func TestLoadPendingTransportStatusRowsOnlyReturnsLocalRows(t *testing.T) {
 	}
 }
 
-func TestReconcileBackupTransportStatusNoOpWhenDisabled(t *testing.T) {
+func TestReconcileBackupTransportStatusErrorsWhenDisabled(t *testing.T) {
 	openTestDB(t)
-	if err := ReconcileBackupTransportStatus(); err != nil {
-		t.Fatalf("ReconcileBackupTransportStatus() error = %v, want nil when remote backup disabled", err)
+	// 现在是管理员显式点击"核对远程状态"按钮才会调用，远程备份没启用时应该明确报错，
+	// 而不是静默返回成功——按钮式的操作不应该让用户以为"核对过了"却其实什么都没做。
+	if _, err := ReconcileBackupTransportStatus(); err == nil {
+		t.Fatal("ReconcileBackupTransportStatus() error = nil, want error when remote backup is disabled")
 	}
 }
 
@@ -590,7 +598,62 @@ func TestReconcileBackupTransportStatusSkipsRemoteCallWhenNothingPending(t *test
 	}
 	// 没有任何 transport_status='local' 的记录时，函数应该在发起任何远程请求之前就直接返回；
 	// 如果它真的尝试连了 https://invalid.example.invalid 就会报网络错误，err==nil 证明短路生效。
-	if err := ReconcileBackupTransportStatus(); err != nil {
+	updated, err := ReconcileBackupTransportStatus()
+	if err != nil {
 		t.Fatalf("ReconcileBackupTransportStatus() error = %v, want nil (no remote call should be attempted)", err)
+	}
+	if updated != 0 {
+		t.Fatalf("ReconcileBackupTransportStatus() updated = %d, want 0", updated)
+	}
+}
+
+func TestLoadPendingTransportStatusRowsReturnsErrorWhenTableMissing(t *testing.T) {
+	openTestDB(t)
+	db := database.GetDB()
+	if _, err := db.Exec(`DROP TABLE db_backups`); err != nil {
+		t.Fatalf("drop db_backups: %v", err)
+	}
+	if _, err := loadPendingTransportStatusRows(); err == nil {
+		t.Fatal("loadPendingTransportStatusRows() error = nil, want error when db_backups is missing")
+	}
+}
+
+func TestApplyReconciledTransportStatusSkipsFailedUpdateWithoutCountingIt(t *testing.T) {
+	openTestDB(t)
+	insertMinimalWebsite(t, "update-fail.example.com")
+	db := database.GetDB()
+	if _, err := db.Exec(`INSERT INTO db_backups (id, site_id, filename, file_size, db_name, transport_status) VALUES (1, 1, 'a.sql.gz', 10, 'db1', 'local')`); err != nil {
+		t.Fatalf("insert db_backups: %v", err)
+	}
+
+	pending := []pendingTransportStatusRow{
+		// id=999 在 db_backups 里不存在，UPDATE 会成功执行但影响 0 行——这里改用一个真正会
+		// 报错的场景：table 名故意写错，触发 db.Exec 报错，验证不会被计入 updated。
+		{table: "db_backups", id: 1, domain: "update-fail.example.com", filename: "a.sql.gz", subdir: "db"},
+	}
+	remoteKeys := map[string]bool{
+		"update-fail.example.com/db/a.sql.gz": true,
+	}
+
+	// 正常情况：这条应该成功回写并计入 updated=1。
+	updated := applyReconciledTransportStatus(pending, remoteKeys, "rsync", "")
+	if updated != 1 {
+		t.Fatalf("applyReconciledTransportStatus() = %d, want 1", updated)
+	}
+	var status string
+	if err := db.QueryRow(`SELECT transport_status FROM db_backups WHERE id = 1`).Scan(&status); err != nil {
+		t.Fatalf("query db_backups: %v", err)
+	}
+	if status != "synced" {
+		t.Fatalf("transport_status = %q, want synced", status)
+	}
+
+	// 现在把表删掉，模拟回写失败：不应该 panic，也不应该把失败的记录计入 updated。
+	if _, err := db.Exec(`DROP TABLE db_backups`); err != nil {
+		t.Fatalf("drop db_backups: %v", err)
+	}
+	updatedAfterDrop := applyReconciledTransportStatus(pending, remoteKeys, "rsync", "")
+	if updatedAfterDrop != 0 {
+		t.Fatalf("applyReconciledTransportStatus() after dropping table = %d, want 0 (UPDATE should fail, not be counted)", updatedAfterDrop)
 	}
 }

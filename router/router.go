@@ -36,7 +36,9 @@ var i18nKeys = []string{
 	"backups.transport_local",
 	"backups.transport_missing",
 	"backups.transport_synced",
-	"backups.remote_reconcile_warning",
+	"backups.reconcile_remote_status",
+	"backups.reconcile_success",
+	"backups.reconciling",
 	"backups.transport_synced_remote_only",
 	"common.cancel",
 	"common.confirm",
@@ -755,6 +757,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.PUT("/api/websites/:id/backups/settings", backupHandler.UpdateSettings)
 	protected.POST("/api/websites/:id/backups/clear-database", backupHandler.ClearDatabase)
 	protected.GET("/api/backups/overview", handlers.GetBackupOverview)
+	protected.POST("/api/backups/reconcile-status", handlers.ReconcileBackupStatus)
 
 	dashboardHandler := &handlers.DashboardHandler{}
 	protected.GET("/api/dashboard/stats", dashboardHandler.GetStats)
