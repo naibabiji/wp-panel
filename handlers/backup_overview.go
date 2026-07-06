@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"path/filepath"
 
@@ -35,7 +36,8 @@ func GetBackupOverview(c *gin.Context) {
 	for rows.Next() {
 		var id int
 		var domain string
-		if rows.Scan(&id, &domain) != nil {
+		if err := rows.Scan(&id, &domain); err != nil {
+			log.Printf("备份总览: 扫描网站列表行失败: %v", err)
 			continue
 		}
 		siteIndex[id] = len(sites)
@@ -57,8 +59,9 @@ func GetBackupOverview(c *gin.Context) {
 	for dbRows.Next() {
 		var b models.DBBackup
 		var auto int
-		if dbRows.Scan(&b.ID, &b.SiteID, &b.Filename, &b.FileSize, &b.DBName, &auto,
-			&b.TransportStatus, &b.TransportMessage, &b.CreatedAt) != nil {
+		if err := dbRows.Scan(&b.ID, &b.SiteID, &b.Filename, &b.FileSize, &b.DBName, &auto,
+			&b.TransportStatus, &b.TransportMessage, &b.CreatedAt); err != nil {
+			log.Printf("备份总览: 扫描数据库备份行失败: %v", err)
 			continue
 		}
 		b.Auto = auto == 1
@@ -76,8 +79,9 @@ func GetBackupOverview(c *gin.Context) {
 	}
 	for fileRows.Next() {
 		var b models.FileBackup
-		if fileRows.Scan(&b.ID, &b.SiteID, &b.Filename, &b.FileSize, &b.Mode,
-			&b.TransportStatus, &b.TransportMessage, &b.CreatedAt) != nil {
+		if err := fileRows.Scan(&b.ID, &b.SiteID, &b.Filename, &b.FileSize, &b.Mode,
+			&b.TransportStatus, &b.TransportMessage, &b.CreatedAt); err != nil {
+			log.Printf("备份总览: 扫描文件备份行失败: %v", err)
 			continue
 		}
 		if idx, ok := siteIndex[b.SiteID]; ok {

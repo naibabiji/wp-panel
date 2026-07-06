@@ -196,7 +196,13 @@ func cleanOldBackups(dir string, keep int, siteID int) {
 	sort.Slice(tars, func(i, j int) bool { return tars[i].modTime.Before(tars[j].modTime) })
 	db := database.GetDB()
 	for i := 0; i < len(tars)-keep; i++ {
-		os.Remove(filepath.Join(dir, tars[i].name))
+		// 文件确实还在磁盘上删除失败（权限/占用/文件系统异常）时，不能删 file_backups 记录，
+		// 否则会出现"磁盘有文件但总览查不到"的反向不一致；下次轮转会重试。
+		// 文件本就已经不存在（IsNotExist）则视为清理成功，照常删除记录。
+		if err := os.Remove(filepath.Join(dir, tars[i].name)); err != nil && !os.IsNotExist(err) {
+			log.Printf("清理过期文件备份失败 [%s]: %v", tars[i].name, err)
+			continue
+		}
 		// 保持 file_backups 表和磁盘一致，避免备份总览页面展示已被轮转清理的记录。
 		db.Exec(`DELETE FROM file_backups WHERE site_id = ? AND filename = ?`, siteID, tars[i].name)
 	}
@@ -225,8 +231,9 @@ func checkDiskSpace(backupDir string, minFree int64) bool {
 func recordFileBackup(siteID int, filename string, size int64, mode, domain string) {
 	if _, err := database.GetDB().Exec(`INSERT INTO file_backups (site_id, filename, file_size, mode) VALUES (?, ?, ?, ?)`,
 		siteID, filename, size, mode); err != nil {
+		msg := fmt.Sprintf("%s 文件备份记录写入失败: %v；该备份不会出现在备份总览页面，后续远程同步状态也无法回写", domain, err)
 		log.Printf("文件备份记录写入 file_backups 失败 [%s]: %v", domain, err)
-		appendCronLog(fmt.Sprintf("%s 文件备份记录写入失败: %v", domain, err))
+		appendCronLog(msg)
 	}
 }
 

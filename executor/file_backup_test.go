@@ -61,6 +61,56 @@ func TestCleanOldBackupsRemovesRotatedFileBackupsRows(t *testing.T) {
 	}
 }
 
+func TestCleanOldBackupsKeepsDBRowWhenFileRemovalFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root; permission-based removal failure cannot be simulated")
+	}
+	openTestDB(t)
+	insertMinimalWebsite(t, "rotate-fail.example.com")
+
+	dir := t.TempDir()
+	names := []string{
+		"file_full_20260101_000000.tar.gz",
+		"file_full_20260102_000000.tar.gz",
+		"file_full_20260103_000000.tar.gz",
+	}
+	base := time.Now().Add(-time.Hour)
+	for i, name := range names {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("x"), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		mt := base.Add(time.Duration(i) * time.Minute)
+		if err := os.Chtimes(path, mt, mt); err != nil {
+			t.Fatalf("chtimes %s: %v", name, err)
+		}
+		if _, err := database.GetDB().Exec(`INSERT INTO file_backups (site_id, filename, file_size, mode) VALUES (1, ?, 1, 'full')`, name); err != nil {
+			t.Fatalf("insert file_backups %s: %v", name, err)
+		}
+	}
+
+	// 去掉目录写权限，让 os.Remove 因权限不足失败（Linux 下删除文件需要父目录的写权限）。
+	if err := os.Chmod(dir, 0555); err != nil {
+		t.Fatalf("chmod dir: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0755) })
+
+	cleanOldBackups(dir, 2, 1)
+
+	// 文件删除失败，仍留在磁盘上：对应的 file_backups 记录不能被删除，
+	// 否则总览页面会漏掉一个实际仍存在的本地备份文件。
+	if _, err := os.Stat(filepath.Join(dir, names[0])); err != nil {
+		t.Fatalf("oldest backup file should still be on disk after failed removal: %v", err)
+	}
+	var count int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM file_backups WHERE filename = ?`, names[0]).Scan(&count); err != nil {
+		t.Fatalf("query file_backups: %v", err)
+	}
+	if count != 1 {
+		t.Fatal("file_backups row should NOT be deleted when the underlying file removal failed")
+	}
+}
+
 func TestRecordFileBackupInsertsRow(t *testing.T) {
 	openTestDB(t)
 	insertMinimalWebsite(t, "record-ok.example.com")
