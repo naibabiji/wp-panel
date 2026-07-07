@@ -98,7 +98,7 @@
 
             <hr class="my-4 border-gray-700">
 
-            <div x-data="versionCheck()" x-init="fetchVersion()">
+            <div x-data="versionCheck()" x-init="scheduleCheck()">
                 <div class="flex items-center justify-between mb-2">
                     <span class="text-sm text-gray-400">{{t .Lang "settings.panel_version"}}</span>
                     <span class="text-sm text-white font-mono" x-text="currentVersion"></span>
@@ -170,11 +170,11 @@
 
             <hr class="my-4 border-gray-700">
 
-            <div x-data="systemUpdate()" x-init="check()">
+            <div x-data="systemUpdate()" x-init="scheduleCheck()">
                 <div class="flex items-center justify-between mb-2">
                     <span class="text-sm text-gray-400">{{t .Lang "settings.system_updates"}}</span>
-                        <span class="text-sm text-white font-mono" x-show="count > 0" x-text="t('settings.available_count', { count })"></span>
-                    <span class="text-xs text-gray-500" x-show="count === 0">{{t .Lang "settings.up_to_date"}}</span>
+                        <span class="text-sm text-white font-mono" x-show="checked && count > 0" x-text="t('settings.available_count', { count })"></span>
+                    <span class="text-xs text-gray-500" x-show="checked && count === 0">{{t .Lang "settings.up_to_date"}}</span>
                 </div>
                 <div x-show="count > 0" class="mb-3 space-y-2">
                     <template x-for="pkg in packages" :key="pkg.name">
@@ -693,6 +693,7 @@ function panelSettings() {
         },
         pw: { old: '', new1: '', new2: '', basic: '' },
         async fetchSettings() {
+            const aiSettings = this.fetchAISettings();
             try {
                 const r = await api('/settings');
                 if (r.success) {
@@ -721,7 +722,7 @@ function panelSettings() {
                     this.autoUpdate.lastSuccessVersion = au.panel_auto_update_last_success_version || '';
                 }
             } catch(e) {}
-            await this.fetchAISettings();
+            await aiSettings.catch(() => {});
             this.tickTime();
             setInterval(() => this.tickTime(), 1000);
         },
@@ -885,7 +886,7 @@ function panelSettings() {
 }
 function versionCheck() {
     return {
-        currentVersion: "",
+        currentVersion: "{{.PanelVersion}}",
         latestVersion: "",
         releaseNotes: "",
         hasUpdate: false,
@@ -897,9 +898,12 @@ function versionCheck() {
         updateStarting: false,
         pollStartedAt: 0,
         maxPollMs: 12 * 60 * 1000,
+        scheduleCheck() {
+            deferTask(() => this.fetchVersion(), 1000);
+        },
         async fetchVersion() {
             try {
-                const r = await api("/update/check");
+                const r = await api("/update/check", { timeout: 15000 });
                 if (r.success) {
                     this.currentVersion = r.data.current_version;
                     this.latestVersion = r.data.latest_version || "";
@@ -1107,10 +1111,10 @@ function remoteBackup() {
                 const r = await api('/settings/remote-backup');
                 if (r.success) {
                     Object.assign(this.cfg, r.data);
+                    this.publicKey = r.data?.ssh_key || '';
                 }
                 if (!this.cfg.backup_type) this.cfg.backup_type = 'rsync';
                 if (!this.cfg.s3_region) this.cfg.s3_region = 'auto';
-                if (this.cfg.backup_type === 'rsync' && this.cfg.auth_type === 'key') this.loadPublicKey();
             } catch(e) {}
         },
         async saveRemote() {
@@ -1209,11 +1213,15 @@ function systemUpdate() {
     return {
         packages: [],
         count: 0,
+        checked: false,
         checking: false,
         updating: false,
         msg: '',
         ok: false,
         output: '',
+        scheduleCheck() {
+            deferTask(() => this.check(), 1600);
+        },
         async check() {
             this.checking = true;
             this.msg = '';
@@ -1222,6 +1230,7 @@ function systemUpdate() {
                 if (r.success) {
                     this.packages = r.data.packages || [];
                     this.count = r.data.count || 0;
+                    this.checked = true;
                 }
             } catch(e) { showToast(e.message, 'error'); }
             this.checking = false;

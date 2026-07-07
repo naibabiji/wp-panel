@@ -672,13 +672,17 @@ function websiteDetail() {
                 }
             } catch(e) { showToast(t('website.load_failed_with_error', { error: e.message }), 'error'); }
             this.loading = false;
-            this.fetchNginxCustom();
-            this.fetchPluginStatus();
-            this.fetchLogs();
-            this.fetchLogFiles();
-            this.fetchBackups();
-            this.fetchBackupSettings();
-            this.fetchCDNGroups();
+            Promise.allSettled([
+                this.fetchNginxCustom(),
+                this.fetchPluginStatus(),
+                this.fetchBackupSettings(),
+                this.fetchCDNGroups()
+            ]);
+            deferTask(() => {
+                this.fetchLogs();
+                this.fetchLogFiles();
+                this.fetchBackups();
+            }, 400);
         },
         async fetchCDNGroups() {
             try {

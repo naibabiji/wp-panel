@@ -162,6 +162,10 @@
 </div>
 
 <script>
+function alertSettings() {
+    return cachedAPI('/alert/settings', { silent: true }, 2000);
+}
+
 function smtpConfig() {
     return {
         cfg: { smtp_host: '', smtp_port: '587', smtp_encryption: 'starttls', smtp_user: '', smtp_pass: '', admin_email: '' },
@@ -169,7 +173,7 @@ function smtpConfig() {
         testing: false,
         async fetch() {
             try {
-                const r = await api('/alert/settings');
+                const r = await alertSettings();
                 if (r.success) {
                     const d = r.data || {};
                     this.cfg = {
@@ -216,7 +220,7 @@ function webhookConfig() {
         saving: false,
         testing: false,
         async fetch() {
-            try { const r = await api('/alert/settings'); if (r.success) { const d = r.data || {}; if (d.webhook_enabled) this.cfg.webhook_enabled = d.webhook_enabled; if (d.webhook_channel) this.cfg.webhook_channel = d.webhook_channel; if (d.webhook_url) this.cfg.webhook_url = d.webhook_url; } } catch(e) {}
+            try { const r = await alertSettings(); if (r.success) { const d = r.data || {}; if (d.webhook_enabled) this.cfg.webhook_enabled = d.webhook_enabled; if (d.webhook_channel) this.cfg.webhook_channel = d.webhook_channel; if (d.webhook_url) this.cfg.webhook_url = d.webhook_url; } } catch(e) {}
         },
         async save() {
             this.saving = true;
@@ -248,7 +252,7 @@ function alertManager() {
         logs: [],
         async fetchAll() {
             try {
-                const r = await api('/alert/settings');
+                const r = await alertSettings();
                 if (r.success) {
                     const d = r.data || {};
                     for (const k of Object.keys(d)) {

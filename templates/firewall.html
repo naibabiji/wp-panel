@@ -1,6 +1,6 @@
 {{template "base" .}}
 {{define "firewall_content"}}
-<div x-data="firewallManager()" x-init="fetchBans(); fetchWPSecurityReport(); refreshFileSecurityEvents()">
+<div x-data="firewallManager()" x-init="init()">
     <div class="flex items-center justify-between mb-6">
         <h2 class="text-xl font-bold text-white">{{t .Lang "nav.firewall"}}</h2>
         <button @click="showRules = true" class="btn-secondary text-sm">{{t .Lang "firewall.rules_help"}}</button>
@@ -296,7 +296,7 @@
         </div>
     </div>
 
-    <div class="card" x-data="{history:[], loaded:false}" x-init="api('/firewall/bans?history=1').then(r => { if (r.success) history = r.data?.data || r.data || []; loaded = true }).catch(e => {})">
+    <div class="card" x-data="{history:[], loaded:false}" x-init="deferTask(() => api('/firewall/bans?history=1', { silent: true }).then(r => { if (r.success) history = r.data?.data || r.data || []; loaded = true }).catch(e => {}), 500)">
         <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "firewall.ban_history"}}</h3>
         <div class="overflow-x-auto">
             <table class="w-full">
@@ -352,6 +352,11 @@ function firewallManager() {
         page: 1,
         totalPages: 1,
         total: 0,
+        init() {
+            this.fetchBans();
+            this.loadFileSecurityEvents();
+            deferTask(() => this.fetchWPSecurityReport(), 500);
+        },
         async fetchBans() {
             try {
                 let url = '/firewall/bans?page=' + this.page;
@@ -375,6 +380,18 @@ function firewallManager() {
                 }
             } catch(e) { showToast(t('firewall.load_wp_report_failed', { error: e.message }), 'error'); }
             finally { this.securityReportLoading = false; }
+        },
+        async loadFileSecurityEvents() {
+            try {
+                const r = await api('/firewall/file-security-events', { silent: true });
+                if (r.success) {
+                    this.fileSecurityEvents = r.data?.events || [];
+                    this.fileSecuritySummary = null;
+                    this.fileSecurityLoaded = true;
+                }
+            } catch(e) {
+                this.fileSecurityLoaded = true;
+            }
         },
         async refreshFileSecurityEvents(clearFirst = false) {
             if (clearFirst && !(await confirmModal(t('firewall.confirm_clear_history')))) return;

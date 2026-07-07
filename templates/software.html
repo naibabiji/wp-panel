@@ -142,7 +142,7 @@
         </div>
     </div>
 
-    <div x-data="processGuard()" x-init="fetch()" class="card mb-6">
+    <div x-data="processGuard()" x-init="deferTask(() => fetchStatus(), 700)" class="card mb-6">
         <div class="flex items-center justify-between mb-3">
             <h3 class="text-lg font-semibold text-white">{{t .Lang "software.process_guard"}}</h3>
             <span class="text-xs text-gray-500">{{t .Lang "software.auto_check_30s"}}</span>
@@ -243,7 +243,7 @@
 function processGuard() {
     return {
         services: [],
-        async fetch() {
+        async fetchStatus() {
             try {
                 const r = await api('/software/guard');
                 if (r.success) {
@@ -251,7 +251,7 @@ function processGuard() {
                     this.services = r.data || [];
                 }
             } catch(e) {}
-            setTimeout(() => this.fetch(), 30000);
+            setTimeout(() => this.fetchStatus(), 30000);
         },
         async action(service, act) {
             const s = this.services.find(s => s.service === service);
@@ -260,7 +260,7 @@ function processGuard() {
             try {
                 const r = await api('/software/guard/action', { method: 'POST', body: { service, action: act } });
                 showToast(r.data?.message || service + ' ' + act + ' 成功', 'success');
-                await this.fetch();
+                await this.fetchStatus();
             } catch(e) {
                 showToast(e.message, 'error');
                 s._acting = false;

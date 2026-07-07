@@ -1,7 +1,7 @@
 {{template "base" .}}
 {{define "dashboard_content"}}
 <div>
-    <div class="flex items-center justify-between mb-6" x-data="versionCheck()" x-init="check()">
+    <div class="flex items-center justify-between mb-6" x-data="versionCheck()" x-init="scheduleCheck()">
         <div class="flex items-center space-x-3">
             <h2 class="text-xl font-bold text-white">{{t .Lang "nav.dashboard"}}</h2>
             <span class="text-xs text-gray-500 bg-gray-800 px-2 py-0.5 rounded">{{.PanelVersion}}</span>
@@ -107,21 +107,27 @@ function versionCheck() {
         checking: false,
         latestVersion: '',
         sysCount: 0,
+        scheduleCheck() {
+            deferTask(() => this.check(), 1000);
+        },
         async check() {
             this.checking = true;
-            try {
-                const r = await api('/update/check');
+            const panelCheck = api('/update/check', { silent: true, timeout: 15000 });
+            const systemCheck = api('/system/updates', { silent: true, timeout: 15000 });
+            const [panelResult, systemResult] = await Promise.allSettled([panelCheck, systemCheck]);
+            if (panelResult.status === 'fulfilled') {
+                const r = panelResult.value;
                 if (r.success && r.data.has_update) {
                     this.hasUpdate = true;
                     this.latestVersion = r.data.latest_version;
                 }
-            } catch(e) {}
-            try {
-                const r2 = await api('/system/updates');
+            }
+            if (systemResult.status === 'fulfilled') {
+                const r2 = systemResult.value;
                 if (r2.success) {
                     this.sysCount = r2.data.count || 0;
                 }
-            } catch(e) {}
+            }
             this.checking = false;
         }
     }
