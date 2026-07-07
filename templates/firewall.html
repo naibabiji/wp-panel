@@ -106,7 +106,14 @@
         </div>
     </div>
 
-    <div class="card mb-6">
+    <div class="mb-6 border-b border-gray-700 flex flex-wrap gap-2">
+        <button @click="loadTab('current')" :class="activeTab === 'current' ? 'text-white border-blue-400' : 'text-gray-400 border-transparent hover:text-white'" class="px-3 py-2 text-sm border-b-2">{{t .Lang "firewall.current_bans"}}</button>
+        <button @click="loadTab('wp')" :class="activeTab === 'wp' ? 'text-white border-blue-400' : 'text-gray-400 border-transparent hover:text-white'" class="px-3 py-2 text-sm border-b-2">{{t .Lang "firewall.wp_suspicious_access"}}</button>
+        <button @click="loadTab('files')" :class="activeTab === 'files' ? 'text-white border-blue-400' : 'text-gray-400 border-transparent hover:text-white'" class="px-3 py-2 text-sm border-b-2">{{t .Lang "firewall.file_security_events"}}</button>
+        <button @click="loadTab('history')" :class="activeTab === 'history' ? 'text-white border-blue-400' : 'text-gray-400 border-transparent hover:text-white'" class="px-3 py-2 text-sm border-b-2">{{t .Lang "firewall.ban_history"}}</button>
+    </div>
+
+    <div class="card mb-6" x-show="activeTab === 'current'" x-cloak>
         <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "firewall.manual_ban_ip"}}</h3>
         <div class="flex items-end space-x-3">
             <div class="flex-1">
@@ -126,7 +133,7 @@
         </div>
     </div>
 
-    <div class="card mb-6">
+    <div class="card mb-6" x-show="activeTab === 'wp'" x-cloak>
         <div class="flex items-center justify-between mb-4">
             <div>
                 <h3 class="text-lg font-semibold text-white">{{t .Lang "firewall.wp_suspicious_access"}}</h3>
@@ -178,7 +185,7 @@
         </div>
     </div>
 
-    <div class="card mb-6">
+    <div class="card mb-6" x-show="activeTab === 'files'" x-cloak>
         <div class="flex items-center justify-between mb-4">
             <div>
                 <h3 class="text-lg font-semibold text-white">{{t .Lang "firewall.file_security_events"}}</h3>
@@ -236,12 +243,31 @@
         </div>
     </div>
 
-    <div class="card mb-6">
-        <div class="flex items-center justify-between mb-4">
+    <div class="card mb-6" x-show="activeTab === 'current'" x-cloak>
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
             <h3 class="text-lg font-semibold text-white">{{t .Lang "firewall.current_bans"}}</h3>
-            <div class="flex items-center space-x-2">
+            <div class="flex flex-wrap items-center gap-2">
                 <input type="text" x-model="searchIP" @keydown.enter="page=1;fetchBans()" class="input-field text-sm py-1.5 w-48" placeholder="{{t .Lang "firewall.search_ip_placeholder"}}">
+                <select x-model="banLevelFilter" @change="page=1;fetchBans()" class="input-field text-sm py-1.5 w-36">
+                    <option value="">{{t .Lang "firewall.all_levels"}}</option>
+                    <option value="1">{{t .Lang "firewall.ban_level_rate_limit"}}</option>
+                    <option value="2">{{t .Lang "firewall.ban_level_10m"}}</option>
+                    <option value="3">{{t .Lang "firewall.ban_level_24h"}}</option>
+                    <option value="4">{{t .Lang "firewall.ban_level_30d"}}</option>
+                    <option value="5">{{t .Lang "firewall.ban_level_permanent"}}</option>
+                </select>
+                <select x-model="banSourceFilter" @change="page=1;fetchBans()" class="input-field text-sm py-1.5 w-40">
+                    <option value="">{{t .Lang "firewall.all_sources"}}</option>
+                    <option value="wppanel">{{t .Lang "firewall.source_web_protect"}}</option>
+                    <option value="wppanel-404">{{t .Lang "firewall.source_404"}}</option>
+                    <option value="wppanel-sshd">{{t .Lang "firewall.source_ssh"}}</option>
+                    <option value="panel">{{t .Lang "firewall.source_panel"}}</option>
+                    <option value="panel_scan">{{t .Lang "firewall.source_scan"}}</option>
+                    <option value="manual">{{t .Lang "firewall.source_manual"}}</option>
+                    <option value="nftables">{{t .Lang "firewall.source_nftables"}}</option>
+                </select>
                 <button @click="page=1;fetchBans()" class="btn-secondary text-xs py-1.5 px-3">{{t .Lang "firewall.search"}}</button>
+                <button @click="resetBanFilters()" class="btn-secondary text-xs py-1.5 px-3">{{t .Lang "firewall.reset_filters"}}</button>
             </div>
         </div>
         <div class="overflow-x-auto">
@@ -296,7 +322,7 @@
         </div>
     </div>
 
-    <div class="card" x-data="{history:[], loaded:false}" x-init="deferTask(() => api('/firewall/bans?history=1', { silent: true }).then(r => { if (r.success) history = r.data?.data || r.data || []; loaded = true }).catch(e => {}), 500)">
+    <div class="card" x-show="activeTab === 'history'" x-cloak>
         <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "firewall.ban_history"}}</h3>
         <div class="overflow-x-auto">
             <table class="w-full">
@@ -336,7 +362,11 @@
 <script>
 function firewallManager() {
     return {
+        activeTab: 'current',
         bans: [],
+        history: [],
+        historyLoaded: false,
+        historyLoading: false,
         banIP: '',
         banDuration: '600',
         banSubmitting: false,
@@ -349,18 +379,32 @@ function firewallManager() {
         fileSecurityLoading: false,
         fileSecuritySummary: null,
         searchIP: '',
+        banLevelFilter: '',
+        banSourceFilter: '',
         page: 1,
         totalPages: 1,
         total: 0,
         init() {
             this.fetchBans();
-            this.loadFileSecurityEvents();
-            deferTask(() => this.fetchWPSecurityReport(), 500);
+        },
+        loadTab(tab) {
+            this.activeTab = tab;
+            if (tab === 'wp' && !this.securityReportLoaded && !this.securityReportLoading) {
+                this.fetchWPSecurityReport();
+            }
+            if (tab === 'files' && !this.fileSecurityLoaded && !this.fileSecurityLoading) {
+                this.loadFileSecurityEvents();
+            }
+            if (tab === 'history' && !this.historyLoaded && !this.historyLoading) {
+                this.fetchHistory();
+            }
         },
         async fetchBans() {
             try {
                 let url = '/firewall/bans?page=' + this.page;
                 if (this.searchIP.trim()) url += '&search=' + encodeURIComponent(this.searchIP.trim());
+                if (this.banLevelFilter) url += '&level=' + encodeURIComponent(this.banLevelFilter);
+                if (this.banSourceFilter) url += '&source=' + encodeURIComponent(this.banSourceFilter);
                 const r = await api(url);
                 if (r.success) {
                     this.bans = r.data?.data || r.data || [];
@@ -369,6 +413,24 @@ function firewallManager() {
                     this.totalPages = r.data?.total_pages || 1;
                 }
             } catch(e) {}
+        },
+        resetBanFilters() {
+            this.searchIP = '';
+            this.banLevelFilter = '';
+            this.banSourceFilter = '';
+            this.page = 1;
+            this.fetchBans();
+        },
+        async fetchHistory() {
+            this.historyLoading = true;
+            try {
+                const r = await api('/firewall/bans?history=1', { silent: true });
+                if (r.success) {
+                    this.history = r.data?.data || r.data || [];
+                    this.historyLoaded = true;
+                }
+            } catch(e) {}
+            finally { this.historyLoading = false; }
         },
         async fetchWPSecurityReport() {
             this.securityReportLoading = true;
@@ -386,7 +448,7 @@ function firewallManager() {
                 const r = await api('/firewall/file-security-events', { silent: true });
                 if (r.success) {
                     this.fileSecurityEvents = r.data?.events || [];
-                    this.fileSecuritySummary = null;
+                    this.fileSecuritySummary = r.data?.summary || null;
                     this.fileSecurityLoaded = true;
                 }
             } catch(e) {

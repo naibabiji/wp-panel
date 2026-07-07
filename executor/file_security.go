@@ -122,6 +122,34 @@ func ListFileSecurityEvents(limit int) ([]models.FileSecurityEvent, error) {
 	return events, rows.Err()
 }
 
+func GetFileSecuritySummary() (models.FileSecurityRefreshSummary, error) {
+	db := database.GetDB()
+	if db == nil {
+		return models.FileSecurityRefreshSummary{}, fmt.Errorf("database is nil")
+	}
+
+	var summary models.FileSecurityRefreshSummary
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM websites
+		WHERE site_type = 'wordpress'
+			AND file_lock_enabled = 1
+			AND COALESCE(file_lock_enabled_at, '') <> ''`).Scan(&summary.SitesScanned); err != nil {
+		return summary, err
+	}
+	if err := db.QueryRow(`
+		SELECT
+			COALESCE(SUM(CASE WHEN event_type = ? AND resolved_at IS NULL THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN event_type = ? AND resolved_at IS NULL THEN event_count ELSE 0 END), 0)
+		FROM file_security_events`,
+		FileSecurityEventSuspiciousFile,
+		FileSecurityEventRuntimePHPAccess,
+	).Scan(&summary.FileEvents, &summary.AccessEvents); err != nil {
+		return summary, err
+	}
+	return summary, nil
+}
+
 func ClearFileSecurityEvents() error {
 	db := database.GetDB()
 	if db == nil {

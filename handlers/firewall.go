@@ -29,6 +29,8 @@ func (h *FirewallHandler) ListBans(c *gin.Context) {
 	}
 	perPage := 30
 	search := strings.TrimSpace(c.Query("search"))
+	level := strings.TrimSpace(c.Query("level"))
+	source := strings.TrimSpace(c.Query("source"))
 
 	var where string
 	var args []interface{}
@@ -42,6 +44,26 @@ func (h *FirewallHandler) ListBans(c *gin.Context) {
 	if search != "" {
 		where += " AND ip_address LIKE ?"
 		args = append(args, "%"+search+"%")
+	}
+	if level != "" {
+		levelValue, err := strconv.Atoi(level)
+		if err != nil || levelValue < 1 || levelValue > 5 {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的封禁等级"))
+			return
+		}
+		where += " AND ban_level = ?"
+		args = append(args, levelValue)
+	}
+	if source != "" {
+		if source == "nftables" {
+			where += " AND ban_level >= 5"
+		} else if isAllowedBanSourceFilter(source) {
+			where += " AND source_jail = ?"
+			args = append(args, source)
+		} else {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的封禁来源"))
+			return
+		}
 	}
 
 	var total int
@@ -90,6 +112,15 @@ func (h *FirewallHandler) ListBans(c *gin.Context) {
 	}))
 }
 
+func isAllowedBanSourceFilter(source string) bool {
+	switch source {
+	case "wppanel", "wppanel-404", "wppanel-sshd", "panel", "panel_scan", "manual":
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *FirewallHandler) WPSecurityReport(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "30"))
 	items, err := executor.BuildWPSecurityReport(limit)
@@ -110,9 +141,15 @@ func (h *FirewallHandler) ListFileSecurityEvents(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取文件安全事件失败"))
 		return
 	}
+	summary, err := executor.GetFileSecuritySummary()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取文件安全事件摘要失败"))
+		return
+	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"events": events,
-		"total":  len(events),
+		"summary": summary,
+		"events":  events,
+		"total":   len(events),
 	}))
 }
 
