@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -587,6 +588,57 @@ func RecordFail2banBan(ip, jail string) error {
 				reason = "404 泛滥检测（高危：累计3次严重违规，永久封禁）"
 			}
 		}
+	}
+
+	var activeID, activeLevel, activeIsManual, activeBanCount int
+	var activeReason string
+	err := db.QueryRow(
+		`SELECT id, ban_level, is_manual, ban_count, reason
+		 FROM firewall_bans
+		 WHERE ip_address = ? AND unbanned_at IS NULL
+		 ORDER BY id DESC LIMIT 1`,
+		ip,
+	).Scan(&activeID, &activeLevel, &activeIsManual, &activeBanCount, &activeReason)
+	if err == nil {
+		if activeIsManual == 1 {
+			_, err = db.Exec(`UPDATE firewall_bans SET ban_count = ban_count + 1 WHERE id = ?`, activeID)
+			return err
+		}
+		if activeLevel >= 3 && activeBanCount+1 >= 3 {
+			banLevel = 5
+			expiresVal = "NULL"
+			reason = "Fail2ban 自动封禁（高危：累计3次严重违规，永久封禁）"
+			if jail == "wppanel-404" {
+				reason = "404 泛滥检测（高危：累计3次严重违规，永久封禁）"
+			}
+			if jail == "wppanel-sshd" {
+				reason = "SSH 暴力破解（高危：累计3次严重违规，永久封禁）"
+			}
+		}
+		if activeLevel > banLevel {
+			banLevel = activeLevel
+			reason = activeReason
+			if banLevel >= 5 {
+				expiresVal = "NULL"
+			} else if banLevel >= 3 {
+				expiresVal = "datetime('now', '+86400 seconds')"
+			}
+		}
+		if _, err := db.Exec(
+			`UPDATE firewall_bans
+			 SET ban_level = ?, reason = ?, source_jail = ?, ban_count = ban_count + 1,
+			     banned_at = CURRENT_TIMESTAMP, expires_at = `+expiresVal+`
+			 WHERE id = ?`,
+			banLevel, reason, jail, activeID,
+		); err != nil {
+			return err
+		}
+		if banLevel >= 3 {
+			recordPersistBan(ip)
+		}
+		return nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
 	}
 
 	if _, err := db.Exec(

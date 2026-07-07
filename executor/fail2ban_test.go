@@ -9,7 +9,7 @@ import (
 	"github.com/naibabiji/wp-panel/database"
 )
 
-func TestRecordFail2banBanKeepsRepeatedHistory(t *testing.T) {
+func TestRecordFail2banBanUpdatesActiveRecord(t *testing.T) {
 	openTestDB(t)
 	oldRecordPersistBan := recordPersistBan
 	recordPersistBan = func(string) {}
@@ -23,40 +23,32 @@ func TestRecordFail2banBanKeepsRepeatedHistory(t *testing.T) {
 		t.Fatalf("second record failed: %v", err)
 	}
 
-	rows, err := database.GetDB().Query(
-		`SELECT ban_level, source_jail, ban_count FROM firewall_bans
-		 WHERE ip_address = ? ORDER BY id`, ip,
-	)
-	if err != nil {
+	var rows, level, count int
+	var jail string
+	if err := database.GetDB().QueryRow(
+		`SELECT COUNT(*), MAX(ban_level), MAX(source_jail), MAX(ban_count)
+		 FROM firewall_bans WHERE ip_address = ? AND unbanned_at IS NULL`, ip,
+	).Scan(&rows, &level, &jail, &count); err != nil {
 		t.Fatalf("query records: %v", err)
 	}
-	defer rows.Close()
+	if rows != 1 {
+		t.Fatalf("expected one active record, got %d", rows)
+	}
+	if level != 3 || jail != "wppanel-404" || count != 2 {
+		t.Fatalf("unexpected active record: level=%d jail=%q count=%d", level, jail, count)
+	}
 
-	var levels, counts []int
-	var jails []string
-	for rows.Next() {
-		var level, count int
-		var jail string
-		if err := rows.Scan(&level, &jail, &count); err != nil {
-			t.Fatalf("scan record: %v", err)
-		}
-		levels = append(levels, level)
-		jails = append(jails, jail)
-		counts = append(counts, count)
+	if err := RecordFail2banBan(ip, "wppanel-404"); err != nil {
+		t.Fatalf("third record failed: %v", err)
 	}
-	if len(levels) != 2 {
-		t.Fatalf("expected two history records, got %d", len(levels))
+	if err := database.GetDB().QueryRow(
+		`SELECT COUNT(*), MAX(ban_level), MAX(source_jail), MAX(ban_count)
+		 FROM firewall_bans WHERE ip_address = ? AND unbanned_at IS NULL`, ip,
+	).Scan(&rows, &level, &jail, &count); err != nil {
+		t.Fatalf("query records after third event: %v", err)
 	}
-	if levels[0] != 2 || levels[1] != 3 {
-		t.Fatalf("expected levels [2 3], got %v", levels)
-	}
-	if counts[0] != 1 || counts[1] != 2 {
-		t.Fatalf("expected ban counts [1 2], got %v", counts)
-	}
-	for _, jail := range jails {
-		if jail != "wppanel-404" {
-			t.Fatalf("expected jail wppanel-404, got %q", jail)
-		}
+	if rows != 1 || level != 5 || jail != "wppanel-404" || count != 3 {
+		t.Fatalf("unexpected permanent active record: rows=%d level=%d jail=%q count=%d", rows, level, jail, count)
 	}
 }
 
