@@ -52,6 +52,71 @@ func TestRecordFail2banBanUpdatesActiveRecord(t *testing.T) {
 	}
 }
 
+func TestRecordFail2banBanKeepsExistingSourceWhenExistingLevelIsHigher(t *testing.T) {
+	openTestDB(t)
+	oldRecordPersistBan := recordPersistBan
+	recordPersistBan = func(string) {}
+	t.Cleanup(func() { recordPersistBan = oldRecordPersistBan })
+
+	ip := "203.0.113.78"
+	if _, err := database.GetDB().Exec(
+		`INSERT INTO firewall_bans (ip_address, ban_level, reason, source_jail, ban_count, expires_at)
+		 VALUES (?, 5, '404 泛滥检测（高危：累计3次严重违规，永久封禁）', 'wppanel-404', 3, NULL)`,
+		ip,
+	); err != nil {
+		t.Fatalf("insert active ban: %v", err)
+	}
+	if err := RecordFail2banBan(ip, "wppanel-sshd"); err != nil {
+		t.Fatalf("record sshd event: %v", err)
+	}
+
+	var rows, level, count int
+	var jail, reason string
+	if err := database.GetDB().QueryRow(
+		`SELECT COUNT(*), MAX(ban_level), MAX(source_jail), MAX(reason), MAX(ban_count)
+		 FROM firewall_bans WHERE ip_address = ? AND unbanned_at IS NULL`, ip,
+	).Scan(&rows, &level, &jail, &reason, &count); err != nil {
+		t.Fatalf("query active record: %v", err)
+	}
+	if rows != 1 || level != 5 || jail != "wppanel-404" || count != 4 {
+		t.Fatalf("unexpected active record: rows=%d level=%d jail=%q count=%d", rows, level, jail, count)
+	}
+	if !strings.Contains(reason, "404 泛滥检测") {
+		t.Fatalf("expected existing 404 reason to be kept, got %q", reason)
+	}
+}
+
+func TestRecordFail2banBanDoesNotReuseExpiredActiveRecord(t *testing.T) {
+	openTestDB(t)
+	oldRecordPersistBan := recordPersistBan
+	recordPersistBan = func(string) {}
+	t.Cleanup(func() { recordPersistBan = oldRecordPersistBan })
+
+	ip := "203.0.113.79"
+	if _, err := database.GetDB().Exec(
+		`INSERT INTO firewall_bans (ip_address, ban_level, reason, source_jail, ban_count, expires_at)
+		 VALUES (?, 3, 'expired', 'wppanel-404', 1, datetime('now', '-60 seconds'))`,
+		ip,
+	); err != nil {
+		t.Fatalf("insert expired ban: %v", err)
+	}
+	if err := RecordFail2banBan(ip, "wppanel-404"); err != nil {
+		t.Fatalf("record new event: %v", err)
+	}
+
+	var totalRows, activeRows int
+	if err := database.GetDB().QueryRow(
+		`SELECT COUNT(*),
+		        SUM(CASE WHEN unbanned_at IS NULL AND (expires_at IS NULL OR expires_at > datetime('now')) THEN 1 ELSE 0 END)
+		 FROM firewall_bans WHERE ip_address = ?`, ip,
+	).Scan(&totalRows, &activeRows); err != nil {
+		t.Fatalf("query rows: %v", err)
+	}
+	if totalRows != 2 || activeRows != 1 {
+		t.Fatalf("expected expired row plus one fresh active row, got total=%d active=%d", totalRows, activeRows)
+	}
+}
+
 func TestDeduplicateActiveFirewallBansKeepsMostSevereRecord(t *testing.T) {
 	openTestDB(t)
 	db := database.GetDB()
@@ -114,6 +179,62 @@ func TestDeduplicateActiveFirewallBansKeepsMostSevereRecord(t *testing.T) {
 	}
 	if otherActiveRows != 1 {
 		t.Fatalf("expected unrelated active row to remain, got %d", otherActiveRows)
+	}
+}
+
+func TestUpgradeDeduplicatesActiveFirewallBans(t *testing.T) {
+	openTestDB(t)
+	db := database.GetDB()
+
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (
+		version TEXT NOT NULL,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		t.Fatalf("create schema_version: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_version (version) VALUES ('1.0.25')`); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+	for _, row := range []struct {
+		level    int
+		count    int
+		bannedAt string
+	}{
+		{5, 5, "2026-07-07 18:00:00"},
+		{5, 9, "2026-07-07 19:00:00"},
+		{3, 4, "2026-07-07 20:00:00"},
+	} {
+		if _, err := db.Exec(
+			`INSERT INTO firewall_bans (ip_address, ban_level, reason, source_jail, ban_count, banned_at, expires_at)
+			 VALUES ('203.0.113.12', ?, 'test', 'wppanel-404', ?, ?, NULL)`,
+			row.level, row.count, row.bannedAt,
+		); err != nil {
+			t.Fatalf("insert duplicate ban: %v", err)
+		}
+	}
+
+	if err := database.RunUpgrades(); err != nil {
+		t.Fatalf("run upgrades: %v", err)
+	}
+
+	var activeRows, count int
+	if err := db.QueryRow(
+		`SELECT COUNT(*), MAX(ban_count)
+		 FROM firewall_bans
+		 WHERE ip_address = '203.0.113.12' AND unbanned_at IS NULL`,
+	).Scan(&activeRows, &count); err != nil {
+		t.Fatalf("query active bans: %v", err)
+	}
+	if activeRows != 1 || count != 9 {
+		t.Fatalf("expected upgrade to keep one active ban with max count, got rows=%d count=%d", activeRows, count)
+	}
+
+	var version string
+	if err := db.QueryRow(`SELECT version FROM schema_version ORDER BY updated_at DESC, rowid DESC LIMIT 1`).Scan(&version); err != nil {
+		t.Fatalf("query schema version: %v", err)
+	}
+	if version != database.LatestVersion() {
+		t.Fatalf("schema_version = %q, want %q", version, database.LatestVersion())
 	}
 }
 

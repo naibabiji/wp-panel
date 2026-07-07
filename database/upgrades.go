@@ -365,6 +365,10 @@ var upgrades = []Upgrade{
 		Description: "回填升级前已存在的网站文件备份到 file_backups 表",
 		Func:        backfillFileBackupsFromDisk,
 	},
+	{
+		Version:     "1.0.26",
+		Description: "清理旧版本遗留的重复活跃防火墙封禁记录",
+	},
 }
 
 func ensureFileLockEnabledColumn() error {

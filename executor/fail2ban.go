@@ -23,6 +23,14 @@ var manualAddNginxBan = AddNginxBan
 var manualRemoveNginxBan = RemoveNginxBan
 var syncReplaceNginxBannedIPs = ReplaceNginxBannedIPs
 
+func init() {
+	database.RegisterUpgrade("1.0.26", cleanupDuplicateActiveFirewallBans)
+}
+
+func cleanupDuplicateActiveFirewallBans() error {
+	return deduplicateActiveFirewallBans(database.GetDB())
+}
+
 type fail2banConfigBackup struct {
 	path    string
 	data    []byte
@@ -418,63 +426,19 @@ func SyncFail2banBans() {
 	nftablesSet := getNftablesPersistIPs()
 
 	db := database.GetDB()
-	now := time.Now()
 
 	for ip, jail := range ipJails {
 		var count int
-		db.QueryRow("SELECT COUNT(*) FROM firewall_bans WHERE ip_address = ? AND unbanned_at IS NULL", ip).Scan(&count)
+		db.QueryRow(`SELECT COUNT(*) FROM firewall_bans
+			WHERE ip_address = ? AND unbanned_at IS NULL
+				AND (expires_at IS NULL OR expires_at > datetime('now'))`, ip).Scan(&count)
 		if count > 0 {
 			continue
 		}
-
-		prevBans, prevMaxLevel := countBanHistory(ip, now)
-		banLevel := 2
-		expiresVal := "datetime('now', '+600 seconds')"
-		reason := "Fail2ban 自动封禁"
-		if jail == "wppanel-404" {
-			reason = "404 泛滥检测"
-		}
-		if jail == "wppanel-sshd" {
-			reason = "SSH 暴力破解"
-		}
-
-		if prevMaxLevel >= 2 || prevBans > 0 {
-			banLevel = 3
-			expiresVal = "datetime('now', '+86400 seconds')"
-			reason = "Fail2ban 自动封禁（24h内重复违规，升级至24小时）"
-			if jail == "wppanel-404" {
-				reason = "404 泛滥检测（24h内重复违规，升级至24小时）"
-			}
-			if jail == "wppanel-sshd" {
-				reason = "SSH 暴力破解（24h内重复违规，升级至24小时）"
-			}
-
-			l3Count := countLevel3(ip)
-			if l3Count >= 2 {
-				banLevel = 5
-				expiresVal = "NULL"
-				reason = "Fail2ban 自动封禁（高危：累计3次严重违规，永久封禁）"
-				if jail == "wppanel-404" {
-					reason = "404 泛滥检测（高危：累计3次严重违规，永久封禁）"
-				}
-				if jail == "wppanel-sshd" {
-					reason = "SSH 暴力破解（高危：累计3次严重违规，永久封禁）"
-				}
-			}
-		}
-
-		db.Exec(
-			`INSERT INTO firewall_bans (ip_address, ban_level, reason, source_jail, ban_count, expires_at)
-			 VALUES (?, ?, ?, ?, ?, `+expiresVal+`)`,
-			ip, banLevel, reason, jail, prevBans+1,
-		)
-
-		if banLevel >= 3 {
-			AddPersistBan(ip)
-		}
+		_ = RecordFail2banBan(ip, jail)
 	}
-	_ = deduplicateActiveFirewallBans(db)
 
+	now := time.Now()
 	rows, err := db.Query("SELECT id, ip_address, ban_level, expires_at, is_manual, source_jail FROM firewall_bans WHERE unbanned_at IS NULL")
 	if err != nil {
 		return
@@ -592,19 +556,20 @@ func RecordFail2banBan(ip, jail string) error {
 	}
 
 	var activeID, activeLevel, activeIsManual, activeBanCount int
-	var activeReason string
+	var activeReason, activeJail string
 	err := db.QueryRow(
-		`SELECT id, ban_level, is_manual, ban_count, reason
+		`SELECT id, ban_level, is_manual, ban_count, reason, source_jail
 		 FROM firewall_bans
 		 WHERE ip_address = ? AND unbanned_at IS NULL
+		   AND (expires_at IS NULL OR expires_at > datetime('now'))
 		 ORDER BY id DESC LIMIT 1`,
 		ip,
-	).Scan(&activeID, &activeLevel, &activeIsManual, &activeBanCount, &activeReason)
+	).Scan(&activeID, &activeLevel, &activeIsManual, &activeBanCount, &activeReason, &activeJail)
 	if err == nil {
 		if activeIsManual == 1 {
 			_, err = db.Exec(`UPDATE firewall_bans SET ban_count = ban_count + 1 WHERE id = ?`, activeID)
 			if err == nil {
-				_ = deduplicateActiveFirewallBans(db)
+				_ = deduplicateActiveFirewallBanIP(db, ip)
 			}
 			return err
 		}
@@ -619,9 +584,10 @@ func RecordFail2banBan(ip, jail string) error {
 				reason = "SSH 暴力破解（高危：累计3次严重违规，永久封禁）"
 			}
 		}
-		if activeLevel > banLevel {
+		if activeLevel >= banLevel {
 			banLevel = activeLevel
 			reason = activeReason
+			jail = activeJail
 			if banLevel >= 5 {
 				expiresVal = "NULL"
 			} else if banLevel >= 3 {
@@ -640,7 +606,7 @@ func RecordFail2banBan(ip, jail string) error {
 		if banLevel >= 3 {
 			recordPersistBan(ip)
 		}
-		_ = deduplicateActiveFirewallBans(db)
+		_ = deduplicateActiveFirewallBanIP(db, ip)
 		return nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
@@ -657,7 +623,7 @@ func RecordFail2banBan(ip, jail string) error {
 	if banLevel >= 3 {
 		recordPersistBan(ip)
 	}
-	_ = deduplicateActiveFirewallBans(db)
+	_ = deduplicateActiveFirewallBanIP(db, ip)
 	return nil
 }
 
@@ -673,48 +639,82 @@ func deduplicateActiveFirewallBans(db *sql.DB) error {
 		return nil
 	}
 	rows, err := db.Query(`
-		SELECT ip_address, id, ban_level, ban_count, banned_at
+		SELECT ip_address
 		FROM firewall_bans
 		WHERE unbanned_at IS NULL
-		ORDER BY ip_address, ban_level DESC, banned_at DESC, id DESC`)
+			AND (expires_at IS NULL OR expires_at > datetime('now'))
+		GROUP BY ip_address
+		HAVING COUNT(*) > 1`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 
-	groups := map[string][]activeFirewallBanCandidate{}
+	var ips []string
 	for rows.Next() {
 		var ip string
-		var row activeFirewallBanCandidate
-		if err := rows.Scan(&ip, &row.id, &row.level, &row.count, &row.bannedAt); err != nil {
+		if err := rows.Scan(&ip); err != nil {
 			return err
 		}
-		groups[ip] = append(groups[ip], row)
+		ips = append(ips, ip)
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
 
-	for _, bans := range groups {
-		if len(bans) <= 1 {
-			continue
-		}
-		keep := bans[0]
-		maxCount := keep.count
-		var duplicateIDs []int
-		for _, ban := range bans[1:] {
-			duplicateIDs = append(duplicateIDs, ban.id)
-			if ban.count > maxCount {
-				maxCount = ban.count
-			}
-		}
-		if _, err := db.Exec(`UPDATE firewall_bans SET ban_count = ? WHERE id = ?`, maxCount, keep.id); err != nil {
+	for _, ip := range ips {
+		if err := deduplicateActiveFirewallBanIP(db, ip); err != nil {
 			return err
 		}
-		for _, id := range duplicateIDs {
-			if _, err := db.Exec(`UPDATE firewall_bans SET unbanned_at = datetime('now') WHERE id = ?`, id); err != nil {
-				return err
-			}
+	}
+	return nil
+}
+
+func deduplicateActiveFirewallBanIP(db *sql.DB, ip string) error {
+	if db == nil || ip == "" {
+		return nil
+	}
+	rows, err := db.Query(`
+		SELECT id, ban_level, ban_count, banned_at
+		FROM firewall_bans
+		WHERE ip_address = ? AND unbanned_at IS NULL
+			AND (expires_at IS NULL OR expires_at > datetime('now'))
+		ORDER BY ban_level DESC, banned_at DESC, id DESC`, ip)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var bans []activeFirewallBanCandidate
+	for rows.Next() {
+		var row activeFirewallBanCandidate
+		if err := rows.Scan(&row.id, &row.level, &row.count, &row.bannedAt); err != nil {
+			return err
+		}
+		bans = append(bans, row)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(bans) <= 1 {
+		return nil
+	}
+
+	keep := bans[0]
+	maxCount := keep.count
+	var duplicateIDs []int
+	for _, ban := range bans[1:] {
+		duplicateIDs = append(duplicateIDs, ban.id)
+		if ban.count > maxCount {
+			maxCount = ban.count
+		}
+	}
+	if _, err := db.Exec(`UPDATE firewall_bans SET ban_count = ? WHERE id = ?`, maxCount, keep.id); err != nil {
+		return err
+	}
+	for _, id := range duplicateIDs {
+		if _, err := db.Exec(`UPDATE firewall_bans SET unbanned_at = datetime('now') WHERE id = ?`, id); err != nil {
+			return err
 		}
 	}
 	return nil

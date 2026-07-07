@@ -349,8 +349,8 @@ func TestUpgradeChainReachesFileBackupsBackfillFromExistingSchema(t *testing.T) 
 	if err := DB.QueryRow("SELECT version FROM schema_version ORDER BY updated_at DESC, rowid DESC LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != "1.0.25" {
-		t.Fatalf("schema_version = %q, want %q (RunUpgrades must actually execute the 1.0.25 backfill step)", version, "1.0.25")
+	if version != LatestVersion() {
+		t.Fatalf("schema_version = %q, want %q (RunUpgrades must execute through the latest step)", version, LatestVersion())
 	}
 
 	// 生产环境的 backfillFileBackupsFromDisk 固定读取 config.DefaultBackupDir，测试环境里这个
