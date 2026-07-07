@@ -78,7 +78,7 @@ func RefreshFileSecurityEvents() (models.FileSecurityRefreshSummary, error) {
 		summary.FileEvents += fileCount
 		summary.AccessEvents += accessCount
 	}
-	return summary, nil
+	return GetFileSecuritySummary()
 }
 
 func ListFileSecurityEvents(limit int) ([]models.FileSecurityEvent, error) {

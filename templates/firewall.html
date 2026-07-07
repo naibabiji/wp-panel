@@ -264,7 +264,6 @@
                     <option value="panel">{{t .Lang "firewall.source_panel"}}</option>
                     <option value="panel_scan">{{t .Lang "firewall.source_scan"}}</option>
                     <option value="manual">{{t .Lang "firewall.source_manual"}}</option>
-                    <option value="nftables">{{t .Lang "firewall.source_nftables"}}</option>
                 </select>
                 <button @click="page=1;fetchBans()" class="btn-secondary text-xs py-1.5 px-3">{{t .Lang "firewall.search"}}</button>
                 <button @click="resetBanFilters()" class="btn-secondary text-xs py-1.5 px-3">{{t .Lang "firewall.reset_filters"}}</button>

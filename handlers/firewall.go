@@ -55,9 +55,7 @@ func (h *FirewallHandler) ListBans(c *gin.Context) {
 		args = append(args, levelValue)
 	}
 	if source != "" {
-		if source == "nftables" {
-			where += " AND ban_level >= 5"
-		} else if isAllowedBanSourceFilter(source) {
+		if isAllowedBanSourceFilter(source) {
 			where += " AND source_jail = ?"
 			args = append(args, source)
 		} else {
