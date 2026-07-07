@@ -52,6 +52,71 @@ func TestRecordFail2banBanUpdatesActiveRecord(t *testing.T) {
 	}
 }
 
+func TestDeduplicateActiveFirewallBansKeepsMostSevereRecord(t *testing.T) {
+	openTestDB(t)
+	db := database.GetDB()
+
+	seed := []struct {
+		ip       string
+		level    int
+		count    int
+		bannedAt string
+	}{
+		{"203.0.113.10", 5, 25, "2026-07-07 18:00:00"},
+		{"203.0.113.10", 5, 30, "2026-07-07 19:00:00"},
+		{"203.0.113.10", 3, 24, "2026-07-07 20:00:00"},
+		{"203.0.113.11", 3, 1, "2026-07-07 18:00:00"},
+	}
+	for _, row := range seed {
+		if _, err := db.Exec(
+			`INSERT INTO firewall_bans (ip_address, ban_level, reason, source_jail, ban_count, banned_at, expires_at)
+			 VALUES (?, ?, 'test', 'wppanel-404', ?, ?, NULL)`,
+			row.ip, row.level, row.count, row.bannedAt,
+		); err != nil {
+			t.Fatalf("insert seed row: %v", err)
+		}
+	}
+
+	if err := deduplicateActiveFirewallBans(db); err != nil {
+		t.Fatalf("deduplicate active bans: %v", err)
+	}
+
+	var activeRows, level, count int
+	var bannedAt string
+	if err := db.QueryRow(
+		`SELECT COUNT(*), MAX(ban_level), MAX(ban_count), MAX(banned_at)
+		 FROM firewall_bans
+		 WHERE ip_address = '203.0.113.10' AND unbanned_at IS NULL`,
+	).Scan(&activeRows, &level, &count, &bannedAt); err != nil {
+		t.Fatalf("query active duplicate group: %v", err)
+	}
+	if activeRows != 1 || level != 5 || count != 30 || bannedAt != "2026-07-07 19:00:00" {
+		t.Fatalf("unexpected kept record: rows=%d level=%d count=%d bannedAt=%q", activeRows, level, count, bannedAt)
+	}
+
+	var unbannedRows int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM firewall_bans
+		 WHERE ip_address = '203.0.113.10' AND unbanned_at IS NOT NULL`,
+	).Scan(&unbannedRows); err != nil {
+		t.Fatalf("query unbanned duplicates: %v", err)
+	}
+	if unbannedRows != 2 {
+		t.Fatalf("expected two duplicate rows to be marked unbanned, got %d", unbannedRows)
+	}
+
+	var otherActiveRows int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM firewall_bans
+		 WHERE ip_address = '203.0.113.11' AND unbanned_at IS NULL`,
+	).Scan(&otherActiveRows); err != nil {
+		t.Fatalf("query non-duplicate active row: %v", err)
+	}
+	if otherActiveRows != 1 {
+		t.Fatalf("expected unrelated active row to remain, got %d", otherActiveRows)
+	}
+}
+
 func TestExecuteManualBanCreatesSingleManualRecord(t *testing.T) {
 	openTestDB(t)
 

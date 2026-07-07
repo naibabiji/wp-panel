@@ -473,6 +473,7 @@ func SyncFail2banBans() {
 			AddPersistBan(ip)
 		}
 	}
+	_ = deduplicateActiveFirewallBans(db)
 
 	rows, err := db.Query("SELECT id, ip_address, ban_level, expires_at, is_manual, source_jail FROM firewall_bans WHERE unbanned_at IS NULL")
 	if err != nil {
@@ -602,6 +603,9 @@ func RecordFail2banBan(ip, jail string) error {
 	if err == nil {
 		if activeIsManual == 1 {
 			_, err = db.Exec(`UPDATE firewall_bans SET ban_count = ban_count + 1 WHERE id = ?`, activeID)
+			if err == nil {
+				_ = deduplicateActiveFirewallBans(db)
+			}
 			return err
 		}
 		if activeLevel >= 3 && activeBanCount+1 >= 3 {
@@ -636,6 +640,7 @@ func RecordFail2banBan(ip, jail string) error {
 		if banLevel >= 3 {
 			recordPersistBan(ip)
 		}
+		_ = deduplicateActiveFirewallBans(db)
 		return nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
@@ -651,6 +656,66 @@ func RecordFail2banBan(ip, jail string) error {
 
 	if banLevel >= 3 {
 		recordPersistBan(ip)
+	}
+	_ = deduplicateActiveFirewallBans(db)
+	return nil
+}
+
+type activeFirewallBanCandidate struct {
+	id       int
+	level    int
+	count    int
+	bannedAt string
+}
+
+func deduplicateActiveFirewallBans(db *sql.DB) error {
+	if db == nil {
+		return nil
+	}
+	rows, err := db.Query(`
+		SELECT ip_address, id, ban_level, ban_count, banned_at
+		FROM firewall_bans
+		WHERE unbanned_at IS NULL
+		ORDER BY ip_address, ban_level DESC, banned_at DESC, id DESC`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	groups := map[string][]activeFirewallBanCandidate{}
+	for rows.Next() {
+		var ip string
+		var row activeFirewallBanCandidate
+		if err := rows.Scan(&ip, &row.id, &row.level, &row.count, &row.bannedAt); err != nil {
+			return err
+		}
+		groups[ip] = append(groups[ip], row)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, bans := range groups {
+		if len(bans) <= 1 {
+			continue
+		}
+		keep := bans[0]
+		maxCount := keep.count
+		var duplicateIDs []int
+		for _, ban := range bans[1:] {
+			duplicateIDs = append(duplicateIDs, ban.id)
+			if ban.count > maxCount {
+				maxCount = ban.count
+			}
+		}
+		if _, err := db.Exec(`UPDATE firewall_bans SET ban_count = ? WHERE id = ?`, maxCount, keep.id); err != nil {
+			return err
+		}
+		for _, id := range duplicateIDs {
+			if _, err := db.Exec(`UPDATE firewall_bans SET unbanned_at = datetime('now') WHERE id = ?`, id); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
