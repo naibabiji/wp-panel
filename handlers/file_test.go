@@ -13,6 +13,7 @@ import (
 
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/models"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 func TestUploadSessionIDIsStableForResume(t *testing.T) {
@@ -612,7 +613,7 @@ func TestZipTargetRejectsSpecialEntries(t *testing.T) {
 	header := &zip.FileHeader{Name: "link"}
 	header.SetMode(os.ModeSymlink | 0777)
 	f := &zip.File{FileHeader: *header}
-	if _, _, err := zipTargetForFile(base, base, f); err == nil {
+	if _, _, _, err := zipTargetForFile(base, base, f); err == nil {
 		t.Fatal("zipTargetForFile symlink error = nil, want error")
 	}
 }
@@ -620,8 +621,68 @@ func TestZipTargetRejectsSpecialEntries(t *testing.T) {
 func TestZipTargetRejectsPathTraversal(t *testing.T) {
 	base := t.TempDir()
 	f := &zip.File{FileHeader: zip.FileHeader{Name: "../escape.txt"}}
-	if _, _, err := zipTargetForFile(base, base, f); err == nil {
+	if _, _, _, err := zipTargetForFile(base, base, f); err == nil {
 		t.Fatal("zipTargetForFile traversal error = nil, want error")
+	}
+}
+
+func TestZipTargetDecodesGB18030EntryName(t *testing.T) {
+	base := t.TempDir()
+	rawName, err := simplifiedchinese.GB18030.NewEncoder().String("资料/测试.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &zip.File{FileHeader: zip.FileHeader{Name: rawName, NonUTF8: true}}
+
+	target, name, skip, err := zipTargetForFile(base, base, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skip {
+		t.Fatal("zipTargetForFile skip = true, want false")
+	}
+	if name != "资料/测试.txt" {
+		t.Fatalf("decoded name = %q, want 资料/测试.txt", name)
+	}
+	want := filepath.Join(base, "资料", "测试.txt")
+	if target != want {
+		t.Fatalf("target = %q, want %q", target, want)
+	}
+}
+
+func TestZipTargetKeepsValidUTF8NameWhenNonUTF8FlagIsWrong(t *testing.T) {
+	base := t.TempDir()
+	// archive/zip sets NonUTF8=true whenever the UTF-8 language flag bit isn't
+	// set on the entry, even if the raw bytes already are valid UTF-8 - this is
+	// exactly what tools like the Linux `zip` command produce for CJK names.
+	f := &zip.File{FileHeader: zip.FileHeader{Name: "资料/测试.txt", NonUTF8: true}}
+
+	target, name, skip, err := zipTargetForFile(base, base, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skip {
+		t.Fatal("zipTargetForFile skip = true, want false")
+	}
+	if name != "资料/测试.txt" {
+		t.Fatalf("decoded name = %q, want 资料/测试.txt (must not be re-decoded)", name)
+	}
+	want := filepath.Join(base, "资料", "测试.txt")
+	if target != want {
+		t.Fatalf("target = %q, want %q", target, want)
+	}
+}
+
+func TestZipTargetRejectsGB18030PathTraversal(t *testing.T) {
+	base := t.TempDir()
+	rawName, err := simplifiedchinese.GB18030.NewEncoder().String("../越权.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &zip.File{FileHeader: zip.FileHeader{Name: rawName, NonUTF8: true}}
+
+	if _, _, _, err := zipTargetForFile(base, base, f); err == nil {
+		t.Fatal("zipTargetForFile decoded traversal error = nil, want error")
 	}
 }
 

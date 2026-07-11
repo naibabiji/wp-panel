@@ -20,12 +20,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/models"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 type FileHandler struct{}
@@ -1541,20 +1543,35 @@ func extractTarArchive(archivePath, format, basePath, destDir string, lockSite *
 	return nil
 }
 
-func zipTargetForFile(basePath, destDir string, f *zip.File) (string, bool, error) {
-	if f.Name == "" {
-		return "", true, nil
+func decodeZipEntryName(name string) (string, error) {
+	if name == "" || utf8.ValidString(name) {
+		return name, nil
+	}
+	decoded, err := simplifiedchinese.GB18030.NewDecoder().String(name)
+	if err != nil || !utf8.ValidString(decoded) {
+		return "", fmt.Errorf("压缩包包含无法识别编码的文件名")
+	}
+	return decoded, nil
+}
+
+func zipTargetForFile(basePath, destDir string, f *zip.File) (string, string, bool, error) {
+	name, err := decodeZipEntryName(f.Name)
+	if err != nil {
+		return "", "", false, err
+	}
+	if name == "" {
+		return "", "", true, nil
 	}
 	info := f.FileInfo()
 	if !info.IsDir() && info.Mode().Type() != 0 {
-		return "", false, fmt.Errorf("压缩包包含不支持的条目: %s", f.Name)
+		return "", "", false, fmt.Errorf("压缩包包含不支持的条目: %s", name)
 	}
-	target := filepath.Join(destDir, filepath.FromSlash(f.Name))
+	target := filepath.Join(destDir, filepath.FromSlash(name))
 	target = filepath.Clean(target)
 	if !isPathWithin(basePath, target) {
-		return "", false, fmt.Errorf("压缩包包含非法路径: %s", f.Name)
+		return "", "", false, fmt.Errorf("压缩包包含非法路径: %s", name)
 	}
-	return target, false, nil
+	return target, name, false, nil
 }
 
 func (h *FileHandler) Decompress(c *gin.Context) {
@@ -1635,7 +1652,7 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 		return
 	}
 	for _, f := range r.File {
-		target, skip, err := zipTargetForFile(basePath, destDir, f)
+		target, name, skip, err := zipTargetForFile(basePath, destDir, f)
 		if err != nil {
 			c.JSON(http.StatusForbidden, models.ErrorResponse(err.Error()))
 			return
@@ -1649,7 +1666,7 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 		}
 		if !f.FileInfo().IsDir() && !overwrite {
 			if _, err := os.Stat(target); err == nil {
-				conflicts = append(conflicts, f.Name)
+				conflicts = append(conflicts, name)
 			}
 		}
 	}
@@ -1659,7 +1676,7 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 	}
 
 	for _, f := range r.File {
-		target, skip, err := zipTargetForFile(basePath, destDir, f)
+		target, name, skip, err := zipTargetForFile(basePath, destDir, f)
 		if err != nil {
 			c.JSON(http.StatusForbidden, models.ErrorResponse(err.Error()))
 			return
@@ -1674,25 +1691,25 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 
 		if f.FileInfo().IsDir() {
 			if err := os.MkdirAll(target, 0755); err != nil {
-				c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建目录失败: "+f.Name))
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建目录失败: "+name))
 				return
 			}
 			continue
 		}
 
 		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建目录失败: "+f.Name))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建目录失败: "+name))
 			return
 		}
 		src, err := f.Open()
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取压缩包文件失败: "+f.Name))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取压缩包文件失败: "+name))
 			return
 		}
 		dst, err := os.Create(target)
 		if err != nil {
 			src.Close()
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建文件失败: "+f.Name))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建文件失败: "+name))
 			return
 		}
 		_, copyErr := io.Copy(dst, src)
@@ -1700,12 +1717,12 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 		closeErr := dst.Close()
 		if copyErr != nil {
 			os.Remove(target)
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("写入文件失败: "+f.Name))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("写入文件失败: "+name))
 			return
 		}
 		if closeErr != nil {
 			os.Remove(target)
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存文件失败: "+f.Name))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存文件失败: "+name))
 			return
 		}
 	}
