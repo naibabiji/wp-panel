@@ -369,6 +369,46 @@ var upgrades = []Upgrade{
 		Version:     "1.0.26",
 		Description: "清理旧版本遗留的重复活跃防火墙封禁记录",
 	},
+	{
+		Version:     "1.0.27",
+		Description: "新增 WordPress 安全探测事件持久化表及日志读取位点表（方案 D 阶段三）",
+		SQL: []string{
+			`CREATE TABLE IF NOT EXISTS wp_security_events (
+				id          INTEGER PRIMARY KEY AUTOINCREMENT,
+				site_id     INTEGER NOT NULL DEFAULT 0,
+				domain      TEXT    NOT NULL DEFAULT '',
+				ip_address  TEXT    NOT NULL DEFAULT '',
+				event_type  TEXT    NOT NULL DEFAULT '',
+				risk_level  TEXT    NOT NULL DEFAULT 'low',
+				method      TEXT    NOT NULL DEFAULT '',
+				path        TEXT    NOT NULL DEFAULT '',
+				user_agent  TEXT    NOT NULL DEFAULT '',
+				status      INTEGER NOT NULL DEFAULT 0,
+				message     TEXT    NOT NULL DEFAULT '',
+				occurred_at DATETIME NOT NULL,
+				created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_wp_security_events_ip_type_time ON wp_security_events(ip_address, event_type, occurred_at)`,
+			`CREATE INDEX IF NOT EXISTS idx_wp_security_events_site_time ON wp_security_events(site_id, occurred_at)`,
+			`CREATE TABLE IF NOT EXISTS wp_security_log_positions (
+				site_id     INTEGER PRIMARY KEY,
+				byte_offset INTEGER NOT NULL DEFAULT 0,
+				first_line_hash TEXT NOT NULL DEFAULT '',
+				updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE
+			)`,
+		},
+	},
+	{
+		Version:     "1.0.28",
+		Description: "新增 WordPress 安全探测告警开关，默认关闭（方案 D 阶段四）",
+		SQL: []string{
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES
+				('alert_wp_sqli_probe', 'false', 'WordPress SQL 注入探测告警（默认关闭）'),
+				('alert_wp_fake_search_bot', 'false', '伪装搜索引擎爬虫告警（默认关闭）')`,
+		},
+	},
 }
 
 func ensureFileLockEnabledColumn() error {

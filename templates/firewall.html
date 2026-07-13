@@ -154,13 +154,22 @@
     </div>
 
     <div class="card mb-6" x-show="activeTab === 'wp'" x-cloak>
-        <div class="flex items-center justify-between mb-4">
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
             <div>
                 <h3 class="text-lg font-semibold text-white">{{t .Lang "firewall.wp_suspicious_access"}}</h3>
                 <p class="text-xs text-gray-500 mt-1">{{t .Lang "firewall.wp_suspicious_access_help"}}</p>
                 <p class="text-xs text-gray-500 mt-1">{{t .Lang "firewall.wp_suspicious_access_cache_help"}}</p>
             </div>
-            <button @click="fetchWPSecurityReport()" :disabled="securityReportLoading" class="btn-secondary text-xs py-1.5 px-3" x-text="securityReportLoading ? t('firewall.analyzing') : t('firewall.refresh_analysis')"></button>
+            <div class="flex items-center gap-2">
+                <select x-model="typeFilter" class="input-field text-sm py-1.5 w-40">
+                    <option value="">{{t .Lang "firewall.all_types"}}</option>
+                    <option value="sensitive_file_scan">{{t .Lang "firewall.type_sensitive_file_scan"}}</option>
+                    <option value="sqli_probe">{{t .Lang "firewall.type_sqli_probe"}}</option>
+                    <option value="fake_search_bot">{{t .Lang "firewall.type_fake_search_bot"}}</option>
+                    <option value="suspicious_php">{{t .Lang "firewall.type_suspicious_php"}}</option>
+                </select>
+                <button @click="fetchWPSecurityReport()" :disabled="securityReportLoading" class="btn-secondary text-xs py-1.5 px-3" x-text="securityReportLoading ? t('firewall.analyzing') : t('firewall.refresh_analysis')"></button>
+            </div>
         </div>
         <div class="overflow-x-auto">
             <table class="w-full">
@@ -168,6 +177,7 @@
                     <tr>
                         <th class="table-header">{{t .Lang "firewall.ip_address"}}</th>
                         <th class="table-header">{{t .Lang "firewall.site"}}</th>
+                        <th class="table-header">{{t .Lang "firewall.event_types"}}</th>
                         <th class="table-header">{{t .Lang "firewall.risk"}}</th>
                         <th class="table-header">{{t .Lang "firewall.count"}}</th>
                         <th class="table-header">{{t .Lang "firewall.last_seen"}}</th>
@@ -176,10 +186,16 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <template x-for="item in securityReportItems" :key="item.domain + item.ip_address">
+                    <template x-for="item in filteredSecurityReportItems()" :key="item.domain + item.ip_address">
                         <tr class="border-b border-gray-700/50">
                             <td class="table-cell font-mono text-sm" x-text="item.ip_address"></td>
                             <td class="table-cell text-sm" x-text="item.domain"></td>
+                            <td class="table-cell text-xs">
+                                <template x-for="eventType in (item.types || [])" :key="eventType">
+                                    <span :class="securityEventTypeClass(eventType)" class="inline-block mr-1 mb-1" x-text="securityEventTypeLabel(eventType)"></span>
+                                </template>
+                                <span x-show="!item.types || item.types.length === 0" class="text-gray-500">--</span>
+                            </td>
                             <td class="table-cell"><span :class="riskClass(item.risk_level)" x-text="item.risk_level"></span></td>
                             <td class="table-cell" x-text="item.event_count"></td>
                             <td class="table-cell text-xs" x-text="item.last_seen || '--'"></td>
@@ -194,11 +210,11 @@
                             </td>
                         </tr>
                     </template>
-                    <tr x-show="securityReportLoaded && securityReportItems.length === 0">
-                        <td colspan="7" class="table-cell text-center text-gray-500 py-6">{{t .Lang "firewall.no_wp_suspicious_access"}}</td>
+                    <tr x-show="securityReportLoaded && filteredSecurityReportItems().length === 0">
+                        <td colspan="8" class="table-cell text-center text-gray-500 py-6">{{t .Lang "firewall.no_wp_suspicious_access"}}</td>
                     </tr>
                     <tr x-show="!securityReportLoaded">
-                        <td colspan="7" class="table-cell text-center text-gray-500 py-6">{{t .Lang "firewall.reading_local_logs"}}</td>
+                        <td colspan="8" class="table-cell text-center text-gray-500 py-6">{{t .Lang "firewall.reading_local_logs"}}</td>
                     </tr>
                 </tbody>
             </table>
@@ -393,6 +409,7 @@ function firewallManager() {
         securityReportItems: [],
         securityReportLoaded: false,
         securityReportLoading: false,
+        typeFilter: '',
         fileSecurityEvents: [],
         fileSecurityLoaded: false,
         fileSecurityLoading: false,
@@ -515,6 +532,22 @@ function firewallManager() {
             if (level === 'medium') return t('firewall.risk_medium');
             if (level === 'low') return t('firewall.risk_low');
             return level || t('firewall.risk_low');
+        },
+        filteredSecurityReportItems() {
+            if (!this.typeFilter) return this.securityReportItems;
+            return this.securityReportItems.filter(item => (item.types || []).includes(this.typeFilter));
+        },
+        securityEventTypeLabel(type) {
+            if (type === 'sensitive_file_scan') return t('firewall.type_sensitive_file_scan');
+            if (type === 'sqli_probe') return t('firewall.type_sqli_probe');
+            if (type === 'fake_search_bot') return t('firewall.type_fake_search_bot');
+            if (type === 'suspicious_php') return t('firewall.type_suspicious_php');
+            return type;
+        },
+        securityEventTypeClass(type) {
+            if (type === 'sqli_probe') return 'badge-danger';
+            if (type === 'fake_search_bot' || type === 'sensitive_file_scan') return 'badge-warning';
+            return 'badge-info';
         },
         fileEventTypeLabel(event) {
             if (event.event_type === 'runtime_php_access') return t('firewall.event_runtime_php_access');

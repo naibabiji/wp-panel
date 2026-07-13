@@ -50,6 +50,8 @@ func StartAlertMonitor(currentVersion string) {
 		{key: "alert_site", checkFn: checkSites},
 		{key: "alert_system_update", checkFn: checkSystemUpdate},
 		{key: "alert_panel_update", checkFn: checkPanelUpdate},
+		{key: "alert_wp_sqli_probe", checkFn: checkWPSQLiProbeThreshold},
+		{key: "alert_wp_fake_search_bot", checkFn: checkWPFakeSearchBotThreshold},
 	}
 	go alertMgr.loop()
 }
@@ -169,7 +171,13 @@ func (r *alertRule) sustainedFiring(instantFiring bool, now time.Time) bool {
 }
 
 func alertResendInterval(key string) time.Duration {
-	if key == "alert_system_update" || key == "alert_panel_update" {
+	switch key {
+	case "alert_system_update", "alert_panel_update":
+		return 24 * time.Hour
+	case "alert_wp_sqli_probe", "alert_wp_fake_search_bot":
+		// 判定条件本身就是"过去 24 小时内达到阈值"的滚动窗口，只要攻击没有停止，
+		// 这个条件会持续成立一整天；用默认的 30 分钟重发会在攻击期间连续发出
+		// 几十封"持续中"邮件，这里和系统/面板更新一样按 24 小时重发一次。
 		return 24 * time.Hour
 	}
 	return 30 * time.Minute
@@ -207,6 +215,10 @@ func alertLabel(key string) string {
 		return "系统有可用更新"
 	case "alert_panel_update":
 		return "面板有新版本"
+	case "alert_wp_sqli_probe":
+		return "WordPress SQL 注入探测"
+	case "alert_wp_fake_search_bot":
+		return "伪装搜索引擎爬虫"
 	}
 	return key
 }
@@ -268,6 +280,16 @@ func getEmailTip(key string, isRecovery bool) string {
 			return "小提示：面板已更新后，建议简单检查网站列表、备份、计划任务等关键页面是否正常。"
 		}
 		return "小提示：建议及时更新面板，避免跨多个版本升级时累积变更过多，增加升级风险。"
+	case "alert_wp_sqli_probe":
+		if isRecovery {
+			return "小提示：面板只记录不自动封禁，建议结合「安全防御」页面的历史记录判断是否需要长期观察该 IP。"
+		}
+		return "小提示：面板只记录不自动封禁，请登录「安全防御」页面查看命中详情，结合 IP 来源和请求路径判断是否需要手动封禁。"
+	case "alert_wp_fake_search_bot":
+		if isRecovery {
+			return "小提示：面板只记录不自动封禁，建议结合「安全防御」页面的历史记录判断是否需要长期观察该 IP。"
+		}
+		return "小提示：面板只记录不自动封禁，如确认对方并非真实搜索引擎爬虫，可在「安全防御」页面手动封禁对应 IP。"
 	}
 	return ""
 }
@@ -778,6 +800,59 @@ func checkPanelUpdate() (bool, string) {
 	panelUpdateCache.mu.Unlock()
 
 	return msg != "", msg
+}
+
+// 方案 D 阶段四：SQL 注入探测 / 伪装搜索引擎爬虫告警，默认关闭。
+// 只做"记录 → 超过阈值提醒管理员"，不自动封禁，最终是否封禁仍由管理员在
+// 「安全防御」页面手动决定。
+const (
+	wpSecurityAlertWindow       = 24 * time.Hour
+	wpSecurityAlertThreshold    = 10
+	wpSecurityAlertPathLimit    = 3
+	wpSecurityAlertMaxOffenders = 10
+)
+
+func checkWPSQLiProbeThreshold() (bool, string) {
+	return checkWPSecurityEventThreshold(SecurityEventSQLiProbe, "SQL 注入探测")
+}
+
+func checkWPFakeSearchBotThreshold() (bool, string) {
+	return checkWPSecurityEventThreshold(SecurityEventFakeSearchBot, "伪装搜索引擎爬虫")
+}
+
+func checkWPSecurityEventThreshold(eventType, label string) (bool, string) {
+	since := time.Now().UTC().Add(-wpSecurityAlertWindow)
+	offenders, err := topWPSecurityOffenders(eventType, since, wpSecurityAlertThreshold, wpSecurityAlertPathLimit)
+	if err != nil || len(offenders) == 0 {
+		return false, ""
+	}
+
+	// 分布式扫描可能同时有几十上百个 IP 超过阈值，不截断的话邮件正文会膨胀到
+	// 几百 KB，Webhook 走 URL 路径段的渠道（如 Bark）还会直接投递失败。
+	// topWPSecurityOffenders 已按次数降序排列，只取影响最大的前 N 个即可。
+	omitted := 0
+	if len(offenders) > wpSecurityAlertMaxOffenders {
+		omitted = len(offenders) - wpSecurityAlertMaxOffenders
+		offenders = offenders[:wpSecurityAlertMaxOffenders]
+	}
+
+	// 邮件正文按单个 <p> 段落渲染，换行符不会被转成 <br>，因此和其余告警规则一样
+	// 使用「；」分隔多条信息，避免所有 IP 挤成一整行无法阅读。
+	entries := make([]string, 0, len(offenders))
+	for _, o := range offenders {
+		paths := "（无样本）"
+		if len(o.Paths) > 0 {
+			paths = strings.Join(o.Paths, "、")
+		}
+		entries = append(entries, fmt.Sprintf("%s（%d 次，热门路径：%s）", o.IP, o.Count, paths))
+	}
+	suffix := "。"
+	if omitted > 0 {
+		suffix = fmt.Sprintf("（还有 %d 个 IP 未列出，请到「安全防御」页面查看完整列表）。", omitted)
+	}
+	msg := fmt.Sprintf("过去 24 小时内以下 IP 触发「%s」次数达到阈值（%d 次）：%s%s面板仅记录、不自动封禁，请结合 IP 来源在「安全防御」页面手动决定是否封禁。",
+		label, wpSecurityAlertThreshold, strings.Join(entries, "；"), suffix)
+	return true, msg
 }
 
 func getPanelTitle() string {

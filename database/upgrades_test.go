@@ -284,6 +284,121 @@ func TestUpgradeAddsFileSecurityEventsTableToExistingSchema(t *testing.T) {
 	}
 }
 
+func TestUpgradeAddsWPSecurityEventsTablesToExistingSchema(t *testing.T) {
+	openTempDB(t)
+
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.26')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+	if _, err := DB.Exec("DROP TABLE IF EXISTS wp_security_events"); err != nil {
+		t.Fatalf("drop wp_security_events: %v", err)
+	}
+	if _, err := DB.Exec("DROP TABLE IF EXISTS wp_security_log_positions"); err != nil {
+		t.Fatalf("drop wp_security_log_positions: %v", err)
+	}
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("second RunUpgrades() error = %v", err)
+	}
+
+	var eventsTableExists, positionsTableExists, ipTypeIndexExists, siteIndexExists int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'wp_security_events'").Scan(&eventsTableExists); err != nil {
+		t.Fatalf("query wp_security_events table: %v", err)
+	}
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'wp_security_log_positions'").Scan(&positionsTableExists); err != nil {
+		t.Fatalf("query wp_security_log_positions table: %v", err)
+	}
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_wp_security_events_ip_type_time'").Scan(&ipTypeIndexExists); err != nil {
+		t.Fatalf("query wp_security_events ip_type index: %v", err)
+	}
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_wp_security_events_site_time'").Scan(&siteIndexExists); err != nil {
+		t.Fatalf("query wp_security_events site index: %v", err)
+	}
+	if eventsTableExists != 1 || positionsTableExists != 1 || ipTypeIndexExists != 1 || siteIndexExists != 1 {
+		t.Fatalf("wp_security_events tables/index exist = %d/%d/%d/%d, want 1/1/1/1", eventsTableExists, positionsTableExists, ipTypeIndexExists, siteIndexExists)
+	}
+}
+
+func TestFreshInstallHasWPSecurityEventsTables(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+
+	var eventsTableExists, positionsTableExists int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'wp_security_events'").Scan(&eventsTableExists); err != nil {
+		t.Fatalf("query wp_security_events table: %v", err)
+	}
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'wp_security_log_positions'").Scan(&positionsTableExists); err != nil {
+		t.Fatalf("query wp_security_log_positions table: %v", err)
+	}
+	if eventsTableExists != 1 || positionsTableExists != 1 {
+		t.Fatalf("fresh install wp_security_events tables exist = %d/%d, want 1/1", eventsTableExists, positionsTableExists)
+	}
+}
+
+func TestWPSecurityAlertRulesDefaultDisabledOnFreshInstallAndUpgrade(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+
+	for _, key := range []string{"alert_wp_sqli_probe", "alert_wp_fake_search_bot"} {
+		var v string
+		if err := DB.QueryRow("SELECT svalue FROM security_settings WHERE skey = ?", key).Scan(&v); err != nil {
+			t.Fatalf("fresh install missing %s: %v", key, err)
+		}
+		if v != "false" {
+			t.Fatalf("fresh install %s = %q, want %q (must default off)", key, v, "false")
+		}
+	}
+
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.27')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM security_settings WHERE skey IN ('alert_wp_sqli_probe', 'alert_wp_fake_search_bot')"); err != nil {
+		t.Fatalf("delete alert rows: %v", err)
+	}
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("second RunUpgrades() error = %v", err)
+	}
+
+	for _, key := range []string{"alert_wp_sqli_probe", "alert_wp_fake_search_bot"} {
+		var v string
+		if err := DB.QueryRow("SELECT svalue FROM security_settings WHERE skey = ?", key).Scan(&v); err != nil {
+			t.Fatalf("upgraded install missing %s: %v", key, err)
+		}
+		if v != "false" {
+			t.Fatalf("upgraded install %s = %q, want %q (must default off)", key, v, "false")
+		}
+	}
+}
+
 func TestUpgradeAddsFileBackupsTableToExistingSchema(t *testing.T) {
 	openTempDB(t)
 

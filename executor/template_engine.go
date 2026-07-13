@@ -74,6 +74,13 @@ func EnsureLogMap() error {
 	oldContent, oldErr := os.ReadFile(confPath)
 	oldExists := oldErr == nil
 
+	// 内容和磁盘上现有的完全一致时跳过写入/校验/reload。EnsureLogMap 现在会被
+	// 白名单刷新任务周期性调用（同步官方 Googlebot/Bingbot IP 段），大多数时候
+	// IP 段并没有变化，没必要每次都触发一次 nginx reload。
+	if oldExists && string(oldContent) == content {
+		return nil
+	}
+
 	if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("写入 Nginx 日志 map 配置失败: %w", err)
 	}
@@ -104,7 +111,7 @@ map $request_uri $wp_access_log_disabled {
     default 0;
 }
 
-map $uri $wp_security_loggable {
+map $uri $wp_uri_security_loggable {
     default 0;
     / 0;
     /wp-admin 0;
@@ -136,6 +143,110 @@ map $uri $wp_security_loggable {
     ~*/dup-installer/ 1;
     ~*^/(?!index\.php$|wp-login\.php$|wp-cron\.php$|wp-comments-post\.php$|xmlrpc\.php$).+\.php$ 1;
 }
+
+` + nginxSecurityProbeMapConfig() + `
+map "$wp_uri_security_loggable$wp_sqli_probe_hit$wp_fake_search_bot_hit" $wp_security_loggable {
+    default 1;
+    "000" 0;
+}
+`
+}
+
+// nginxSecurityProbeMapConfig 生成方案 D 阶段二的"只记录、不拦截"探测规则：
+// SQL 注入探测（基于 $request_uri，与 executor/wp_security_report.go 里
+// sqliProbePatterns 保持同一套关键词，但故意做得更宽松——这里只决定"是否值得记录"，
+// 真正的精细分类和去重仍由 Go 侧 classifySecurityEvent() 完成，多记一点不会误封，
+// 少记一条就等于证据永久丢失）和伪装搜索引擎爬虫探测（UA 声明 Googlebot/Bingbot，
+// 但来源 IP 不在官方段）。
+//
+// 注意：这里的 geo/map 变量名全部独立命名（wp_security_ 前缀），不能复用
+// executor/rate_limit.go 里 Bot 限流用的同名变量——Bot 限流的配置文件是开关控制、
+// 可能被删除的，如果这里直接引用它的变量，关闭 Bot 限流后本文件会因引用不存在的
+// 变量导致 nginx -t 失败；两处同名定义同时存在时则会因为重复定义变量而失败。
+// 两个功能各自独立定义、各自不依赖对方是否启用。
+func nginxSecurityProbeMapConfig() string {
+	googleGeoEntries := renderSecurityBotGeoEntries("googlebot_ips")
+	bingGeoEntries := renderSecurityBotGeoEntries("bingbot_ips")
+	googleFakeRule := fakeBotMapRule(googleGeoEntries)
+	bingFakeRule := fakeBotMapRule(bingGeoEntries)
+
+	return `map $request_uri $wp_sqli_probe_hit {
+    default 0;
+    ~*union(?:\s|%20|\+)+select 1;
+    ~*sleep\s*\( 1;
+    ~*benchmark\s*\( 1;
+    ~*information_schema 1;
+    ~*\bxp_cmdshell\b 1;
+    ~*\bwaitfor(?:\s|%20|\+)+delay\b 1;
+    ~*\bload_file\s*\( 1;
+    ~*\binto(?:\s|%20|\+)+outfile\b 1;
+    "~*0x[0-9a-f]{16,}" 1;
+    "~*(?:;|%3b)(?:\s|%20|\+)*(?:drop|insert|update|delete)(?:\s|%20|\+)+" 1;
+}
+
+geo $wp_security_verified_googlebot_ip {
+    default 0;
+` + googleGeoEntries + `}
+
+geo $wp_security_verified_bingbot_ip {
+    default 0;
+` + bingGeoEntries + `}
+
+map $http_user_agent $wp_security_claims_googlebot {
+    default 0;
+    ~*googlebot 1;
+}
+
+map $http_user_agent $wp_security_claims_bingbot {
+    default 0;
+    ~*bingbot 1;
+}
+
+map "$wp_security_claims_googlebot:$wp_security_verified_googlebot_ip" $wp_fake_googlebot_hit {
+    default 0;
+` + googleFakeRule + `}
+
+map "$wp_security_claims_bingbot:$wp_security_verified_bingbot_ip" $wp_fake_bingbot_hit {
+    default 0;
+` + bingFakeRule + `}
+
+map "$wp_fake_googlebot_hit$wp_fake_bingbot_hit" $wp_fake_search_bot_hit {
+    default 0;
+    ~1 1;
+}
+`
+}
+
+func renderSecurityBotGeoEntries(key string) string {
+	if key != "googlebot_ips" && key != "bingbot_ips" {
+		return ""
+	}
+	db := database.GetDB()
+	if db == nil {
+		return ""
+	}
+	var raw string
+	_ = db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = ?`, key).Scan(&raw)
+	var b strings.Builder
+	seen := map[string]bool{}
+	for _, line := range strings.Split(raw, "\n") {
+		item := strings.TrimSpace(line)
+		if item == "" || seen[item] || !isValidIPOrCIDR(item) {
+			continue
+		}
+		seen[item] = true
+		b.WriteString("    ")
+		b.WriteString(item)
+		b.WriteString(" 1;\n")
+	}
+	return b.String()
+}
+
+func fakeBotMapRule(geoEntries string) string {
+	if geoEntries == "" {
+		return ""
+	}
+	return `    "1:0" 1;
 `
 }
 

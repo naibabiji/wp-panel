@@ -122,9 +122,18 @@
                     <input type="checkbox" x-model="rules.alert_panel_update" @change="save">
                     <span>{{t .Lang "alert.rule_panel_update"}}</span>
                 </label>
+                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer mb-3">
+                    <input type="checkbox" x-model="rules.alert_wp_sqli_probe" @change="save">
+                    <span>{{t .Lang "alert.rule_wp_sqli_probe"}}</span>
+                </label>
+                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer mb-3">
+                    <input type="checkbox" x-model="rules.alert_wp_fake_search_bot" @change="save">
+                    <span>{{t .Lang "alert.rule_wp_fake_search_bot"}}</span>
+                </label>
             </div>
         </div>
         <p class="text-xs text-gray-500 mt-2">{{t .Lang "alert.rate_limit_help"}}</p>
+        <p class="text-xs text-gray-500 mt-1">{{t .Lang "alert.wp_security_alert_help"}}</p>
     </div>
     </div>
 
@@ -279,7 +288,7 @@ function alertManager() {
                 if (r.success) this.logs = r.data || [];
             } catch(e) {}
         },
-        typeLabel(t) {
+        typeLabel(alertType) {
             const m = {
                 alert_cpu: t('alert.type_cpu_high_load'),
                 alert_memory: t('alert.type_memory_low'),
@@ -292,9 +301,11 @@ function alertManager() {
                 alert_website_expiry: t('alert.type_website_expiry'),
                 alert_site: t('alert.type_site_unavailable'),
                 alert_system_update: t('alert.type_system_update'),
-                alert_panel_update: t('alert.type_panel_update')
+                alert_panel_update: t('alert.type_panel_update'),
+                alert_wp_sqli_probe: t('alert.type_wp_sqli_probe'),
+                alert_wp_fake_search_bot: t('alert.type_wp_fake_search_bot')
             };
-            return m[t] || t;
+            return m[alertType] || alertType;
         }
     }
 }

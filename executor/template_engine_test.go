@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/naibabiji/wp-panel/database"
 )
 
 func TestCleanupNginxConfigBackupsKeepsNewestForTargetOnly(t *testing.T) {
@@ -132,5 +134,95 @@ func TestWPSecurityLogMapRecordsRuntimePHPBeforeContentExclusion(t *testing.T) {
 	}
 	if ruleIndex > exclusionIndex {
 		t.Fatalf("runtime PHP rule must appear before wp-content exclusion")
+	}
+}
+
+func TestNginxSecurityProbeMapConfigDefinesIndependentVariables(t *testing.T) {
+	config := nginxGlobalLogMapConfig()
+
+	for _, want := range []string{
+		"map $uri $wp_uri_security_loggable {",
+		"map $request_uri $wp_sqli_probe_hit {",
+		"geo $wp_security_verified_googlebot_ip {",
+		"geo $wp_security_verified_bingbot_ip {",
+		"map $http_user_agent $wp_security_claims_googlebot {",
+		"map $http_user_agent $wp_security_claims_bingbot {",
+		`map "$wp_security_claims_googlebot:$wp_security_verified_googlebot_ip" $wp_fake_googlebot_hit {`,
+		`map "$wp_security_claims_bingbot:$wp_security_verified_bingbot_ip" $wp_fake_bingbot_hit {`,
+		`map "$wp_fake_googlebot_hit$wp_fake_bingbot_hit" $wp_fake_search_bot_hit {`,
+		`map "$wp_uri_security_loggable$wp_sqli_probe_hit$wp_fake_search_bot_hit" $wp_security_loggable {`,
+	} {
+		if !strings.Contains(config, want) {
+			t.Fatalf("nginxGlobalLogMapConfig() missing %q", want)
+		}
+	}
+
+	// 阶段二新增的变量名必须和 rate_limit.go 里 Bot 限流用的变量名完全不同，
+	// 否则 Bot 限流关闭时（该文件被删除）或同时启用时会导致 nginx -t 失败。
+	for _, forbidden := range []string{"$wp_verified_search_bot_ip", "$wp_search_bot_ua"} {
+		if strings.Contains(config, forbidden) {
+			t.Fatalf("nginxGlobalLogMapConfig() must not reuse bot rate-limit variable %q", forbidden)
+		}
+	}
+}
+
+func TestNginxSecurityProbeMapConfigSQLiPatterns(t *testing.T) {
+	config := nginxSecurityProbeMapConfig()
+	for _, want := range []string{
+		`~*union(?:\s|%20|\+)+select 1;`,
+		`~*sleep\s*\( 1;`,
+		`~*information_schema 1;`,
+		// nginx map 里含 { } ; 等特殊字符的模式必须加双引号，否则 nginx -t 会报
+		// "unexpected {" 或 "invalid number of the map parameters"，导致
+		// EnsureLogMap() 整体回滚、方案 D 阶段二在真实服务器上永远不会生效。
+		`"~*0x[0-9a-f]{16,}" 1;`,
+		`"~*(?:;|%3b)(?:\s|%20|\+)*(?:drop|insert|update|delete)(?:\s|%20|\+)+" 1;`,
+	} {
+		if !strings.Contains(config, want) {
+			t.Fatalf("nginxSecurityProbeMapConfig() missing %q", want)
+		}
+	}
+}
+
+func TestNginxSecurityProbeMapConfigDisablesFakeBotRuleWhenNoOfficialIPCache(t *testing.T) {
+	// 没有初始化数据库时 renderVerifiedSearchBotGeoEntries() 返回空字符串，
+	// 等价于官方 IP 段缓存为空（新装/白名单刷新任务尚未跑过）。这种情况下不能
+	// 生成 "1:0" -> 1 这条规则，否则每一个真实 Googlebot/Bingbot 都会被判定为伪装。
+	config := nginxSecurityProbeMapConfig()
+	if strings.Contains(config, `"1:0" 1;`) {
+		t.Fatalf("nginxSecurityProbeMapConfig() must not enable the fake-bot rule when the official IP cache is empty:\n%s", config)
+	}
+	if !strings.Contains(config, "geo $wp_security_verified_googlebot_ip {") {
+		t.Fatal("nginxSecurityProbeMapConfig() missing split googlebot geo block even with empty IP cache")
+	}
+}
+
+func TestNginxSecurityProbeMapConfigEnablesFakeBotRulePerCachedProvider(t *testing.T) {
+	openTestDB(t)
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue = ? WHERE skey = 'googlebot_ips'`, "66.249.64.0/19"); err != nil {
+		t.Fatalf("seed googlebot_ips: %v", err)
+	}
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue = '' WHERE skey = 'bingbot_ips'`); err != nil {
+		t.Fatalf("clear bingbot_ips: %v", err)
+	}
+
+	config := nginxSecurityProbeMapConfig()
+	googleMapStart := strings.Index(config, `map "$wp_security_claims_googlebot:$wp_security_verified_googlebot_ip" $wp_fake_googlebot_hit {`)
+	bingMapStart := strings.Index(config, `map "$wp_security_claims_bingbot:$wp_security_verified_bingbot_ip" $wp_fake_bingbot_hit {`)
+	if googleMapStart < 0 || bingMapStart < 0 {
+		t.Fatalf("missing split fake bot maps:\n%s", config)
+	}
+	googleMap := config[googleMapStart:bingMapStart]
+	bingMapEnd := strings.Index(config[bingMapStart:], `map "$wp_fake_googlebot_hit$wp_fake_bingbot_hit"`)
+	if bingMapEnd < 0 {
+		t.Fatalf("missing combined fake bot map:\n%s", config)
+	}
+	bingMap := config[bingMapStart : bingMapStart+bingMapEnd]
+
+	if !strings.Contains(googleMap, `"1:0" 1;`) {
+		t.Fatalf("googlebot fake rule should be enabled when google ranges are cached:\n%s", googleMap)
+	}
+	if strings.Contains(bingMap, `"1:0" 1;`) {
+		t.Fatalf("bingbot fake rule must stay disabled when bing ranges are not cached:\n%s", bingMap)
 	}
 }

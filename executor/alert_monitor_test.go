@@ -50,6 +50,12 @@ func TestAlertResendIntervalForUpdateAlerts(t *testing.T) {
 	if got := alertResendInterval("alert_disk"); got != 30*time.Minute {
 		t.Fatalf("regular alerts should keep 30 minute resend interval, got %v", got)
 	}
+	if got := alertResendInterval("alert_wp_sqli_probe"); got != 24*time.Hour {
+		t.Fatalf("wp sqli probe alert should resend daily to avoid spamming during a sustained attack, got %v", got)
+	}
+	if got := alertResendInterval("alert_wp_fake_search_bot"); got != 24*time.Hour {
+		t.Fatalf("wp fake search bot alert should resend daily to avoid spamming during a sustained attack, got %v", got)
+	}
 }
 
 func TestClearSystemUpdateAlertCache(t *testing.T) {

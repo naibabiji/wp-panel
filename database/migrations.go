@@ -486,4 +486,46 @@ var migrations = []string{
 		FOREIGN KEY (session_id) REFERENCES ai_sessions(id) ON DELETE CASCADE
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_ai_messages_session ON ai_messages(session_id, created_at)`,
+
+	// ============================================================
+	// wp_security_events — 方案 D 阶段三：持久化 WordPress 安全探测事件，
+	// 避免仅依赖日志尾部读取导致 logrotate 跨天后历史丢失
+	// ============================================================
+	`CREATE TABLE IF NOT EXISTS wp_security_events (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		site_id     INTEGER NOT NULL DEFAULT 0,
+		domain      TEXT    NOT NULL DEFAULT '',
+		ip_address  TEXT    NOT NULL DEFAULT '',
+		event_type  TEXT    NOT NULL DEFAULT '',
+		risk_level  TEXT    NOT NULL DEFAULT 'low',
+		method      TEXT    NOT NULL DEFAULT '',
+		path        TEXT    NOT NULL DEFAULT '',
+		user_agent  TEXT    NOT NULL DEFAULT '',
+		status      INTEGER NOT NULL DEFAULT 0,
+		message     TEXT    NOT NULL DEFAULT '',
+		occurred_at DATETIME NOT NULL,
+		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_wp_security_events_ip_type_time ON wp_security_events(ip_address, event_type, occurred_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_wp_security_events_site_time ON wp_security_events(site_id, occurred_at)`,
+
+	// ============================================================
+	// wp_security_log_positions — 记录每个站点 wp-security.log 已读取到的字节偏移，
+	// 支撑增量读取（配合 copytruncate 轮转：文件变小即视为已轮转，从头重新读取）
+	// ============================================================
+	`CREATE TABLE IF NOT EXISTS wp_security_log_positions (
+		site_id     INTEGER PRIMARY KEY,
+		byte_offset INTEGER NOT NULL DEFAULT 0,
+		first_line_hash TEXT NOT NULL DEFAULT '',
+		updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE
+	)`,
+
+	// ============================================================
+	// 方案 D 阶段四：WordPress 安全探测告警开关，默认关闭
+	// ============================================================
+	`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES
+		('alert_wp_sqli_probe', 'false', 'WordPress SQL 注入探测告警（默认关闭）'),
+		('alert_wp_fake_search_bot', 'false', '伪装搜索引擎爬虫告警（默认关闭）')`,
 }

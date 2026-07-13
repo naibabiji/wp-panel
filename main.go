@@ -209,6 +209,8 @@ func main() {
 	log.Println("面板数据库备份调度器已启动")
 	executor.StartSSLRenewalScheduler()
 	log.Println("SSL 自动续期调度器已启动")
+	executor.StartWPSecurityEventIngestor()
+	log.Println("WordPress 安全探测事件持久化调度器已启动")
 	go func() {
 		for {
 			time.Sleep(30 * time.Minute)

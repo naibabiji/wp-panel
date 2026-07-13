@@ -326,6 +326,15 @@ func executeRefreshWhitelist(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: err.Error()}
 	}
 
+	// googlebot_ips/bingbot_ips 缓存已更新，重新生成日志 map 配置，
+	// 让方案 D 阶段二的伪装爬虫探测（$wp_security_verified_bot_ip）使用最新官方 IP 段。
+	// 这一步只是让探测规则更及时，不是白名单刷新本身的核心目的：
+	// 即使这里失败，Cloudflare/Fail2ban 白名单已经成功更新，不应该让整个任务
+	// 报失败——那样会让管理员误以为白名单刷新失败，实际上只是日志规则没同步上。
+	if err := EnsureLogMap(); err != nil {
+		details = append(details, "安全探测规则同步失败: "+err.Error())
+	}
+
 	return TaskResult{
 		Success: true,
 		Message: fmt.Sprintf("共获取 %d 条（%s）", len(allIPs), strings.Join(details, "；")),
