@@ -15,20 +15,28 @@
                     <p>自动封禁规则监控所有网站的 access.log 和 error.log；WordPress 可疑访问分析额外读取 wp-security.log，仅做本地统计和证据整理。</p>
                 </div>
                 <div>
-                    <p class="text-white font-semibold mb-1">触发条件（命中以下任一规则计为 1 次违规）</p>
+                    <p class="text-white font-semibold mb-1">触发条件 — 来源标注为「Web防护」（命中以下任一规则计为 1 次违规）</p>
                     <ul class="list-disc list-inside space-y-1 ml-2">
                         <li><code class="text-gray-300">POST /wp-login.php</code> — WordPress 登录暴力破解</li>
                         <li><code class="text-gray-300">POST /xmlrpc.php</code> 返回 <span class="text-gray-300">HTTP 403</span> — 禁用 XML-RPC 后仍被请求（含 <code class="text-gray-300">//xmlrpc.php</code> 变体）</li>
                         <li>返回 <span class="text-gray-300">HTTP 429</span> — 超出请求频率限制</li>
                         <li>敏感文件扫描返回 <span class="text-gray-300">404</span> — 如 <code class="text-gray-300">.env</code>、<code class="text-gray-300">.git</code>、<code class="text-gray-300">wp-config.php</code>、<code class="text-gray-300">.sql</code>、压缩包等</li>
-                        <li class="text-green-400">404 泛滥检测 — 任意路径返回 404 达 <span class="text-green-300">30 次/60 秒</span> 判定为目录扫描（独立规则，固定阈值）</li>
-                        <li>WordPress 异常路径访问 — 写入 <code class="text-gray-300">wp-security.log</code>，用于管理员分析，不自动封禁</li>
                     </ul>
+                    <p class="text-gray-500 mt-1">以上 4 条共用同一条 Fail2ban 规则（jail: <code class="text-gray-300">wppanel</code>），封禁列表「来源」列只会统一显示「Web防护」，无法从来源反查具体命中哪一条，可结合「原因」列或站点日志判断。</p>
+                </div>
+                <div>
+                    <p class="text-white font-semibold mb-1">404 泛滥检测（独立规则，来源标注为「404防御」）</p>
+                    <p class="text-green-400">任意路径返回 404 达 <span class="text-green-300">30 次/60 秒</span> 判定为目录扫描，固定阈值，不受下方自定义阈值影响。</p>
+                    <p class="text-gray-500 mt-1">与「Web防护」的敏感文件扫描规则存在重叠：命中 <code class="text-gray-300">.env</code>、<code class="text-gray-300">.git</code> 等敏感文件的 404 请求，会同时被两条规则计数，可能让同一 IP 先后出现「Web防护」和「404防御」两条来源的封禁记录。这是有意设计（精确规则阈值更低、触发更快），不是重复封禁。</p>
+                </div>
+                <div>
+                    <p class="text-white font-semibold mb-1">WordPress 异常路径访问（仅记录，不产生「来源」）</p>
+                    <p>写入 <code class="text-gray-300">wp-security.log</code>，用于「WordPress 可疑访问分析」标签页统计，不自动封禁，不会出现在封禁列表的「来源」列。</p>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">封禁阈值</p>
-                    <p>前 4 项规则默认 <span class="text-blue-400">60 秒</span>内累计 <span class="text-blue-400">5 次</span>违规 → 自动封禁（可在「安全设置」页面自定义阈值、窗口和封禁时长）。</p>
-                    <p>404 泛滥规则固定为 <span class="text-blue-400">30 次/60 秒</span>，不开放自定义。</p>
+                    <p>「Web防护」的 4 条触发条件默认 <span class="text-blue-400">60 秒</span>内累计 <span class="text-blue-400">5 次</span>违规 → 自动封禁（可在「安全设置」页面自定义阈值、窗口和封禁时长）。</p>
+                    <p>「404防御」固定为 <span class="text-blue-400">30 次/60 秒</span>，不开放自定义。</p>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">多级渐进封禁</p>
@@ -42,8 +50,8 @@
                 <div>
                     <p class="text-white font-semibold mb-1">封禁机制</p>
                     <ul class="space-y-1 ml-2">
-                        <li><span class="text-blue-400">Fail2ban</span> — 管理网站防护封禁（jail: <code class="text-gray-300">wppanel</code>、<code class="text-gray-300">wppanel-404</code>）和 SSH 防护封禁（jail: <code class="text-gray-300">wppanel-sshd</code>），到期自动释放</li>
-                        <li><span class="text-purple-400">Nftables 持久</span> — 管理永久封禁、扫描防御封禁（来源: <code class="text-gray-300">panel_scan</code>）和面板认证封禁（来源: <code class="text-gray-300">panel</code>），独立于 Fail2ban，到期自动解除</li>
+                        <li><span class="text-blue-400">Fail2ban</span> — 管理来源「Web防护」封禁（jail: <code class="text-gray-300">wppanel</code>）、来源「404防御」封禁（jail: <code class="text-gray-300">wppanel-404</code>）和来源「SSH防护」封禁（jail: <code class="text-gray-300">wppanel-sshd</code>，复用与 Web防护相同的阈值，检测 <code class="text-gray-300">/var/log/auth.log</code> 中的 SSH 登录失败），到期自动释放</li>
+                        <li><span class="text-purple-400">Nftables 持久</span> — 管理永久封禁、来源「扫描防御」封禁（jail: <code class="text-gray-300">panel_scan</code>）和来源「面板」封禁（jail: <code class="text-gray-300">panel</code>），独立于 Fail2ban，到期自动解除</li>
                         <li><span class="text-green-400">Nginx 黑名单</span> — 与 Fail2ban 联动，Web 防护 jail 封禁时同步写入 Nginx geo 黑名单，被禁 IP 直接返回 <code class="text-gray-300">444</code>（关闭连接），确保 Cloudflare 代理场景下也能有效拦截</li>
                     </ul>
                     <p class="text-gray-500 mt-1">三条通道同时生效：Nftables 拦截直连源站的请求，Nginx 拦截经 Cloudflare 转发的请求，Fail2ban 到期自动释放。</p>
@@ -65,6 +73,18 @@
                         <li>命中随机入口（<code class="text-gray-300">/{suffix}</code>）的请求正常放行，不受影响</li>
                     </ul>
                     <p class="text-gray-500 mt-1">触发后写入面板封禁列表，来源标注为「扫描防御」，等级为临时 30 天。</p>
+                </div>
+                <div>
+                    <p class="text-white font-semibold mb-1">面板登录防护</p>
+                    <ul class="space-y-1 ml-2">
+                        <li>面板登录页或 BasicAuth 连续 <span class="text-blue-400">5 次</span>认证失败（<span class="text-blue-400">5 分钟</span>窗口内）→ 封禁 <span class="text-blue-400">24 小时</span></li>
+                        <li>只统计面板自身的认证请求，与上方针对网站访问的「Web防护」规则相互独立</li>
+                    </ul>
+                    <p class="text-gray-500 mt-1">触发后写入面板封禁列表，来源标注为「面板」。</p>
+                </div>
+                <div>
+                    <p class="text-white font-semibold mb-1">手动封禁</p>
+                    <p>管理员在本页面「手动封禁 IP」表单提交的封禁，不经过以上任何自动规则，来源标注为「手动封禁」。</p>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">白名单豁免</p>
