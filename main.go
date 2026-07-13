@@ -242,6 +242,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("正在关闭面板...")
+	executor.StopWPSecurityEventIngestor()
 }
 
 func handleFail2banCLI(configPath, banIP, unbanIP, recordIP, jail string) {

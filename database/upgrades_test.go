@@ -399,6 +399,83 @@ func TestWPSecurityAlertRulesDefaultDisabledOnFreshInstallAndUpgrade(t *testing.
 	}
 }
 
+func TestUpgradeAddsWPSecurityAlertThresholdSettings(t *testing.T) {
+	openTempDB(t)
+
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.28')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM security_settings WHERE skey IN ('alert_wp_security_threshold', 'alert_wp_security_window_hours')"); err != nil {
+		t.Fatalf("delete threshold rows: %v", err)
+	}
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("second RunUpgrades() error = %v", err)
+	}
+
+	for _, setting := range []struct {
+		key  string
+		want string
+	}{
+		{"alert_wp_security_threshold", "10"},
+		{"alert_wp_security_window_hours", "24"},
+	} {
+		var got string
+		if err := DB.QueryRow("SELECT svalue FROM security_settings WHERE skey = ?", setting.key).Scan(&got); err != nil {
+			t.Fatalf("upgraded install missing %s: %v", setting.key, err)
+		}
+		if got != setting.want {
+			t.Fatalf("upgraded install %s = %q, want %q", setting.key, got, setting.want)
+		}
+	}
+
+	var version string
+	if err := DB.QueryRow("SELECT version FROM schema_version ORDER BY updated_at DESC, rowid DESC LIMIT 1").Scan(&version); err != nil {
+		t.Fatalf("query schema_version: %v", err)
+	}
+	if version != LatestVersion() {
+		t.Fatalf("schema_version = %q, want %q", version, LatestVersion())
+	}
+}
+
+func TestFreshInstallHasWPSecurityAlertThresholdSettings(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+
+	for _, setting := range []struct {
+		key  string
+		want string
+	}{
+		{"alert_wp_security_threshold", "10"},
+		{"alert_wp_security_window_hours", "24"},
+	} {
+		var got string
+		if err := DB.QueryRow("SELECT svalue FROM security_settings WHERE skey = ?", setting.key).Scan(&got); err != nil {
+			t.Fatalf("fresh install missing %s: %v", setting.key, err)
+		}
+		if got != setting.want {
+			t.Fatalf("fresh install %s = %q, want %q", setting.key, got, setting.want)
+		}
+	}
+}
+
 func TestUpgradeAddsFileBackupsTableToExistingSchema(t *testing.T) {
 	openTempDB(t)
 

@@ -523,9 +523,12 @@ var migrations = []string{
 	)`,
 
 	// ============================================================
-	// 方案 D 阶段四：WordPress 安全探测告警开关，默认关闭
+	// 方案 D 阶段四：WordPress 安全探测告警开关，默认关闭；
+	// 阈值与统计窗口可配置（审核优化项 3.1）
 	// ============================================================
 	`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES
-		('alert_wp_sqli_probe', 'false', 'WordPress SQL 注入探测告警（默认关闭）'),
-		('alert_wp_fake_search_bot', 'false', '伪装搜索引擎爬虫告警（默认关闭）')`,
+		('alert_wp_sqli_probe',          'false', 'WordPress SQL 注入探测告警（默认关闭）'),
+		('alert_wp_fake_search_bot',     'false', '伪装搜索引擎爬虫告警（默认关闭）'),
+		('alert_wp_security_threshold',  '10',    'WordPress 安全探测告警阈值（每 IP 触发次数，默认 10）'),
+		('alert_wp_security_window_hours','24',   'WordPress 安全探测告警统计窗口（小时，默认 24）')`,
 }

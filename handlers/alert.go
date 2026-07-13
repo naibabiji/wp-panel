@@ -137,6 +137,26 @@ func normalizeAlertSetting(key string, val interface{}) (string, bool, error) {
 		"alert_wp_sqli_probe", "alert_wp_fake_search_bot":
 		v, err := normalizeBool(val)
 		return v, true, err
+	case "alert_wp_security_threshold":
+		v, err := normalizePlainString(val, 10, key)
+		if err != nil {
+			return "", false, err
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 10000 {
+			return "", false, fmt.Errorf("告警阈值必须为 1-10000 之间的整数")
+		}
+		return v, true, nil
+	case "alert_wp_security_window_hours":
+		v, err := normalizePlainString(val, 10, key)
+		if err != nil {
+			return "", false, err
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 168 {
+			return "", false, fmt.Errorf("统计窗口必须为 1-168 之间的整数（小时）")
+		}
+		return v, true, nil
 	default:
 		return "", false, nil
 	}

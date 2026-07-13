@@ -1,0 +1,102 @@
+{{template "base" .}}
+{{define "help_content"}}
+<div x-data="helpManager()">
+    <h2 class="text-xl font-bold text-white mb-2">{{t .Lang "nav.help"}}</h2>
+    <p class="text-sm text-gray-400 mb-6">{{t .Lang "help.intro"}}</p>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <!-- 左侧：联系方式 -->
+        <div class="card flex flex-col">
+            <h3 class="text-base font-semibold text-white mb-4">{{t .Lang "help.contact_title"}}</h3>
+
+            <div class="flex items-start mb-5">
+                <svg class="w-5 h-5 mr-3 text-white flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.09 3.29 9.4 7.86 10.93.58.1.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.7-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.68-1.28-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.75 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.18-3.09-.12-.29-.51-1.46.11-3.05 0 0 .96-.31 3.15 1.18a10.9 10.9 0 015.73 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.59.23 2.76.11 3.05.74.8 1.18 1.83 1.18 3.09 0 4.42-2.69 5.39-5.25 5.68.41.36.78 1.06.78 2.14 0 1.55-.01 2.79-.01 3.17 0 .31.21.67.8.56A11.5 11.5 0 0023.5 12c0-6.35-5.15-11.5-11.5-11.5z"/>
+                </svg>
+                <div class="flex-1 min-w-0">
+                    <h4 class="text-sm font-semibold text-white">{{t .Lang "help.github_title"}}</h4>
+                    <p class="text-xs text-gray-400 mt-1 mb-2">{{t .Lang "help.github_desc"}}</p>
+                    <a href="https://github.com/naibabiji/wp-panel/issues/new" target="_blank" rel="noopener" class="btn-secondary text-xs inline-block">{{t .Lang "help.github_action"}}</a>
+                </div>
+            </div>
+
+            <div class="flex items-start mb-5">
+                <svg class="w-5 h-5 mr-3 text-blue-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                </svg>
+                <div class="flex-1 min-w-0">
+                    <h4 class="text-sm font-semibold text-white">{{t .Lang "help.email_title"}}</h4>
+                    <p class="text-xs text-gray-400 mt-1 mb-2">{{t .Lang "help.email_desc"}}</p>
+                    <div class="flex items-center gap-2">
+                        <code class="text-xs text-gray-300 bg-gray-900 rounded px-2 py-1 flex-1 truncate">blog@naibabiji.com</code>
+                        <button @click="copy('blog@naibabiji.com', 'help.email_copied')" class="btn-secondary text-xs py-1 px-2">{{t .Lang "help.copy"}}</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-start">
+                <svg class="w-5 h-5 mr-3 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                </svg>
+                <div class="flex-1 min-w-0">
+                    <h4 class="text-sm font-semibold text-white">{{t .Lang "help.wechat_title"}}</h4>
+                    <p class="text-xs text-gray-400 mt-1 mb-2">{{t .Lang "help.wechat_desc"}}</p>
+                    <div class="flex items-center gap-2">
+                        <code class="text-xs text-gray-300 bg-gray-900 rounded px-2 py-1 flex-1 truncate">vv15_zhi</code>
+                        <button @click="copy('vv15_zhi', 'help.wechat_copied')" class="btn-secondary text-xs py-1 px-2">{{t .Lang "help.copy"}}</button>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2">{{t .Lang "help.wechat_group_note"}}</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧：Server Panel 介绍 -->
+        <div class="card flex flex-col bg-gradient-to-br from-gray-800 to-gray-900 border-gray-700">
+            <div class="flex items-center mb-3">
+                <svg class="w-6 h-6 mr-2 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12H3l9-9 9 9h-2M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7M9 21v-6a2 2 0 012-2h2a2 2 0 012 2v6"/>
+                </svg>
+                <h3 class="text-base font-semibold text-white">Server Panel</h3>
+                <span class="ml-2 text-xs text-blue-400 bg-blue-400/10 rounded px-1.5 py-0.5">{{t .Lang "help.sp_badge"}}</span>
+            </div>
+            <p class="text-sm text-gray-300 mb-4">{{t .Lang "help.sp_desc"}}</p>
+            <ul class="text-xs text-gray-400 space-y-2 mb-4 flex-1">
+                <li class="flex items-start">
+                    <svg class="w-4 h-4 mr-2 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    <span>{{t .Lang "help.sp_feature_1"}}</span>
+                </li>
+                <li class="flex items-start">
+                    <svg class="w-4 h-4 mr-2 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    <span>{{t .Lang "help.sp_feature_2"}}</span>
+                </li>
+                <li class="flex items-start">
+                    <svg class="w-4 h-4 mr-2 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    <span>{{t .Lang "help.sp_feature_3"}}</span>
+                </li>
+                <li class="flex items-start">
+                    <svg class="w-4 h-4 mr-2 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    <span>{{t .Lang "help.sp_feature_4"}}</span>
+                </li>
+            </ul>
+            <a href="https://github.com/naibabiji/server-panel" target="_blank" rel="noopener" class="btn-primary text-sm text-center">
+                {{t .Lang "help.sp_action"}}
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+function helpManager() {
+    return {
+        async copy(text, msgKey) {
+            try {
+                await navigator.clipboard.writeText(text);
+                showToast(t(msgKey), 'success');
+            } catch (e) {
+                showToast(t('help.copy_failed'), 'error');
+            }
+        }
+    }
+}
+</script>
+{{end}}

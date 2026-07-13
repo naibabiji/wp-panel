@@ -805,12 +805,52 @@ func checkPanelUpdate() (bool, string) {
 // 方案 D 阶段四：SQL 注入探测 / 伪装搜索引擎爬虫告警，默认关闭。
 // 只做"记录 → 超过阈值提醒管理员"，不自动封禁，最终是否封禁仍由管理员在
 // 「安全防御」页面手动决定。
+//
+// threshold / window 通过 security_settings 表中的 alert_wp_security_threshold
+// 与 alert_wp_security_window_hours 配置（审核优化项 3.1）；这里的常量仅作为
+// DB 读取失败或值非法时的 fallback。pathLimit / maxOffenders 是展示细节，
+// 不对用户开放，保持硬编码。
 const (
-	wpSecurityAlertWindow       = 24 * time.Hour
-	wpSecurityAlertThreshold    = 10
-	wpSecurityAlertPathLimit    = 3
-	wpSecurityAlertMaxOffenders = 10
+	defaultWPSecurityAlertThreshold = 10
+	defaultWPSecurityAlertWindow    = 24 * time.Hour
+	wpSecurityAlertPathLimit        = 3
+	wpSecurityAlertMaxOffenders     = 10
 )
+
+// wpSecurityAlertConfig 汇总一次告警判定所需的全部参数。
+type wpSecurityAlertConfig struct {
+	threshold    int
+	window       time.Duration
+	pathLimit    int
+	maxOffenders int
+}
+
+// getWPSecurityAlertConfig 从 security_settings 读取阈值与窗口，DB 不可用或
+// 值非法时回退到包级默认值。每次告警判定（最多每分钟一次）调用一次，无需缓存。
+func getWPSecurityAlertConfig() wpSecurityAlertConfig {
+	cfg := wpSecurityAlertConfig{
+		threshold:    defaultWPSecurityAlertThreshold,
+		window:       defaultWPSecurityAlertWindow,
+		pathLimit:    wpSecurityAlertPathLimit,
+		maxOffenders: wpSecurityAlertMaxOffenders,
+	}
+	db := database.GetDB()
+	if db == nil {
+		return cfg
+	}
+	var s string
+	if db.QueryRow("SELECT svalue FROM security_settings WHERE skey = 'alert_wp_security_threshold'").Scan(&s) == nil {
+		if n, err := strconv.Atoi(s); err == nil && n >= 1 && n <= 10000 {
+			cfg.threshold = n
+		}
+	}
+	if db.QueryRow("SELECT svalue FROM security_settings WHERE skey = 'alert_wp_security_window_hours'").Scan(&s) == nil {
+		if n, err := strconv.Atoi(s); err == nil && n >= 1 && n <= 168 {
+			cfg.window = time.Duration(n) * time.Hour
+		}
+	}
+	return cfg
+}
 
 func checkWPSQLiProbeThreshold() (bool, string) {
 	return checkWPSecurityEventThreshold(SecurityEventSQLiProbe, "SQL 注入探测")
@@ -821,8 +861,9 @@ func checkWPFakeSearchBotThreshold() (bool, string) {
 }
 
 func checkWPSecurityEventThreshold(eventType, label string) (bool, string) {
-	since := time.Now().UTC().Add(-wpSecurityAlertWindow)
-	offenders, err := topWPSecurityOffenders(eventType, since, wpSecurityAlertThreshold, wpSecurityAlertPathLimit)
+	cfg := getWPSecurityAlertConfig()
+	since := time.Now().UTC().Add(-cfg.window)
+	offenders, err := topWPSecurityOffenders(eventType, since, cfg.threshold, cfg.pathLimit)
 	if err != nil || len(offenders) == 0 {
 		return false, ""
 	}
@@ -831,9 +872,9 @@ func checkWPSecurityEventThreshold(eventType, label string) (bool, string) {
 	// 几百 KB，Webhook 走 URL 路径段的渠道（如 Bark）还会直接投递失败。
 	// topWPSecurityOffenders 已按次数降序排列，只取影响最大的前 N 个即可。
 	omitted := 0
-	if len(offenders) > wpSecurityAlertMaxOffenders {
-		omitted = len(offenders) - wpSecurityAlertMaxOffenders
-		offenders = offenders[:wpSecurityAlertMaxOffenders]
+	if len(offenders) > cfg.maxOffenders {
+		omitted = len(offenders) - cfg.maxOffenders
+		offenders = offenders[:cfg.maxOffenders]
 	}
 
 	// 邮件正文按单个 <p> 段落渲染，换行符不会被转成 <br>，因此和其余告警规则一样
@@ -850,8 +891,8 @@ func checkWPSecurityEventThreshold(eventType, label string) (bool, string) {
 	if omitted > 0 {
 		suffix = fmt.Sprintf("（还有 %d 个 IP 未列出，请到「安全防御」页面查看完整列表）。", omitted)
 	}
-	msg := fmt.Sprintf("过去 24 小时内以下 IP 触发「%s」次数达到阈值（%d 次）：%s%s面板仅记录、不自动封禁，请结合 IP 来源在「安全防御」页面手动决定是否封禁。",
-		label, wpSecurityAlertThreshold, strings.Join(entries, "；"), suffix)
+	msg := fmt.Sprintf("过去 %d 小时内以下 IP 触发「%s」次数达到阈值（%d 次）：%s%s面板仅记录、不自动封禁，请结合 IP 来源在「安全防御」页面手动决定是否封禁。",
+		int(cfg.window.Hours()), label, cfg.threshold, strings.Join(entries, "；"), suffix)
 	return true, msg
 }
 

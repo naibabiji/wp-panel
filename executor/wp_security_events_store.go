@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/naibabiji/wp-panel/database"
@@ -298,15 +299,53 @@ func PruneWPSecurityEvents(retentionDays int) error {
 	return err
 }
 
-// StartWPSecurityEventIngestor 启动后台增量摄取调度：每 5 分钟读取一次新增日志，
-// 并顺带清理过期历史事件。
+// StartWPSecurityEventIngestor 启动后台增量摄取调度：每 wpSecurityIngestorInterval
+// 读取一次新增日志，并顺带清理过期历史事件。StopWPSecurityEventIngestor 可关闭
+// 该调度，供 main.go 在收到 SIGINT/SIGTERM 时调用（审核优化项 3.2）。
+//
+// 保留初始 runWPSecurityEventIngestCycle() 调用（select 之前），保证面板启动后
+// 立即摄取一次，而不是等到第一个 tick。代价是 Stop 无法中断正在执行的初始摄取，
+// 但该调用在生产环境秒级完成，可接受。
+var (
+	wpSecurityIngestorMu       sync.Mutex
+	wpSecurityIngestorStopCh   chan struct{}
+	wpSecurityIngestorDone     chan struct{}
+	wpSecurityIngestorInterval = 5 * time.Minute // var 而非 const，便于测试覆盖
+)
+
 func StartWPSecurityEventIngestor() {
+	wpSecurityIngestorMu.Lock()
+	wpSecurityIngestorStopCh = make(chan struct{})
+	wpSecurityIngestorDone = make(chan struct{})
+	stopCh := wpSecurityIngestorStopCh
+	done := wpSecurityIngestorDone
+	wpSecurityIngestorMu.Unlock()
+
 	go func() {
+		defer close(done)
+		runWPSecurityEventIngestCycle()
+		ticker := time.NewTicker(wpSecurityIngestorInterval)
+		defer ticker.Stop()
 		for {
-			runWPSecurityEventIngestCycle()
-			time.Sleep(5 * time.Minute)
+			select {
+			case <-ticker.C:
+				runWPSecurityEventIngestCycle()
+			case <-stopCh:
+				return
+			}
 		}
 	}()
+}
+
+// StopWPSecurityEventIngestor 关闭后台摄取调度。幂等：多次调用安全。
+// 调用后 wpSecurityIngestorDone 会被关闭，调用方可 select 等待退出完成。
+func StopWPSecurityEventIngestor() {
+	wpSecurityIngestorMu.Lock()
+	defer wpSecurityIngestorMu.Unlock()
+	if wpSecurityIngestorStopCh != nil {
+		close(wpSecurityIngestorStopCh)
+		wpSecurityIngestorStopCh = nil
+	}
 }
 
 func runWPSecurityEventIngestCycle() {

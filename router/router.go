@@ -59,6 +59,9 @@ var i18nKeys = []string{
 	"dashboard.tooltip_time",
 	"dashboard.update_available",
 	"files.root_directory",
+	"help.copy_failed",
+	"help.email_copied",
+	"help.wechat_copied",
 	"settings.account_saved_please_relogin",
 	"settings.ai_settings_saved",
 	"settings.api_key_placeholder",
@@ -153,8 +156,11 @@ var i18nKeys = []string{
 	"alert.type_ssl_expire",
 	"alert.type_system_update",
 	"alert.type_website_expiry",
+	"alert.type_wp_fake_search_bot",
+	"alert.type_wp_sqli_probe",
 	"alert.webhook_config_saved",
 	"alert.webhook_url_required",
+	"alert.wp_security_config_saved",
 	"cron.confirm_delete",
 	"cron.deleted_success",
 	"cron.job_created",
@@ -384,6 +390,10 @@ var i18nKeys = []string{
 	"firewall.status_current_risk",
 	"firewall.status_handled",
 	"firewall.total_records",
+	"firewall.type_fake_search_bot",
+	"firewall.type_sensitive_file_scan",
+	"firewall.type_sqli_probe",
+	"firewall.type_suspicious_php",
 	"firewall.unbanned",
 	"firewall.unknown",
 	"name",
@@ -891,6 +901,9 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/settings", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "settings.html", pageData(suffix, "settings", "settings_content", c))
 	})
+	protected.GET("/help", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "help.html", pageData(suffix, "help", "help_content", c))
+	})
 
 	softwareHandler := &handlers.SoftwareHandler{}
 	protected.GET("/software", func(c *gin.Context) {
@@ -929,6 +942,7 @@ var pageTitleKeys = map[string]string{
 	"alert":          "nav.alert",
 	"extensions":     "nav.extensions",
 	"settings":       "nav.settings",
+	"help":           "nav.help",
 }
 
 func pageData(suffix string, active string, contentTpl string, c *gin.Context) gin.H {

@@ -432,7 +432,7 @@ func TestCheckWPSecurityEventThresholdFiresAndIncludesIPAndPaths(t *testing.T) {
 	seedWPSecurityEventSite(t, t.TempDir())
 
 	recent := time.Now().UTC().Add(-1 * time.Hour).Format("2006-01-02 15:04:05")
-	for i := 0; i < wpSecurityAlertThreshold; i++ {
+	for i := 0; i < defaultWPSecurityAlertThreshold; i++ {
 		insertWPSecurityEvent(t, "217.216.37.82", SecurityEventSQLiProbe, "/index.php", recent)
 	}
 
@@ -463,7 +463,7 @@ func TestCheckWPSecurityEventThresholdTruncatesLargeOffenderList(t *testing.T) {
 	const offenderCount = 15
 	for i := 0; i < offenderCount; i++ {
 		ip := fmt.Sprintf("10.0.0.%d", i+1)
-		for j := 0; j < wpSecurityAlertThreshold; j++ {
+		for j := 0; j < defaultWPSecurityAlertThreshold; j++ {
 			insertWPSecurityEvent(t, ip, SecurityEventSQLiProbe, "/index.php", recent)
 		}
 	}
@@ -479,4 +479,142 @@ func TestCheckWPSecurityEventThresholdTruncatesLargeOffenderList(t *testing.T) {
 	if ipMentions != wpSecurityAlertMaxOffenders {
 		t.Fatalf("alert message mentions %d IPs, want exactly %d (capped)", ipMentions, wpSecurityAlertMaxOffenders)
 	}
+}
+
+func TestGetWPSecurityAlertConfigReturnsDefaults(t *testing.T) {
+	openTestDB(t)
+	// openTestDB 跑过 migrations，security_settings 中已有默认值 '10' / '24'。
+	// 这里验证读取流程端到端正确。
+	cfg := getWPSecurityAlertConfig()
+	if cfg.threshold != defaultWPSecurityAlertThreshold {
+		t.Fatalf("cfg.threshold = %d, want default %d", cfg.threshold, defaultWPSecurityAlertThreshold)
+	}
+	if cfg.window != defaultWPSecurityAlertWindow {
+		t.Fatalf("cfg.window = %v, want default %v", cfg.window, defaultWPSecurityAlertWindow)
+	}
+	if cfg.pathLimit != wpSecurityAlertPathLimit {
+		t.Fatalf("cfg.pathLimit = %d, want %d", cfg.pathLimit, wpSecurityAlertPathLimit)
+	}
+	if cfg.maxOffenders != wpSecurityAlertMaxOffenders {
+		t.Fatalf("cfg.maxOffenders = %d, want %d", cfg.maxOffenders, wpSecurityAlertMaxOffenders)
+	}
+}
+
+func TestGetWPSecurityAlertConfigReadsDBValues(t *testing.T) {
+	openTestDB(t)
+
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue = '5' WHERE skey = 'alert_wp_security_threshold'`); err != nil {
+		t.Fatalf("update threshold: %v", err)
+	}
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue = '6' WHERE skey = 'alert_wp_security_window_hours'`); err != nil {
+		t.Fatalf("update window: %v", err)
+	}
+
+	cfg := getWPSecurityAlertConfig()
+	if cfg.threshold != 5 {
+		t.Fatalf("cfg.threshold = %d, want 5", cfg.threshold)
+	}
+	if cfg.window != 6*time.Hour {
+		t.Fatalf("cfg.window = %v, want 6h", cfg.window)
+	}
+}
+
+func TestGetWPSecurityAlertConfigClampsInvalidValuesToDefaults(t *testing.T) {
+	openTestDB(t)
+
+	// 低于下限：阈值 0、窗口 0 小时
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue = '0' WHERE skey = 'alert_wp_security_threshold'`); err != nil {
+		t.Fatalf("update threshold: %v", err)
+	}
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue = '0' WHERE skey = 'alert_wp_security_window_hours'`); err != nil {
+		t.Fatalf("update window: %v", err)
+	}
+	cfg := getWPSecurityAlertConfig()
+	if cfg.threshold != defaultWPSecurityAlertThreshold {
+		t.Fatalf("cfg.threshold with 0 = %d, want default %d (clamped)", cfg.threshold, defaultWPSecurityAlertThreshold)
+	}
+	if cfg.window != defaultWPSecurityAlertWindow {
+		t.Fatalf("cfg.window with 0 = %v, want default %v (clamped)", cfg.window, defaultWPSecurityAlertWindow)
+	}
+
+	// 超过上限：阈值 99999、窗口 999 小时
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue = '99999' WHERE skey = 'alert_wp_security_threshold'`); err != nil {
+		t.Fatalf("update threshold: %v", err)
+	}
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue = '999' WHERE skey = 'alert_wp_security_window_hours'`); err != nil {
+		t.Fatalf("update window: %v", err)
+	}
+	cfg = getWPSecurityAlertConfig()
+	if cfg.threshold != defaultWPSecurityAlertThreshold {
+		t.Fatalf("cfg.threshold with 99999 = %d, want default %d (clamped)", cfg.threshold, defaultWPSecurityAlertThreshold)
+	}
+	if cfg.window != defaultWPSecurityAlertWindow {
+		t.Fatalf("cfg.window with 999 = %v, want default %v (clamped)", cfg.window, defaultWPSecurityAlertWindow)
+	}
+
+	// 非数字字符串
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue = 'abc' WHERE skey = 'alert_wp_security_threshold'`); err != nil {
+		t.Fatalf("update threshold: %v", err)
+	}
+	cfg = getWPSecurityAlertConfig()
+	if cfg.threshold != defaultWPSecurityAlertThreshold {
+		t.Fatalf("cfg.threshold with 'abc' = %d, want default %d (clamped)", cfg.threshold, defaultWPSecurityAlertThreshold)
+	}
+}
+
+func TestCheckWPSecurityEventThresholdUsesConfiguredThreshold(t *testing.T) {
+	openTestDB(t)
+	seedWPSecurityEventSite(t, t.TempDir())
+
+	// 把阈值改为 3，少于默认 10
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue = '3' WHERE skey = 'alert_wp_security_threshold'`); err != nil {
+		t.Fatalf("update threshold: %v", err)
+	}
+
+	recent := time.Now().UTC().Add(-1 * time.Hour).Format("2006-01-02 15:04:05")
+	// 插入 3 条（达到新阈值，但低于默认 10）
+	for i := 0; i < 3; i++ {
+		insertWPSecurityEvent(t, "217.216.37.82", SecurityEventSQLiProbe, "/index.php", recent)
+	}
+
+	firing, msg := checkWPSQLiProbeThreshold()
+	if !firing {
+		t.Fatal("checkWPSQLiProbeThreshold() firing = false, want true with configured threshold=3 and 3 events")
+	}
+	if !strings.Contains(msg, "达到阈值（3 次）") {
+		t.Fatalf("alert message = %q, want it to mention configured threshold 3", msg)
+	}
+
+	// 伪装爬虫规则不应被触发（事件类型独立统计）
+	firing, _ = checkWPFakeSearchBotThreshold()
+	if firing {
+		t.Fatal("checkWPFakeSearchBotThreshold() firing = true, want false (only sqli events were inserted)")
+	}
+}
+
+func TestStopWPSecurityEventIngestorExitsCleanly(t *testing.T) {
+	openTestDB(t)
+
+	prev := wpSecurityIngestorInterval
+	wpSecurityIngestorInterval = 10 * time.Millisecond
+	t.Cleanup(func() { wpSecurityIngestorInterval = prev })
+
+	StartWPSecurityEventIngestor()
+	wpSecurityIngestorMu.Lock()
+	done := wpSecurityIngestorDone
+	wpSecurityIngestorMu.Unlock()
+
+	// 等待初始 cycle 完成（openTestDB 没有 websites，IngestWPSecurityEvents 立即返回）
+	time.Sleep(50 * time.Millisecond)
+
+	StopWPSecurityEventIngestor()
+	select {
+	case <-done:
+		// ok
+	case <-time.After(2 * time.Second):
+		t.Fatal("ingestor did not exit within 2s after Stop")
+	}
+
+	// 二次 Stop 应幂等，不 panic
+	StopWPSecurityEventIngestor()
 }

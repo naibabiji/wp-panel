@@ -132,6 +132,12 @@
                         </svg>
                         {{t .Lang "nav.settings"}}
                     </a>
+                    <a href="/{{$.RandomSuffix}}/help" class="sidebar-link {{if eq .Active "help"}}active{{end}}">
+                        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        {{t .Lang "nav.help"}}
+                    </a>
 
                     <div class="border-t border-gray-800 pt-2 mt-2">
                         <div class="px-3 py-2 text-xs text-gray-500">
@@ -168,6 +174,7 @@
                 {{if eq .ContentTemplate "alert_content"}}{{template "alert_content" .}}{{end}}
                 {{if eq .ContentTemplate "extensions_content"}}{{template "extensions_content" .}}{{end}}
                 {{if eq .ContentTemplate "software_content"}}{{template "software_content" .}}{{end}}
+                {{if eq .ContentTemplate "help_content"}}{{template "help_content" .}}{{end}}
             </main>
         </div>
     </div>

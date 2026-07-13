@@ -130,6 +130,16 @@
                     <input type="checkbox" x-model="rules.alert_wp_fake_search_bot" @change="save">
                     <span>{{t .Lang "alert.rule_wp_fake_search_bot"}}</span>
                 </label>
+                <div class="flex flex-wrap items-center gap-4 mt-2 mb-3 text-sm text-gray-300">
+                    <label class="flex items-center gap-2">
+                        <span>{{t .Lang "alert.wp_security_threshold_label"}}</span>
+                        <input type="number" min="1" max="10000" x-model.number="wpSecCfg.threshold" @change="saveWPSecCfg" :disabled="wpSecSaving" class="input-field w-20 py-1 text-sm">
+                    </label>
+                    <label class="flex items-center gap-2">
+                        <span>{{t .Lang "alert.wp_security_window_label"}}</span>
+                        <input type="number" min="1" max="168" x-model.number="wpSecCfg.windowHours" @change="saveWPSecCfg" :disabled="wpSecSaving" class="input-field w-20 py-1 text-sm">
+                    </label>
+                </div>
             </div>
         </div>
         <p class="text-xs text-gray-500 mt-2">{{t .Lang "alert.rate_limit_help"}}</p>
@@ -258,6 +268,8 @@ function webhookConfig() {
 function alertManager() {
     return {
         rules: {},
+        wpSecCfg: { threshold: 10, windowHours: 24 },
+        wpSecSaving: false,
         logs: [],
         async fetchAll() {
             try {
@@ -265,10 +277,15 @@ function alertManager() {
                 if (r.success) {
                     const d = r.data || {};
                     for (const k of Object.keys(d)) {
-                        if (k.startsWith('alert_')) {
+                        // alert_wp_security_threshold / alert_wp_security_window_hours
+                        // 是数值键，不能走布尔 rules 通道，否则 "10" 会被 !== 'false'
+                        // 判成 true，下次 save() 又把 true 写回去覆盖数值。
+                        if (k.startsWith('alert_') && k !== 'alert_wp_security_threshold' && k !== 'alert_wp_security_window_hours') {
                             this.rules[k] = d[k] !== 'false';
                         }
                     }
+                    this.wpSecCfg.threshold = parseInt(d.alert_wp_security_threshold) || 10;
+                    this.wpSecCfg.windowHours = parseInt(d.alert_wp_security_window_hours) || 24;
                 }
             } catch(e) {}
             this.fetchLog();
@@ -281,6 +298,17 @@ function alertManager() {
                 }
                 await api('/alert/settings', { method: 'PUT', body });
             } catch(e) {}
+        },
+        async saveWPSecCfg() {
+            this.wpSecSaving = true;
+            try {
+                await api('/alert/settings', { method: 'PUT', body: {
+                    alert_wp_security_threshold: String(this.wpSecCfg.threshold),
+                    alert_wp_security_window_hours: String(this.wpSecCfg.windowHours)
+                }});
+                showToast(t('alert.wp_security_config_saved'), 'success');
+            } catch(e) { showToast(e.message || t('common.operation_failed'), 'error'); }
+            this.wpSecSaving = false;
         },
         async fetchLog() {
             try {

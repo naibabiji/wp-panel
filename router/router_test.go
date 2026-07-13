@@ -29,6 +29,7 @@ var pageTemplates = map[string]string{
 	"alert.html":          "alert_content",
 	"extension.html":      "extensions_content",
 	"software.html":       "software_content",
+	"help.html":           "help_content",
 }
 
 func TestPageTemplatesRender(t *testing.T) {
@@ -46,7 +47,7 @@ func TestContentTemplatesRender(t *testing.T) {
 		"dashboard_content", "websites_content", "websites_new_content",
 		"websites_detail_content", "ai_diagnostics_content", "cron_content", "backups_content", "firewall_content",
 		"files_content", "security_content", "settings_content",
-		"alert_content", "extensions_content", "software_content",
+		"alert_content", "extensions_content", "software_content", "help_content",
 	}
 	for _, content := range contents {
 		t.Run(content, func(t *testing.T) {
