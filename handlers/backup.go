@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/models"
@@ -20,6 +21,44 @@ import (
 type BackupHandler struct{}
 
 var mysqlIdentifierRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+var fileBackupStorageRoot = config.DefaultBackupDir
+
+func dbBackupRoot() string {
+	if config.AppConfig != nil && strings.TrimSpace(config.AppConfig.Panel.BackupDir) != "" {
+		return config.AppConfig.Panel.BackupDir
+	}
+	return config.DefaultBackupDir
+}
+
+func backupPathWithin(basePath, targetPath string) bool {
+	base, err := resolvePathForAccess(basePath)
+	if err != nil {
+		return false
+	}
+	target, err := resolvePathForAccess(targetPath)
+	if err != nil {
+		return false
+	}
+	base = filepath.Clean(base)
+	target = filepath.Clean(target)
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+func siteDBBackupPath(site *models.Website, filename string) (string, bool) {
+	backupDir := filepath.Join(dbBackupRoot(), site.Domain, "db")
+	filePath := filepath.Clean(filepath.Join(backupDir, filename))
+	return filePath, backupPathWithin(backupDir, filePath)
+}
+
+func siteFileBackupPath(site *models.Website, filename string) (string, bool) {
+	backupDir := filepath.Join(fileBackupStorageRoot, site.Domain, "files")
+	filePath := filepath.Clean(filepath.Join(backupDir, filename))
+	return filePath, backupPathWithin(backupDir, filePath)
+}
 
 func (h *BackupHandler) List(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
@@ -99,8 +138,11 @@ func (h *BackupHandler) Download(c *gin.Context) {
 		return
 	}
 
-	backupDir := filepath.Join("/www/server/panel/backups", site.Domain, "db")
-	filePath := filepath.Join(backupDir, filename)
+	filePath, ok := siteDBBackupPath(site, filename)
+	if !ok {
+		c.JSON(http.StatusForbidden, models.ErrorResponse("备份路径越权"))
+		return
+	}
 	if _, err := os.Stat(filePath); err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("备份文件不存在"))
 		return
@@ -127,8 +169,11 @@ func (h *BackupHandler) Restore(c *gin.Context) {
 	}
 
 	// 检查本地文件是否存在
-	backupDir := filepath.Join("/www/server/panel/backups", site.Domain, "db")
-	filePath := filepath.Join(backupDir, filename)
+	filePath, ok := siteDBBackupPath(site, filename)
+	if !ok {
+		c.JSON(http.StatusForbidden, models.ErrorResponse("备份路径越权"))
+		return
+	}
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		var remoteEnabled int
 		database.GetDB().QueryRow("SELECT enabled FROM remote_backup_settings WHERE id = 1").Scan(&remoteEnabled)
@@ -190,6 +235,71 @@ func (h *BackupHandler) UploadRestore(c *gin.Context) {
 		"task_id": task.ID,
 		"status":  task.Status,
 	}))
+}
+
+func (h *BackupHandler) DownloadFileBackup(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	bid, _ := strconv.Atoi(c.Param("bid"))
+
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+
+	db := database.GetDB()
+	var filename string
+	err := db.QueryRow("SELECT filename FROM file_backups WHERE id = ? AND site_id = ?", bid, id).Scan(&filename)
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("备份记录不存在"))
+		return
+	}
+
+	filePath, ok := siteFileBackupPath(site, filename)
+	if !ok {
+		c.JSON(http.StatusForbidden, models.ErrorResponse("备份路径越权"))
+		return
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("备份文件不存在"))
+		return
+	}
+	c.FileAttachment(filePath, filename)
+}
+
+func (h *BackupHandler) DeleteFileBackup(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	bid, _ := strconv.Atoi(c.Param("bid"))
+
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+
+	db := database.GetDB()
+	var filename string
+	err := db.QueryRow("SELECT filename FROM file_backups WHERE id = ? AND site_id = ?", bid, id).Scan(&filename)
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("备份记录不存在"))
+		return
+	}
+
+	filePath, ok := siteFileBackupPath(site, filename)
+	if !ok {
+		c.JSON(http.StatusForbidden, models.ErrorResponse("备份路径越权"))
+		return
+	}
+	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+		log.Printf("删除文件备份失败 path=%s: %v", filePath, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("删除备份文件失败"))
+		return
+	}
+	if _, err := db.Exec("DELETE FROM file_backups WHERE id = ? AND site_id = ?", bid, id); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("删除备份记录失败"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已删除"}))
 }
 
 func (h *BackupHandler) RestoreStatus(c *gin.Context) {

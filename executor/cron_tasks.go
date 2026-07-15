@@ -15,6 +15,10 @@ import (
 )
 
 func executeRenderCron(task *Task) TaskResult {
+	return renderCronConfig()
+}
+
+func renderCronConfig() TaskResult {
 	cfg := config.AppConfig
 	if cfg == nil {
 		return TaskResult{Success: false, Message: "配置未加载"}
@@ -148,9 +152,13 @@ func executeRunCron(task *Task) TaskResult {
 		outBytes, execErr = exec.CommandContext(ctx, "curl", "-k", "-s", "-o", "/dev/null", url).CombinedOutput()
 		out = string(outBytes)
 	} else if runAsUser != "" {
-			var outBytes []byte; outBytes, execErr = exec.CommandContext(ctx, "runuser", "-u", runAsUser, "--", "bash", "-c", command).CombinedOutput(); out = string(outBytes)
+		var outBytes []byte
+		outBytes, execErr = exec.CommandContext(ctx, "runuser", "-u", runAsUser, "--", "bash", "-c", command).CombinedOutput()
+		out = string(outBytes)
 	} else {
-			var outBytes []byte; outBytes, execErr = exec.CommandContext(ctx, "bash", "-c", command).CombinedOutput(); out = string(outBytes)
+		var outBytes []byte
+		outBytes, execErr = exec.CommandContext(ctx, "bash", "-c", command).CombinedOutput()
+		out = string(outBytes)
 	}
 
 	status := "success"

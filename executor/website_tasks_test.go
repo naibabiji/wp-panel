@@ -4,11 +4,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
+	"github.com/naibabiji/wp-panel/models"
 )
 
-func TestDisableSiteBackupCronJobsDisablesOnlyMatchingSite(t *testing.T) {
+func TestDeleteSiteBackupCronJobsDeletesOnlyMatchingSite(t *testing.T) {
 	openTestDB(t)
 	db := database.GetDB()
 	insertMinimalWebsite(t, "site-a.example.com")
@@ -21,41 +24,129 @@ func TestDisableSiteBackupCronJobsDisablesOnlyMatchingSite(t *testing.T) {
 	mustExec(t, db, `INSERT INTO cron_jobs (id, name, cron_expression, command, task_type, site_id, enabled)
 		VALUES (3, 'unrelated command', '0 3 * * *', 'echo hi', 'command', NULL, 1)`)
 
-	disabled, err := disableSiteBackupCronJobs(db, 1)
+	deleted, err := deleteSiteBackupCronJobs(db, 1)
 	if err != nil {
-		t.Fatalf("disableSiteBackupCronJobs error = %v", err)
+		t.Fatalf("deleteSiteBackupCronJobs error = %v", err)
 	}
-	if !disabled {
-		t.Fatal("disableSiteBackupCronJobs = false, want true when a matching job was disabled")
+	if !deleted {
+		t.Fatal("deleteSiteBackupCronJobs = false, want true when a matching job was deleted")
 	}
 
-	var enabledA, enabledB, enabledOther int
-	if err := db.QueryRow(`SELECT enabled FROM cron_jobs WHERE id = 1`).Scan(&enabledA); err != nil {
-		t.Fatalf("query job 1: %v", err)
+	var countA, countB, countOther int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM cron_jobs WHERE id = 1`).Scan(&countA); err != nil {
+		t.Fatalf("query job 1 count: %v", err)
 	}
-	if err := db.QueryRow(`SELECT enabled FROM cron_jobs WHERE id = 2`).Scan(&enabledB); err != nil {
-		t.Fatalf("query job 2: %v", err)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM cron_jobs WHERE id = 2`).Scan(&countB); err != nil {
+		t.Fatalf("query job 2 count: %v", err)
 	}
-	if err := db.QueryRow(`SELECT enabled FROM cron_jobs WHERE id = 3`).Scan(&enabledOther); err != nil {
-		t.Fatalf("query job 3: %v", err)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM cron_jobs WHERE id = 3`).Scan(&countOther); err != nil {
+		t.Fatalf("query job 3 count: %v", err)
 	}
-	if enabledA != 0 {
-		t.Fatal("site-a's file_backup cron job should be disabled")
+	if countA != 0 {
+		t.Fatal("site-a's file_backup cron job should be deleted")
 	}
-	if enabledB != 1 {
+	if countB != 1 {
 		t.Fatal("site-b's file_backup cron job should NOT be affected by site-a's deletion")
 	}
-	if enabledOther != 1 {
-		t.Fatal("unrelated non-file_backup cron job should NOT be disabled")
+	if countOther != 1 {
+		t.Fatal("unrelated non-file_backup cron job should NOT be deleted")
 	}
 
-	// 幂等：再次调用不应报错，且因为已经没有 enabled=1 的匹配任务，应返回 false。
-	disabledAgain, err := disableSiteBackupCronJobs(db, 1)
+	// 幂等：再次调用不应报错，且因为已经没有匹配任务，应返回 false。
+	deletedAgain, err := deleteSiteBackupCronJobs(db, 1)
 	if err != nil {
-		t.Fatalf("second disableSiteBackupCronJobs error = %v", err)
+		t.Fatalf("second deleteSiteBackupCronJobs error = %v", err)
 	}
-	if disabledAgain {
-		t.Fatal("disableSiteBackupCronJobs = true on second call, want false (nothing left to disable)")
+	if deletedAgain {
+		t.Fatal("deleteSiteBackupCronJobs = true on second call, want false (nothing left to delete)")
+	}
+}
+
+func TestDeleteSiteWithEnabledFileBackupCronDoesNotDeadlockQueue(t *testing.T) {
+	openTestDB(t)
+	db := database.GetDB()
+	root := t.TempDir()
+	cfg := &config.Config{
+		Panel: config.PanelConfig{BackupDir: filepath.Join(root, "backups")},
+		MariaDB: config.MariaDBConfig{
+			RootUser:     "root",
+			RootPassword: "test",
+		},
+		Paths: config.PathsConfig{
+			WWWRoot:             filepath.Join(root, "wwwroot"),
+			WWWLogs:             filepath.Join(root, "wwwlogs"),
+			NginxSitesAvailable: filepath.Join(root, "nginx-available"),
+			NginxSitesEnabled:   filepath.Join(root, "nginx-enabled"),
+			PHPFPMPool:          filepath.Join(root, "php-pool"),
+			PHPFPMSock:          filepath.Join(root, "php-sock"),
+			Certificates:        filepath.Join(root, "certs"),
+			CronFile:            filepath.Join(root, "wp-panel-cron"),
+		},
+	}
+	oldCfg := config.AppConfig
+	oldQueue := GlobalQueue
+	config.AppConfig = cfg
+	t.Cleanup(func() {
+		config.AppConfig = oldCfg
+		GlobalQueue = oldQueue
+	})
+	for _, dir := range []string{
+		cfg.Paths.WWWRoot,
+		cfg.Paths.WWWLogs,
+		cfg.Paths.NginxSitesAvailable,
+		cfg.Paths.NginxSitesEnabled,
+		cfg.Paths.PHPFPMPool,
+		cfg.Paths.PHPFPMSock,
+		cfg.Paths.Certificates,
+		filepath.Dir(cfg.Paths.CronFile),
+	} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+
+	domain := "delete-cron.example.com"
+	site := &models.Website{
+		ID:            10,
+		Domain:        domain,
+		SystemUser:    "php_delete_cron",
+		WebRoot:       filepath.Join(cfg.Paths.WWWRoot, domain),
+		LogDir:        filepath.Join(cfg.Paths.WWWLogs, domain),
+		DBName:        "db_delete_cron",
+		DBUser:        "user_delete_cron",
+		PHPPoolPath:   filepath.Join(cfg.Paths.PHPFPMPool, "delete-cron.conf"),
+		NginxConfPath: filepath.Join(cfg.Paths.NginxSitesAvailable, "delete-cron.conf"),
+		SiteType:      "php",
+	}
+	mustExec(t, db, `INSERT INTO websites (id, name, domain, status, system_user, web_root, log_dir, db_name, db_user, php_pool_path, nginx_conf_path, site_type)
+		VALUES (10, 'delete-cron', 'delete-cron.example.com', 'active', 'php_delete_cron', '`+site.WebRoot+`', '`+site.LogDir+`', 'db_delete_cron', 'user_delete_cron', '`+site.PHPPoolPath+`', '`+site.NginxConfPath+`', 'php')`)
+	mustExec(t, db, `INSERT INTO cron_jobs (name, cron_expression, command, task_type, backup_mode, site_id, enabled)
+		VALUES ('delete-cron file backup', '0 2 * * *', 'wp-panel file backup', 'file_backup', 'incremental', 10, 1)`)
+
+	queue := InitQueue(cfg)
+	task := queue.Enqueue(TaskDeleteSite, &DeleteSitePayload{Site: site})
+	select {
+	case result := <-task.ResultCh:
+		if !result.Success {
+			t.Fatalf("delete result = %#v, want success", result)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("delete site task timed out; likely queue self-deadlocked while refreshing cron")
+	}
+
+	var siteCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM websites WHERE id = 10`).Scan(&siteCount); err != nil {
+		t.Fatalf("query websites: %v", err)
+	}
+	if siteCount != 0 {
+		t.Fatal("website row still exists after delete")
+	}
+	var cronCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM cron_jobs WHERE name = 'delete-cron file backup'`).Scan(&cronCount); err != nil {
+		t.Fatalf("query cron job count: %v", err)
+	}
+	if cronCount != 0 {
+		t.Fatalf("cron job count = %d, want deleted", cronCount)
 	}
 }
 

@@ -25,7 +25,14 @@ var i18nKeys = []string{
 	"auth.session_expired",
 	"backups.backup_auto",
 	"backups.backup_manual",
+	"backups.actions",
+	"backups.clean_record",
 	"backups.collapse_all",
+	"backups.confirm_clean_record",
+	"backups.confirm_delete_local",
+	"backups.delete",
+	"backups.deleted",
+	"backups.download",
 	"backups.expand_all",
 	"backups.mode_full",
 	"backups.mode_incremental",
@@ -761,6 +768,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.DELETE("/api/websites/:id/backups/:bid", backupHandler.Delete)
 	protected.GET("/api/websites/:id/backups/:bid/download", backupHandler.Download)
 	protected.POST("/api/websites/:id/backups/:bid/restore", backupHandler.Restore)
+	protected.DELETE("/api/websites/:id/file-backups/:bid", backupHandler.DeleteFileBackup)
+	protected.GET("/api/websites/:id/file-backups/:bid/download", backupHandler.DownloadFileBackup)
 	protected.POST("/api/websites/:id/backups/upload-restore", backupHandler.UploadRestore)
 	protected.GET("/api/websites/:id/backups/restore-tasks/:task_id", backupHandler.RestoreStatus)
 	protected.GET("/api/websites/:id/backups/settings", backupHandler.GetSettings)

@@ -66,6 +66,7 @@
                                 <th class="py-2 text-left">{{t .Lang "backups.time"}}</th>
                                 <th class="py-2 text-left">{{t .Lang "backups.mode"}}</th>
                                 <th class="py-2 text-left">{{t .Lang "backups.transport"}}</th>
+                                <th class="py-2 text-left">{{t .Lang "backups.actions"}}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -76,10 +77,14 @@
                                     <td class="py-2 text-xs whitespace-nowrap" x-text="fmtTime(b.created_at)"></td>
                                     <td class="py-2 whitespace-nowrap"><span :class="b.auto ? 'badge-info' : 'badge-success'" class="text-xs" x-text="b.auto ? t('backups.backup_auto') : t('backups.backup_manual')"></span></td>
                                     <td class="py-2 whitespace-nowrap"><span :class="transportBadgeClass(b)" class="text-xs" x-text="transportLabel(b)"></span></td>
+                                    <td class="py-2 whitespace-nowrap">
+                                        <button type="button" @click="downloadDBBackup(site, b)" :disabled="!b.local_exists" class="btn-secondary text-xs py-1 px-2 mr-1" x-text="t('backups.download')"></button>
+                                        <button type="button" @click="deleteDBBackup(site, b)" class="btn-danger text-xs py-1 px-2" x-text="b.local_exists ? t('backups.delete') : t('backups.clean_record')"></button>
+                                    </td>
                                 </tr>
                             </template>
                             <tr x-show="site.db_backups.length === 0">
-                                <td colspan="5" class="py-3 text-center text-gray-500">{{t .Lang "backups.no_backups"}}</td>
+                                <td colspan="6" class="py-3 text-center text-gray-500">{{t .Lang "backups.no_backups"}}</td>
                             </tr>
                         </tbody>
                     </table>
@@ -97,6 +102,7 @@
                                 <th class="py-2 text-left">{{t .Lang "backups.time"}}</th>
                                 <th class="py-2 text-left">{{t .Lang "backups.mode"}}</th>
                                 <th class="py-2 text-left">{{t .Lang "backups.transport"}}</th>
+                                <th class="py-2 text-left">{{t .Lang "backups.actions"}}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -107,10 +113,14 @@
                                     <td class="py-2 text-xs whitespace-nowrap" x-text="fmtTime(b.created_at)"></td>
                                     <td class="py-2 whitespace-nowrap"><span :class="b.mode === 'full' ? 'badge-success' : 'badge-info'" class="text-xs" x-text="b.mode === 'full' ? t('backups.mode_full') : t('backups.mode_incremental')"></span></td>
                                     <td class="py-2 whitespace-nowrap"><span :class="transportBadgeClass(b)" class="text-xs" x-text="transportLabel(b)"></span></td>
+                                    <td class="py-2 whitespace-nowrap">
+                                        <button type="button" @click="downloadFileBackup(site, b)" :disabled="!b.local_exists" class="btn-secondary text-xs py-1 px-2 mr-1" x-text="t('backups.download')"></button>
+                                        <button type="button" @click="deleteFileBackup(site, b)" class="btn-danger text-xs py-1 px-2" x-text="b.local_exists ? t('backups.delete') : t('backups.clean_record')"></button>
+                                    </td>
                                 </tr>
                             </template>
                             <tr x-show="site.file_backups.length === 0">
-                                <td colspan="5" class="py-3 text-center text-gray-500">{{t .Lang "backups.no_backups"}}</td>
+                                <td colspan="6" class="py-3 text-center text-gray-500">{{t .Lang "backups.no_backups"}}</td>
                             </tr>
                         </tbody>
                     </table>
@@ -179,8 +189,37 @@ function backupsOverview() {
             const prefix = document.body.dataset.panelPrefix || '';
             return prefix + '/websites/' + siteId;
         },
+        apiPrefix() {
+            return document.body.dataset.panelPrefix || '';
+        },
         goToSite(siteId) {
             window.location.href = this.siteDetailUrl(siteId);
+        },
+        downloadDBBackup(site, backup) {
+            if (!backup.local_exists) return;
+            window.open(this.apiPrefix() + '/api/websites/' + site.site_id + '/backups/' + backup.id + '/download');
+        },
+        downloadFileBackup(site, backup) {
+            if (!backup.local_exists) return;
+            window.open(this.apiPrefix() + '/api/websites/' + site.site_id + '/file-backups/' + backup.id + '/download');
+        },
+        async deleteDBBackup(site, backup) {
+            const key = backup.local_exists ? 'backups.confirm_delete_local' : 'backups.confirm_clean_record';
+            if (!await confirmModal(t(key, { filename: backup.filename }))) return;
+            try {
+                await api('/websites/' + site.site_id + '/backups/' + backup.id, { method: 'DELETE' });
+                await this.fetchOverview();
+                showToast(t('backups.deleted'), 'success');
+            } catch (e) { showToast(e.message, 'error'); }
+        },
+        async deleteFileBackup(site, backup) {
+            const key = backup.local_exists ? 'backups.confirm_delete_local' : 'backups.confirm_clean_record';
+            if (!await confirmModal(t(key, { filename: backup.filename }))) return;
+            try {
+                await api('/websites/' + site.site_id + '/file-backups/' + backup.id, { method: 'DELETE' });
+                await this.fetchOverview();
+                showToast(t('backups.deleted'), 'success');
+            } catch (e) { showToast(e.message, 'error'); }
         },
         expandAll() {
             // 用 document 而不是 this.$el：在方法体内 this.$el 指向触发这次调用的元素（这里是

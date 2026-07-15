@@ -37,7 +37,7 @@ type SiteBackupOverview struct {
 }
 
 // GetBackupOverview 返回所有网站的备份总览（数据库备份 + 文件备份）以及面板自身数据库备份列表。
-// 只读接口，不提供下载/删除，跳转到具体操作请前往对应网站详情页。
+// 列表接口只做本地状态汇总；下载/删除由独立备份操作接口处理。
 func GetBackupOverview(c *gin.Context) {
 	db := database.GetDB()
 	cfg := config.AppConfig
