@@ -143,6 +143,10 @@ func TestBackupUsageListsMultipleAndDisabledCronJobs(t *testing.T) {
 		VALUES ('weekly full backup', '0 3 * * 0', 'wp-panel file backup', 'file_backup', 'full', 1, 0)`); err != nil {
 		t.Fatalf("insert cron_jobs: %v", err)
 	}
+	if _, err := db.Exec(`INSERT INTO cron_jobs (name, cron_expression, command, task_type, site_id, enabled)
+		VALUES ('system wp cron', '*/5 * * * *', 'example.com', 'wp_cron', 1, 1)`); err != nil {
+		t.Fatalf("insert wp_cron job: %v", err)
+	}
 
 	router := gin.New()
 	handler := &WebsiteHandler{}
@@ -163,11 +167,11 @@ func TestBackupUsageListsMultipleAndDisabledCronJobs(t *testing.T) {
 	for _, j := range resp.Data.CronJobs {
 		names[j.Name] = true
 	}
-	if len(resp.Data.CronJobs) != 2 {
-		t.Fatalf("cron_jobs count = %d, want 2; got %+v", len(resp.Data.CronJobs), resp.Data.CronJobs)
+	if len(resp.Data.CronJobs) != 3 {
+		t.Fatalf("cron_jobs count = %d, want 3; got %+v", len(resp.Data.CronJobs), resp.Data.CronJobs)
 	}
-	if !names["nightly backup"] || !names["weekly full backup"] {
-		t.Fatalf("cron_jobs = %+v, want both nightly backup and weekly full backup listed regardless of enabled state", resp.Data.CronJobs)
+	if !names["nightly backup"] || !names["weekly full backup"] || !names["system wp cron"] {
+		t.Fatalf("cron_jobs = %+v, want file_backup and wp_cron jobs listed", resp.Data.CronJobs)
 	}
 	if !resp.Data.HasBackupData() {
 		t.Fatal("HasBackupData() = false, want true")

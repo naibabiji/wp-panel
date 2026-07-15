@@ -109,6 +109,12 @@ func (h *BackupHandler) Delete(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	bid, _ := strconv.Atoi(c.Param("bid"))
 
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+
 	db := database.GetDB()
 	var filename string
 	err := db.QueryRow("SELECT filename FROM db_backups WHERE id = ? AND site_id = ?", bid, id).Scan(&filename)
@@ -116,7 +122,20 @@ func (h *BackupHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("备份记录不存在"))
 		return
 	}
-	executor.ExecuteDeleteBackup(id, filename)
+	filePath, ok := siteDBBackupPath(site, filename)
+	if !ok {
+		c.JSON(http.StatusForbidden, models.ErrorResponse("备份路径越权"))
+		return
+	}
+	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+		log.Printf("删除数据库备份失败 path=%s: %v", filePath, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("删除备份文件失败"))
+		return
+	}
+	if _, err := db.Exec("DELETE FROM db_backups WHERE id = ? AND site_id = ?", bid, id); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("删除备份记录失败"))
+		return
+	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已删除"}))
 }
 

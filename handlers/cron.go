@@ -393,6 +393,9 @@ func validateCronInput(name, expr, command, taskType, backupMode, runAsUser stri
 	}
 	switch taskType {
 	case "command":
+		if siteID != nil {
+			return "普通命令任务不能绑定网站"
+		}
 		if strings.TrimSpace(command) == "" {
 			return "请输入要执行的命令"
 		}

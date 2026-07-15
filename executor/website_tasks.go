@@ -531,32 +531,47 @@ func executeDeleteSite(task *Task) TaskResult {
 
 	db := database.GetDB()
 
-	// 面板不自动删除备份文件；但网站关联的文件备份计划任务已经失去执行目标，
-	// 删除网站时直接删除这些任务，并刷新系统 crontab。
-	if deleted, err := deleteSiteBackupCronJobs(db, site.ID); err != nil {
-		log.Printf("删除网站关联备份计划任务失败 domain=%s: %v", site.Domain, err)
-	} else if deleted {
-		if result := renderCronConfig(); !result.Success {
-			log.Printf("删除网站关联备份计划任务后刷新Cron配置失败 domain=%s: %s", site.Domain, result.Message)
-		}
-	}
-
-	if _, err := db.Exec("DELETE FROM websites WHERE id = ?", site.ID); err != nil {
+	cronDeleted, err := deleteSiteAndAssociatedCronJobs(db, site.ID)
+	if err != nil {
 		return TaskResult{Success: false, Message: "清理数据库记录失败: " + err.Error()}
+	}
+	if cronDeleted {
+		if result := renderCronConfig(); !result.Success {
+			log.Printf("删除网站关联计划任务后刷新Cron配置失败 domain=%s: %s", site.Domain, result.Message)
+		}
 	}
 
 	return TaskResult{Success: true, Message: "网站 " + site.Domain + " 已删除" + dbCleanupWarning}
 }
 
-// deleteSiteBackupCronJobs 删除指定网站的“备份网站文件”计划任务。
-// 返回是否有任务被删除，供调用方决定是否需要重新生成系统 crontab。
-func deleteSiteBackupCronJobs(db *sql.DB, siteID int) (bool, error) {
-	res, err := db.Exec(`DELETE FROM cron_jobs WHERE site_id = ? AND task_type = 'file_backup'`, siteID)
+// deleteSiteAndAssociatedCronJobs 原子删除网站记录和所有仍关联该网站的计划任务。
+// cron_jobs.site_id 的外键是 ON DELETE SET NULL；这里必须先显式删除关联任务，
+// 避免 wp_cron/file_backup 等任务在网站删除后变成继续执行的孤儿任务。
+func deleteSiteAndAssociatedCronJobs(db *sql.DB, siteID int) (bool, error) {
+	tx, err := db.Begin()
 	if err != nil {
 		return false, err
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	res, err := tx.Exec(`DELETE FROM cron_jobs WHERE site_id = ?`, siteID)
+	if err != nil {
+		return false, err
+	}
+	cronRows, _ := res.RowsAffected()
+	if _, err := tx.Exec("DELETE FROM websites WHERE id = ?", siteID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	committed = true
+	return cronRows > 0, nil
 }
 
 func executePauseSite(task *Task) TaskResult {

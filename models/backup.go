@@ -30,7 +30,7 @@ type FileBackup struct {
 	CreatedAt        time.Time `json:"created_at"`
 }
 
-// BackupCronJobRef 是删除网站前提醒用的关联备份计划任务简要信息。
+// BackupCronJobRef 是删除网站前提醒用的关联计划任务简要信息。
 type BackupCronJobRef struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`

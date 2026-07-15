@@ -477,7 +477,8 @@ func (h *WebsiteHandler) Delete(c *gin.Context) {
 }
 
 // BackupUsage 返回网站当前的备份数据规模（数据库备份数、文件备份数、是否启用自动备份、
-// 关联的备份计划任务），供前端在删除网站前提醒管理员：面板不会自动删除这些备份或计划任务。
+// 关联计划任务），供前端在删除网站前提醒管理员：面板不会自动删除备份文件，
+// 但会在删除网站时自动删除仍关联该网站的计划任务。
 func (h *WebsiteHandler) BackupUsage(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -507,7 +508,7 @@ func (h *WebsiteHandler) BackupUsage(c *gin.Context) {
 	}
 	usage.AutoBackupEnabled = enabled == 1
 
-	rows, err := db.Query(`SELECT id, name FROM cron_jobs WHERE site_id = ? AND task_type = 'file_backup'`, id)
+	rows, err := db.Query(`SELECT id, name FROM cron_jobs WHERE site_id = ?`, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询关联计划任务失败"))
 		return

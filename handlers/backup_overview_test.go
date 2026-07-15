@@ -306,6 +306,92 @@ func TestFileBackupDownloadAndDelete(t *testing.T) {
 	}
 }
 
+func TestDBBackupDeleteRemovesFileAndRecord(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupBackupOverviewTestDB(t)
+
+	db := database.GetDB()
+	if _, err := db.Exec(`INSERT INTO websites (id, name, domain, system_user, web_root, log_dir, db_name, db_user, php_pool_path, nginx_conf_path)
+		VALUES (1, 'site', 'delete-db-backup.example.com', 'u1', '/www/wwwroot/delete-db-backup.example.com', '/www/wwwlogs/delete-db-backup.example.com', 'db1', 'u1', '/p', '/n')`); err != nil {
+		t.Fatalf("insert website: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO db_backups (id, site_id, filename, file_size, db_name, transport_status) VALUES (11, 1, 'db.sql.gz', 20, 'db1', 'local')`); err != nil {
+		t.Fatalf("insert db_backups: %v", err)
+	}
+
+	root := t.TempDir()
+	oldConfig := config.AppConfig
+	config.AppConfig = &config.Config{Panel: config.PanelConfig{BackupDir: root}}
+	t.Cleanup(func() { config.AppConfig = oldConfig })
+
+	dbDir := filepath.Join(root, "delete-db-backup.example.com", "db")
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		t.Fatalf("mkdir db dir: %v", err)
+	}
+	backupPath := filepath.Join(dbDir, "db.sql.gz")
+	if err := os.WriteFile(backupPath, []byte("backup"), 0644); err != nil {
+		t.Fatalf("write db backup: %v", err)
+	}
+
+	router := gin.New()
+	handler := &BackupHandler{}
+	router.DELETE("/api/websites/:id/backups/:bid", handler.Delete)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/websites/1/backups/11", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if _, err := os.Stat(backupPath); !os.IsNotExist(err) {
+		t.Fatalf("backup file still exists or unexpected stat error: %v", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM db_backups WHERE id = 11`).Scan(&count); err != nil {
+		t.Fatalf("query db_backups: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("db_backups row count = %d, want 0", count)
+	}
+}
+
+func TestDeleteMissingDBBackupCleansRecord(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupBackupOverviewTestDB(t)
+
+	db := database.GetDB()
+	if _, err := db.Exec(`INSERT INTO websites (id, name, domain, system_user, web_root, log_dir, db_name, db_user, php_pool_path, nginx_conf_path)
+		VALUES (1, 'site', 'missing-db-backup.example.com', 'u1', '/www/wwwroot/missing-db-backup.example.com', '/www/wwwlogs/missing-db-backup.example.com', 'db1', 'u1', '/p', '/n')`); err != nil {
+		t.Fatalf("insert website: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO db_backups (id, site_id, filename, file_size, db_name, transport_status) VALUES (12, 1, 'missing.sql.gz', 20, 'db1', 'local')`); err != nil {
+		t.Fatalf("insert db_backups: %v", err)
+	}
+
+	root := t.TempDir()
+	oldConfig := config.AppConfig
+	config.AppConfig = &config.Config{Panel: config.PanelConfig{BackupDir: root}}
+	t.Cleanup(func() { config.AppConfig = oldConfig })
+
+	router := gin.New()
+	handler := &BackupHandler{}
+	router.DELETE("/api/websites/:id/backups/:bid", handler.Delete)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/websites/1/backups/12", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM db_backups WHERE id = 12`).Scan(&count); err != nil {
+		t.Fatalf("query db_backups: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("db_backups row count = %d, want 0", count)
+	}
+}
+
 func TestDeleteMissingFileBackupCleansRecord(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupBackupOverviewTestDB(t)

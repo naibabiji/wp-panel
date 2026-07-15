@@ -164,7 +164,7 @@ const (
 
 func fileBasePath(siteID int) (string, error) {
 	if siteID == 0 {
-		return "/www/server/panel/backups", nil
+		return dbBackupRoot(), nil
 	}
 	site := getWebsiteByID(siteID)
 	if site == nil {

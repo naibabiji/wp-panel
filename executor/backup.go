@@ -623,16 +623,6 @@ func ClearDatabaseTables(dbName, dbPass string) error {
 	return nil
 }
 
-func ExecuteDeleteBackup(siteID int, filename string) error {
-	cfg := config.AppConfig
-	backupDir := filepath.Join(cfg.Panel.BackupDir, getSiteDomain(siteID), "db")
-	filePath := filepath.Join(backupDir, filename)
-	os.Remove(filePath)
-	db := database.GetDB()
-	db.Exec("DELETE FROM db_backups WHERE site_id = ? AND filename = ?", siteID, filename)
-	return nil
-}
-
 func executeAutoBackups() {
 	db := database.GetDB()
 	cfg := config.AppConfig
