@@ -208,6 +208,7 @@ func TestFileManagerStartsWithDirectoryList(t *testing.T) {
 		[]byte(`url.searchParams.set('site_id', this.selectedSite)`),
 		[]byte(`calculateDirectorySize(siteID, path)`),
 		[]byte(`'/files/size?site_id='`),
+		[]byte(`{ timeout: 65000, suppressToast: true }`),
 		[]byte(`deepLinkFailed: false`),
 		[]byte(`this.deepLinkFailed = true`),
 	} {
@@ -217,6 +218,9 @@ func TestFileManagerStartsWithDirectoryList(t *testing.T) {
 	}
 	if bytes.Contains(source, []byte(`x-model="selectedSite"`)) {
 		t.Fatal("file manager still requires the website dropdown")
+	}
+	if bytes.Contains(source, []byte(`:disabled="directorySizeState`)) {
+		t.Fatal("directory size buttons must remain recoverable while a request is in progress")
 	}
 	if bytes.Contains(source, []byte(`x-show="!siteSearch"`)) {
 		t.Fatal("file manager hides the backup directory while filtering websites")

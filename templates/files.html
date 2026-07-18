@@ -49,12 +49,12 @@
                             <td class="py-3 pr-4 text-gray-300" x-text="site.site_type === 'wordpress' ? 'WordPress' : 'PHP'"></td>
                             <td class="py-3 pr-4 font-mono text-xs text-gray-400" x-text="site.web_root"></td>
                             <td class="py-3 pr-4">
-                                <button @click.stop="calculateDirectorySize(site.id, '/')" :disabled="directorySizeState(site.id, '/')?.loading" class="text-xs text-blue-400 hover:text-blue-300 disabled:cursor-wait disabled:text-gray-500">
-                                    <span x-show="directorySizeState(site.id, '/')?.loading">{{t .Lang "files.calculating_size"}}</span>
-                                    <span x-show="!directorySizeState(site.id, '/')?.loading && directorySizeState(site.id, '/')?.size === undefined">{{t .Lang "files.calculate_size"}}</span>
-                                    <span x-show="!directorySizeState(site.id, '/')?.loading && directorySizeState(site.id, '/')?.size !== undefined" x-text="formatBytes(directorySizeState(site.id, '/')?.size || 0)"></span>
+                                <button type="button" @click.stop="calculateDirectorySize(site.id, '/')" :aria-busy="directorySizeState(site.id, '/').loading" :class="directorySizeState(site.id, '/').loading ? 'text-gray-500' : 'text-blue-400 hover:text-blue-300'" class="cursor-pointer text-xs">
+                                    <span x-show="directorySizeState(site.id, '/').loading">{{t .Lang "files.calculating_size"}}</span>
+                                    <span x-show="!directorySizeState(site.id, '/').loading && directorySizeState(site.id, '/').size === undefined">{{t .Lang "files.calculate_size"}}</span>
+                                    <span x-show="!directorySizeState(site.id, '/').loading && directorySizeState(site.id, '/').size !== undefined" x-text="formatBytes(directorySizeState(site.id, '/').size || 0)"></span>
                                 </button>
-                                <div x-show="directorySizeState(site.id, '/')?.calculated_at" class="text-xs text-gray-600 mt-1"><span>{{t .Lang "files.calculated_at"}}</span><span x-text="formatCalculatedTime(directorySizeState(site.id, '/')?.calculated_at)"></span></div>
+                                <div x-show="directorySizeState(site.id, '/').calculated_at" class="text-xs text-gray-600 mt-1"><span>{{t .Lang "files.calculated_at"}}</span><span x-text="formatCalculatedTime(directorySizeState(site.id, '/').calculated_at)"></span></div>
                             </td>
                             <td class="py-3 pr-4">
                                 <span x-show="site.file_lock_enabled" class="badge-warning text-xs">{{t .Lang "files.protected"}}</span>
@@ -74,12 +74,12 @@
                         <td class="py-3 pr-4 text-gray-300">{{t .Lang "files.panel_directory"}}</td>
                         <td class="py-3 pr-4 text-xs text-gray-400">{{t .Lang "files.panel_backup_storage"}}</td>
                         <td class="py-3 pr-4">
-                            <button @click.stop="calculateDirectorySize(0, '/')" :disabled="directorySizeState(0, '/')?.loading" class="text-xs text-blue-400 hover:text-blue-300 disabled:cursor-wait disabled:text-gray-500">
-                                <span x-show="directorySizeState(0, '/')?.loading">{{t .Lang "files.calculating_size"}}</span>
-                                <span x-show="!directorySizeState(0, '/')?.loading && directorySizeState(0, '/')?.size === undefined">{{t .Lang "files.calculate_size"}}</span>
-                                <span x-show="!directorySizeState(0, '/')?.loading && directorySizeState(0, '/')?.size !== undefined" x-text="formatBytes(directorySizeState(0, '/')?.size || 0)"></span>
+                            <button type="button" @click.stop="calculateDirectorySize(0, '/')" :aria-busy="directorySizeState(0, '/').loading" :class="directorySizeState(0, '/').loading ? 'text-gray-500' : 'text-blue-400 hover:text-blue-300'" class="cursor-pointer text-xs">
+                                <span x-show="directorySizeState(0, '/').loading">{{t .Lang "files.calculating_size"}}</span>
+                                <span x-show="!directorySizeState(0, '/').loading && directorySizeState(0, '/').size === undefined">{{t .Lang "files.calculate_size"}}</span>
+                                <span x-show="!directorySizeState(0, '/').loading && directorySizeState(0, '/').size !== undefined" x-text="formatBytes(directorySizeState(0, '/').size || 0)"></span>
                             </button>
-                            <div x-show="directorySizeState(0, '/')?.calculated_at" class="text-xs text-gray-600 mt-1"><span>{{t .Lang "files.calculated_at"}}</span><span x-text="formatCalculatedTime(directorySizeState(0, '/')?.calculated_at)"></span></div>
+                            <div x-show="directorySizeState(0, '/').calculated_at" class="text-xs text-gray-600 mt-1"><span>{{t .Lang "files.calculated_at"}}</span><span x-text="formatCalculatedTime(directorySizeState(0, '/').calculated_at)"></span></div>
                         </td>
                         <td class="py-3 pr-4 text-gray-500">—</td>
                         <td class="py-3"><button @click.stop="openRoot(0)" class="btn-primary text-xs py-1 px-3">{{t .Lang "files.open_directory"}}</button></td>
@@ -219,12 +219,12 @@
                             <td class="table-cell text-sm" x-text="f.is_dir ? t('files.file_type_dir') : t('files.file_type_file')"></td>
                             <td class="table-cell text-sm">
                                 <span x-show="!f.is_dir" x-text="formatBytes(f.size)"></span>
-                                <button x-show="f.is_dir" @click.stop="calculateDirectorySize(selectedSite, pathFor(f.name))" :disabled="directorySizeState(selectedSite, pathFor(f.name))?.loading" class="text-xs text-blue-400 hover:text-blue-300 disabled:cursor-wait disabled:text-gray-500">
-                                    <span x-show="directorySizeState(selectedSite, pathFor(f.name))?.loading">{{t .Lang "files.calculating_size"}}</span>
-                                    <span x-show="!directorySizeState(selectedSite, pathFor(f.name))?.loading && directorySizeState(selectedSite, pathFor(f.name))?.size === undefined">{{t .Lang "files.calculate_size"}}</span>
-                                    <span x-show="!directorySizeState(selectedSite, pathFor(f.name))?.loading && directorySizeState(selectedSite, pathFor(f.name))?.size !== undefined" x-text="formatBytes(directorySizeState(selectedSite, pathFor(f.name))?.size || 0)"></span>
+                                <button x-show="f.is_dir" type="button" @click.stop="calculateDirectorySize(selectedSite, pathFor(f.name))" :aria-busy="directorySizeState(selectedSite, pathFor(f.name)).loading" :class="directorySizeState(selectedSite, pathFor(f.name)).loading ? 'text-gray-500' : 'text-blue-400 hover:text-blue-300'" class="cursor-pointer text-xs">
+                                    <span x-show="directorySizeState(selectedSite, pathFor(f.name)).loading">{{t .Lang "files.calculating_size"}}</span>
+                                    <span x-show="!directorySizeState(selectedSite, pathFor(f.name)).loading && directorySizeState(selectedSite, pathFor(f.name)).size === undefined">{{t .Lang "files.calculate_size"}}</span>
+                                    <span x-show="!directorySizeState(selectedSite, pathFor(f.name)).loading && directorySizeState(selectedSite, pathFor(f.name)).size !== undefined" x-text="formatBytes(directorySizeState(selectedSite, pathFor(f.name)).size || 0)"></span>
                                 </button>
-                                <div x-show="f.is_dir && directorySizeState(selectedSite, pathFor(f.name))?.calculated_at" class="text-xs text-gray-600 mt-1"><span>{{t .Lang "files.calculated_at"}}</span><span x-text="formatCalculatedTime(directorySizeState(selectedSite, pathFor(f.name))?.calculated_at)"></span></div>
+                                <div x-show="f.is_dir && directorySizeState(selectedSite, pathFor(f.name)).calculated_at" class="text-xs text-gray-600 mt-1"><span>{{t .Lang "files.calculated_at"}}</span><span x-text="formatCalculatedTime(directorySizeState(selectedSite, pathFor(f.name)).calculated_at)"></span></div>
                             </td>
                             <td class="table-cell font-mono text-xs" x-text="f.mode"></td>
                             <td class="table-cell text-xs" x-text="f.mod_time"></td>
@@ -325,23 +325,24 @@ function fileManager() {
             return String(siteID) + ':' + path;
         },
         directorySizeState(siteID, path) {
-            return this.directorySizes[this.directorySizeKey(siteID, path)];
+            return this.directorySizes[this.directorySizeKey(siteID, path)] || { loading: false };
         },
         formatCalculatedTime(value) {
             return value ? new Date(value).toLocaleString(currentLocale()) : '';
         },
         async calculateDirectorySize(siteID, path) {
             const key = this.directorySizeKey(siteID, path);
+            if (this.directorySizes[key]?.loading) return;
             this.directorySizes[key] = { loading: true };
             try {
-                const r = await api('/files/size?site_id=' + encodeURIComponent(siteID) + '&path=' + encodeURIComponent(path));
+                const r = await api('/files/size?site_id=' + encodeURIComponent(siteID) + '&path=' + encodeURIComponent(path), { timeout: 65000, suppressToast: true });
                 this.directorySizes[key] = {
                     loading: false,
                     size: r.data?.size || 0,
                     calculated_at: r.data?.calculated_at || ''
                 };
             } catch(e) {
-                delete this.directorySizes[key];
+                this.directorySizes[key] = { loading: false };
                 showToast(e.message, 'error');
             }
         },
