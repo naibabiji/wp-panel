@@ -1,7 +1,77 @@
 {{template "base" .}}
 {{define "files_content"}}
 <div x-data="fileManager()" x-init="initSites()">
-    <h2 class="text-xl font-bold text-white mb-6">{{t .Lang "nav.files"}}</h2>
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+        <div>
+            <h2 class="text-xl font-bold text-white">{{t .Lang "nav.files"}}</h2>
+            <p x-show="!hasSelectedRoot()" class="text-sm text-gray-500 mt-1">{{t .Lang "files.directory_list_help"}}</p>
+            <p x-show="hasSelectedRoot()" class="text-sm text-gray-500 mt-1">
+                <span>{{t .Lang "files.current_root"}}</span>
+                <span x-show="String(selectedSite) === '0'">{{t .Lang "files.backup_directory_name"}}</span>
+                <span x-show="String(selectedSite) !== '0'" x-text="selectedSiteInfo()?.domain || ''"></span>
+            </p>
+        </div>
+        <button x-show="hasSelectedRoot()" @click="showRootList()" :disabled="uploading || archiveBusy || remoteImporting" class="btn-secondary text-sm self-start sm:self-auto">{{t .Lang "files.back_to_directory_list"}}</button>
+    </div>
+
+    <div x-show="!hasSelectedRoot()" x-cloak class="card">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+            <div>
+                <h3 class="text-lg font-semibold text-white">{{t .Lang "files.directory_list_title"}}</h3>
+                <p class="text-xs text-gray-500 mt-1">{{t .Lang "files.directory_list_subtitle"}}</p>
+            </div>
+            <input type="search" x-model.trim="siteSearch" class="input-field w-full sm:w-80 text-sm" placeholder="{{t .Lang "files.search_directories_placeholder"}}">
+        </div>
+
+        <div x-show="sitesLoading" class="text-center py-8 text-gray-500">{{t .Lang "files.loading_directories"}}</div>
+        <div x-show="sitesLoadFailed && !sitesLoading" class="text-center py-8 text-red-300">{{t .Lang "files.load_directories_failed"}}</div>
+        <div x-show="!sitesLoading && !sitesLoadFailed" class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="border-b border-gray-700 text-gray-400">
+                    <tr>
+                        <th class="py-2 text-left">{{t .Lang "files.website_or_directory"}}</th>
+                        <th class="py-2 text-left">{{t .Lang "files.site_type"}}</th>
+                        <th class="py-2 text-left">{{t .Lang "files.root_path"}}</th>
+                        <th class="py-2 text-left">{{t .Lang "files.protection_status"}}</th>
+                        <th class="py-2 text-left w-28">{{t .Lang "files.actions"}}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="site in filteredSites" :key="site.id">
+                        <tr @click="openRoot(site.id)" class="border-b border-gray-700/50 cursor-pointer hover:bg-gray-800/50">
+                            <td class="py-3 pr-4">
+                                <div class="text-white font-medium" x-text="site.domain"></div>
+                                <div x-show="site.status === 'active'" class="text-xs text-gray-500">{{t .Lang "website.status_running"}}</div>
+                                <div x-show="site.status !== 'active'" class="text-xs text-gray-500">{{t .Lang "website.status_paused"}}</div>
+                            </td>
+                            <td class="py-3 pr-4 text-gray-300" x-text="site.site_type === 'wordpress' ? 'WordPress' : 'PHP'"></td>
+                            <td class="py-3 pr-4 font-mono text-xs text-gray-400" x-text="site.web_root"></td>
+                            <td class="py-3 pr-4">
+                                <span x-show="site.file_lock_enabled" class="badge-warning text-xs">{{t .Lang "files.protected"}}</span>
+                                <span x-show="!site.file_lock_enabled" class="badge-success text-xs">{{t .Lang "files.not_protected"}}</span>
+                            </td>
+                            <td class="py-3"><button @click.stop="openRoot(site.id)" class="btn-primary text-xs py-1 px-3">{{t .Lang "files.open_directory"}}</button></td>
+                        </tr>
+                    </template>
+                    <tr x-show="filteredSites.length === 0 && siteSearch">
+                        <td colspan="5" class="py-6 text-center text-gray-500">{{t .Lang "files.no_matching_directories"}}</td>
+                    </tr>
+                    <tr x-show="!siteSearch" @click="openRoot(0)" class="border-b border-gray-700/50 cursor-pointer hover:bg-gray-800/50">
+                        <td class="py-3 pr-4">
+                            <div class="text-white font-medium">{{t .Lang "files.backup_directory_name"}}</div>
+                            <div class="text-xs text-gray-500">{{t .Lang "files.backup_directory_help"}}</div>
+                        </td>
+                        <td class="py-3 pr-4 text-gray-300">{{t .Lang "files.panel_directory"}}</td>
+                        <td class="py-3 pr-4 text-xs text-gray-400">{{t .Lang "files.panel_backup_storage"}}</td>
+                        <td class="py-3 pr-4 text-gray-500">—</td>
+                        <td class="py-3"><button @click.stop="openRoot(0)" class="btn-primary text-xs py-1 px-3">{{t .Lang "files.open_directory"}}</button></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div x-show="hasSelectedRoot()" x-cloak>
 
     <div x-show="selected.length > 0" class="flex flex-wrap items-center gap-2 mb-3 p-3 bg-blue-900/30 rounded border border-blue-800">
         <span class="text-sm text-gray-300" x-text="t('files.current_selection', { count: selected.length })"></span>
@@ -56,15 +126,6 @@
     </div>
 
     <div class="card mb-4">
-        <div class="flex items-center space-x-4 mb-4">
-            <select x-model="selectedSite" @change="switchRoot()" class="input-field w-64" x-ref="siteSelect">
-                <option value="">{{t .Lang "files.select_website"}}</option>
-                <template x-for="s in sites" :key="s.id">
-                    <option :value="s.id" x-text="s.domain"></option>
-                </template>
-                <option value="0">{{t .Lang "files.backup_dir"}}</option>
-            </select>
-        </div>
         <div x-show="selectedSiteLocked()" class="mb-4 p-3 bg-yellow-900/30 border border-yellow-700 text-yellow-100 rounded text-sm">
             {{t .Lang "files.file_lock_notice"}}
         </div>
@@ -172,12 +233,16 @@
             </div>
         </div>
     </div>
+    </div>
 </div>
 
 <script>
 function fileManager() {
     return {
         sites: [],
+        sitesLoading: true,
+        sitesLoadFailed: false,
+        siteSearch: '',
         selectedSite: '',
         currentPath: '/',
         files: [],
@@ -228,6 +293,11 @@ function fileManager() {
             const site = this.selectedSiteInfo();
             return !!(site && site.file_lock_enabled);
         },
+        get filteredSites() {
+            const query = this.siteSearch.toLowerCase();
+            if (!query) return this.sites;
+            return this.sites.filter(site => (site.domain || '').toLowerCase().includes(query) || (site.web_root || '').toLowerCase().includes(query));
+        },
         apiMessage(data, fallback) {
             return data?.message || data?.data?.message || fallback;
         },
@@ -235,20 +305,48 @@ function fileManager() {
             try {
                 const r = await api('/websites');
                 if (r.success && r.data) this.sites = r.data;
-            } catch(e) {}
+            } catch(e) {
+                this.sitesLoadFailed = true;
+            } finally {
+                this.sitesLoading = false;
+            }
             // 从 URL 参数自动选择网站（从网站管理页面跳转过来）
             const params = new URLSearchParams(window.location.search);
             const sid = params.get('site_id');
-            if (sid && !this.selectedSite) {
-                this.selectedSite = parseInt(sid);
-                this.loadFiles();
+            if (sid !== null && (sid === '0' || this.sites.some(site => String(site.id) === sid))) {
+                this.openRoot(sid, false);
             }
         },
-        switchRoot() {
+        openRoot(siteID, updateURL = true) {
+            this.selectedSite = String(siteID);
             this.currentPath = '/';
             this.page = 1;
             this.selected = [];
+            this.showMkdir = false;
+            this.showRename = false;
+            this.uploadTarget = null;
+            if (updateURL) {
+                const url = new URL(window.location.href);
+                url.searchParams.set('site_id', this.selectedSite);
+                window.history.replaceState({}, '', url);
+            }
             this.loadFiles();
+        },
+        showRootList() {
+            this.loadRequestID++;
+            this.selectedSite = '';
+            this.currentPath = '/';
+            this.files = [];
+            this.selected = [];
+            this.page = 1;
+            this.total = 0;
+            this.totalPages = 1;
+            this.showMkdir = false;
+            this.showRename = false;
+            this.uploadTarget = null;
+            const url = new URL(window.location.href);
+            url.searchParams.delete('site_id');
+            window.history.replaceState({}, '', url);
         },
         breadcrumbs() {
             const parts = [{ label: t('files.root_directory'), path: '/' }];
@@ -269,7 +367,7 @@ function fileManager() {
         },
         async loadFiles() {
             const requestID = ++this.loadRequestID;
-            if (!this.selectedSite) {
+            if (!this.hasSelectedRoot()) {
                 this.files = [];
                 this.total = 0;
                 this.totalPages = 1;
@@ -591,7 +689,7 @@ function fileManager() {
         },
         async pasteItems() {
             if (!this.clipboard) return;
-            if (!this.selectedSite) { showToast(t('files.paste_target_required'), 'error'); return; }
+            if (!this.hasSelectedRoot()) { showToast(t('files.paste_target_required'), 'error'); return; }
             const cb = this.clipboard;
             const apiPath = cb.action === 'cut' ? '/files/move' : '/files/copy';
             const pasteRequest = async (conflictPolicy = '') => {

@@ -195,6 +195,27 @@ func TestDatabaseDetailShowsFiveRecentBackupsByDefault(t *testing.T) {
 	}
 }
 
+func TestFileManagerStartsWithDirectoryList(t *testing.T) {
+	source, err := os.ReadFile("../templates/files.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range [][]byte{
+		[]byte(`x-model.trim="siteSearch"`),
+		[]byte(`@click="openRoot(site.id)"`),
+		[]byte(`@click="openRoot(0)"`),
+		[]byte(`@click="showRootList()"`),
+		[]byte(`url.searchParams.set('site_id', this.selectedSite)`),
+	} {
+		if !bytes.Contains(source, expected) {
+			t.Fatalf("file manager is missing directory-list behavior %s", expected)
+		}
+	}
+	if bytes.Contains(source, []byte(`x-model="selectedSite"`)) {
+		t.Fatal("file manager still requires the website dropdown")
+	}
+}
+
 func TestPageTitleKeysExist(t *testing.T) {
 	for active, key := range pageTitleKeys {
 		t.Run(active, func(t *testing.T) {
