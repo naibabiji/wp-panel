@@ -1917,6 +1917,58 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
 }
 
+func (h *WebsiteHandler) SetFileEditingProtection(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.invalid_site_id")))
+		return
+	}
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "website.not_found")))
+		return
+	}
+	if site.SiteType != "wordpress" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.file_editing_wordpress_only")))
+		return
+	}
+	if site.FileLockEnabled {
+		c.JSON(http.StatusLocked, models.ErrorResponse(fileLockBlockedMessage))
+		return
+	}
+
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "common.invalid_params")))
+		return
+	}
+	if err := executor.SetWPFileEditingDisabled(site.WebRoot, req.Enabled); err != nil {
+		recordHandlerOperationLog("wp_file_editor", site.Domain, "failed", err.Error())
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "website.file_editing_save_failed")))
+		return
+	}
+
+	enabled := 0
+	if req.Enabled {
+		enabled = 1
+	}
+	if _, err := database.GetDB().Exec("UPDATE websites SET disable_file_editing = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", enabled, id); err != nil {
+		if rollbackErr := executor.SetWPFileEditingDisabled(site.WebRoot, site.DisableFileEditing); rollbackErr != nil {
+			log.Printf("回滚后台代码编辑器设置失败 site=%d: %v", id, rollbackErr)
+		}
+		recordHandlerOperationLog("wp_file_editor", site.Domain, "failed", err.Error())
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "website.file_editing_save_failed")))
+		return
+	}
+	recordHandlerOperationLog("wp_file_editor", site.Domain, "success", fmt.Sprintf("后台代码编辑器关闭=%t", req.Enabled))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"message":              i18n.TE(c.Request, "website.file_editing_saved"),
+		"disable_file_editing": req.Enabled,
+	}))
+}
+
 func (h *WebsiteHandler) SetFileLock(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {

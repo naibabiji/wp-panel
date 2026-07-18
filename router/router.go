@@ -451,6 +451,7 @@ var i18nKeys = []string{
 	"website.file_lock_enable_confirm",
 	"website.file_lock_enabled",
 	"website.file_lock_executable_warning",
+	"website.file_editing_saved",
 	"website.file_lock_legacy",
 	"website.file_lock_mode_standard",
 	"website.file_lock_mode_strict",
@@ -478,6 +479,7 @@ var i18nKeys = []string{
 	"website.file_lock_strict_help",
 	"website.file_lock_symlink_warning",
 	"website.file_lock_writable_dirs",
+	"website.save_file_editing",
 	"website.installed",
 	"website.load_current_url_failed",
 	"website.load_failed_with_error",
@@ -783,6 +785,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.PUT("/api/websites/:id/cache", websiteHandler.UpdateCache)
 	protected.DELETE("/api/websites/:id/cache", websiteHandler.ClearCache)
 	protected.PUT("/api/websites/:id/wp-optimizations", websiteHandler.SaveWPOptimizations)
+	protected.PUT("/api/websites/:id/file-editor", websiteHandler.SetFileEditingProtection)
 	protected.PUT("/api/websites/:id/file-lock", websiteHandler.SetFileLock)
 	protected.GET("/api/websites/:id/file-lock/preview", websiteHandler.PreviewFileLock)
 	protected.PUT("/api/websites/:id/monitoring", websiteHandler.SaveMonitoring)

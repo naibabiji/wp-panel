@@ -101,6 +101,22 @@ func TestWebsiteLogRoutesRegistered(t *testing.T) {
 	}
 }
 
+func TestWebsiteProtectionRoutesRegistered(t *testing.T) {
+	source, err := os.ReadFile("router.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []string{
+		`protected.PUT("/api/websites/:id/file-editor", websiteHandler.SetFileEditingProtection)`,
+		`protected.PUT("/api/websites/:id/file-lock", websiteHandler.SetFileLock)`,
+		`protected.GET("/api/websites/:id/file-lock/preview", websiteHandler.PreviewFileLock)`,
+	} {
+		if !bytes.Contains(source, []byte(route)) {
+			t.Fatalf("router.go missing route %s", route)
+		}
+	}
+}
+
 func TestPageTitleKeysExist(t *testing.T) {
 	for active, key := range pageTitleKeys {
 		t.Run(active, func(t *testing.T) {

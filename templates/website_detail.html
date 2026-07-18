@@ -258,61 +258,6 @@ location ^~ /api/ {
 
         <div class="card">
             <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "website.wp_optimization"}}</h3>
-            <div x-show="site.site_type === 'wordpress'" class="pb-4 mb-4 border-b border-gray-700">
-                <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                    <div>
-                        <div class="flex items-center gap-2 mb-1">
-                            <span class="text-sm font-medium text-white">{{t .Lang "website.file_lock"}}</span>
-                            <span class="text-xs px-2 py-0.5 rounded" :class="fileLockApplyIncomplete() ? 'bg-red-900/50 text-red-200 border border-red-700' : (site.file_lock_enabled ? 'bg-yellow-900/50 text-yellow-200 border border-yellow-700' : 'bg-green-900/40 text-green-200 border border-green-800')" x-text="fileLockStatusText()"></span>
-                        </div>
-                        <p class="text-xs text-gray-500">{{t .Lang "website.file_lock_help"}}</p>
-                        <p x-show="site.file_lock_mode === 'legacy'" class="text-xs text-yellow-300 mt-2">{{t .Lang "website.file_lock_legacy_notice"}}</p>
-                        <p x-show="fileLockApplyIncomplete()" class="text-xs text-red-300 mt-2">{{t .Lang "website.file_lock_apply_failed_notice"}}</p>
-                    </div>
-                </div>
-                <div class="mt-3 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
-                    <label class="block">
-                        <span class="text-xs text-gray-400 block mb-1">{{t .Lang "website.file_lock_mode"}}</span>
-                        <select x-model="fileLockMode" @change="fileLockPreview = null" :disabled="fileLockSaving" class="input-field w-full text-sm py-1.5">
-                            <option value="standard">{{t .Lang "website.file_lock_mode_standard"}}</option>
-                            <option value="strict">{{t .Lang "website.file_lock_mode_strict"}}</option>
-                        </select>
-                    </label>
-                    <div class="flex flex-wrap gap-2">
-                        <button @click="loadFileLockPreview()" :disabled="fileLockSaving || fileLockPreviewLoading" class="text-sm py-1.5 px-3 rounded bg-gray-700 text-gray-200" x-text="fileLockPreviewLoading ? t('website.file_lock_checking') : t('website.file_lock_check_impact')"></button>
-                        <button x-show="!site.file_lock_enabled || site.file_lock_mode === 'legacy' || site.file_lock_mode !== fileLockMode || fileLockApplyIncomplete()" @click="applyFileLock(true)" :disabled="fileLockSaving" class="text-sm py-1.5 px-3 rounded bg-red-900 text-red-200" x-text="fileLockSaving ? t('website.processing') : (site.file_lock_enabled ? t('website.file_lock_apply_mode') : t('website.enable_lock'))"></button>
-                        <button x-show="site.file_lock_enabled" @click="applyFileLock(false)" :disabled="fileLockSaving" class="text-sm py-1.5 px-3 rounded bg-blue-950 text-blue-300" x-text="t('website.unlock')"></button>
-                    </div>
-                </div>
-                <p class="text-xs text-gray-500 mt-2" x-text="fileLockMode === 'strict' ? t('website.file_lock_strict_help') : t('website.file_lock_standard_help')"></p>
-                <div x-show="fileLockPreview" class="mt-3 rounded border border-gray-700 bg-gray-900/60 p-3 text-xs space-y-2">
-                    <p class="text-sm font-medium text-white">{{t .Lang "website.file_lock_preview_title"}}</p>
-                    <div>
-                        <span class="text-gray-400" x-text="t('website.file_lock_writable_dirs')"></span>
-                        <div class="mt-1 flex flex-wrap gap-1.5"><template x-for="path in (fileLockPreview?.writable_dirs || [])" :key="path"><span class="px-2 py-1 rounded bg-green-950/60 text-green-300 border border-green-900" x-text="fileLockDisplayPath(path)"></span></template></div>
-                    </div>
-                    <div>
-                        <span class="text-gray-400" x-text="t('website.file_lock_readonly_dirs')"></span>
-                        <div x-show="(fileLockPreview?.read_only_dirs || []).length" class="mt-1 flex flex-wrap gap-1.5"><template x-for="path in (fileLockPreview?.read_only_dirs || [])" :key="path"><span class="px-2 py-1 rounded bg-blue-950/60 text-blue-200 border border-blue-900" x-text="fileLockDisplayPath(path)"></span></template></div>
-                        <span x-show="!(fileLockPreview?.read_only_dirs || []).length" class="text-gray-300" x-text="t('common.none')"></span>
-                    </div>
-                    <div>
-                        <span class="text-gray-400" x-text="t('website.file_lock_sensitive_files')"></span>
-                        <div x-show="(fileLockPreview?.sensitive_files || []).length" class="mt-1 flex flex-wrap gap-1.5"><template x-for="path in (fileLockPreview?.sensitive_files || [])" :key="path"><span class="px-2 py-1 rounded bg-blue-950/60 text-blue-200 border border-blue-900" x-text="fileLockDisplayPath(path)"></span></template></div>
-                        <span x-show="!(fileLockPreview?.sensitive_files || []).length" class="text-gray-300" x-text="t('common.none')"></span>
-                    </div>
-                    <div x-show="(fileLockPreview?.executable_files || []).length > 0" class="text-yellow-300">
-                        <span x-text="t('website.file_lock_executable_warning', { count: fileLockPreview?.executable_files?.length || 0 })"></span>
-                        <ul class="mt-1 ml-4 list-disc text-gray-300"><template x-for="path in (fileLockPreview?.executable_files || []).slice(0, 20)" :key="path"><li x-text="path"></li></template></ul>
-                    </div>
-                    <div x-show="(fileLockPreview?.symlink_paths || []).length > 0" class="text-yellow-300">
-                        <span x-text="t('website.file_lock_symlink_warning', { count: fileLockPreview?.symlink_paths?.length || 0 })"></span>
-                        <ul class="mt-1 ml-4 list-disc text-gray-300"><template x-for="path in (fileLockPreview?.symlink_paths || []).slice(0, 20)" :key="path"><li x-text="path"></li></template></ul>
-                    </div>
-                    <p x-show="fileLockPreview?.truncated" class="text-yellow-300" x-text="t('website.file_lock_preview_truncated')"></p>
-                    <p class="text-gray-500">{{t .Lang "website.file_lock_preview_disclaimer"}}</p>
-                </div>
-            </div>
             <div class="flex items-center space-x-3 mb-3">
                 <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
                     <input type="checkbox" x-model="fcacheEnabled">
@@ -323,18 +268,16 @@ location ^~ /api/ {
                 <label class="text-sm text-gray-300 mb-1 block">{{t .Lang "website.cache_ttl_seconds"}}</label>
                 <input type="number" x-model="fcacheTTL" class="input-field w-32 text-sm py-1" min="10" max="86400">
             </div>
-            <div class="flex items-center space-x-3 mb-3">
-                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-                    <input type="checkbox" x-model="disableWPUpdates">
-                    <span>{{t .Lang "website.disable_wp_updates"}}</span>
+            <details class="mb-4 rounded border border-gray-700 bg-gray-900/30 px-3 py-2">
+                <summary class="cursor-pointer text-sm text-gray-300">{{t .Lang "website.wp_optimization_advanced"}}</summary>
+                <label class="mt-3 flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" x-model="disableWPUpdates" class="mt-0.5">
+                    <span>
+                        <span class="block">{{t .Lang "website.disable_wp_updates"}}</span>
+                        <span class="block text-xs text-yellow-300 mt-1">{{t .Lang "website.disable_wp_updates_help"}}</span>
+                    </span>
                 </label>
-            </div>
-            <div class="flex items-center space-x-3 mb-4">
-                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-                    <input type="checkbox" x-model="disableFileEditing">
-                    <span>{{t .Lang "website.disable_file_editing"}}</span>
-                </label>
-            </div>
+            </details>
             <div class="flex items-center space-x-3 mb-3" x-show="site.site_type === 'wordpress'">
                 <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
                     <input type="checkbox" x-model="wpDebug">
@@ -369,7 +312,7 @@ location ^~ /api/ {
                 <button @click="saveWPOptimizations()" :disabled="optimizationSaving || site.file_lock_enabled" class="btn-primary text-sm" x-text="optimizationSaving ? t('common.saving') : t('website.save_settings')"></button>
                 <button x-show="fcacheEnabled" @click="clearFCache()" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">{{t .Lang "website.clear_cache"}}</button>
             </div>
-            <div x-show="(fcacheEnabled || disableWPUpdates || disableFileEditing || wpDebug) && site.site_type === 'wordpress'" class="flex items-center space-x-3 mb-3">
+            <div x-show="(fcacheEnabled || disableWPUpdates || wpDebug) && site.site_type === 'wordpress'" class="flex items-center space-x-3 mb-3">
                 <button x-show="pluginStatus === 'not_installed'" @click="installPlugin()" :disabled="pluginInstalling || site.file_lock_enabled" class="btn-primary text-sm py-1.5" x-text="pluginInstalling ? t('website.installing') : t('website.install_companion_plugin')"></button>
                 <button x-show="pluginStatus === 'update_available'" @click="installPlugin()" :disabled="pluginInstalling || site.file_lock_enabled" class="text-sm py-1.5 px-3 rounded" style="background-color: #166534; color: #bbf7d0;" x-text="pluginInstalling ? t('website.updating') : t('website.update_companion_plugin')"></button>
                 <span x-show="pluginStatus === 'installed'" class="text-xs text-green-400">{{t .Lang "website.plugin_installed"}}</span>
@@ -385,6 +328,87 @@ location ^~ /api/ {
                 </ul>
                 <p class="text-gray-500 mt-2" x-show="site.site_type === 'wordpress'">{{t .Lang "website.wp_optimizer_plugin_help"}}</p>
             </div>
+        </div>
+    </div>
+
+    <div x-show="site.site_type === 'wordpress'" class="mt-6">
+        <div class="card">
+            <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                <div>
+                    <div class="flex items-center gap-2 mb-1">
+                        <h3 class="text-lg font-semibold text-white">{{t .Lang "website.file_lock"}}</h3>
+                        <span class="text-xs px-2 py-0.5 rounded" :class="fileLockApplyIncomplete() ? 'bg-red-900/50 text-red-200 border border-red-700' : (site.file_lock_enabled ? 'bg-yellow-900/50 text-yellow-200 border border-yellow-700' : 'bg-green-900/40 text-green-200 border border-green-800')" x-text="fileLockStatusText()"></span>
+                    </div>
+                    <p class="text-sm text-gray-400">{{t .Lang "website.file_lock_help"}}</p>
+                    <details class="mt-2 text-xs">
+                        <summary class="cursor-pointer text-yellow-300">{{t .Lang "website.file_lock_limits_toggle"}}</summary>
+                        <div class="mt-2 rounded border border-yellow-900/70 bg-yellow-950/30 px-3 py-2 text-yellow-100">
+                            <span class="font-medium">{{t .Lang "website.file_lock_limit_title"}}</span>
+                            <span class="text-yellow-200/80">{{t .Lang "website.file_lock_limit_help"}}</span>
+                        </div>
+                    </details>
+                    <p x-show="site.file_lock_mode === 'legacy'" class="text-xs text-yellow-300 mt-2">{{t .Lang "website.file_lock_legacy_notice"}}</p>
+                    <p x-show="fileLockApplyIncomplete()" class="text-xs text-red-300 mt-2">{{t .Lang "website.file_lock_apply_failed_notice"}}</p>
+                </div>
+            </div>
+
+            <div class="mt-4 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
+                <label class="block">
+                    <span class="text-xs text-gray-400 block mb-1">{{t .Lang "website.file_lock_mode"}}</span>
+                    <select x-model="fileLockMode" @change="fileLockPreview = null" :disabled="fileLockSaving" class="input-field w-full text-sm py-1.5">
+                        <option value="standard">{{t .Lang "website.file_lock_mode_standard"}}</option>
+                        <option value="strict">{{t .Lang "website.file_lock_mode_strict"}}</option>
+                    </select>
+                </label>
+                <div class="flex flex-wrap gap-2">
+                    <button @click="loadFileLockPreview()" :disabled="fileLockSaving || fileLockPreviewLoading" class="text-sm py-1.5 px-3 rounded bg-gray-700 text-gray-200" x-text="fileLockPreviewLoading ? t('website.file_lock_checking') : t('website.file_lock_check_impact')"></button>
+                    <button x-show="!site.file_lock_enabled || site.file_lock_mode === 'legacy' || site.file_lock_mode !== fileLockMode || fileLockApplyIncomplete()" @click="applyFileLock(true)" :disabled="fileLockSaving" class="text-sm py-1.5 px-3 rounded bg-red-900 text-red-200" x-text="fileLockSaving ? t('website.processing') : (site.file_lock_enabled ? t('website.file_lock_apply_mode') : t('website.enable_lock'))"></button>
+                    <button x-show="site.file_lock_enabled" @click="applyFileLock(false)" :disabled="fileLockSaving" class="text-sm py-1.5 px-3 rounded bg-blue-950 text-blue-300" x-text="t('website.unlock')"></button>
+                </div>
+            </div>
+            <p class="text-xs text-gray-500 mt-2" x-text="fileLockMode === 'strict' ? t('website.file_lock_strict_help') : t('website.file_lock_standard_help')"></p>
+
+            <div x-show="fileLockPreview" class="mt-3 rounded border border-gray-700 bg-gray-900/60 p-3 text-xs space-y-2">
+                <p class="text-sm font-medium text-white">{{t .Lang "website.file_lock_preview_title"}}</p>
+                <div>
+                    <span class="text-gray-400" x-text="t('website.file_lock_writable_dirs')"></span>
+                    <div class="mt-1 flex flex-wrap gap-1.5"><template x-for="path in (fileLockPreview?.writable_dirs || [])" :key="path"><span class="px-2 py-1 rounded bg-green-950/60 text-green-300 border border-green-900" x-text="fileLockDisplayPath(path)"></span></template></div>
+                </div>
+                <div>
+                    <span class="text-gray-400" x-text="t('website.file_lock_readonly_dirs')"></span>
+                    <div x-show="(fileLockPreview?.read_only_dirs || []).length" class="mt-1 flex flex-wrap gap-1.5"><template x-for="path in (fileLockPreview?.read_only_dirs || [])" :key="path"><span class="px-2 py-1 rounded bg-blue-950/60 text-blue-200 border border-blue-900" x-text="fileLockDisplayPath(path)"></span></template></div>
+                    <span x-show="!(fileLockPreview?.read_only_dirs || []).length" class="text-gray-300" x-text="t('common.none')"></span>
+                </div>
+                <div>
+                    <span class="text-gray-400" x-text="t('website.file_lock_sensitive_files')"></span>
+                    <div x-show="(fileLockPreview?.sensitive_files || []).length" class="mt-1 flex flex-wrap gap-1.5"><template x-for="path in (fileLockPreview?.sensitive_files || [])" :key="path"><span class="px-2 py-1 rounded bg-blue-950/60 text-blue-200 border border-blue-900" x-text="fileLockDisplayPath(path)"></span></template></div>
+                    <span x-show="!(fileLockPreview?.sensitive_files || []).length" class="text-gray-300" x-text="t('common.none')"></span>
+                </div>
+                <div x-show="(fileLockPreview?.executable_files || []).length > 0" class="text-yellow-300">
+                    <span x-text="t('website.file_lock_executable_warning', { count: fileLockPreview?.executable_files?.length || 0 })"></span>
+                    <ul class="mt-1 ml-4 list-disc text-gray-300"><template x-for="path in (fileLockPreview?.executable_files || []).slice(0, 20)" :key="path"><li x-text="path"></li></template></ul>
+                </div>
+                <div x-show="(fileLockPreview?.symlink_paths || []).length > 0" class="text-yellow-300">
+                    <span x-text="t('website.file_lock_symlink_warning', { count: fileLockPreview?.symlink_paths?.length || 0 })"></span>
+                    <ul class="mt-1 ml-4 list-disc text-gray-300"><template x-for="path in (fileLockPreview?.symlink_paths || []).slice(0, 20)" :key="path"><li x-text="path"></li></template></ul>
+                </div>
+                <p x-show="fileLockPreview?.truncated" class="text-yellow-300" x-text="t('website.file_lock_preview_truncated')"></p>
+                <p class="text-gray-500">{{t .Lang "website.file_lock_preview_disclaimer"}}</p>
+            </div>
+
+            <hr class="my-5 border-gray-700">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <label class="flex items-start space-x-2 text-sm text-gray-300" :class="site.file_lock_enabled ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'">
+                    <input type="checkbox" :checked="site.file_lock_enabled || disableFileEditing" @change="disableFileEditing = $event.target.checked" :disabled="site.file_lock_enabled || fileEditingSaving" class="mt-0.5">
+                    <span>
+                        <span class="block">{{t .Lang "website.disable_file_editing"}}</span>
+                        <span class="block text-xs text-gray-500 mt-1">{{t .Lang "website.disable_file_editing_help"}}</span>
+                        <span x-show="site.file_lock_enabled" class="block text-xs text-green-400 mt-1">{{t .Lang "website.disable_file_editing_managed"}}</span>
+                    </span>
+                </label>
+                <button x-show="!site.file_lock_enabled" @click="saveFileEditingProtection()" :disabled="fileEditingSaving" class="btn-secondary text-sm whitespace-nowrap" x-text="fileEditingSaving ? t('common.saving') : t('website.save_file_editing')"></button>
+            </div>
+            <p x-show="pluginStatus === 'not_installed'" class="text-xs text-gray-500 mt-4">{{t .Lang "website.file_lock_plugin_optional"}}</p>
         </div>
     </div>
 
@@ -651,6 +675,8 @@ function websiteDetail() {
         fcacheTTL: 300,
         disableWPUpdates: false,
         disableFileEditing: false,
+        savedDisableFileEditing: false,
+        fileEditingSaving: false,
         xmlrpcEnabled: false,
         wpDebug: false,
         wpPostRevisions: -1,
@@ -703,6 +729,7 @@ function websiteDetail() {
                     this.fcacheTTL = r.data.fastcgi_cache_ttl || 300;
                     this.disableWPUpdates = r.data.disable_wp_updates || false;
                     this.disableFileEditing = r.data.disable_file_editing || false;
+                    this.savedDisableFileEditing = this.disableFileEditing;
                     this.xmlrpcEnabled = r.data.xmlrpc_enabled || false;
                     this.wpDebug = r.data.wp_debug_enabled || false;
                     this.wpPostRevisions = r.data.wp_post_revisions != null ? r.data.wp_post_revisions : -1;
@@ -1286,6 +1313,23 @@ function websiteDetail() {
                 showToast(t('website.optimization_saved'), 'success');
             } catch(e) { showToast(t('website.save_failed_with_error', { error: e.message }), 'error'); }
             this.optimizationSaving = false;
+        },
+        async saveFileEditingProtection() {
+            if (this.site.file_lock_enabled) return;
+            this.fileEditingSaving = true;
+            try {
+                const r = await api('/websites/' + this.site.id + '/file-editor', {
+                    method: 'PUT',
+                    body: { enabled: this.disableFileEditing }
+                });
+                this.disableFileEditing = r.data?.disable_file_editing ?? this.disableFileEditing;
+                this.savedDisableFileEditing = this.disableFileEditing;
+                showToast(r.data?.message || t('website.file_editing_saved'), 'success');
+            } catch(e) {
+                this.disableFileEditing = this.savedDisableFileEditing;
+                showToast(e.message, 'error');
+            }
+            this.fileEditingSaving = false;
         },
         async saveLogRetention() {
             try {

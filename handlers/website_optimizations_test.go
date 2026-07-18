@@ -53,6 +53,86 @@ func TestSaveWPOptimizationsRecordsOperationLog(t *testing.T) {
 	}
 }
 
+func TestSetFileEditingProtectionUpdatesOnlyEditorSetting(t *testing.T) {
+	setupWebsiteOptimizationsTestDB(t)
+
+	router := gin.New()
+	handler := &WebsiteHandler{}
+	router.PUT("/api/websites/:id/file-editor", handler.SetFileEditingProtection)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/websites/1/file-editor", strings.NewReader(`{"enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("enable status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var enabled int
+	if err := database.GetDB().QueryRow("SELECT disable_file_editing FROM websites WHERE id = 1").Scan(&enabled); err != nil {
+		t.Fatalf("query disable_file_editing: %v", err)
+	}
+	if enabled != 1 {
+		t.Fatalf("disable_file_editing = %d, want 1", enabled)
+	}
+	var webRoot string
+	if err := database.GetDB().QueryRow("SELECT web_root FROM websites WHERE id = 1").Scan(&webRoot); err != nil {
+		t.Fatalf("query web_root: %v", err)
+	}
+	config, err := os.ReadFile(filepath.Join(webRoot, "wp-config.php"))
+	if err != nil {
+		t.Fatalf("read wp-config.php: %v", err)
+	}
+	if !strings.Contains(string(config), "define('DISALLOW_FILE_EDIT', true);") {
+		t.Fatalf("DISALLOW_FILE_EDIT missing: %s", config)
+	}
+	if strings.Contains(string(config), "AUTOMATIC_UPDATER_DISABLED") {
+		t.Fatalf("unrelated optimization constant changed: %s", config)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/api/websites/1/file-editor", strings.NewReader(`{"enabled":false}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disable status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if err := database.GetDB().QueryRow("SELECT disable_file_editing FROM websites WHERE id = 1").Scan(&enabled); err != nil {
+		t.Fatalf("query disabled file editing: %v", err)
+	}
+	if enabled != 0 {
+		t.Fatalf("disable_file_editing = %d, want 0", enabled)
+	}
+	config, err = os.ReadFile(filepath.Join(webRoot, "wp-config.php"))
+	if err != nil {
+		t.Fatalf("read disabled wp-config.php: %v", err)
+	}
+	if strings.Contains(string(config), "DISALLOW_FILE_EDIT") {
+		t.Fatalf("DISALLOW_FILE_EDIT was not removed: %s", config)
+	}
+	if strings.Contains(string(config), "AUTOMATIC_UPDATER_DISABLED") {
+		t.Fatalf("unrelated optimization constant changed while disabling: %s", config)
+	}
+}
+
+func TestSetFileEditingProtectionRejectsLockedSite(t *testing.T) {
+	setupWebsiteOptimizationsTestDB(t)
+	if _, err := database.GetDB().Exec("UPDATE websites SET file_lock_enabled = 1, file_lock_mode = 'standard', file_lock_apply_status = 'ready' WHERE id = 1"); err != nil {
+		t.Fatalf("lock site: %v", err)
+	}
+
+	router := gin.New()
+	handler := &WebsiteHandler{}
+	router.PUT("/api/websites/:id/file-editor", handler.SetFileEditingProtection)
+	req := httptest.NewRequest(http.MethodPut, "/api/websites/1/file-editor", strings.NewReader(`{"enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusLocked {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusLocked, rec.Body.String())
+	}
+}
+
 func setupWebsiteOptimizationsTestDB(t *testing.T) {
 	t.Helper()
 	oldDB := database.DB

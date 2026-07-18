@@ -61,6 +61,22 @@ func ApplyWPOptimizations(webRoot string, opts WPOptimizations) error {
 	return os.WriteFile(configPath, []byte(content), 0600)
 }
 
+// SetWPFileEditingDisabled updates only the WordPress dashboard file editor
+// setting without rewriting unrelated optimization constants.
+func SetWPFileEditingDisabled(webRoot string, disabled bool) error {
+	configPath := filepath.Join(webRoot, "wp-config.php")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		return err
+	}
+	content := applyBoolConstant(string(data), "DISALLOW_FILE_EDIT", disabled)
+	return os.WriteFile(configPath, []byte(content), info.Mode().Perm())
+}
+
 func constPattern(name string) *regexp.Regexp {
 	return regexp.MustCompile(`(?m)^\s*define\s*\(\s*'` + regexp.QuoteMeta(name) + `'\s*,\s*[^)]+\)\s*;\s*\n?`)
 }
