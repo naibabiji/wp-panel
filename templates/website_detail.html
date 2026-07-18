@@ -286,9 +286,21 @@ location ^~ /api/ {
                 </div>
                 <p class="text-xs text-gray-500 mt-2" x-text="fileLockMode === 'strict' ? t('website.file_lock_strict_help') : t('website.file_lock_standard_help')"></p>
                 <div x-show="fileLockPreview" class="mt-3 rounded border border-gray-700 bg-gray-900/60 p-3 text-xs space-y-2">
-                    <div><span class="text-gray-400" x-text="t('website.file_lock_writable_dirs')"></span> <span class="text-green-300" x-text="(fileLockPreview?.writable_dirs || []).join(', ')"></span></div>
-                    <div><span class="text-gray-400" x-text="t('website.file_lock_readonly_dirs')"></span> <span class="text-gray-300" x-text="(fileLockPreview?.read_only_dirs || []).join(', ') || t('common.none')"></span></div>
-                    <div><span class="text-gray-400" x-text="t('website.file_lock_sensitive_files')"></span> <span class="text-gray-300" x-text="(fileLockPreview?.sensitive_files || []).join(', ') || t('common.none')"></span></div>
+                    <p class="text-sm font-medium text-white">{{t .Lang "website.file_lock_preview_title"}}</p>
+                    <div>
+                        <span class="text-gray-400" x-text="t('website.file_lock_writable_dirs')"></span>
+                        <div class="mt-1 flex flex-wrap gap-1.5"><template x-for="path in (fileLockPreview?.writable_dirs || [])" :key="path"><span class="px-2 py-1 rounded bg-green-950/60 text-green-300 border border-green-900" x-text="fileLockDisplayPath(path)"></span></template></div>
+                    </div>
+                    <div>
+                        <span class="text-gray-400" x-text="t('website.file_lock_readonly_dirs')"></span>
+                        <div x-show="(fileLockPreview?.read_only_dirs || []).length" class="mt-1 flex flex-wrap gap-1.5"><template x-for="path in (fileLockPreview?.read_only_dirs || [])" :key="path"><span class="px-2 py-1 rounded bg-blue-950/60 text-blue-200 border border-blue-900" x-text="fileLockDisplayPath(path)"></span></template></div>
+                        <span x-show="!(fileLockPreview?.read_only_dirs || []).length" class="text-gray-300" x-text="t('common.none')"></span>
+                    </div>
+                    <div>
+                        <span class="text-gray-400" x-text="t('website.file_lock_sensitive_files')"></span>
+                        <div x-show="(fileLockPreview?.sensitive_files || []).length" class="mt-1 flex flex-wrap gap-1.5"><template x-for="path in (fileLockPreview?.sensitive_files || [])" :key="path"><span class="px-2 py-1 rounded bg-blue-950/60 text-blue-200 border border-blue-900" x-text="fileLockDisplayPath(path)"></span></template></div>
+                        <span x-show="!(fileLockPreview?.sensitive_files || []).length" class="text-gray-300" x-text="t('common.none')"></span>
+                    </div>
                     <div x-show="(fileLockPreview?.executable_files || []).length > 0" class="text-yellow-300">
                         <span x-text="t('website.file_lock_executable_warning', { count: fileLockPreview?.executable_files?.length || 0 })"></span>
                         <ul class="mt-1 ml-4 list-disc text-gray-300"><template x-for="path in (fileLockPreview?.executable_files || []).slice(0, 20)" :key="path"><li x-text="path"></li></template></ul>
@@ -1165,6 +1177,26 @@ function websiteDetail() {
         },
         fileLockApplyIncomplete() {
             return this.site.file_lock_apply_status === 'failed' || this.site.file_lock_apply_status === 'applying';
+        },
+        fileLockDisplayPath(path) {
+            const labels = {
+                'wp-content/uploads': t('website.file_lock_path_uploads'),
+                'wp-content/cache': t('website.file_lock_path_cache'),
+                'wp-content/wflogs': t('website.file_lock_path_wflogs'),
+                'wp-content/languages': t('website.file_lock_path_languages'),
+                'wp-content/plugins': t('website.file_lock_path_plugins'),
+                'wp-content/themes': t('website.file_lock_path_themes'),
+                'wp-content/mu-plugins': t('website.file_lock_path_mu_plugins'),
+                'wp-config.php': t('website.file_lock_path_wp_config'),
+                '.user.ini': t('website.file_lock_path_user_ini'),
+                'php.ini': t('website.file_lock_path_php_ini'),
+                'wordfence-waf.php': t('website.file_lock_path_wordfence_waf'),
+                'wp-content/advanced-cache.php': t('website.file_lock_path_advanced_cache'),
+                'wp-content/object-cache.php': t('website.file_lock_path_object_cache'),
+                'wp-content/db.php': t('website.file_lock_path_db_dropin'),
+                'wp-content/sunrise.php': t('website.file_lock_path_sunrise')
+            };
+            return labels[path] || path;
         },
         async loadFileLockPreview() {
             if (!this.site?.id) return null;
