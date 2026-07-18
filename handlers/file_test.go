@@ -4,6 +4,11 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,11 +16,116 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/models"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
+
+func TestCalculateDirectorySizeSkipsSymlinks(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "one.txt"), []byte("123"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	subdir := filepath.Join(root, "sub")
+	if err := os.Mkdir(subdir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subdir, "two.txt"), []byte("12345"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	external := t.TempDir()
+	if err := os.WriteFile(filepath.Join(external, "large.txt"), make([]byte, 1024), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(root, "external-link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	size, err := calculateDirectorySize(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != 8 {
+		t.Fatalf("size = %d, want 8", size)
+	}
+}
+
+func TestCalculateDirectorySizeHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := calculateDirectorySize(ctx, t.TempDir()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context canceled", err)
+	}
+}
+
+func TestDirectorySizeUsesBackupRootAndRejectsEscapes(t *testing.T) {
+	oldConfig := config.AppConfig
+	backupRoot := t.TempDir()
+	config.AppConfig = &config.Config{Panel: config.PanelConfig{BackupDir: backupRoot}}
+	t.Cleanup(func() { config.AppConfig = oldConfig })
+	if err := os.Mkdir(filepath.Join(backupRoot, "nested"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backupRoot, "nested", "backup.bin"), []byte("123456"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.GET("/api/files/size", (&FileHandler{}).DirectorySize)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/files/size?site_id=0&path=/nested", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Data struct {
+			Size int64 `json:"size"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Data.Size != 6 {
+		t.Fatalf("size = %d, want 6", response.Data.Size)
+	}
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/files/size?site_id=0&path=/../../", nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("escape status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	if err := os.Symlink(filepath.Join(backupRoot, "nested"), filepath.Join(backupRoot, "nested-link")); err == nil {
+		rec = httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/files/size?site_id=0&path=/nested-link", nil))
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("symlink status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestDirectorySizeRejectsConcurrentOverflow(t *testing.T) {
+	oldConfig := config.AppConfig
+	oldSlots := directorySizeSlots
+	backupRoot := t.TempDir()
+	config.AppConfig = &config.Config{Panel: config.PanelConfig{BackupDir: backupRoot}}
+	directorySizeSlots = make(chan struct{}, 1)
+	directorySizeSlots <- struct{}{}
+	t.Cleanup(func() {
+		config.AppConfig = oldConfig
+		directorySizeSlots = oldSlots
+	})
+
+	router := gin.New()
+	router.GET("/api/files/size", (&FileHandler{}).DirectorySize)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/files/size?site_id=0&path=/", nil))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
 
 func TestUploadSessionIDIsStableForResume(t *testing.T) {
 	session := uploadSession{

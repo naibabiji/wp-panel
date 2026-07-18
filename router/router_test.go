@@ -206,6 +206,10 @@ func TestFileManagerStartsWithDirectoryList(t *testing.T) {
 		[]byte(`@click="openRoot(0)"`),
 		[]byte(`@click="showRootList()"`),
 		[]byte(`url.searchParams.set('site_id', this.selectedSite)`),
+		[]byte(`calculateDirectorySize(siteID, path)`),
+		[]byte(`'/files/size?site_id='`),
+		[]byte(`deepLinkFailed: false`),
+		[]byte(`this.deepLinkFailed = true`),
 	} {
 		if !bytes.Contains(source, expected) {
 			t.Fatalf("file manager is missing directory-list behavior %s", expected)
@@ -213,6 +217,19 @@ func TestFileManagerStartsWithDirectoryList(t *testing.T) {
 	}
 	if bytes.Contains(source, []byte(`x-model="selectedSite"`)) {
 		t.Fatal("file manager still requires the website dropdown")
+	}
+	if bytes.Contains(source, []byte(`x-show="!siteSearch"`)) {
+		t.Fatal("file manager hides the backup directory while filtering websites")
+	}
+}
+
+func TestDirectorySizeRouteRegistered(t *testing.T) {
+	source, err := os.ReadFile("router.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(source, []byte(`protected.GET("/api/files/size", fileHandler.DirectorySize)`)) {
+		t.Fatal("directory size route is not registered")
 	}
 }
 

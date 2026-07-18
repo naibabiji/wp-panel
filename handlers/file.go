@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"compress/bzip2"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/executor"
+	"github.com/naibabiji/wp-panel/i18n"
 	"github.com/naibabiji/wp-panel/models"
 
 	"github.com/gin-gonic/gin"
@@ -158,9 +160,12 @@ func normalizeFileConflictPolicy(policy string) (string, error) {
 }
 
 const (
-	defaultFilePageSize = 50
-	maxFilePageSize     = 200
+	defaultFilePageSize  = 50
+	maxFilePageSize      = 200
+	directorySizeTimeout = 60 * time.Second
 )
+
+var directorySizeSlots = make(chan struct{}, 2)
 
 func fileBasePath(siteID int) (string, error) {
 	if siteID == 0 {
@@ -661,6 +666,154 @@ func (h *FileHandler) List(c *gin.Context) {
 		"per_page":    perPage,
 		"total_pages": totalPages,
 	}))
+}
+
+func (h *FileHandler) DirectorySize(c *gin.Context) {
+	siteID, err := strconv.Atoi(c.Query("site_id"))
+	if err != nil || siteID < 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "files.directory_size_invalid_site")))
+		return
+	}
+
+	basePath, err := fileBasePath(siteID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "website.not_found")))
+		return
+	}
+	targetPath := filepath.Clean(filepath.Join(basePath, c.DefaultQuery("path", "/")))
+	if !isPathWithin(basePath, targetPath) {
+		c.JSON(http.StatusForbidden, models.ErrorResponse(i18n.TE(c.Request, "files.path_out_of_bounds")))
+		return
+	}
+	containsSymlink, err := pathContainsSymlinkBelowRoot(basePath, targetPath)
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "files.directory_size_not_found")))
+		return
+	}
+	if containsSymlink {
+		c.JSON(http.StatusForbidden, models.ErrorResponse(i18n.TE(c.Request, "files.directory_size_symlink")))
+		return
+	}
+	resolvedTarget, err := filepath.EvalSymlinks(targetPath)
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "files.directory_size_not_found")))
+		return
+	}
+	if !isPathWithin(basePath, resolvedTarget) {
+		c.JSON(http.StatusForbidden, models.ErrorResponse(i18n.TE(c.Request, "files.path_out_of_bounds")))
+		return
+	}
+	info, err := os.Stat(resolvedTarget)
+	if err != nil || !info.IsDir() {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "files.directory_size_not_directory")))
+		return
+	}
+
+	select {
+	case directorySizeSlots <- struct{}{}:
+		defer func() { <-directorySizeSlots }()
+	default:
+		c.JSON(http.StatusTooManyRequests, models.ErrorResponse(i18n.TE(c.Request, "files.directory_size_busy")))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), directorySizeTimeout)
+	defer cancel()
+	size, err := calculateDirectorySize(ctx, resolvedTarget)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			c.JSON(http.StatusGatewayTimeout, models.ErrorResponse(i18n.TE(c.Request, "files.directory_size_timeout")))
+			return
+		}
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "files.directory_size_failed")))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"size":          size,
+		"calculated_at": time.Now().Format(time.RFC3339),
+	}))
+}
+
+func pathContainsSymlinkBelowRoot(basePath, targetPath string) (bool, error) {
+	rel, err := filepath.Rel(filepath.Clean(basePath), filepath.Clean(targetPath))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false, errors.New("path outside root")
+	}
+	if rel == "." {
+		return false, nil
+	}
+	current := filepath.Clean(basePath)
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return false, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func calculateDirectorySize(ctx context.Context, root string) (int64, error) {
+	var total int64
+	directories := []string{root}
+	for len(directories) > 0 {
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		default:
+		}
+
+		dirPath := directories[len(directories)-1]
+		directories = directories[:len(directories)-1]
+		dir, err := os.Open(dirPath)
+		if err != nil {
+			return 0, err
+		}
+		for {
+			entries, readErr := dir.ReadDir(256)
+			for _, entry := range entries {
+				select {
+				case <-ctx.Done():
+					_ = dir.Close()
+					return 0, ctx.Err()
+				default:
+				}
+				if entry.Type()&os.ModeSymlink != 0 {
+					continue
+				}
+				entryPath := filepath.Join(dirPath, entry.Name())
+				if entry.IsDir() {
+					directories = append(directories, entryPath)
+					continue
+				}
+				info, err := entry.Info()
+				if err != nil {
+					_ = dir.Close()
+					return 0, err
+				}
+				if info.Size() > 0 && total > int64(^uint64(0)>>1)-info.Size() {
+					_ = dir.Close()
+					return 0, errors.New("directory size overflow")
+				}
+				total += info.Size()
+			}
+			if readErr == io.EOF {
+				break
+			}
+			if readErr != nil {
+				_ = dir.Close()
+				return 0, readErr
+			}
+		}
+		if err := dir.Close(); err != nil {
+			return 0, err
+		}
+	}
+	return total, nil
 }
 
 func (h *FileHandler) Upload(c *gin.Context) {

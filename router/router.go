@@ -872,6 +872,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 
 	fileHandler := &handlers.FileHandler{}
 	protected.GET("/api/files/list", fileHandler.List)
+	protected.GET("/api/files/size", fileHandler.DirectorySize)
 	protected.POST("/api/files/upload", fileHandler.Upload)
 	protected.POST("/api/files/upload/init", fileHandler.UploadInit)
 	protected.POST("/api/files/upload/chunk", fileHandler.UploadChunk)

@@ -25,6 +25,7 @@
 
         <div x-show="sitesLoading" class="text-center py-8 text-gray-500">{{t .Lang "files.loading_directories"}}</div>
         <div x-show="sitesLoadFailed && !sitesLoading" class="text-center py-8 text-red-300">{{t .Lang "files.load_directories_failed"}}</div>
+        <div x-show="deepLinkFailed && !sitesLoading" class="mb-4 rounded border border-yellow-800 bg-yellow-900/30 p-3 text-sm text-yellow-200">{{t .Lang "files.deep_link_failed"}}</div>
         <div x-show="!sitesLoading && !sitesLoadFailed" class="overflow-x-auto">
             <table class="w-full text-sm">
                 <thead class="border-b border-gray-700 text-gray-400">
@@ -32,6 +33,7 @@
                         <th class="py-2 text-left">{{t .Lang "files.website_or_directory"}}</th>
                         <th class="py-2 text-left">{{t .Lang "files.site_type"}}</th>
                         <th class="py-2 text-left">{{t .Lang "files.root_path"}}</th>
+                        <th class="py-2 text-left">{{t .Lang "files.directory_size"}}</th>
                         <th class="py-2 text-left">{{t .Lang "files.protection_status"}}</th>
                         <th class="py-2 text-left w-28">{{t .Lang "files.actions"}}</th>
                     </tr>
@@ -47,6 +49,14 @@
                             <td class="py-3 pr-4 text-gray-300" x-text="site.site_type === 'wordpress' ? 'WordPress' : 'PHP'"></td>
                             <td class="py-3 pr-4 font-mono text-xs text-gray-400" x-text="site.web_root"></td>
                             <td class="py-3 pr-4">
+                                <button @click.stop="calculateDirectorySize(site.id, '/')" :disabled="directorySizeState(site.id, '/')?.loading" class="text-xs text-blue-400 hover:text-blue-300 disabled:cursor-wait disabled:text-gray-500">
+                                    <span x-show="directorySizeState(site.id, '/')?.loading">{{t .Lang "files.calculating_size"}}</span>
+                                    <span x-show="!directorySizeState(site.id, '/')?.loading && directorySizeState(site.id, '/')?.size === undefined">{{t .Lang "files.calculate_size"}}</span>
+                                    <span x-show="!directorySizeState(site.id, '/')?.loading && directorySizeState(site.id, '/')?.size !== undefined" x-text="formatBytes(directorySizeState(site.id, '/')?.size || 0)"></span>
+                                </button>
+                                <div x-show="directorySizeState(site.id, '/')?.calculated_at" class="text-xs text-gray-600 mt-1"><span>{{t .Lang "files.calculated_at"}}</span><span x-text="formatCalculatedTime(directorySizeState(site.id, '/')?.calculated_at)"></span></div>
+                            </td>
+                            <td class="py-3 pr-4">
                                 <span x-show="site.file_lock_enabled" class="badge-warning text-xs">{{t .Lang "files.protected"}}</span>
                                 <span x-show="!site.file_lock_enabled" class="badge-success text-xs">{{t .Lang "files.not_protected"}}</span>
                             </td>
@@ -54,15 +64,23 @@
                         </tr>
                     </template>
                     <tr x-show="filteredSites.length === 0 && siteSearch">
-                        <td colspan="5" class="py-6 text-center text-gray-500">{{t .Lang "files.no_matching_directories"}}</td>
+                        <td colspan="6" class="py-6 text-center text-gray-500">{{t .Lang "files.no_matching_directories"}}</td>
                     </tr>
-                    <tr x-show="!siteSearch" @click="openRoot(0)" class="border-b border-gray-700/50 cursor-pointer hover:bg-gray-800/50">
+                    <tr @click="openRoot(0)" class="border-b border-gray-700/50 cursor-pointer hover:bg-gray-800/50">
                         <td class="py-3 pr-4">
                             <div class="text-white font-medium">{{t .Lang "files.backup_directory_name"}}</div>
                             <div class="text-xs text-gray-500">{{t .Lang "files.backup_directory_help"}}</div>
                         </td>
                         <td class="py-3 pr-4 text-gray-300">{{t .Lang "files.panel_directory"}}</td>
                         <td class="py-3 pr-4 text-xs text-gray-400">{{t .Lang "files.panel_backup_storage"}}</td>
+                        <td class="py-3 pr-4">
+                            <button @click.stop="calculateDirectorySize(0, '/')" :disabled="directorySizeState(0, '/')?.loading" class="text-xs text-blue-400 hover:text-blue-300 disabled:cursor-wait disabled:text-gray-500">
+                                <span x-show="directorySizeState(0, '/')?.loading">{{t .Lang "files.calculating_size"}}</span>
+                                <span x-show="!directorySizeState(0, '/')?.loading && directorySizeState(0, '/')?.size === undefined">{{t .Lang "files.calculate_size"}}</span>
+                                <span x-show="!directorySizeState(0, '/')?.loading && directorySizeState(0, '/')?.size !== undefined" x-text="formatBytes(directorySizeState(0, '/')?.size || 0)"></span>
+                            </button>
+                            <div x-show="directorySizeState(0, '/')?.calculated_at" class="text-xs text-gray-600 mt-1"><span>{{t .Lang "files.calculated_at"}}</span><span x-text="formatCalculatedTime(directorySizeState(0, '/')?.calculated_at)"></span></div>
+                        </td>
                         <td class="py-3 pr-4 text-gray-500">—</td>
                         <td class="py-3"><button @click.stop="openRoot(0)" class="btn-primary text-xs py-1 px-3">{{t .Lang "files.open_directory"}}</button></td>
                     </tr>
@@ -199,7 +217,15 @@
                                 <span x-show="!f.is_dir" x-text="'📄 ' + f.name"></span>
                             </td>
                             <td class="table-cell text-sm" x-text="f.is_dir ? t('files.file_type_dir') : t('files.file_type_file')"></td>
-                            <td class="table-cell text-sm" x-text="f.is_dir ? '--' : formatBytes(f.size)"></td>
+                            <td class="table-cell text-sm">
+                                <span x-show="!f.is_dir" x-text="formatBytes(f.size)"></span>
+                                <button x-show="f.is_dir" @click.stop="calculateDirectorySize(selectedSite, pathFor(f.name))" :disabled="directorySizeState(selectedSite, pathFor(f.name))?.loading" class="text-xs text-blue-400 hover:text-blue-300 disabled:cursor-wait disabled:text-gray-500">
+                                    <span x-show="directorySizeState(selectedSite, pathFor(f.name))?.loading">{{t .Lang "files.calculating_size"}}</span>
+                                    <span x-show="!directorySizeState(selectedSite, pathFor(f.name))?.loading && directorySizeState(selectedSite, pathFor(f.name))?.size === undefined">{{t .Lang "files.calculate_size"}}</span>
+                                    <span x-show="!directorySizeState(selectedSite, pathFor(f.name))?.loading && directorySizeState(selectedSite, pathFor(f.name))?.size !== undefined" x-text="formatBytes(directorySizeState(selectedSite, pathFor(f.name))?.size || 0)"></span>
+                                </button>
+                                <div x-show="f.is_dir && directorySizeState(selectedSite, pathFor(f.name))?.calculated_at" class="text-xs text-gray-600 mt-1"><span>{{t .Lang "files.calculated_at"}}</span><span x-text="formatCalculatedTime(directorySizeState(selectedSite, pathFor(f.name))?.calculated_at)"></span></div>
+                            </td>
                             <td class="table-cell font-mono text-xs" x-text="f.mode"></td>
                             <td class="table-cell text-xs" x-text="f.mod_time"></td>
                             <td class="table-cell">
@@ -242,11 +268,13 @@ function fileManager() {
         sites: [],
         sitesLoading: true,
         sitesLoadFailed: false,
+        deepLinkFailed: false,
         siteSearch: '',
         selectedSite: '',
         currentPath: '/',
         files: [],
         selected: [],
+        directorySizes: {},
         sortBy: 'name',
         sortDir: 'asc',
         page: 1,
@@ -293,6 +321,30 @@ function fileManager() {
             const site = this.selectedSiteInfo();
             return !!(site && site.file_lock_enabled);
         },
+        directorySizeKey(siteID, path) {
+            return String(siteID) + ':' + path;
+        },
+        directorySizeState(siteID, path) {
+            return this.directorySizes[this.directorySizeKey(siteID, path)];
+        },
+        formatCalculatedTime(value) {
+            return value ? new Date(value).toLocaleString(currentLocale()) : '';
+        },
+        async calculateDirectorySize(siteID, path) {
+            const key = this.directorySizeKey(siteID, path);
+            this.directorySizes[key] = { loading: true };
+            try {
+                const r = await api('/files/size?site_id=' + encodeURIComponent(siteID) + '&path=' + encodeURIComponent(path));
+                this.directorySizes[key] = {
+                    loading: false,
+                    size: r.data?.size || 0,
+                    calculated_at: r.data?.calculated_at || ''
+                };
+            } catch(e) {
+                delete this.directorySizes[key];
+                showToast(e.message, 'error');
+            }
+        },
         get filteredSites() {
             const query = this.siteSearch.toLowerCase();
             if (!query) return this.sites;
@@ -315,6 +367,8 @@ function fileManager() {
             const sid = params.get('site_id');
             if (sid !== null && (sid === '0' || this.sites.some(site => String(site.id) === sid))) {
                 this.openRoot(sid, false);
+            } else if (sid !== null) {
+                this.deepLinkFailed = true;
             }
         },
         openRoot(siteID, updateURL = true) {
