@@ -3,8 +3,12 @@ package executor
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/naibabiji/wp-panel/database"
+	"github.com/naibabiji/wp-panel/models"
 )
 
 func TestIsPathWithinRoot(t *testing.T) {
@@ -158,21 +162,36 @@ func TestWPConfigHasUserFileModsLockIgnoresManagedBlock(t *testing.T) {
 
 func TestWPFileLockRuntimeWritablePathPolicy(t *testing.T) {
 	root := t.TempDir()
+	upload := filepath.Join(root, "wp-content", "uploads", "2026", "photo.jpg")
+	cache := filepath.Join(root, "wp-content", "cache", "page.html")
+	language := filepath.Join(root, "wp-content", "languages", "zh_CN.mo")
+	wflog := filepath.Join(root, "wp-content", "wflogs", "rules.php.json")
+	unknown := filepath.Join(root, "wp-content", "plugin-data", "state.json")
 
-	allowed := []string{
-		filepath.Join(root, "wp-content", "uploads", "2026", "photo.jpg"),
-		filepath.Join(root, "wp-content", "cache", "page.html"),
-		filepath.Join(root, "wp-content", "cache", "pages", ".htaccess"),
-		filepath.Join(root, "wp-content", "languages", "zh_CN.mo"),
-		filepath.Join(root, "wp-content", "wflogs", "rules.php.json"),
-	}
-	for _, path := range allowed {
-		if !IsWPFileLockRuntimeWritablePath(root, path, false, false) {
-			t.Fatalf("%s should be writable runtime data", path)
-		}
+	for _, tt := range []struct {
+		mode    string
+		allowed []string
+		blocked []string
+	}{
+		{FileLockModeLegacy, []string{upload, cache, language, wflog, unknown}, nil},
+		{FileLockModeStandard, []string{upload, cache, wflog}, []string{language, unknown}},
+		{FileLockModeStrict, []string{upload}, []string{cache, language, wflog, unknown}},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			for _, path := range tt.allowed {
+				if !IsWPFileLockRuntimeWritablePath(tt.mode, root, path, false, false) {
+					t.Fatalf("%s should be writable in %s mode", path, tt.mode)
+				}
+			}
+			for _, path := range tt.blocked {
+				if IsWPFileLockRuntimeWritablePath(tt.mode, root, path, false, false) {
+					t.Fatalf("%s should be read-only in %s mode", path, tt.mode)
+				}
+			}
+		})
 	}
 
-	blocked := []string{
+	for _, path := range []string{
 		filepath.Join(root, "index.php"),
 		filepath.Join(root, "wp-config.php"),
 		filepath.Join(root, "wordfence-waf.php"),
@@ -187,31 +206,126 @@ func TestWPFileLockRuntimeWritablePathPolicy(t *testing.T) {
 		filepath.Join(root, "wp-content", "plugins", "plugin.php"),
 		filepath.Join(root, "wp-content", "themes", "theme", "functions.php"),
 		filepath.Join(root, "wp-content", "mu-plugins", "loader.php"),
-	}
-	for _, path := range blocked {
-		if IsWPFileLockRuntimeWritablePath(root, path, false, false) {
-			t.Fatalf("%s should be blocked by file lock", path)
+	} {
+		for _, mode := range []string{FileLockModeLegacy, FileLockModeStandard, FileLockModeStrict} {
+			if IsWPFileLockRuntimeWritablePath(mode, root, path, false, false) {
+				t.Fatalf("%s should be blocked in %s mode", path, mode)
+			}
 		}
 	}
 
-	if !IsWPFileLockRuntimeWritablePath(root, filepath.Join(root, "wp-content", "uploads", "shell.php"), false, true) {
+	if !IsWPFileLockRuntimeWritablePath(FileLockModeStrict, root, filepath.Join(root, "wp-content", "uploads", "shell.php"), false, true) {
 		t.Fatal("runtime PHP cleanup should be allowed when explicitly requested")
 	}
-	if IsWPFileLockRuntimeWritablePath(root, filepath.Join(root, "wp-content", "advanced-cache.php"), false, true) {
+	if IsWPFileLockRuntimeWritablePath(FileLockModeLegacy, root, filepath.Join(root, "wp-content", "advanced-cache.php"), false, true) {
 		t.Fatal("drop-in PHP should stay blocked even during cleanup")
 	}
-	if wpFileLockPermissionWritablePath(root, filepath.Join(root, "wp-content"), true) {
+	if wpFileLockPermissionWritablePath(FileLockModeStandard, root, filepath.Join(root, "wp-content"), true) {
 		t.Fatal("wp-content root should not be writable")
 	}
-	if !wpFileLockPermissionWritablePath(root, filepath.Join(root, "wp-content", "cache"), true) {
-		t.Fatal("existing runtime directories should be writable")
+	if !wpFileLockPermissionWritablePath(FileLockModeStandard, root, filepath.Join(root, "wp-content", "cache"), true) {
+		t.Fatal("cache should be writable in standard mode")
 	}
-	if wpFileLockPermissionWritablePath(root, filepath.Join(root, "wp-content", "upgrade"), true) {
+	if wpFileLockPermissionWritablePath(FileLockModeStrict, root, filepath.Join(root, "wp-content", "cache"), true) {
+		t.Fatal("cache should be read-only in strict mode")
+	}
+	if wpFileLockPermissionWritablePath(FileLockModeLegacy, root, filepath.Join(root, "wp-content", "upgrade"), true) {
 		t.Fatal("upgrade directory should stay locked")
 	}
-	if wpFileLockPermissionWritablePath(root, filepath.Join(root, "wp-content", "upgrade-temp-backup"), true) {
+	if wpFileLockPermissionWritablePath(FileLockModeLegacy, root, filepath.Join(root, "wp-content", "upgrade-temp-backup"), true) {
 		t.Fatal("upgrade-temp-backup directory should stay locked")
 	}
+}
+
+func TestPreviewSiteFileLockUsesModePolicy(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"uploads", "cache", "languages", "wflogs", "plugin-data", "plugins"} {
+		if err := os.MkdirAll(filepath.Join(root, "wp-content", dir), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "wp-content", "languages", "zh_CN.l10n.php"), []byte("<?php\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "wp-content", "plugin-data", "drop.phtml"), []byte("<?php\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "wp-content", "drop.php"), []byte("<?php\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "wp-content", "plugins", "legit.php"), []byte("<?php\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		outside := t.TempDir()
+		if err := os.Symlink(outside, filepath.Join(root, "wp-content", "plugins", "linked-code")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "wp-config.php"), []byte("<?php\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	site := &models.Website{WebRoot: root, SiteType: "wordpress"}
+
+	standard, err := PreviewSiteFileLock(site, FileLockModeStandard)
+	if err != nil {
+		t.Fatalf("standard preview: %v", err)
+	}
+	if got := strings.Join(standard.WritableDirs, ","); got != "wp-content/cache,wp-content/uploads,wp-content/wflogs" {
+		t.Fatalf("standard writable dirs = %q", got)
+	}
+	if got := strings.Join(standard.ExecutableFiles, ","); got != "wp-content/drop.php,wp-content/languages/zh_CN.l10n.php,wp-content/plugin-data/drop.phtml" {
+		t.Fatalf("standard executable files = %q", got)
+	}
+	if !containsPreviewString(standard.ReadOnlyDirs, "wp-content/languages") || !containsPreviewString(standard.ReadOnlyDirs, "wp-content/plugin-data") {
+		t.Fatalf("standard read-only dirs = %#v", standard.ReadOnlyDirs)
+	}
+	if runtime.GOOS != "windows" && !containsPreviewString(standard.SymlinkPaths, "wp-content/plugins/linked-code") {
+		t.Fatalf("standard symlink paths = %#v", standard.SymlinkPaths)
+	}
+
+	strict, err := PreviewSiteFileLock(site, FileLockModeStrict)
+	if err != nil {
+		t.Fatalf("strict preview: %v", err)
+	}
+	if got := strings.Join(strict.WritableDirs, ","); got != "wp-content/uploads" {
+		t.Fatalf("strict writable dirs = %q", got)
+	}
+	if !containsPreviewString(strict.ReadOnlyDirs, "wp-content/cache") || !containsPreviewString(strict.ReadOnlyDirs, "wp-content/wflogs") {
+		t.Fatalf("strict read-only dirs = %#v", strict.ReadOnlyDirs)
+	}
+}
+
+func TestExecuteSetFileLockMarksIncompleteApply(t *testing.T) {
+	openTestDB(t)
+	missingRoot := filepath.Join(t.TempDir(), "missing")
+	if _, err := database.GetDB().Exec(`INSERT INTO websites
+		(id, name, domain, status, system_user, web_root, log_dir, db_name, db_user, php_pool_path, nginx_conf_path, site_type)
+		VALUES (1, 'demo', 'example.com', 'active', 'wp_demo', ?, '/tmp/log', 'db', 'dbuser', '/tmp/php.conf', '/tmp/nginx.conf', 'wordpress')`, missingRoot); err != nil {
+		t.Fatalf("insert website: %v", err)
+	}
+	site := &models.Website{ID: 1, Domain: "example.com", WebRoot: missingRoot, SystemUser: "wp_demo", SiteType: "wordpress"}
+	result := executeSetFileLock(&Task{Payload: &SetFileLockPayload{Site: site, Enabled: true, Mode: FileLockModeStandard}})
+	if result.Success {
+		t.Fatal("file lock should fail for a missing web root")
+	}
+	var enabled int
+	var mode, status string
+	if err := database.GetDB().QueryRow("SELECT file_lock_enabled, file_lock_mode, file_lock_apply_status FROM websites WHERE id = 1").Scan(&enabled, &mode, &status); err != nil {
+		t.Fatalf("query website: %v", err)
+	}
+	if enabled != 0 || mode != "" || status != FileLockApplyStatusFailed {
+		t.Fatalf("enabled/mode/status = %d/%q/%q, want 0/empty/failed", enabled, mode, status)
+	}
+}
+
+func containsPreviewString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestApplyWPFileModsLockBlockFallbackForNonstandardWPConfig(t *testing.T) {

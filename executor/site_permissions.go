@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,13 +21,21 @@ import (
 const (
 	wpPanelFileLockBegin = "// BEGIN WP Panel File Lock"
 	wpPanelFileLockEnd   = "// END WP Panel File Lock"
+
+	FileLockModeLegacy   = "legacy"
+	FileLockModeStandard = "standard"
+	FileLockModeStrict   = "strict"
+
+	FileLockApplyStatusReady    = "ready"
+	FileLockApplyStatusApplying = "applying"
+	FileLockApplyStatusFailed   = "failed"
 )
 
 var (
 	disallowFileModsPattern      = regexp.MustCompile(`(?im)^\s*define\s*\(\s*['"]DISALLOW_FILE_MODS['"]\s*,\s*[^)]+\)\s*;\s*$`)
 	disallowFileModsFalsePattern = regexp.MustCompile(`(?im)^\s*define\s*\(\s*['"]DISALLOW_FILE_MODS['"]\s*,\s*false\s*\)\s*;\s*$`)
 	disallowFileModsTruePattern  = regexp.MustCompile(`(?im)^\s*define\s*\(\s*['"]DISALLOW_FILE_MODS['"]\s*,\s*true\s*\)\s*;\s*$`)
-	fsMethodPattern             = regexp.MustCompile(`(?im)^\s*define\s*\(\s*['"]FS_METHOD['"]\s*,\s*[^)]+\)\s*;\s*$`)
+	fsMethodPattern              = regexp.MustCompile(`(?im)^\s*define\s*\(\s*['"]FS_METHOD['"]\s*,\s*[^)]+\)\s*;\s*$`)
 )
 
 var wpFileLockCodeDirs = map[string]struct{}{
@@ -40,11 +49,40 @@ var wpFileLockLockedContentDirs = map[string]struct{}{
 	"upgrade-temp-backup": {},
 }
 
+var wpFileLockWritableContentDirs = map[string]map[string]struct{}{
+	FileLockModeStandard: {
+		"uploads": {},
+		"cache":   {},
+		"wflogs":  {},
+	},
+	FileLockModeStrict: {
+		"uploads": {},
+	},
+}
+
 var wpFileLockConfigNames = map[string]struct{}{
 	".user.ini":         {},
 	"php.ini":           {},
 	"wordfence-waf.php": {},
 	"wp-config.php":     {},
+}
+
+var wpFileLockKnownContentPHPFiles = map[string]struct{}{
+	"advanced-cache.php": {},
+	"db.php":             {},
+	"index.php":          {},
+	"object-cache.php":   {},
+	"sunrise.php":        {},
+}
+
+type FileLockPreview struct {
+	Mode            string   `json:"mode"`
+	WritableDirs    []string `json:"writable_dirs"`
+	ReadOnlyDirs    []string `json:"read_only_dirs"`
+	ExecutableFiles []string `json:"executable_files"`
+	SymlinkPaths    []string `json:"symlink_paths"`
+	SensitiveFiles  []string `json:"sensitive_files"`
+	Truncated       bool     `json:"truncated"`
 }
 
 func siteOwner(systemUser string) string {
@@ -156,15 +194,89 @@ func IsWPExecutableFile(path string) bool {
 	}
 }
 
-func IsWPFileLockRuntimeWritablePath(webRoot, targetPath string, isDir, allowExecutableCleanup bool) bool {
+func NormalizeFileLockMode(mode string) (string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case FileLockModeLegacy, FileLockModeStandard, FileLockModeStrict:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("invalid file lock mode")
+	}
+}
+
+func EffectiveFileLockMode(site *models.Website) string {
+	if site == nil || !site.FileLockEnabled {
+		return ""
+	}
+	mode, err := NormalizeFileLockMode(site.FileLockMode)
+	if err != nil {
+		// Sites locked before modes existed keep the historical compatibility policy.
+		return FileLockModeLegacy
+	}
+	return mode
+}
+
+func FileLockWritableContentDirs(mode string) ([]string, error) {
+	mode, err := NormalizeFileLockMode(mode)
+	if err != nil {
+		return nil, err
+	}
+	if mode == FileLockModeLegacy {
+		return []string{"uploads", "cache", "languages", "wflogs"}, nil
+	}
+	dirs := make([]string, 0, len(wpFileLockWritableContentDirs[mode]))
+	for dir := range wpFileLockWritableContentDirs[mode] {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
+	return dirs, nil
+}
+
+func FileLockSecurityScanContentDirs(mode, webRoot string) ([]string, error) {
+	mode, err := NormalizeFileLockMode(mode)
+	if err != nil {
+		return nil, err
+	}
+	if mode == FileLockModeLegacy {
+		entries, readErr := os.ReadDir(filepath.Join(webRoot, "wp-content"))
+		if readErr != nil {
+			return nil, readErr
+		}
+		dirs := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			if entry.IsDir() && entry.Type()&os.ModeSymlink == 0 && wpFileLockContentDirWritable(mode, entry.Name()) {
+				dirs = append(dirs, entry.Name())
+			}
+		}
+		sort.Strings(dirs)
+		return dirs, nil
+	}
+	dirs, err := FileLockWritableContentDirs(mode)
+	if err != nil {
+		return nil, err
+	}
+	// Known runtime directories remain scanned even when a mode makes them read-only.
+	// A post-lock executable there signals permission drift or a privileged write.
+	seen := make(map[string]struct{}, len(dirs)+4)
+	for _, dir := range dirs {
+		seen[dir] = struct{}{}
+	}
+	for _, dir := range []string{"uploads", "cache", "languages", "wflogs"} {
+		if _, ok := seen[dir]; !ok {
+			dirs = append(dirs, dir)
+			seen[dir] = struct{}{}
+		}
+	}
+	sort.Strings(dirs)
+	return dirs, nil
+}
+
+func IsWPFileLockRuntimeWritablePath(mode, webRoot, targetPath string, isDir, allowExecutableCleanup bool) bool {
 	relParts, ok := wpFileLockRelParts(webRoot, targetPath)
 	if !ok || len(relParts) < 3 || relParts[0] != "wp-content" {
 		return false
 	}
-	if _, locked := wpFileLockCodeDirs[relParts[1]]; locked {
-		return false
-	}
-	if _, locked := wpFileLockLockedContentDirs[relParts[1]]; locked {
+	if !wpFileLockContentDirWritable(mode, relParts[1]) {
 		return false
 	}
 	if wpFileLockSensitiveConfigName(relParts, targetPath) {
@@ -176,24 +288,40 @@ func IsWPFileLockRuntimeWritablePath(webRoot, targetPath string, isDir, allowExe
 	return true
 }
 
-func wpFileLockPermissionWritablePath(webRoot, targetPath string, isDir bool) bool {
+func wpFileLockPermissionWritablePath(mode, webRoot, targetPath string, isDir bool) bool {
 	relParts, ok := wpFileLockRelParts(webRoot, targetPath)
 	if !ok || len(relParts) == 0 {
 		return false
 	}
 	if len(relParts) == 2 && relParts[0] == "wp-content" && isDir {
-		if _, locked := wpFileLockCodeDirs[relParts[1]]; locked {
-			return false
-		}
-		if _, locked := wpFileLockLockedContentDirs[relParts[1]]; locked {
-			return false
-		}
-		if wpFileLockSensitiveConfigName(relParts, targetPath) {
-			return false
-		}
-		return true
+		return wpFileLockContentDirWritable(mode, relParts[1])
 	}
-	return IsWPFileLockRuntimeWritablePath(webRoot, targetPath, isDir, false)
+	return IsWPFileLockRuntimeWritablePath(mode, webRoot, targetPath, isDir, false)
+}
+
+func wpFileLockContentDirWritable(mode, dir string) bool {
+	mode, err := NormalizeFileLockMode(mode)
+	if err != nil {
+		return false
+	}
+	dir = strings.ToLower(strings.TrimSpace(dir))
+	if _, locked := wpFileLockCodeDirs[dir]; locked {
+		return false
+	}
+	if _, locked := wpFileLockLockedContentDirs[dir]; locked {
+		return false
+	}
+	if dir == ".htaccess" {
+		return false
+	}
+	if _, locked := wpFileLockConfigNames[dir]; locked {
+		return false
+	}
+	if mode == FileLockModeLegacy {
+		return dir != ""
+	}
+	_, writable := wpFileLockWritableContentDirs[mode][dir]
+	return writable
 }
 
 func wpFileLockSensitiveConfigName(relParts []string, targetPath string) bool {
@@ -221,6 +349,144 @@ func wpFileLockRelParts(webRoot, targetPath string) ([]string, bool) {
 		return nil, false
 	}
 	return parts, true
+}
+
+func PreviewSiteFileLock(site *models.Website, mode string) (FileLockPreview, error) {
+	if site == nil {
+		return FileLockPreview{}, fmt.Errorf("site is nil")
+	}
+	mode, err := NormalizeFileLockMode(mode)
+	if err != nil || mode == FileLockModeLegacy {
+		return FileLockPreview{}, fmt.Errorf("invalid preview mode")
+	}
+	webRoot, err := safeSiteWebRoot(site.WebRoot)
+	if err != nil {
+		return FileLockPreview{}, err
+	}
+
+	preview := FileLockPreview{Mode: mode}
+	writableDirs, err := FileLockWritableContentDirs(mode)
+	if err != nil {
+		return FileLockPreview{}, err
+	}
+	for _, dir := range writableDirs {
+		preview.WritableDirs = append(preview.WritableDirs, filepath.ToSlash(filepath.Join("wp-content", dir)))
+	}
+
+	contentRoot := filepath.Join(webRoot, "wp-content")
+	entries, err := os.ReadDir(contentRoot)
+	if err != nil {
+		return FileLockPreview{}, err
+	}
+	const maxPreviewEntries = 20000
+	const maxPreviewFindings = 200
+	visited := 0
+	codeRoots := make([]string, 0, len(wpFileLockCodeDirs))
+	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 {
+			preview.SymlinkPaths = append(preview.SymlinkPaths, filepath.ToSlash(filepath.Join("wp-content", entry.Name())))
+			if len(preview.ExecutableFiles)+len(preview.SymlinkPaths) >= maxPreviewFindings {
+				preview.Truncated = true
+				break
+			}
+			continue
+		}
+		if !entry.IsDir() {
+			name := strings.ToLower(entry.Name())
+			if IsWPExecutableFile(entry.Name()) {
+				if _, known := wpFileLockKnownContentPHPFiles[name]; !known {
+					preview.ExecutableFiles = append(preview.ExecutableFiles, filepath.ToSlash(filepath.Join("wp-content", entry.Name())))
+				}
+			}
+			continue
+		}
+		name := strings.ToLower(entry.Name())
+		if !wpFileLockContentDirWritable(mode, name) {
+			preview.ReadOnlyDirs = append(preview.ReadOnlyDirs, filepath.ToSlash(filepath.Join("wp-content", entry.Name())))
+		}
+		if _, codeDir := wpFileLockCodeDirs[name]; codeDir {
+			codeRoots = append(codeRoots, filepath.Join(contentRoot, entry.Name()))
+			continue
+		}
+		root := filepath.Join(contentRoot, entry.Name())
+		walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return nil
+			}
+			visited++
+			if visited > maxPreviewEntries || len(preview.ExecutableFiles)+len(preview.SymlinkPaths) >= maxPreviewFindings {
+				preview.Truncated = true
+				return filepath.SkipAll
+			}
+			if d.Type()&os.ModeSymlink != 0 {
+				rel, relErr := filepath.Rel(webRoot, path)
+				if relErr == nil {
+					preview.SymlinkPaths = append(preview.SymlinkPaths, filepath.ToSlash(rel))
+				}
+				return nil
+			}
+			if d.IsDir() || !IsWPExecutableFile(path) {
+				return nil
+			}
+			rel, relErr := filepath.Rel(webRoot, path)
+			if relErr == nil {
+				preview.ExecutableFiles = append(preview.ExecutableFiles, filepath.ToSlash(rel))
+			}
+			return nil
+		})
+		if walkErr != nil {
+			return FileLockPreview{}, walkErr
+		}
+		if preview.Truncated {
+			break
+		}
+	}
+	if !preview.Truncated {
+		for _, root := range codeRoots {
+			walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return nil
+				}
+				visited++
+				if visited > maxPreviewEntries || len(preview.ExecutableFiles)+len(preview.SymlinkPaths) >= maxPreviewFindings {
+					preview.Truncated = true
+					return filepath.SkipAll
+				}
+				if d.Type()&os.ModeSymlink == 0 {
+					return nil
+				}
+				rel, relErr := filepath.Rel(webRoot, path)
+				if relErr == nil {
+					preview.SymlinkPaths = append(preview.SymlinkPaths, filepath.ToSlash(rel))
+				}
+				return nil
+			})
+			if walkErr != nil {
+				return FileLockPreview{}, walkErr
+			}
+			if preview.Truncated {
+				break
+			}
+		}
+	}
+
+	for _, rel := range []string{
+		"wp-config.php", ".user.ini", "php.ini", "wordfence-waf.php",
+		filepath.Join("wp-content", "advanced-cache.php"),
+		filepath.Join("wp-content", "object-cache.php"),
+		filepath.Join("wp-content", "db.php"),
+		filepath.Join("wp-content", "sunrise.php"),
+	} {
+		path := filepath.Join(webRoot, rel)
+		if info, statErr := os.Lstat(path); statErr == nil && info.Mode()&os.ModeSymlink == 0 {
+			preview.SensitiveFiles = append(preview.SensitiveFiles, filepath.ToSlash(rel))
+		}
+	}
+	sort.Strings(preview.ReadOnlyDirs)
+	sort.Strings(preview.ExecutableFiles)
+	sort.Strings(preview.SymlinkPaths)
+	sort.Strings(preview.SensitiveFiles)
+	return preview, nil
 }
 
 func ChownSitePath(path, allowedRoot, systemUser string) error {
@@ -277,46 +543,80 @@ func executeSetFileLock(task *Task) TaskResult {
 	if site.SiteType != "" && site.SiteType != "wordpress" {
 		return TaskResult{Success: false, Message: "只有 WordPress 站点支持文件锁定"}
 	}
+	if _, err := database.GetDB().Exec(
+		"UPDATE websites SET file_lock_apply_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		FileLockApplyStatusApplying, site.ID,
+	); err != nil {
+		return taskFailure("准备文件锁定设置失败", err)
+	}
 
 	var err error
+	mode := ""
 	if payload.Enabled {
-		err = ApplySiteFileLock(site)
+		mode, err = NormalizeFileLockMode(payload.Mode)
+		if err == nil {
+			err = ApplySiteFileLockMode(site, mode)
+		}
 	} else {
 		err = ApplySiteUnlockedPermissions(site)
 	}
 	if err != nil {
+		if _, statusErr := database.GetDB().Exec(
+			"UPDATE websites SET file_lock_apply_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+			FileLockApplyStatusFailed, site.ID,
+		); statusErr != nil {
+			log.Printf("记录文件锁定权限应用失败状态 site=%d: %v", site.ID, statusErr)
+		}
 		return taskFailure("文件锁定设置失败", err)
 	}
 
 	enabled := 0
 	lockEnabledAt := ""
+	applyStatus := ""
 	message := "文件锁定已关闭"
 	if payload.Enabled {
 		enabled = 1
 		lockEnabledAt = formatEventTime(time.Now())
+		applyStatus = FileLockApplyStatusReady
 		message = "文件锁定已开启"
 	} else if wpConfigHasUserFileModsLock(site.WebRoot) {
 		message = "文件锁定已关闭，但 wp-config.php 中仍存在用户自定义 DISALLOW_FILE_MODS=true，WordPress 后台文件修改仍会被禁止"
 	}
 	if _, err := database.GetDB().Exec(
-		"UPDATE websites SET file_lock_enabled = ?, file_lock_enabled_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-		enabled, lockEnabledAt, site.ID,
+		"UPDATE websites SET file_lock_enabled = ?, file_lock_enabled_at = ?, file_lock_mode = ?, file_lock_apply_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		enabled, lockEnabledAt, mode, applyStatus, site.ID,
 	); err != nil {
 		return taskFailure("保存文件锁定状态失败", err)
 	}
 	site.FileLockEnabled = payload.Enabled
+	site.FileLockMode = mode
+	site.FileLockApplyStatus = applyStatus
 
 	return TaskResult{Success: true, Message: message, Data: map[string]interface{}{
-		"file_lock_enabled": payload.Enabled,
+		"file_lock_enabled":      payload.Enabled,
+		"file_lock_mode":         mode,
+		"file_lock_apply_status": site.FileLockApplyStatus,
 	}}
 }
 
 func ApplySiteFileLock(site *models.Website) error {
+	mode := EffectiveFileLockMode(site)
+	if mode == "" {
+		mode = FileLockModeLegacy
+	}
+	return ApplySiteFileLockMode(site, mode)
+}
+
+func ApplySiteFileLockMode(site *models.Website, mode string) error {
 	if site == nil {
 		return fmt.Errorf("site is nil")
 	}
 	if site.SiteType != "" && site.SiteType != "wordpress" {
 		return fmt.Errorf("only WordPress sites support file lock")
+	}
+	mode, err := NormalizeFileLockMode(mode)
+	if err != nil {
+		return err
 	}
 	webRoot, err := safeSiteWebRoot(site.WebRoot)
 	if err != nil {
@@ -354,7 +654,11 @@ func ApplySiteFileLock(site *models.Website) error {
 	if err := setWPFileModsLock(webRoot, true); err != nil {
 		return err
 	}
-	for _, dir := range []string{"uploads", "cache", "languages", "wflogs"} {
+	writableDirs, err := FileLockWritableContentDirs(mode)
+	if err != nil {
+		return err
+	}
+	for _, dir := range writableDirs {
 		if err := os.MkdirAll(filepath.Join(webRoot, "wp-content", dir), 0755); err != nil {
 			return err
 		}
@@ -367,7 +671,7 @@ func ApplySiteFileLock(site *models.Website) error {
 		if d.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
-		if wpFileLockPermissionWritablePath(webRoot, path, d.IsDir()) {
+		if wpFileLockPermissionWritablePath(mode, webRoot, path, d.IsDir()) {
 			return applyOwnerMode(path, uid, gid, modeForWritablePath(d))
 		}
 		mode := os.FileMode(0444)

@@ -418,6 +418,47 @@ var upgrades = []Upgrade{
 				('alert_wp_security_window_hours','24', 'WordPress 安全探测告警统计窗口（小时，默认 24）')`,
 		},
 	},
+	{
+		Version:     "1.0.30",
+		Description: "新增 WordPress 文件锁定模式与权限应用状态",
+		Func:        ensureFileLockModeColumns,
+	},
+}
+
+func ensureFileLockModeColumns() error {
+	var tableExists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'websites'`).Scan(&tableExists); err != nil {
+		return err
+	}
+	if tableExists == 0 {
+		return nil
+	}
+
+	for _, column := range []struct {
+		name string
+		sql  string
+	}{
+		{"file_lock_mode", `ALTER TABLE websites ADD COLUMN file_lock_mode TEXT NOT NULL DEFAULT ''`},
+		{"file_lock_apply_status", `ALTER TABLE websites ADD COLUMN file_lock_apply_status TEXT NOT NULL DEFAULT ''`},
+	} {
+		var exists int
+		if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('websites') WHERE name = ?`, column.name).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			if _, err := DB.Exec(column.sql); err != nil {
+				return err
+			}
+		}
+	}
+
+	if _, err := DB.Exec(`UPDATE websites SET file_lock_mode = 'legacy'
+		WHERE file_lock_enabled = 1 AND COALESCE(file_lock_mode, '') = ''`); err != nil {
+		return err
+	}
+	_, err := DB.Exec(`UPDATE websites SET file_lock_apply_status = 'ready'
+		WHERE file_lock_enabled = 1 AND COALESCE(file_lock_apply_status, '') = ''`)
+	return err
 }
 
 func ensureFileLockEnabledColumn() error {

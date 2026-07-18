@@ -117,16 +117,16 @@ func TestImportSiteRuntimePHPAccessEventsAggregatesLogEntries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("importSiteRuntimePHPAccessEvents() error = %v", err)
 	}
-	if count != 2 {
-		t.Fatalf("imported count = %d, want 2", count)
+	if count != 3 {
+		t.Fatalf("imported count = %d, want 3", count)
 	}
 
 	events, err := ListFileSecurityEvents(10)
 	if err != nil {
 		t.Fatalf("ListFileSecurityEvents() error = %v", err)
 	}
-	if len(events) != 2 {
-		t.Fatalf("events len = %d, want 2: %+v", len(events), events)
+	if len(events) != 3 {
+		t.Fatalf("events len = %d, want 3: %+v", len(events), events)
 	}
 
 	var uploadEvent *models.FileSecurityEvent
@@ -237,8 +237,8 @@ func TestRefreshFileSecurityEventsScansRuntimePHPFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RefreshFileSecurityEvents() error = %v", err)
 	}
-	if summary.SitesScanned != 1 || summary.FileEvents != 1 {
-		t.Fatalf("summary = %+v, want one site and one file event", summary)
+	if summary.SitesScanned != 1 || summary.FileEvents != 2 {
+		t.Fatalf("summary = %+v, want one site and two file events", summary)
 	}
 	if _, err := RefreshFileSecurityEvents(); err != nil {
 		t.Fatalf("second RefreshFileSecurityEvents() error = %v", err)
@@ -248,18 +248,22 @@ func TestRefreshFileSecurityEventsScansRuntimePHPFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListFileSecurityEvents() error = %v", err)
 	}
-	if len(events) != 1 {
-		t.Fatalf("events len = %d, want 1", len(events))
+	if len(events) != 2 {
+		t.Fatalf("events len = %d, want 2", len(events))
 	}
-	event := events[0]
-	if event.EventType != FileSecurityEventSuspiciousFile || event.Source != "scanner" || event.Path != "/wp-content/uploads/2026/shell.php" {
-		t.Fatalf("unexpected event: %+v", event)
+	seen := map[string]models.FileSecurityEvent{}
+	for _, event := range events {
+		seen[event.Path] = event
 	}
-	if event.EventCount != 1 {
-		t.Fatalf("event count = %d, want 1", event.EventCount)
+	uploadEvent, ok := seen["/wp-content/uploads/2026/shell.php"]
+	if !ok || uploadEvent.EventType != FileSecurityEventSuspiciousFile || uploadEvent.Source != "scanner" || uploadEvent.EventCount != 1 {
+		t.Fatalf("unexpected upload event: %+v", uploadEvent)
 	}
-	if event.ResolvedAt != nil {
-		t.Fatalf("event resolved_at = %v, want nil", *event.ResolvedAt)
+	if event, ok := seen["/wp-content/languages/zh_CN.l10n.php"]; !ok || event.RiskLevel != "medium" {
+		t.Fatalf("unexpected legacy l10n event: %+v", event)
+	}
+	if uploadEvent.ResolvedAt != nil {
+		t.Fatalf("event resolved_at = %v, want nil", *uploadEvent.ResolvedAt)
 	}
 
 	if err := os.Remove(shellPath); err != nil {
@@ -272,7 +276,13 @@ func TestRefreshFileSecurityEventsScansRuntimePHPFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListFileSecurityEvents() after removal error = %v", err)
 	}
-	if len(events) != 1 || events[0].ResolvedAt == nil {
+	var resolved bool
+	for _, event := range events {
+		if event.Path == "/wp-content/uploads/2026/shell.php" && event.ResolvedAt != nil {
+			resolved = true
+		}
+	}
+	if !resolved {
 		t.Fatalf("removed event should be marked resolved: %+v", events)
 	}
 }

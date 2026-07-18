@@ -21,6 +21,7 @@ import (
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/executor"
+	"github.com/naibabiji/wp-panel/i18n"
 	"github.com/naibabiji/wp-panel/models"
 
 	"github.com/gin-gonic/gin"
@@ -33,7 +34,8 @@ const websiteCols = `id, name, domain, aliases, status, system_user, web_root, d
 	fastcgi_cache_enabled, fastcgi_cache_ttl, fastcgi_cache_key,
 	monitoring_enabled, monitoring_interval, disable_wp_updates, disable_file_editing,
 		xmlrpc_enabled, wp_debug_enabled, wp_post_revisions, wp_memory_limit,
-		file_lock_enabled, log_retention_days, cdn_realip_enabled, expires_at, created_at, updated_at`
+		file_lock_enabled, file_lock_mode, file_lock_apply_status,
+		log_retention_days, cdn_realip_enabled, expires_at, created_at, updated_at`
 
 const fileLockBlockedMessage = "该站点已开启文件锁定，请先解除文件锁定后再执行此维护操作"
 
@@ -68,7 +70,8 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 		&fCacheEnabled, &w.FCacheTTL, &w.FCacheKey,
 		&monitoringEnabled, &monitoringInterval, &disableWPUpdates, &disableFileEditing,
 		&xmlrpcEnabled, &wpDebugEnabled, &wpPostRevisions, &wpMemoryLimit,
-		&fileLockEnabled, &logRetentionDays, &cdnRealIPEnabled, &w.ExpiresAt,
+		&fileLockEnabled, &w.FileLockMode, &w.FileLockApplyStatus,
+		&logRetentionDays, &cdnRealIPEnabled, &w.ExpiresAt,
 		&w.CreatedAt, &w.UpdatedAt,
 	)
 	if err != nil {
@@ -1931,16 +1934,26 @@ func (h *WebsiteHandler) SetFileLock(c *gin.Context) {
 	}
 
 	var req struct {
-		Enabled bool `json:"enabled"`
+		Enabled bool   `json:"enabled"`
+		Mode    string `json:"mode"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
-	if site.FileLockEnabled == req.Enabled {
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if req.Enabled {
+		if mode != executor.FileLockModeStandard && mode != executor.FileLockModeStrict {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.file_lock_invalid_mode")))
+			return
+		}
+	}
+	if site.FileLockEnabled == req.Enabled && (!req.Enabled || (site.FileLockMode == mode && site.FileLockApplyStatus == executor.FileLockApplyStatusReady)) {
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-			"message":           "文件锁定状态未变化",
-			"file_lock_enabled": req.Enabled,
+			"message":                "文件锁定状态未变化",
+			"file_lock_enabled":      req.Enabled,
+			"file_lock_mode":         site.FileLockMode,
+			"file_lock_apply_status": site.FileLockApplyStatus,
 		}))
 		return
 	}
@@ -1948,6 +1961,7 @@ func (h *WebsiteHandler) SetFileLock(c *gin.Context) {
 	task := executor.GlobalQueue.Enqueue(executor.TaskSetFileLock, &executor.SetFileLockPayload{
 		Site:    site,
 		Enabled: req.Enabled,
+		Mode:    mode,
 	})
 	result := <-task.ResultCh
 	if result.Success {
@@ -1955,6 +1969,34 @@ func (h *WebsiteHandler) SetFileLock(c *gin.Context) {
 	} else {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(result.Message))
 	}
+}
+
+func (h *WebsiteHandler) PreviewFileLock(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
+		return
+	}
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+	if site.SiteType != "wordpress" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("只有 WordPress 站点支持文件锁定"))
+		return
+	}
+	mode := strings.ToLower(strings.TrimSpace(c.Query("mode")))
+	if mode != executor.FileLockModeStandard && mode != executor.FileLockModeStrict {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.file_lock_invalid_mode")))
+		return
+	}
+	preview, err := executor.PreviewSiteFileLock(site, mode)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "website.file_lock_preview_failed")))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(preview))
 }
 
 func (h *WebsiteHandler) SaveMonitoring(c *gin.Context) {

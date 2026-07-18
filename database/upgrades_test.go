@@ -40,7 +40,7 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 		t.Fatalf("version = %q, want %q", version, LatestVersion())
 	}
 
-	for _, col := range []string{"php_pool_path", "nginx_conf_path", "wp_memory_limit", "file_lock_enabled", "file_lock_enabled_at", "cdn_realip_enabled", "ssl_last_error", "ssl_export_enabled", "document_root_subdir"} {
+	for _, col := range []string{"php_pool_path", "nginx_conf_path", "wp_memory_limit", "file_lock_enabled", "file_lock_enabled_at", "file_lock_mode", "file_lock_apply_status", "cdn_realip_enabled", "ssl_last_error", "ssl_export_enabled", "document_root_subdir"} {
 		var exists int
 		if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('websites') WHERE name = ?", col).Scan(&exists); err != nil {
 			t.Fatalf("query websites column %s: %v", col, err)
@@ -106,6 +106,66 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 		}
 		if got != setting.want {
 			t.Fatalf("%s = %q, want %q", setting.key, got, setting.want)
+		}
+	}
+}
+
+func TestUpgradeAddsFileLockModesAndBackfillsLegacySites(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.29')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+	if _, err := DB.Exec("ALTER TABLE websites DROP COLUMN file_lock_mode"); err != nil {
+		t.Fatalf("drop file_lock_mode: %v", err)
+	}
+	if _, err := DB.Exec("ALTER TABLE websites DROP COLUMN file_lock_apply_status"); err != nil {
+		t.Fatalf("drop file_lock_apply_status: %v", err)
+	}
+	for _, site := range []struct {
+		domain  string
+		enabled int
+	}{
+		{"locked.example.com", 1},
+		{"unlocked.example.com", 0},
+	} {
+		if _, err := DB.Exec(`INSERT INTO websites
+			(name, domain, status, system_user, web_root, log_dir, db_name, db_user, php_pool_path, nginx_conf_path, file_lock_enabled)
+			VALUES (?, ?, 'active', 'wp_demo', '/tmp/www', '/tmp/log', 'db', 'dbuser', '/tmp/php.conf', '/tmp/nginx.conf', ?)`,
+			site.domain, site.domain, site.enabled); err != nil {
+			t.Fatalf("insert %s: %v", site.domain, err)
+		}
+	}
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := ensureFileLockModeColumns(); err != nil {
+		t.Fatalf("second ensureFileLockModeColumns() error = %v", err)
+	}
+
+	for _, tt := range []struct {
+		domain string
+		mode   string
+		status string
+	}{
+		{"locked.example.com", "legacy", "ready"},
+		{"unlocked.example.com", "", ""},
+	} {
+		var mode, status string
+		if err := DB.QueryRow("SELECT file_lock_mode, file_lock_apply_status FROM websites WHERE domain = ?", tt.domain).Scan(&mode, &status); err != nil {
+			t.Fatalf("query %s: %v", tt.domain, err)
+		}
+		if mode != tt.mode || status != tt.status {
+			t.Fatalf("%s mode/status = %q/%q, want %q/%q", tt.domain, mode, status, tt.mode, tt.status)
 		}
 	}
 }

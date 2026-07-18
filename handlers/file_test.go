@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/naibabiji/wp-panel/config"
+	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/models"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
@@ -240,13 +241,13 @@ func TestFileLockWriteGuardAllowsRuntimeDataAndBlocksCode(t *testing.T) {
 		WebRoot:         root,
 		SiteType:        "wordpress",
 		FileLockEnabled: true,
+		FileLockMode:    executor.FileLockModeStandard,
 	}
 
 	for _, target := range []string{
 		filepath.Join(uploads, "photo.jpg"),
 		filepath.Join(cache, "page.html"),
 		filepath.Join(cache, "pages", ".htaccess"),
-		filepath.Join(languages, "zh_CN.mo"),
 		filepath.Join(wflogs, "config-livewaf.php.json"),
 	} {
 		if err := checkFileLockWrite(site, target, false, false); err != nil {
@@ -259,6 +260,7 @@ func TestFileLockWriteGuardAllowsRuntimeDataAndBlocksCode(t *testing.T) {
 		filepath.Join(wpContent, "advanced-cache.php"),
 		filepath.Join(wpContent, ".user.ini"),
 		filepath.Join(cache, ".user.ini"),
+		filepath.Join(languages, "zh_CN.mo"),
 		filepath.Join(wpContent, "upgrade", "wordpress.zip"),
 		filepath.Join(wpContent, "upgrade-temp-backup", "plugins", "plugin.zip"),
 		filepath.Join(root, "wordfence-waf.php"),
@@ -279,6 +281,14 @@ func TestFileLockWriteGuardAllowsRuntimeDataAndBlocksCode(t *testing.T) {
 	if err := checkFileLockWrite(site, filepath.Join(wpContent, "new-plugin-data"), true, false); !isFileLockWriteError(err) {
 		t.Fatalf("top-level runtime directory creation error = %v, want file lock rejection", err)
 	}
+
+	site.FileLockMode = executor.FileLockModeStrict
+	if err := checkFileLockWrite(site, filepath.Join(uploads, "strict-photo.jpg"), false, false); err != nil {
+		t.Fatalf("strict uploads write should be allowed: %v", err)
+	}
+	if err := checkFileLockWrite(site, filepath.Join(cache, "strict-cache.html"), false, false); !isFileLockWriteError(err) {
+		t.Fatalf("strict cache write error = %v, want file lock rejection", err)
+	}
 }
 
 func TestFileLockWriteGuardRejectsUploadsSymlinkEscape(t *testing.T) {
@@ -298,6 +308,7 @@ func TestFileLockWriteGuardRejectsUploadsSymlinkEscape(t *testing.T) {
 		WebRoot:         root,
 		SiteType:        "wordpress",
 		FileLockEnabled: true,
+		FileLockMode:    executor.FileLockModeStrict,
 	}
 
 	target := filepath.Join(uploads, "linked", "photo.jpg")

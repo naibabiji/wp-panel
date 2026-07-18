@@ -182,7 +182,7 @@ func (e *fileLockWriteError) Error() string {
 }
 
 func newFileLockWriteError() error {
-	return &fileLockWriteError{message: "该站点已开启文件锁定，仅允许写入 wp-content 下的运行数据目录，且禁止写入 PHP 可执行文件"}
+	return &fileLockWriteError{message: "该站点已开启文件锁定，仅允许写入当前锁定模式放行的运行数据目录，且禁止写入 PHP 可执行文件"}
 }
 
 func isFileLockWriteError(err error) bool {
@@ -224,7 +224,8 @@ func checkFileLockWrite(site *models.Website, targetPath string, targetIsDir, al
 	if err != nil {
 		return newFileLockWriteError()
 	}
-	if !executor.IsWPFileLockRuntimeWritablePath(resolvedRoot, resolvedTarget, targetIsDir, allowExecutableCleanup) {
+	mode := executor.EffectiveFileLockMode(site)
+	if !executor.IsWPFileLockRuntimeWritablePath(mode, resolvedRoot, resolvedTarget, targetIsDir, allowExecutableCleanup) {
 		return newFileLockWriteError()
 	}
 	return nil
@@ -2202,9 +2203,15 @@ func (h *FileHandler) FixPermissions(c *gin.Context) {
 		return
 	}
 	if site.FileLockEnabled {
-		if err := executor.ApplySiteFileLock(site); err != nil {
-			log.Printf("文件锁定权限重应用失败 root=%s: %v", site.WebRoot, err)
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("文件锁定权限重应用失败"))
+		task := executor.GlobalQueue.Enqueue(executor.TaskSetFileLock, &executor.SetFileLockPayload{
+			Site:    site,
+			Enabled: true,
+			Mode:    executor.EffectiveFileLockMode(site),
+		})
+		result := <-task.ResultCh
+		if !result.Success {
+			log.Printf("文件锁定权限重应用失败 root=%s: %s", site.WebRoot, result.Message)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(result.Message))
 			return
 		}
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{

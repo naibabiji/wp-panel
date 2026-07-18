@@ -259,15 +259,46 @@ location ^~ /api/ {
         <div class="card">
             <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "website.wp_optimization"}}</h3>
             <div x-show="site.site_type === 'wordpress'" class="pb-4 mb-4 border-b border-gray-700">
-                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                     <div>
                         <div class="flex items-center gap-2 mb-1">
                             <span class="text-sm font-medium text-white">{{t .Lang "website.file_lock"}}</span>
-                            <span class="text-xs px-2 py-0.5 rounded" :class="site.file_lock_enabled ? 'bg-yellow-900/50 text-yellow-200 border border-yellow-700' : 'bg-green-900/40 text-green-200 border border-green-800'" x-text="site.file_lock_enabled ? t('website.file_locked') : t('website.file_unlocked')"></span>
+                            <span class="text-xs px-2 py-0.5 rounded" :class="fileLockApplyIncomplete() ? 'bg-red-900/50 text-red-200 border border-red-700' : (site.file_lock_enabled ? 'bg-yellow-900/50 text-yellow-200 border border-yellow-700' : 'bg-green-900/40 text-green-200 border border-green-800')" x-text="fileLockStatusText()"></span>
                         </div>
                         <p class="text-xs text-gray-500">{{t .Lang "website.file_lock_help"}}</p>
+                        <p x-show="site.file_lock_mode === 'legacy'" class="text-xs text-yellow-300 mt-2">{{t .Lang "website.file_lock_legacy_notice"}}</p>
+                        <p x-show="fileLockApplyIncomplete()" class="text-xs text-red-300 mt-2">{{t .Lang "website.file_lock_apply_failed_notice"}}</p>
                     </div>
-                    <button @click="toggleFileLock(!site.file_lock_enabled)" :disabled="fileLockSaving" class="text-sm py-1.5 px-3 rounded" :style="site.file_lock_enabled ? 'background-color: #1e3a5f; color: #93c5fd;' : 'background-color: #7f1d1d; color: #fca5a5;'" x-text="fileLockSaving ? t('website.processing') : (site.file_lock_enabled ? t('website.unlock') : t('website.enable_lock'))"></button>
+                </div>
+                <div class="mt-3 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
+                    <label class="block">
+                        <span class="text-xs text-gray-400 block mb-1">{{t .Lang "website.file_lock_mode"}}</span>
+                        <select x-model="fileLockMode" @change="fileLockPreview = null" :disabled="fileLockSaving" class="input-field w-full text-sm py-1.5">
+                            <option value="standard">{{t .Lang "website.file_lock_mode_standard"}}</option>
+                            <option value="strict">{{t .Lang "website.file_lock_mode_strict"}}</option>
+                        </select>
+                    </label>
+                    <div class="flex flex-wrap gap-2">
+                        <button @click="loadFileLockPreview()" :disabled="fileLockSaving || fileLockPreviewLoading" class="text-sm py-1.5 px-3 rounded bg-gray-700 text-gray-200" x-text="fileLockPreviewLoading ? t('website.file_lock_checking') : t('website.file_lock_check_impact')"></button>
+                        <button x-show="!site.file_lock_enabled || site.file_lock_mode === 'legacy' || site.file_lock_mode !== fileLockMode || fileLockApplyIncomplete()" @click="applyFileLock(true)" :disabled="fileLockSaving" class="text-sm py-1.5 px-3 rounded bg-red-900 text-red-200" x-text="fileLockSaving ? t('website.processing') : (site.file_lock_enabled ? t('website.file_lock_apply_mode') : t('website.enable_lock'))"></button>
+                        <button x-show="site.file_lock_enabled" @click="applyFileLock(false)" :disabled="fileLockSaving" class="text-sm py-1.5 px-3 rounded bg-blue-950 text-blue-300" x-text="t('website.unlock')"></button>
+                    </div>
+                </div>
+                <p class="text-xs text-gray-500 mt-2" x-text="fileLockMode === 'strict' ? t('website.file_lock_strict_help') : t('website.file_lock_standard_help')"></p>
+                <div x-show="fileLockPreview" class="mt-3 rounded border border-gray-700 bg-gray-900/60 p-3 text-xs space-y-2">
+                    <div><span class="text-gray-400" x-text="t('website.file_lock_writable_dirs')"></span> <span class="text-green-300" x-text="(fileLockPreview?.writable_dirs || []).join(', ')"></span></div>
+                    <div><span class="text-gray-400" x-text="t('website.file_lock_readonly_dirs')"></span> <span class="text-gray-300" x-text="(fileLockPreview?.read_only_dirs || []).join(', ') || t('common.none')"></span></div>
+                    <div><span class="text-gray-400" x-text="t('website.file_lock_sensitive_files')"></span> <span class="text-gray-300" x-text="(fileLockPreview?.sensitive_files || []).join(', ') || t('common.none')"></span></div>
+                    <div x-show="(fileLockPreview?.executable_files || []).length > 0" class="text-yellow-300">
+                        <span x-text="t('website.file_lock_executable_warning', { count: fileLockPreview?.executable_files?.length || 0 })"></span>
+                        <ul class="mt-1 ml-4 list-disc text-gray-300"><template x-for="path in (fileLockPreview?.executable_files || []).slice(0, 20)" :key="path"><li x-text="path"></li></template></ul>
+                    </div>
+                    <div x-show="(fileLockPreview?.symlink_paths || []).length > 0" class="text-yellow-300">
+                        <span x-text="t('website.file_lock_symlink_warning', { count: fileLockPreview?.symlink_paths?.length || 0 })"></span>
+                        <ul class="mt-1 ml-4 list-disc text-gray-300"><template x-for="path in (fileLockPreview?.symlink_paths || []).slice(0, 20)" :key="path"><li x-text="path"></li></template></ul>
+                    </div>
+                    <p x-show="fileLockPreview?.truncated" class="text-yellow-300" x-text="t('website.file_lock_preview_truncated')"></p>
+                    <p class="text-gray-500">{{t .Lang "website.file_lock_preview_disclaimer"}}</p>
                 </div>
             </div>
             <div class="flex items-center space-x-3 mb-3">
@@ -615,6 +646,9 @@ function websiteDetail() {
         logRetentionDays: 7,
         optimizationSaving: false,
         fileLockSaving: false,
+        fileLockMode: 'standard',
+        fileLockPreview: null,
+        fileLockPreviewLoading: false,
         pluginStatus: 'not_installed',
         pluginInstalling: false,
         monitoringEnabled: false,
@@ -669,6 +703,8 @@ function websiteDetail() {
                     this.cdnRealIPGroupIDs = (r.data.cdn_realip_groups || []).map(g => g.id);
                     this.editTablePrefix = r.data.table_prefix || '';
                     this.sslExportEnabled = r.data.ssl_export_enabled || false;
+                    this.fileLockMode = r.data.file_lock_mode === 'strict' ? 'strict' : 'standard';
+                    this.fileLockPreview = null;
                 }
             } catch(e) { showToast(t('website.load_failed_with_error', { error: e.message }), 'error'); }
             this.loading = false;
@@ -1121,19 +1157,57 @@ function websiteDetail() {
             } catch(e) { showToast(e.message, 'error'); }
             this.pluginInstalling = false;
         },
-        async toggleFileLock(enabled) {
-            const prompt = enabled ? t('website.file_lock_enable_confirm') : t('website.file_lock_disable_confirm');
+        fileLockStatusText() {
+            if (this.fileLockApplyIncomplete()) return t('website.file_lock_apply_failed');
+            if (!this.site.file_lock_enabled) return t('website.file_unlocked');
+            if (this.site.file_lock_mode === 'legacy') return t('website.file_lock_legacy');
+            return this.site.file_lock_mode === 'strict' ? t('website.file_lock_strict') : t('website.file_lock_standard');
+        },
+        fileLockApplyIncomplete() {
+            return this.site.file_lock_apply_status === 'failed' || this.site.file_lock_apply_status === 'applying';
+        },
+        async loadFileLockPreview() {
+            if (!this.site?.id) return null;
+            this.fileLockPreviewLoading = true;
+            try {
+                const r = await api('/websites/' + this.site.id + '/file-lock/preview?mode=' + encodeURIComponent(this.fileLockMode));
+                this.fileLockPreview = r.data || null;
+                return this.fileLockPreview;
+            } catch(e) {
+                showToast(e.message, 'error');
+                return null;
+            } finally {
+                this.fileLockPreviewLoading = false;
+            }
+        },
+        async applyFileLock(enabled) {
+            let prompt = t('website.file_lock_disable_confirm');
+            if (enabled) {
+                const preview = await this.loadFileLockPreview();
+                if (!preview) return;
+                prompt = t('website.file_lock_apply_confirm', {
+                    mode: this.fileLockMode === 'strict' ? t('website.file_lock_mode_strict') : t('website.file_lock_mode_standard'),
+                    readonly: (preview.read_only_dirs || []).length,
+                    executable: (preview.executable_files || []).length,
+                    symlink: (preview.symlink_paths || []).length
+                });
+            }
             if (!await confirmModal(prompt)) return;
             this.fileLockSaving = true;
             try {
                 const r = await api('/websites/' + this.site.id + '/file-lock', {
                     method: 'PUT',
-                    body: { enabled }
+                    body: { enabled, mode: enabled ? this.fileLockMode : '' }
                 });
                 this.site.file_lock_enabled = r.data?.file_lock_enabled ?? enabled;
+                this.site.file_lock_mode = r.data?.file_lock_mode || '';
+                this.site.file_lock_apply_status = r.data?.file_lock_apply_status || '';
                 showToast(r.data?.message || (enabled ? t('website.file_lock_enabled') : t('website.file_lock_disabled')), 'success');
             } catch(e) {
+                const selectedMode = this.fileLockMode;
                 showToast(e.message, 'error');
+                await this.fetchDetail();
+                this.fileLockMode = selectedMode;
             }
             this.fileLockSaving = false;
         },

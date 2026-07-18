@@ -31,6 +31,7 @@ type fileSecuritySite struct {
 	Domain        string
 	WebRoot       string
 	LogDir        string
+	LockMode      string
 	LockEnabledAt time.Time
 }
 
@@ -161,7 +162,7 @@ func ClearFileSecurityEvents() error {
 
 func listFileSecuritySites(db *sql.DB) ([]fileSecuritySite, error) {
 	rows, err := db.Query(`
-		SELECT id, domain, web_root, log_dir, file_lock_enabled_at
+		SELECT id, domain, web_root, log_dir, file_lock_mode, file_lock_enabled_at
 		FROM websites
 		WHERE site_type = 'wordpress'
 			AND file_lock_enabled = 1
@@ -176,8 +177,11 @@ func listFileSecuritySites(db *sql.DB) ([]fileSecuritySite, error) {
 	for rows.Next() {
 		var site fileSecuritySite
 		var lockEnabledAt string
-		if err := rows.Scan(&site.ID, &site.Domain, &site.WebRoot, &site.LogDir, &lockEnabledAt); err != nil {
+		if err := rows.Scan(&site.ID, &site.Domain, &site.WebRoot, &site.LogDir, &site.LockMode, &lockEnabledAt); err != nil {
 			return nil, err
+		}
+		if _, err := NormalizeFileLockMode(site.LockMode); err != nil {
+			site.LockMode = FileLockModeLegacy
 		}
 		site.LockEnabledAt = parseFileLockEnabledTime(lockEnabledAt)
 		if site.LockEnabledAt.IsZero() {
@@ -196,7 +200,11 @@ func scanSiteSuspiciousRuntimeFiles(db *sql.DB, site fileSecuritySite) (int, err
 
 	seen := map[string]bool{}
 	count := 0
-	for _, dir := range []string{"uploads", "cache", "languages", "wflogs"} {
+	scanDirs, err := FileLockSecurityScanContentDirs(site.LockMode, webRoot)
+	if err != nil {
+		return 0, nil
+	}
+	for _, dir := range scanDirs {
 		root := filepath.Join(webRoot, "wp-content", dir)
 		if info, err := os.Lstat(root); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			continue
@@ -225,21 +233,24 @@ func scanSiteSuspiciousRuntimeFiles(db *sql.DB, site fileSecuritySite) (int, err
 			if relPath == "" {
 				return nil
 			}
-			if isLanguageL10nRuntimePHP(relPath) {
-				return nil
-			}
 			seen[relPath] = true
 			count++
+			riskLevel := "high"
+			message := "运行数据目录中发现 PHP 可执行文件。Nginx 会阻止直接执行，请确认来源后删除或隔离。"
+			if site.LockMode == FileLockModeLegacy && isLanguageL10nRuntimePHP(relPath) {
+				riskLevel = "medium"
+				message = "旧版锁定规则的翻译目录中发现锁定后生成的 .l10n.php 文件。该格式可能是正常翻译缓存，也可能被 WordPress 内部加载，请核实来源并迁移到新版锁定规则。"
+			}
 			return upsertFileSecurityEvent(db, fileSecurityRecord{
 				SiteID:     site.ID,
 				Domain:     site.Domain,
 				EventType:  FileSecurityEventSuspiciousFile,
 				Source:     "scanner",
-				RiskLevel:  "high",
+				RiskLevel:  riskLevel,
 				Path:       relPath,
 				FileSize:   info.Size(),
 				FileMTime:  formatEventTime(info.ModTime()),
-				Message:    "运行数据目录中发现 PHP 可执行文件。Nginx 会阻止直接执行，请确认来源后删除或隔离。",
+				Message:    message,
 				FirstSeen:  formatEventTime(time.Now()),
 				LastSeen:   formatEventTime(time.Now()),
 				EventCount: 1,
@@ -268,9 +279,6 @@ func importSiteRuntimePHPAccessEvents(db *sql.DB, site fileSecuritySite) (int, e
 		}
 		requestPath := runtimePHPRequestPath(m[4])
 		if requestPath == "" {
-			continue
-		}
-		if isLanguageL10nRuntimePHP(requestPath) {
 			continue
 		}
 		status, _ := strconv.Atoi(m[5])

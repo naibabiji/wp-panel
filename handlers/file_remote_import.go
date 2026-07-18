@@ -94,6 +94,9 @@ func (h *FileHandler) RemoteImport(c *gin.Context) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse(i18n.TE(c.Request, "files.path_out_of_bounds")))
 		return
 	}
+	// The destination is resolved and checked before the asynchronous download starts.
+	// runRemoteImport writes only this exact path; any future extraction or additional
+	// destination must perform its own file-lock check before writing.
 	if err := checkSiteFileLockWrite(*req.SiteID, destPath, false, false); err != nil {
 		respondFileWriteError(c, err)
 		return

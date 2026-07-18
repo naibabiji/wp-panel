@@ -3,7 +3,7 @@
  * Plugin Name: WP Panel Optimizer
  * Plugin URI:  https://github.com/naibabiji/wp-panel
  * Description: 与 WP Panel 面板配合，管理 FastCGI 缓存、预加载、调试模式、文章修订、内存限制等优化项。发布/更新文章自动清除缓存。
- * Version:     1.1.7
+ * Version:     1.1.8
  * Author:      WP Panel
  * Author URI:  https://blog.naibabiji.com
  * License:     GPL-2.0+
@@ -34,7 +34,7 @@ function wpp_optimizer_uninstall() {
 
 class WP_Panel_Optimizer {
 
-    const VERSION = '1.1.7';
+    const VERSION = '1.1.8';
 
     const OPTION_FCACHE_ENABLED = 'wpp_optimizer_fcache_enabled';
     const OPTION_FCACHE_TTL     = 'wpp_optimizer_fcache_ttl';
@@ -136,6 +136,18 @@ class WP_Panel_Optimizer {
         return $cfg ? $cfg['api_key'] : '';
     }
 
+    public static function bootstrap() {
+        if (get_option(self::OPTION_NO_UPDATES, '0') !== '1') {
+            return;
+        }
+
+        // Run before core's init callback so update checks are not re-scheduled
+        // and immediately cleared on every request.
+        remove_action('init', 'wp_schedule_update_checks');
+        self::suppress_updates();
+        self::clear_update_schedules();
+    }
+
     public static function init() {
         add_action('admin_bar_menu', [__CLASS__, 'admin_bar_button'], 100);
         add_action('admin_menu', [__CLASS__, 'settings_page']);
@@ -152,10 +164,6 @@ class WP_Panel_Optimizer {
         add_action(self::PRELOAD_HOOK, [__CLASS__, 'process_preload_batch']);
         self::maybe_process_preload_tick();
 
-        // 禁止检测更新：完全屏蔽更新提示和通知
-        if (get_option(self::OPTION_NO_UPDATES, '0') === '1') {
-            add_action('admin_init', [__CLASS__, 'suppress_updates']);
-        }
     }
 
     public static function suppress_updates() {
@@ -166,21 +174,25 @@ class WP_Panel_Optimizer {
         remove_action('admin_init', '_maybe_update_plugins');
         remove_action('admin_init', '_maybe_update_themes');
         remove_action('load-plugins.php', 'wp_update_plugins');
+        remove_action('load-update.php', 'wp_update_plugins');
         remove_action('load-themes.php', 'wp_update_themes');
         remove_action('load-update-core.php', 'wp_update_plugins');
         remove_action('load-update-core.php', 'wp_update_themes');
         remove_action('wp_update_plugins', 'wp_update_plugins');
         remove_action('wp_update_themes', 'wp_update_themes');
-        wp_clear_scheduled_hook('wp_version_check');
-        wp_clear_scheduled_hook('wp_update_plugins');
-        wp_clear_scheduled_hook('wp_update_themes');
-
         add_filter('pre_site_transient_update_core', '__return_null');
         add_filter('pre_site_transient_update_plugins', '__return_null');
         add_filter('pre_site_transient_update_themes', '__return_null');
 
-        if (!current_user_can('update_core')) return;
         add_filter('wp_get_update_data', [__CLASS__, 'filter_update_data'], 10, 2);
+    }
+
+    public static function clear_update_schedules() {
+        foreach (array('wp_version_check', 'wp_update_plugins', 'wp_update_themes') as $hook) {
+            if (wp_next_scheduled($hook) !== false) {
+                wp_clear_scheduled_hook($hook);
+            }
+        }
     }
 
     public static function filter_update_data($data) {
@@ -246,6 +258,9 @@ class WP_Panel_Optimizer {
             update_option(self::OPTION_FCACHE_ENABLED, $fcacheEnabled ? '1' : '0');
             update_option(self::OPTION_FCACHE_TTL, $fcacheTTL);
             update_option(self::OPTION_NO_UPDATES, $noUpdates ? '1' : '0');
+            if ($noUpdates) {
+                self::clear_update_schedules();
+            }
             update_option(self::OPTION_NO_FILE_EDIT, $noFileEdit ? '1' : '0');
             update_option(self::OPTION_WP_DEBUG, $wpDebug ? '1' : '0');
             update_option(self::OPTION_POST_REVISIONS, $postRevisions);
@@ -289,7 +304,7 @@ class WP_Panel_Optimizer {
                 <div class="notice notice-error"><p><strong>配置文件缺失</strong> — 请在 WP Panel 面板中进入该网站详情页，点击 WordPress 优化卡片的「安装配套插件」按钮完成初始化。</p></div>
             <?php endif; ?>
             <?php if ($fileLockEnabled): ?>
-                <div class="notice notice-warning"><p><strong>WP Panel 文件锁定已开启。</strong>发文章、编辑页面、上传图片、生成缓存和写入插件运行日志不受影响；安装、更新、删除插件或主题，以及修改代码和站点配置会被阻止。如需维护插件主题或首次配置安全/缓存插件，请先到 WP Panel 网站详情页解除文件锁定。</p></div>
+                <div class="notice notice-warning"><p><strong>WP Panel 文件锁定已开启。</strong>发文章、编辑页面和上传图片不受影响；其他运行目录的写入范围由当前文件锁规则决定，安装、更新、删除插件或主题，以及修改代码和站点配置会被阻止。如需维护插件主题或首次配置安全/缓存插件，请先到 WP Panel 网站详情页解除文件锁定。</p></div>
             <?php endif; ?>
             <div id="wpp-verify-msg"></div>
             <hr>
@@ -528,7 +543,7 @@ class WP_Panel_Optimizer {
         if (!self::sync_file_lock_state()) {
             return;
         }
-        echo '<div class="notice notice-warning"><p><strong>WP Panel 文件锁定已开启。</strong>发文章、编辑页面、上传图片、生成缓存和写入插件运行日志不受影响；安装、更新、删除插件或主题，以及修改代码和站点配置会被阻止。如需维护插件主题或首次配置安全/缓存插件，请先到 WP Panel 网站详情页解除文件锁定。</p></div>';
+        echo '<div class="notice notice-warning"><p><strong>WP Panel 文件锁定已开启。</strong>发文章、编辑页面和上传图片不受影响；其他运行目录的写入范围由当前文件锁规则决定，安装、更新、删除插件或主题，以及修改代码和站点配置会被阻止。如需维护插件主题或首次配置安全/缓存插件，请先到 WP Panel 网站详情页解除文件锁定。</p></div>';
     }
 
     public static function admin_bar_button($bar) {
@@ -1088,6 +1103,7 @@ class WP_Panel_Optimizer {
     }
 }
 
+add_action('plugins_loaded', ['WP_Panel_Optimizer', 'bootstrap'], 1);
 add_action('init', ['WP_Panel_Optimizer', 'init']);
 
 add_action('wp_ajax_wpp_optimizer_verify', function() {

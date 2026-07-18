@@ -132,6 +132,7 @@ type SetDocumentRootPayload struct {
 type SetFileLockPayload struct {
 	Site    *models.Website `json:"-"`
 	Enabled bool            `json:"enabled"`
+	Mode    string          `json:"mode"`
 }
 
 type RunCronPayload struct {
