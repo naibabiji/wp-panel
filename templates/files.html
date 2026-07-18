@@ -80,7 +80,11 @@
                 </template>
             </div>
             <div class="flex flex-wrap items-center gap-2">
-                    <button @click="showMkdir = true" :disabled="!selectedSite" class="btn-secondary text-sm">{{t .Lang "files.new_directory"}}</button>
+                <button type="button" @click="loadFiles()" :disabled="!hasSelectedRoot() || loadingFiles" class="btn-secondary text-sm">
+                    <span x-show="loadingFiles">{{t .Lang "files.refreshing"}}</span>
+                    <span x-show="!loadingFiles">{{t .Lang "files.refresh"}}</span>
+                </button>
+                <button @click="showMkdir = true" :disabled="!selectedSite" class="btn-secondary text-sm">{{t .Lang "files.new_directory"}}</button>
                 <button @click="fixPermissions()" :disabled="!selectedSite || selectedSite == '0' || fixingPerms" class="btn-secondary text-sm">
                     <span x-show="fixingPerms">{{t .Lang "files.fixing_permissions"}}</span>
                     <span x-show="!fixingPerms">{{t .Lang "files.fix_permissions"}}</span>
@@ -184,6 +188,8 @@ function fileManager() {
         perPage: 50,
         total: 0,
         totalPages: 1,
+        loadingFiles: false,
+        loadRequestID: 0,
         setSort(field) {
             if (this.sortBy === field) { this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc'; }
             else { this.sortBy = field; this.sortDir = 'asc'; }
@@ -262,13 +268,16 @@ function fileManager() {
             this.loadFiles();
         },
         async loadFiles() {
+            const requestID = ++this.loadRequestID;
             if (!this.selectedSite) {
                 this.files = [];
                 this.total = 0;
                 this.totalPages = 1;
+                this.loadingFiles = false;
                 return;
             }
             this.selected = [];
+            this.loadingFiles = true;
             try {
                 let url = '/files/list?site_id=' + this.selectedSite
                     + '&path=' + encodeURIComponent(this.currentPath)
@@ -277,6 +286,7 @@ function fileManager() {
                     + '&sort_by=' + encodeURIComponent(this.sortBy)
                     + '&sort_dir=' + encodeURIComponent(this.sortDir);
                 const r = await api(url);
+                if (requestID !== this.loadRequestID) return;
                 if (r.success) {
                     this.files = r.data.files || [];
                     this.total = r.data.total || this.files.length;
@@ -284,7 +294,11 @@ function fileManager() {
                     this.perPage = r.data.per_page || 50;
                     this.totalPages = r.data.total_pages || 1;
                 }
-            } catch(e) { showToast(e.message, 'error'); }
+            } catch(e) {
+                if (requestID === this.loadRequestID) showToast(e.message, 'error');
+            } finally {
+                if (requestID === this.loadRequestID) this.loadingFiles = false;
+            }
         },
         goPage(p) {
             if (p < 1 || p > this.totalPages) return;

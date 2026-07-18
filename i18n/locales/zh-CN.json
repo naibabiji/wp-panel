@@ -433,6 +433,8 @@
     "fix_permissions": "修复权限",
     "fixing_permissions": "修复中...",
     "root_directory": "根目录",
+    "refresh": "刷新",
+    "refreshing": "刷新中...",
     "new_directory": "新建目录",
     "remote_import": "远程导入",
     "remote_import_filename_required": "无法从URL识别文件名，请手动填写文件名",

@@ -419,6 +419,8 @@
     "fix_permissions": "Fix Permissions",
     "fixing_permissions": "Fixing...",
     "root_directory": "Root directory",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing...",
     "new_directory": "New directory",
     "remote_import": "Remote Import",
     "directory_name": "Directory name:",
