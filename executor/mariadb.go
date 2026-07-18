@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/naibabiji/wp-panel/config"
@@ -42,6 +43,40 @@ func runMySQL(rootPassword string, args ...string) error {
 		return fmt.Errorf("mysql: %s", stderr.String())
 	}
 	return nil
+}
+
+// GetMariaDBDatabaseSizes returns the on-disk table and index size for each
+// non-system database. The caller may filter the result to panel-managed sites.
+func GetMariaDBDatabaseSizes(cfg *config.Config) (map[string]int64, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("panel config is not initialized")
+	}
+	query := `SELECT TABLE_SCHEMA, COALESCE(SUM(DATA_LENGTH + INDEX_LENGTH), 0)
+		FROM INFORMATION_SCHEMA.TABLES
+		WHERE TABLE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+		GROUP BY TABLE_SCHEMA`
+	cmd := exec.Command("mysql", "-u", cfg.MariaDB.RootUser, "-B", "-N", "-e", query)
+	cmd.Env = append(os.Environ(), "MYSQL_PWD="+cfg.MariaDB.RootPassword)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("query database sizes: %s", strings.TrimSpace(stderr.String()))
+	}
+
+	sizes := make(map[string]int64)
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+		if len(parts) != 2 || parts[0] == "" {
+			continue
+		}
+		size, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+		if err != nil {
+			continue
+		}
+		sizes[parts[0]] = size
+	}
+	return sizes, nil
 }
 
 func createMariaDBDatabase(dbName, dbUser, dbPassword string, cfg *config.Config) error {

@@ -1,0 +1,99 @@
+{{template "base" .}}
+{{define "databases_content"}}
+<div x-data="databaseManager()" x-init="loadDatabases()">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+        <div>
+            <h2 class="text-xl font-bold text-white">{{t .Lang "nav.databases"}}</h2>
+            <p class="text-sm text-gray-500 mt-1">{{t .Lang "database.list_help"}}</p>
+        </div>
+        <button @click="loadDatabases()" :disabled="loading" class="btn-secondary text-sm" x-text="loading ? t('database.refreshing') : t('database.refresh')"></button>
+    </div>
+
+    <div class="card">
+        <div class="mb-4">
+            <input type="search" x-model="search" class="input-field w-full sm:w-80 text-sm" :placeholder="t('database.search_placeholder')">
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead class="border-b border-gray-700">
+                    <tr>
+                        <th class="table-header">{{t .Lang "database.website"}}</th>
+                        <th class="table-header">{{t .Lang "website.database_name"}}</th>
+                        <th class="table-header">{{t .Lang "website.username"}}</th>
+                        <th class="table-header">{{t .Lang "database.size"}}</th>
+                        <th class="table-header">{{t .Lang "database.auto_backup"}}</th>
+                        <th class="table-header">{{t .Lang "database.latest_backup"}}</th>
+                        <th class="table-header">{{t .Lang "database.actions"}}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="item in filteredDatabases()" :key="item.site_id">
+                        <tr class="border-b border-gray-700/50 hover:bg-gray-800/50 cursor-pointer" @click="openDatabase(item)">
+                            <td class="table-cell">
+                                <div class="text-white" x-text="item.domain"></div>
+                                <span :class="item.status === 'active' ? 'badge-success' : 'badge-warning'" class="text-xs" x-text="item.status === 'active' ? t('website.status_running') : t('website.status_paused')"></span>
+                            </td>
+                            <td class="table-cell font-mono text-sm" x-text="item.db_name"></td>
+                            <td class="table-cell font-mono text-sm" x-text="item.db_user"></td>
+                            <td class="table-cell text-sm" x-text="item.size_available ? formatBytes(item.database_size) : t('database.size_unavailable')"></td>
+                            <td class="table-cell">
+                                <span :class="item.backup_enabled ? 'badge-success' : 'badge-info'" x-text="item.backup_enabled ? t('website.enabled') : t('website.disabled')"></span>
+                                <span class="block text-xs text-gray-500 mt-1" x-show="item.backup_count > 0" x-text="t('database.backup_count', { count: item.backup_count })"></span>
+                            </td>
+                            <td class="table-cell text-sm" x-text="item.latest_backup_at ? formatDateTime(item.latest_backup_at) : t('database.never_backed_up')"></td>
+                            <td class="table-cell" @click.stop>
+                                <button @click="openDatabase(item)" class="btn-primary text-xs py-1 px-2">{{t .Lang "database.manage"}}</button>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="!loading && filteredDatabases().length === 0">
+                        <td colspan="7" class="table-cell text-center text-gray-500 py-8" x-text="search ? t('database.no_search_results') : t('database.no_databases')"></td>
+                    </tr>
+                    <tr x-show="loading">
+                        <td colspan="7" class="table-cell text-center text-gray-500 py-8">{{t .Lang "database.loading"}}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function databaseManager() {
+    return {
+        databases: [],
+        loading: false,
+        search: '',
+        async loadDatabases() {
+            this.loading = true;
+            try {
+                const r = await api('/databases');
+                if (r.success) this.databases = r.data || [];
+            } catch (e) {
+                showToast(e.message, 'error');
+            }
+            this.loading = false;
+        },
+        filteredDatabases() {
+            const keyword = this.search.trim().toLowerCase();
+            if (!keyword) return this.databases;
+            return this.databases.filter(item =>
+                (item.domain || '').toLowerCase().includes(keyword) ||
+                (item.db_name || '').toLowerCase().includes(keyword) ||
+                (item.db_user || '').toLowerCase().includes(keyword)
+            );
+        },
+        openDatabase(item) {
+            const prefix = document.body.dataset.panelPrefix || '';
+            window.location.href = prefix + '/databases/' + item.site_id;
+        },
+        formatDateTime(value) {
+            if (!value) return '';
+            const normalized = value.includes('T') ? value : value.replace(' ', 'T') + 'Z';
+            const date = new Date(normalized);
+            return Number.isNaN(date.getTime()) ? value : date.toLocaleString(currentLocale());
+        }
+    };
+}
+</script>
+{{end}}

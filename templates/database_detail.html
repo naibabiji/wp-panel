@@ -1,0 +1,350 @@
+{{template "base" .}}
+{{define "database_detail_content"}}
+<div x-data="databaseDetail()" x-init="init()">
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h2 class="text-xl font-bold text-white">{{t .Lang "database.detail_title"}}</h2>
+            <p x-show="site" class="text-sm text-gray-500 mt-1" x-text="site?.domain || ''"></p>
+        </div>
+        <a href="/{{.RandomSuffix}}/databases" class="btn-secondary">{{t .Lang "database.back_to_list"}}</a>
+    </div>
+
+    <div x-show="loading" class="text-center py-8">
+        <div class="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto"></div>
+    </div>
+
+    <template x-if="site">
+    <div class="space-y-6">
+        <div class="card">
+            <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                <div>
+                    <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "database.connection_info"}}</h3>
+                    <dl class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div><dt class="text-sm text-gray-400">{{t .Lang "database.website"}}</dt><dd class="text-white" x-text="site.domain"></dd></div>
+                        <div><dt class="text-sm text-gray-400">{{t .Lang "website.database_name"}}</dt><dd class="text-white font-mono text-sm" x-text="site.db_name"></dd></div>
+                        <div><dt class="text-sm text-gray-400">{{t .Lang "website.username"}}</dt><dd class="text-white font-mono text-sm" x-text="site.db_user"></dd></div>
+                    </dl>
+                </div>
+                <a :href="panelPrefix() + '/websites/' + site.id" class="btn-secondary text-sm whitespace-nowrap">{{t .Lang "database.view_website"}}</a>
+            </div>
+
+            <div x-show="site.site_type === 'wordpress'" class="mt-5 pt-5 border-t border-gray-700">
+                <label class="text-sm text-gray-400 block mb-2">{{t .Lang "website.table_prefix"}}</label>
+                <div class="flex flex-wrap items-center gap-2">
+                    <input type="text" x-model="editTablePrefix" class="input-field text-sm font-mono py-1 w-32" placeholder="{{t .Lang "website.table_prefix_placeholder"}}">
+                    <button @click="detectTablePrefix()" :disabled="detectingPrefix" class="btn-secondary text-xs" x-text="detectingPrefix ? t('website.detecting') : t('website.auto_detect')"></button>
+                    <button @click="fixWPConfig()" :disabled="dbSubmitting" class="btn-secondary text-xs" x-text="dbSubmitting ? t('website.processing') : t('website.sync_db_info')"></button>
+                </div>
+                <p class="text-xs text-gray-500 mt-2">{{t .Lang "website.table_prefix_help"}}</p>
+            </div>
+
+            <div class="flex flex-wrap gap-2 mt-5 pt-5 border-t border-gray-700">
+                <button @click="dbPasswordModal = true" class="btn-primary text-sm">{{t .Lang "website.change_password"}}</button>
+                <button x-show="site.site_type === 'wordpress'" @click="openSiteURLModal()" class="btn-secondary text-sm">{{t .Lang "website.change_site_url"}}</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                <div>
+                    <h3 class="text-lg font-semibold text-white">{{t .Lang "database.backup_management"}}</h3>
+                    <p class="text-xs text-gray-500 mt-1">{{t .Lang "database.backup_help"}}</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button @click="createBackup()" :disabled="backupSubmitting" class="btn-primary text-sm" x-text="backupSubmitting ? t('website.backing_up') : t('website.manual_backup')"></button>
+                    <button @click="uploadRestore()" :disabled="restoreUploading" class="btn-secondary text-sm" x-text="restoreUploading ? t('website.restoring') : t('website.upload_restore')"></button>
+                    <input type="file" id="databaseRestoreFileInput" @change="handleRestoreUpload($event)" accept=".sql,.sql.gz,.gz,.zip" class="hidden">
+                </div>
+            </div>
+
+            <div class="flex flex-col sm:flex-row sm:items-center gap-3 mb-4 p-3 rounded bg-gray-900/60">
+                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" x-model="backupEnabled" @change="saveBackupSettings()">
+                    <span>{{t .Lang "website.auto_backup"}}</span>
+                </label>
+                <label class="flex items-center gap-2 text-sm text-gray-300">
+                    <span>{{t .Lang "website.keep"}}</span>
+                    <input type="number" x-model.number="backupKeepCount" @change="saveBackupSettings()" class="input-field w-16 text-sm py-0.5 text-center" min="1" max="30">
+                    <span>{{t .Lang "website.copies"}}</span>
+                </label>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="border-b border-gray-700 text-gray-400">
+                        <tr>
+                            <th class="py-2 text-left whitespace-nowrap">{{t .Lang "website.filename"}}</th>
+                            <th class="py-2 text-left whitespace-nowrap">{{t .Lang "website.size"}}</th>
+                            <th class="py-2 text-left whitespace-nowrap">{{t .Lang "website.time"}}</th>
+                            <th class="py-2 text-left whitespace-nowrap">{{t .Lang "website.type"}}</th>
+                            <th class="py-2 text-left w-40">{{t .Lang "website.actions"}}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="b in visibleBackups()" :key="b.id">
+                            <tr class="border-b border-gray-700/50">
+                                <td class="py-2 font-mono text-xs whitespace-nowrap" x-text="b.filename"></td>
+                                <td class="py-2 text-xs whitespace-nowrap" x-text="formatBytes(b.file_size)"></td>
+                                <td class="py-2 text-xs whitespace-nowrap" x-text="formatDateTime(b.created_at)"></td>
+                                <td class="py-2 whitespace-nowrap"><span :class="b.auto ? 'badge-info' : 'badge-success'" class="text-xs" x-text="b.auto ? t('website.backup_auto') : t('website.backup_manual')"></span></td>
+                                <td class="py-2">
+                                    <div class="flex flex-wrap gap-1">
+                                        <button @click="downloadBackup(b)" class="btn-primary text-xs py-1 px-2">{{t .Lang "website.download"}}</button>
+                                        <button @click="restoreBackup(b)" :disabled="restoringId" class="btn-danger text-xs py-1 px-2" x-text="restoringId === b.id ? t('website.restoring') : t('website.restore')"></button>
+                                        <button @click="deleteBackup(b)" :disabled="restoringId" class="btn-secondary text-xs py-1 px-2">{{t .Lang "website.delete"}}</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
+                        <tr x-show="backups.length === 0">
+                            <td colspan="5" class="py-5 text-center text-gray-500">{{t .Lang "website.no_backups"}}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <button x-show="backups.length > 5" @click="showAllBackups = !showAllBackups" class="mt-3 text-sm text-blue-400 hover:text-blue-300" x-text="showAllBackups ? t('database.collapse_backups') : t('database.show_more_backups', { count: backups.length - 5 })"></button>
+        </div>
+
+        <div class="card border border-red-900/70">
+            <h3 class="text-lg font-semibold text-red-300 mb-2">{{t .Lang "database.danger_zone"}}</h3>
+            <p class="text-sm text-gray-400 mb-4">{{t .Lang "database.clear_warning"}}</p>
+            <button @click="clearDatabase()" :disabled="dbSubmitting" class="btn-danger text-sm" x-text="dbSubmitting ? t('website.clearing') : t('website.clear_database')"></button>
+        </div>
+    </div>
+    </template>
+
+    <div x-show="dbPasswordModal" class="modal-overlay" x-cloak @click.self="dbPasswordModal = false">
+        <div class="modal-content max-w-md">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-white">{{t .Lang "website.change_db_password"}}</h3>
+                <button @click="dbPasswordModal = false" class="text-gray-400 hover:text-white text-xl">&times;</button>
+            </div>
+            <p class="text-gray-400 text-sm mb-3">{{t .Lang "database.password_target"}} <span class="text-white font-mono" x-text="site?.db_name"></span> / <span class="text-white font-mono" x-text="site?.db_user"></span></p>
+            <label class="block text-sm text-gray-300 mb-1">{{t .Lang "website.new_password_label"}}</label>
+            <input type="text" x-model="newDBPassword" class="input-field w-full text-sm font-mono" :placeholder="t('website.new_password_placeholder')">
+            <p class="text-gray-500 text-xs mt-2 mb-4" x-text="site?.site_type === 'wordpress' ? t('database.wordpress_password_help') : t('database.php_password_help')"></p>
+            <div class="flex justify-end gap-2">
+                <button @click="dbPasswordModal = false" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
+                <button @click="changeDBPassword()" :disabled="dbSubmitting" class="btn-primary" x-text="dbSubmitting ? t('website.processing') : t('website.confirm_change')"></button>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="siteURLModal" class="modal-overlay" x-cloak @click.self="siteURLModal = false">
+        <div class="modal-content max-w-md">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-white">{{t .Lang "website.change_site_urls"}}</h3>
+                <button @click="siteURLModal = false" class="text-gray-400 hover:text-white text-xl">&times;</button>
+            </div>
+            <div class="space-y-3 mb-4">
+                <div><label class="label">{{t .Lang "website.current_siteurl"}}</label><div class="text-sm font-mono text-gray-400" x-text="currentSiteURL || t('website.reading')"></div></div>
+                <div><label class="label">{{t .Lang "website.current_home"}}</label><div class="text-sm font-mono text-gray-400" x-text="currentHomeURL || t('website.reading')"></div></div>
+                <hr class="border-gray-700">
+                <div><label class="label">{{t .Lang "website.new_siteurl"}}</label><input type="text" x-model="newSiteURL" class="input-field font-mono" placeholder="https://example.com"></div>
+                <div><label class="label">{{t .Lang "website.new_home"}}</label><input type="text" x-model="newHomeURL" class="input-field font-mono" placeholder="https://example.com"></div>
+                <button @click="autoFillSiteURL()" type="button" class="btn-secondary text-xs">{{t .Lang "website.auto_fill_panel_domain"}}</button>
+            </div>
+            <div class="p-3 rounded text-xs mb-4 bg-yellow-950/40 border border-yellow-900 text-yellow-200">{{t .Lang "database.site_url_warning"}}</div>
+            <div class="flex justify-end gap-2">
+                <button @click="siteURLModal = false" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
+                <button @click="updateSiteURLs()" :disabled="siteURLSubmitting" class="btn-primary" x-text="siteURLSubmitting ? t('website.processing_update') : t('website.confirm_update')"></button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function databaseDetail() {
+    return {
+        site: null,
+        loading: true,
+        editTablePrefix: '',
+        detectingPrefix: false,
+        dbSubmitting: false,
+        dbPasswordModal: false,
+        newDBPassword: '',
+        siteURLModal: false,
+        currentSiteURL: '',
+        currentHomeURL: '',
+        newSiteURL: '',
+        newHomeURL: '',
+        siteURLSubmitting: false,
+        backups: [],
+        showAllBackups: false,
+        backupSubmitting: false,
+        backupEnabled: false,
+        backupKeepCount: 7,
+        restoringId: null,
+        restoreUploading: false,
+        restorePollingActive: true,
+        siteID() { return window.location.pathname.split('/').pop(); },
+        panelPrefix() { return document.body.dataset.panelPrefix || ''; },
+        init() {
+            window.addEventListener('beforeunload', () => { this.restorePollingActive = false; });
+            this.fetchDetail();
+        },
+        async fetchDetail() {
+            this.loading = true;
+            try {
+                const r = await api('/websites/' + this.siteID());
+                if (r.success) {
+                    this.site = r.data;
+                    this.editTablePrefix = r.data.table_prefix || '';
+                    await Promise.all([this.fetchBackups(), this.fetchBackupSettings()]);
+                }
+            } catch (e) { showToast(t('website.load_failed_with_error', { error: e.message }), 'error'); }
+            this.loading = false;
+        },
+        visibleBackups() { return this.showAllBackups ? this.backups : this.backups.slice(0, 5); },
+        formatDateTime(value) { return new Date(value).toLocaleString(currentLocale()); },
+        async changeDBPassword() {
+            this.dbSubmitting = true;
+            try {
+                const body = {};
+                if (this.newDBPassword) body.new_password = this.newDBPassword;
+                const r = await api('/websites/' + this.site.id + '/db-password', { method: 'PUT', body });
+                showToast(t('website.password_updated', { password: r.data?.new_password || '****' }), 'success');
+                this.dbPasswordModal = false;
+                this.newDBPassword = '';
+            } catch (e) { showToast(e.message, 'error'); }
+            this.dbSubmitting = false;
+        },
+        async detectTablePrefix() {
+            this.detectingPrefix = true;
+            try {
+                const r = await api('/websites/' + this.site.id + '/detect-table-prefix');
+                this.editTablePrefix = r.data?.prefix || this.editTablePrefix;
+                const candidates = r.data?.candidates || [];
+                showToast(candidates.length > 1 ? t('website.detect_multiple_prefixes', { candidates: candidates.join('、'), prefix: this.editTablePrefix }) : t('website.detect_prefix_found', { prefix: this.editTablePrefix }), candidates.length > 1 ? 'warning' : 'success');
+            } catch (e) { showToast(t('website.detect_failed', { error: e.message }), 'error'); }
+            this.detectingPrefix = false;
+        },
+        async fixWPConfig() {
+            const parts = [t('website.sync_wp_config_base')];
+            if (this.editTablePrefix) parts.push(t('website.sync_wp_config_prefix', { prefix: this.editTablePrefix }));
+            if (!await confirmModal(parts.join('') + t('website.confirm_continue'))) return;
+            this.dbSubmitting = true;
+            try {
+                const body = this.editTablePrefix ? { table_prefix: this.editTablePrefix } : {};
+                const r = await api('/websites/' + this.site.id + '/fix-wp-config', { method: 'POST', body });
+                showToast(r.data?.message || t('website.updated'), 'success');
+                await this.fetchDetail();
+            } catch (e) { showToast(e.message, 'error'); }
+            this.dbSubmitting = false;
+        },
+        async openSiteURLModal() {
+            this.siteURLModal = true;
+            this.currentSiteURL = '';
+            this.currentHomeURL = '';
+            this.newSiteURL = '';
+            this.newHomeURL = '';
+            try {
+                const r = await api('/websites/' + this.site.id + '/wp-site-urls');
+                this.currentSiteURL = r.data?.siteurl || '';
+                this.currentHomeURL = r.data?.home || '';
+            } catch (e) { showToast(t('website.load_current_url_failed', { error: e.message }), 'error'); }
+        },
+        autoFillSiteURL() {
+            const url = (this.site.ssl_enabled ? 'https' : 'http') + '://' + this.site.domain;
+            this.newSiteURL = url;
+            this.newHomeURL = url;
+        },
+        async updateSiteURLs() {
+            if (!this.newSiteURL && !this.newHomeURL) { showToast(t('website.at_least_one_url'), 'error'); return; }
+            if (!await confirmModal(t('website.confirm_update_site_urls', { siteurl: this.newSiteURL || t('website.unchanged'), home: this.newHomeURL || t('website.unchanged') }))) return;
+            this.siteURLSubmitting = true;
+            try {
+                const body = {};
+                if (this.newSiteURL) body.siteurl = this.newSiteURL;
+                if (this.newHomeURL) body.home = this.newHomeURL;
+                await api('/websites/' + this.site.id + '/wp-site-urls', { method: 'PUT', body });
+                showToast(t('website.site_urls_updated'), 'success');
+                this.siteURLModal = false;
+            } catch (e) { showToast(t('website.update_failed_with_error', { error: e.message }), 'error'); }
+            this.siteURLSubmitting = false;
+        },
+        async fetchBackups() {
+            const r = await api('/websites/' + this.site.id + '/backups');
+            if (r.success) this.backups = r.data || [];
+        },
+        async fetchBackupSettings() {
+            const r = await api('/websites/' + this.site.id + '/backups/settings');
+            if (r.success) { this.backupEnabled = r.data.enabled; this.backupKeepCount = r.data.keep_count; }
+        },
+        async saveBackupSettings() {
+            try {
+                await api('/websites/' + this.site.id + '/backups/settings', { method: 'PUT', body: { enabled: this.backupEnabled, keep_count: parseInt(this.backupKeepCount) || 7 } });
+                showToast(t('website.backup_settings_saved'), 'success');
+            } catch (e) { showToast(e.message, 'error'); }
+        },
+        async createBackup() {
+            this.backupSubmitting = true;
+            try {
+                const r = await api('/websites/' + this.site.id + '/backups', { method: 'POST' });
+                showToast(r.data?.message || t('website.backup_completed'), 'success');
+                await this.fetchBackups();
+            } catch (e) { showToast(e.message, 'error'); }
+            this.backupSubmitting = false;
+        },
+        downloadBackup(b) { window.open(this.panelPrefix() + '/api/websites/' + this.site.id + '/backups/' + b.id + '/download'); },
+        async restoreBackup(b) {
+            if (!await confirmModal(t('website.confirm_restore_backup', { filename: b.filename }))) return;
+            this.restoringId = b.id;
+            try {
+                const r = await api('/websites/' + this.site.id + '/backups/' + b.id + '/restore', { method: 'POST' });
+                if (!r.data?.task_id) throw new Error(t('website.restore_task_failed'));
+                showToast(r.data?.message || t('website.restore_started'), 'info');
+                await this.pollRestoreTask(r.data.task_id);
+            } catch (e) { showToast(e.message, 'error'); }
+            this.restoringId = null;
+        },
+        async deleteBackup(b) {
+            if (!await confirmModal(t('website.confirm_delete_backup', { filename: b.filename }))) return;
+            try {
+                await api('/websites/' + this.site.id + '/backups/' + b.id, { method: 'DELETE' });
+                await this.fetchBackups();
+                showToast(t('website.deleted'), 'success');
+            } catch (e) { showToast(e.message, 'error'); }
+        },
+        uploadRestore() { document.getElementById('databaseRestoreFileInput').click(); },
+        async handleRestoreUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            if (![ '.sql', '.sql.gz', '.gz', '.zip' ].some(ext => file.name.endsWith(ext))) { showToast(t('website.restore_file_invalid'), 'error'); event.target.value = ''; return; }
+            if (!await confirmModal(t('website.confirm_restore_upload', { filename: file.name }))) { event.target.value = ''; return; }
+            this.restoreUploading = true;
+            const body = new FormData();
+            body.append('file', file);
+            try {
+                const r = await api('/websites/' + this.site.id + '/backups/upload-restore', { method: 'POST', body, headers: {} });
+                if (!r.data?.task_id) throw new Error(t('website.restore_task_failed'));
+                showToast(r.data?.message || t('website.restore_started'), 'info');
+                await this.pollRestoreTask(r.data.task_id);
+                await this.fetchBackups();
+            } catch (e) { showToast(e.message, 'error'); }
+            this.restoreUploading = false;
+            event.target.value = '';
+        },
+        async pollRestoreTask(taskID) {
+            this.restorePollingActive = true;
+            for (let i = 0; i < 3600 && this.restorePollingActive; i++) {
+                const r = await api('/websites/' + this.site.id + '/backups/restore-tasks/' + encodeURIComponent(taskID));
+                if (r.data?.status === 'success') { showToast(r.data.message || t('website.restore_success'), 'success'); return; }
+                if (r.data?.status === 'failed') throw new Error(r.data.message || t('website.restore_failed'));
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            if (this.restorePollingActive) throw new Error(t('website.restore_still_running'));
+        },
+        async clearDatabase() {
+            if (!await confirmModal(t('website.confirm_clear_database', { db: this.site.db_name }))) return;
+            this.dbSubmitting = true;
+            try {
+                const r = await api('/websites/' + this.site.id + '/backups/clear-database', { method: 'POST' });
+                showToast(r.data?.message || t('website.database_cleared'), 'success');
+            } catch (e) { showToast(e.message, 'error'); }
+            this.dbSubmitting = false;
+        }
+    };
+}
+</script>
+{{end}}

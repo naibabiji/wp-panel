@@ -70,23 +70,29 @@
                         </svg>
                         {{t .Lang "nav.websites"}}
                     </a>
-                    <a href="/{{$.RandomSuffix}}/ai-diagnostics" class="sidebar-link {{if eq .Active "ai-diagnostics"}}active{{end}}">
+                    <a href="/{{$.RandomSuffix}}/files" class="sidebar-link {{if eq .Active "files"}}active{{end}}">
                         <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
                         </svg>
-                        {{t .Lang "nav.ai_diagnostics"}}
+                        {{t .Lang "nav.files"}}
                     </a>
-                    <a href="/{{$.RandomSuffix}}/cron" class="sidebar-link {{if eq .Active "cron"}}active{{end}}">
+                    <a href="/{{$.RandomSuffix}}/databases" class="sidebar-link {{if eq .Active "databases"}}active{{end}}">
                         <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6c0 1.657 3.582 3 8 3s8-1.343 8-3-3.582-3-8-3-8 1.343-8 3zm0 0v6c0 1.657 3.582 3 8 3s8-1.343 8-3V6m-16 6v6c0 1.657 3.582 3 8 3s8-1.343 8-3v-6"/>
                         </svg>
-                        {{t .Lang "nav.cron"}}
+                        {{t .Lang "nav.databases"}}
                     </a>
                     <a href="/{{$.RandomSuffix}}/backups" class="sidebar-link {{if eq .Active "backups"}}active{{end}}">
                         <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v1a2 2 0 01-2 2M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8M10 12h4"/>
                         </svg>
                         {{t .Lang "nav.backups"}}
+                    </a>
+                    <a href="/{{$.RandomSuffix}}/cron" class="sidebar-link {{if eq .Active "cron"}}active{{end}}">
+                        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        {{t .Lang "nav.cron"}}
                     </a>
                     <a href="/{{$.RandomSuffix}}/firewall" class="sidebar-link {{if eq .Active "firewall"}}active{{end}}">
                         <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -101,12 +107,6 @@
                         </svg>
                         {{t .Lang "nav.security"}}
                     </a>
-                    <a href="/{{$.RandomSuffix}}/files" class="sidebar-link {{if eq .Active "files"}}active{{end}}">
-                        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-                        </svg>
-                        {{t .Lang "nav.files"}}
-                    </a>
                     <a href="/{{$.RandomSuffix}}/software" class="sidebar-link {{if eq .Active "software"}}active{{end}}">
                         <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/>
@@ -118,6 +118,12 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
                         </svg>
                         {{t .Lang "nav.alert"}}
+                    </a>
+                    <a href="/{{$.RandomSuffix}}/ai-diagnostics" class="sidebar-link {{if eq .Active "ai-diagnostics"}}active{{end}}">
+                        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                        </svg>
+                        {{t .Lang "nav.ai_diagnostics"}}
                     </a>
                     <a href="/{{$.RandomSuffix}}/extensions" class="sidebar-link {{if eq .Active "extensions"}}active{{end}}">
                         <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -164,6 +170,8 @@
                 {{if eq .ContentTemplate "websites_content"}}{{template "websites_content" .}}{{end}}
                 {{if eq .ContentTemplate "websites_new_content"}}{{template "websites_new_content" .}}{{end}}
                 {{if eq .ContentTemplate "websites_detail_content"}}{{template "websites_detail_content" .}}{{end}}
+                {{if eq .ContentTemplate "databases_content"}}{{template "databases_content" .}}{{end}}
+                {{if eq .ContentTemplate "database_detail_content"}}{{template "database_detail_content" .}}{{end}}
                 {{if eq .ContentTemplate "ai_diagnostics_content"}}{{template "ai_diagnostics_content" .}}{{end}}
                 {{if eq .ContentTemplate "cron_content"}}{{template "cron_content" .}}{{end}}
                 {{if eq .ContentTemplate "backups_content"}}{{template "backups_content" .}}{{end}}

@@ -184,6 +184,18 @@ var i18nKeys = []string{
 	"cron.status_enabled",
 	"cron.task_type_command",
 	"cron.task_type_file_backup",
+	"database.backup_count",
+	"database.collapse_backups",
+	"database.never_backed_up",
+	"database.no_databases",
+	"database.no_search_results",
+	"database.php_password_help",
+	"database.refresh",
+	"database.refreshing",
+	"database.search_placeholder",
+	"database.show_more_backups",
+	"database.size_unavailable",
+	"database.wordpress_password_help",
 	"website.status_paused",
 	"website.status_running",
 	"website.generic_php_site",
@@ -430,6 +442,7 @@ var i18nKeys = []string{
 	"website.confirm_delete_backup",
 	"website.confirm_delete_ssl",
 	"website.confirm_restore_backup",
+	"website.confirm_restore_upload",
 	"website.confirm_update",
 	"website.confirm_update_site_urls",
 	"website.database_cleared",
@@ -812,6 +825,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/websites/:id/backups/settings", backupHandler.GetSettings)
 	protected.PUT("/api/websites/:id/backups/settings", backupHandler.UpdateSettings)
 	protected.POST("/api/websites/:id/backups/clear-database", backupHandler.ClearDatabase)
+	databaseManagerHandler := &handlers.DatabaseManagerHandler{}
+	protected.GET("/api/databases", databaseManagerHandler.List)
 	protected.GET("/api/backups/overview", handlers.GetBackupOverview)
 	protected.POST("/api/backups/reconcile-status", handlers.ReconcileBackupStatus)
 
@@ -920,6 +935,12 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/websites/:id", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "website_detail.html", pageData(suffix, "websites", "websites_detail_content", c))
 	})
+	protected.GET("/databases", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "databases.html", pageData(suffix, "databases", "databases_content", c))
+	})
+	protected.GET("/databases/:id", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "database_detail.html", pageData(suffix, "databases", "database_detail_content", c))
+	})
 	protected.GET("/ai-diagnostics", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "ai_diagnostics.html", pageData(suffix, "ai-diagnostics", "ai_diagnostics_content", c))
 	})
@@ -978,6 +999,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 var pageTitleKeys = map[string]string{
 	"dashboard":      "nav.dashboard",
 	"websites":       "nav.websites",
+	"databases":      "nav.databases",
 	"ai-diagnostics": "nav.ai_diagnostics",
 	"cron":           "nav.cron",
 	"backups":        "nav.backups",

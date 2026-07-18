@@ -14,22 +14,24 @@ import (
 )
 
 var pageTemplates = map[string]string{
-	"login.html":          "",
-	"dashboard.html":      "dashboard_content",
-	"websites.html":       "websites_content",
-	"website_new.html":    "websites_new_content",
-	"website_detail.html": "websites_detail_content",
-	"ai_diagnostics.html": "ai_diagnostics_content",
-	"cron.html":           "cron_content",
-	"backups.html":        "backups_content",
-	"firewall.html":       "firewall_content",
-	"files.html":          "files_content",
-	"security.html":       "security_content",
-	"settings.html":       "settings_content",
-	"alert.html":          "alert_content",
-	"extension.html":      "extensions_content",
-	"software.html":       "software_content",
-	"help.html":           "help_content",
+	"login.html":           "",
+	"dashboard.html":       "dashboard_content",
+	"websites.html":        "websites_content",
+	"website_new.html":     "websites_new_content",
+	"website_detail.html":  "websites_detail_content",
+	"databases.html":       "databases_content",
+	"database_detail.html": "database_detail_content",
+	"ai_diagnostics.html":  "ai_diagnostics_content",
+	"cron.html":            "cron_content",
+	"backups.html":         "backups_content",
+	"firewall.html":        "firewall_content",
+	"files.html":           "files_content",
+	"security.html":        "security_content",
+	"settings.html":        "settings_content",
+	"alert.html":           "alert_content",
+	"extension.html":       "extensions_content",
+	"software.html":        "software_content",
+	"help.html":            "help_content",
 }
 
 func TestPageTemplatesRender(t *testing.T) {
@@ -45,7 +47,7 @@ func TestPageTemplatesRender(t *testing.T) {
 func TestContentTemplatesRender(t *testing.T) {
 	contents := []string{
 		"dashboard_content", "websites_content", "websites_new_content",
-		"websites_detail_content", "ai_diagnostics_content", "cron_content", "backups_content", "firewall_content",
+		"websites_detail_content", "databases_content", "database_detail_content", "ai_diagnostics_content", "cron_content", "backups_content", "firewall_content",
 		"files_content", "security_content", "settings_content",
 		"alert_content", "extensions_content", "software_content", "help_content",
 	}
@@ -114,6 +116,82 @@ func TestWebsiteProtectionRoutesRegistered(t *testing.T) {
 		if !bytes.Contains(source, []byte(route)) {
 			t.Fatalf("router.go missing route %s", route)
 		}
+	}
+}
+
+func TestDatabaseManagementRoutesRegistered(t *testing.T) {
+	source, err := os.ReadFile("router.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []string{
+		`protected.GET("/api/databases", databaseManagerHandler.List)`,
+		`protected.GET("/databases", func(c *gin.Context)`,
+		`protected.GET("/databases/:id", func(c *gin.Context)`,
+	} {
+		if !bytes.Contains(source, []byte(route)) {
+			t.Fatalf("router.go missing route %s", route)
+		}
+	}
+}
+
+func TestWebsiteDetailCardOrderAndDatabaseNavigation(t *testing.T) {
+	source, err := os.ReadFile("../templates/website_detail.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	monitoring := bytes.Index(source, []byte(`website.site_monitoring`))
+	ssl := bytes.Index(source, []byte(`website.ssl_management`))
+	nginx := bytes.Index(source, []byte(`website.nginx_custom_config`))
+	if monitoring < 0 || ssl < 0 || nginx < 0 || !(monitoring < ssl && ssl < nginx) {
+		t.Fatalf("runtime configuration order = monitoring:%d ssl:%d nginx:%d", monitoring, ssl, nginx)
+	}
+	if !bytes.Contains(source, []byte(`'/databases/' + site.id`)) {
+		t.Fatal("website detail is missing the direct database management link")
+	}
+	if !bytes.Contains(source, []byte(`site.site_type === 'wordpress' ? '' : 'md:col-span-2'`)) {
+		t.Fatal("non-WordPress optimization card does not span the full desktop row")
+	}
+}
+
+func TestSidebarNavigationOrder(t *testing.T) {
+	source, err := os.ReadFile("../templates/base.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := [][]byte{
+		[]byte(`href="/{{$.RandomSuffix}}/"`),
+		[]byte(`href="/{{$.RandomSuffix}}/websites"`),
+		[]byte(`href="/{{$.RandomSuffix}}/files"`),
+		[]byte(`href="/{{$.RandomSuffix}}/databases"`),
+		[]byte(`href="/{{$.RandomSuffix}}/backups"`),
+		[]byte(`href="/{{$.RandomSuffix}}/cron"`),
+		[]byte(`href="/{{$.RandomSuffix}}/firewall"`),
+		[]byte(`href="/{{$.RandomSuffix}}/security"`),
+		[]byte(`href="/{{$.RandomSuffix}}/software"`),
+		[]byte(`href="/{{$.RandomSuffix}}/alert"`),
+		[]byte(`href="/{{$.RandomSuffix}}/ai-diagnostics"`),
+		[]byte(`href="/{{$.RandomSuffix}}/extensions"`),
+		[]byte(`href="/{{$.RandomSuffix}}/settings"`),
+		[]byte(`href="/{{$.RandomSuffix}}/help"`),
+	}
+	previous := -1
+	for _, item := range items {
+		position := bytes.Index(source, item)
+		if position < 0 || position <= previous {
+			t.Fatalf("sidebar item %s is missing or out of order", item)
+		}
+		previous = position
+	}
+}
+
+func TestDatabaseDetailShowsFiveRecentBackupsByDefault(t *testing.T) {
+	source, err := os.ReadFile("../templates/database_detail.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(source, []byte(`this.backups.slice(0, 5)`)) {
+		t.Fatal("database detail does not limit the default backup list to five entries")
 	}
 }
 
