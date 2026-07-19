@@ -29,6 +29,44 @@ func TestParseAIReportJSON(t *testing.T) {
 	}
 }
 
+func TestAIPanelContextUsesCurrentDatabaseAndFileManagerCapabilities(t *testing.T) {
+	entries, ok := aiPanelContext()["known_panel_entries"].([]map[string]string)
+	if !ok {
+		t.Fatal("known_panel_entries has unexpected type")
+	}
+	var contextText strings.Builder
+	for _, entry := range entries {
+		contextText.WriteString(entry["page"])
+		contextText.WriteString("\n")
+		contextText.WriteString(entry["entry"])
+		contextText.WriteString("\n")
+		contextText.WriteString(entry["description"])
+		contextText.WriteString("\n")
+	}
+	got := contextText.String()
+
+	for _, want := range []string{
+		"数据库管理 -> 对应网站 -> 数据库详情 -> 同步数据库信息",
+		"数据库管理 -> 对应网站 -> 数据库详情 -> 修改密码",
+		"数据库管理 -> 对应网站 -> 数据库详情 -> 修改站点URL",
+		"当前不提供在线文本编辑",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("panel context does not contain current capability %q", want)
+		}
+	}
+
+	for _, stale := range []string{
+		"网站详情 -> 数据库",
+		"查看或编辑 wp-config.php",
+		"浏览、上传、编辑、删除",
+	} {
+		if strings.Contains(got, stale) {
+			t.Fatalf("panel context still contains stale capability %q", stale)
+		}
+	}
+}
+
 func TestParseAIReportFlexibleStringEvidence(t *testing.T) {
 	report, raw, ok := ParseAIReport(`{
 		"summary": "站点未开启缓存",

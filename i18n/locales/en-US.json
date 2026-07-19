@@ -744,7 +744,7 @@
     "unknown": "Unknown"
   },
   "database": {
-    "list_help": "View each site's database, size, and backup status, then select a site to manage it.",
+    "list_help": "Each database is tied to one website and cannot be added or deleted separately. Creating a website automatically creates its database and database user; deleting the website also deletes both, but existing backup files are retained.",
     "refresh": "Refresh",
     "refreshing": "Refreshing...",
     "search_placeholder": "Search by site, database, or username",

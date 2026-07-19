@@ -852,21 +852,21 @@ func aiPanelContext() map[string]interface{} {
 			{
 				"page":        "网站详情",
 				"entry":       "网站详情 -> 基本信息 -> 文件管理",
-				"description": "进入该站点的网站根目录，查看或编辑 wp-config.php、主题、插件等站点文件。",
+				"description": "进入该站点的网站根目录，可浏览、上传、下载、删除、重命名、移动、复制和压缩解压文件；当前不提供在线文本编辑。",
 			},
 			{
-				"page":        "网站详情",
-				"entry":       "网站详情 -> 数据库 -> 同步数据库信息",
+				"page":        "数据库管理",
+				"entry":       "数据库管理 -> 对应网站 -> 数据库详情 -> 同步数据库信息",
 				"description": "用面板记录的数据库名和用户名同步 wp-config.php 中的 DB_NAME、DB_USER，并可同步表前缀。",
 			},
 			{
-				"page":        "网站详情",
-				"entry":       "网站详情 -> 数据库 -> 修改密码",
+				"page":        "数据库管理",
+				"entry":       "数据库管理 -> 对应网站 -> 数据库详情 -> 修改密码",
 				"description": "修改该站点数据库用户密码；WordPress 站点需要同步 wp-config.php。",
 			},
 			{
-				"page":        "网站详情",
-				"entry":       "网站详情 -> 数据库 -> 修改站点URL",
+				"page":        "数据库管理",
+				"entry":       "数据库管理 -> 对应网站 -> 数据库详情 -> 修改站点URL",
 				"description": "修改 WordPress 数据库中的 siteurl 和 home。",
 			},
 			{
@@ -892,7 +892,7 @@ func aiPanelContext() map[string]interface{} {
 			{
 				"page":        "文件管理",
 				"entry":       "文件管理 -> 选择站点",
-				"description": "浏览、上传、编辑、删除站点根目录内文件；不要跨站点操作。",
+				"description": "浏览、上传、下载、删除、重命名、移动、复制和压缩解压站点根目录内文件；当前不提供在线文本编辑，也不要跨站点操作。",
 			},
 			{
 				"page":        "软件管理",
