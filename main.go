@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"flag"
@@ -154,6 +155,15 @@ func main() {
 
 	executor.InitQueue(cfg)
 	log.Println("任务队列初始化完成")
+	var inventoryWorker *executor.WPInventoryWorker
+	if candidate, err := executor.NewWPInventoryWorker(cfg); err != nil {
+		log.Println("WordPress 库存后台任务未启动")
+	} else if err := candidate.Start(); err != nil {
+		log.Println("WordPress 库存后台任务未启动")
+	} else {
+		inventoryWorker = candidate
+		log.Println("WordPress 库存后台任务已启动")
+	}
 
 	collector.Start()
 
@@ -242,6 +252,11 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("正在关闭面板...")
+	if inventoryWorker != nil {
+		if err := inventoryWorker.Stop(context.Background()); err != nil {
+			log.Println("WordPress 库存后台任务关闭失败")
+		}
+	}
 	executor.StopWPSecurityEventIngestor()
 }
 
