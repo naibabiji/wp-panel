@@ -20,6 +20,18 @@ func TestSitePHPDisabledFunctions(t *testing.T) {
 	}
 }
 
+func TestSitePHPRunnerOpenBaseDir(t *testing.T) {
+	got := sitePHPRunnerOpenBaseDir(
+		"/www/wwwroot/example.com",
+		"example.com",
+		"/var/wp-panel/runners/wp-inventory/0123456789abcdef",
+	)
+	want := "/www/wwwroot/example.com:/tmp:/usr/share/php:/var/wp-panel/site-secrets/example.com:/var/wp-panel/runners/wp-inventory/0123456789abcdef"
+	if got != want {
+		t.Fatalf("sitePHPRunnerOpenBaseDir() = %q, want %q", got, want)
+	}
+}
+
 func TestRenderPHPFPMPoolUsesSharedSecurityPolicy(t *testing.T) {
 	engine := NewTemplateEngine("")
 	rendered, err := engine.RenderPHPFPMPool(&PHPFPMPoolData{

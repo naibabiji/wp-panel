@@ -22,3 +22,10 @@ func sitePHPOpenBaseDir(webRoot, domain string) string {
 func sitePHPDisabledFunctions() string {
 	return phpDisabledFunctionsSetting
 }
+
+func sitePHPRunnerOpenBaseDir(webRoot, domain, runnerDir string) string {
+	return strings.Join([]string{
+		sitePHPOpenBaseDir(webRoot, domain),
+		runnerDir,
+	}, ":")
+}
