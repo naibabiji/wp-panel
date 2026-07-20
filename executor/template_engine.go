@@ -384,7 +384,10 @@ func (e *TemplateEngine) RenderPHPFPMPool(data *PHPFPMPoolData) (string, error) 
 	if data.MaxInputTime == "" {
 		data.MaxInputTime = phpCfg.MaxInputTime
 	}
-	tmpl, err := template.New("php_fpm_pool").Parse(phpFPMPoolTemplate)
+	tmpl, err := template.New("php_fpm_pool").Funcs(template.FuncMap{
+		"sitePHPOpenBaseDir":       sitePHPOpenBaseDir,
+		"sitePHPDisabledFunctions": sitePHPDisabledFunctions,
+	}).Parse(phpFPMPoolTemplate)
 	if err != nil {
 		return "", fmt.Errorf("模板解析失败: %w", err)
 	}
@@ -975,13 +978,13 @@ pm.max_spare_servers = 5
 pm.process_idle_timeout = 10s
 pm.max_requests = 500
 
-php_admin_value[open_basedir] = {{.WebRoot}}:/tmp:/usr/share/php:/var/wp-panel/site-secrets/{{.Domain}}
+php_admin_value[open_basedir] = {{sitePHPOpenBaseDir .WebRoot .Domain}}
 php_admin_value[upload_max_filesize] = {{.UploadMaxFilesize}}
 php_admin_value[post_max_size] = {{.PostMaxSize}}
 php_admin_value[max_execution_time] = {{.MaxExecutionTime}}
 php_admin_value[max_input_time] = {{.MaxInputTime}}
 php_admin_value[memory_limit] = {{.MemoryLimit}}
-php_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,popen,show_source
+php_admin_value[disable_functions] = {{sitePHPDisabledFunctions}}
 php_admin_flag[allow_url_fopen] = On
 php_admin_flag[allow_url_include] = Off
 
