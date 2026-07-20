@@ -423,6 +423,11 @@ var upgrades = []Upgrade{
 		Description: "新增 WordPress 文件锁定模式与权限应用状态",
 		Func:        ensureFileLockModeColumns,
 	},
+	{
+		Version:     "1.0.31",
+		Description: "新增 WordPress 组件库存与可恢复采集任务表",
+		SQL:         wpInventorySchemaStatements,
+	},
 }
 
 func ensureFileLockModeColumns() error {

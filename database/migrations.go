@@ -1,6 +1,6 @@
 package database
 
-var migrations = []string{
+var migrations = append([]string{
 	// ============================================================
 	// admin_users
 	// ============================================================
@@ -533,4 +533,113 @@ var migrations = []string{
 		('alert_wp_fake_search_bot',     'false', '伪装搜索引擎爬虫告警（默认关闭）'),
 		('alert_wp_security_threshold',  '10',    'WordPress 安全探测告警阈值（每 IP 触发次数，默认 10）'),
 		('alert_wp_security_window_hours','24',   'WordPress 安全探测告警统计窗口（小时，默认 24）')`,
+}, wpInventorySchemaStatements...)
+
+// wpInventorySchemaStatements 同时供全新安装和 1.0.31 增量升级使用，避免两条路径的
+// 表结构、约束或索引随维护产生漂移。
+var wpInventorySchemaStatements = []string{
+	`CREATE TABLE IF NOT EXISTS site_wp_inventory_state (
+		site_id                           INTEGER PRIMARY KEY,
+		status                            TEXT NOT NULL,
+		wordpress_version                 TEXT NOT NULL DEFAULT '',
+		wordpress_locale                  TEXT NOT NULL DEFAULT '',
+		is_multisite                      INTEGER NOT NULL DEFAULT 0,
+		current_theme_key                 TEXT NOT NULL DEFAULT '',
+		plugin_count                      INTEGER NOT NULL DEFAULT 0,
+		active_plugin_count               INTEGER NOT NULL DEFAULT 0,
+		theme_count                       INTEGER NOT NULL DEFAULT 0,
+		core_update_count                 INTEGER NOT NULL DEFAULT 0,
+		plugin_update_count               INTEGER NOT NULL DEFAULT 0,
+		theme_update_count                INTEGER NOT NULL DEFAULT 0,
+		core_updates_transient_present    INTEGER NOT NULL DEFAULT 0,
+		core_updates_last_checked         INTEGER NOT NULL DEFAULT 0,
+		core_version_checked              TEXT NOT NULL DEFAULT '',
+		plugin_updates_transient_present  INTEGER NOT NULL DEFAULT 0,
+		plugin_updates_last_checked       INTEGER NOT NULL DEFAULT 0,
+		theme_updates_transient_present   INTEGER NOT NULL DEFAULT 0,
+		theme_updates_last_checked        INTEGER NOT NULL DEFAULT 0,
+		collection_id                     TEXT NOT NULL DEFAULT '',
+		last_attempt_at                   DATETIME,
+		last_success_at                   DATETIME,
+		last_error_code                   TEXT NOT NULL DEFAULT '',
+		last_error_stage                  TEXT NOT NULL DEFAULT '',
+		updated_at                        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE,
+		CHECK (status IN ('unknown','complete','partial','failed','unsupported'))
+	)`,
+	`CREATE TABLE IF NOT EXISTS site_wp_components (
+		site_id          INTEGER NOT NULL,
+		component_type   TEXT NOT NULL,
+		component_key    TEXT NOT NULL,
+		name             TEXT NOT NULL DEFAULT '',
+		version          TEXT NOT NULL DEFAULT '',
+		is_active        INTEGER NOT NULL DEFAULT 0,
+		is_network_active INTEGER NOT NULL DEFAULT 0,
+		is_current_theme INTEGER NOT NULL DEFAULT 0,
+		collection_id    TEXT NOT NULL,
+		collected_at     DATETIME NOT NULL,
+		PRIMARY KEY (site_id, component_type, component_key),
+		FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE,
+		CHECK (component_type IN ('core','plugin','theme'))
+	)`,
+	`CREATE TABLE IF NOT EXISTS site_wp_component_updates (
+		site_id        INTEGER NOT NULL,
+		component_type TEXT NOT NULL,
+		component_key  TEXT NOT NULL,
+		target_version TEXT NOT NULL,
+		response       TEXT NOT NULL DEFAULT '',
+		locale         TEXT NOT NULL DEFAULT '',
+		collection_id  TEXT NOT NULL,
+		collected_at   DATETIME NOT NULL,
+		PRIMARY KEY (site_id, component_type, component_key, target_version, locale, response),
+		FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE,
+		CHECK (component_type IN ('core','plugin','theme'))
+	)`,
+	`CREATE TABLE IF NOT EXISTS site_wp_inventory_jobs (
+		id                       TEXT PRIMARY KEY,
+		site_id                  INTEGER NOT NULL,
+		trigger_type              TEXT NOT NULL,
+		status                   TEXT NOT NULL,
+		requested_at             DATETIME NOT NULL,
+		not_before               DATETIME NOT NULL,
+		lease_owner              TEXT NOT NULL DEFAULT '',
+		lease_expires_at         DATETIME,
+		attempt_count            INTEGER NOT NULL DEFAULT 0,
+		lease_recovery_count     INTEGER NOT NULL DEFAULT 0,
+		started_at               DATETIME,
+		finished_at              DATETIME,
+		error_code               TEXT NOT NULL DEFAULT '',
+		error_stage              TEXT NOT NULL DEFAULT '',
+		timed_out                INTEGER NOT NULL DEFAULT 0,
+		exit_code                INTEGER NOT NULL DEFAULT -1,
+		wall_time_ms             INTEGER NOT NULL DEFAULT 0,
+		user_cpu_ms              INTEGER NOT NULL DEFAULT 0,
+		system_cpu_ms            INTEGER NOT NULL DEFAULT 0,
+		max_rss_kib              INTEGER NOT NULL DEFAULT 0,
+		stdout_bytes             INTEGER NOT NULL DEFAULT 0,
+		stderr_bytes             INTEGER NOT NULL DEFAULT 0,
+		protocol_bytes           INTEGER NOT NULL DEFAULT 0,
+		runner_hash              TEXT NOT NULL DEFAULT '',
+		runner_version           TEXT NOT NULL DEFAULT '',
+		inventory_schema_version INTEGER NOT NULL DEFAULT 0,
+		created_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE,
+		CHECK (trigger_type IN ('manual','site_created','update_followup','scheduled')),
+		CHECK (status IN ('queued','running','succeeded','failed'))
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS ux_site_wp_inventory_jobs_active_site
+		ON site_wp_inventory_jobs(site_id) WHERE status IN ('queued','running')`,
+	`CREATE INDEX IF NOT EXISTS ix_site_wp_inventory_jobs_claim
+		ON site_wp_inventory_jobs(status, not_before, requested_at)`,
+	`CREATE INDEX IF NOT EXISTS ix_site_wp_inventory_jobs_finished
+		ON site_wp_inventory_jobs(status, finished_at)`,
+	`CREATE TABLE IF NOT EXISTS site_wp_inventory_job_warnings (
+		job_id       TEXT NOT NULL,
+		warning_code TEXT NOT NULL,
+		created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (job_id, warning_code),
+		FOREIGN KEY (job_id) REFERENCES site_wp_inventory_jobs(id) ON DELETE CASCADE,
+		CHECK (warning_code IN ('stale_runner_cleanup_failed','unknown_runner_entry'))
+	)`,
 }

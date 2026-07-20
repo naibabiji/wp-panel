@@ -80,6 +80,21 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 	if fileSecurityEventsTable != 1 {
 		t.Fatalf("file_security_events exists = %d, want 1", fileSecurityEventsTable)
 	}
+	for _, table := range []string{
+		"site_wp_inventory_state",
+		"site_wp_components",
+		"site_wp_component_updates",
+		"site_wp_inventory_jobs",
+		"site_wp_inventory_job_warnings",
+	} {
+		var exists int
+		if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&exists); err != nil {
+			t.Fatalf("query %s table: %v", table, err)
+		}
+		if exists != 1 {
+			t.Fatalf("%s exists = %d, want 1", table, exists)
+		}
+	}
 	for _, col := range []string{"backup_type", "s3_endpoint", "s3_bucket", "s3_region", "s3_access_key_id", "s3_secret_key", "s3_path_prefix"} {
 		var exists int
 		if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('remote_backup_settings') WHERE name = ?", col).Scan(&exists); err != nil {
@@ -106,6 +121,74 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 		}
 		if got != setting.want {
 			t.Fatalf("%s = %q, want %q", setting.key, got, setting.want)
+		}
+	}
+}
+
+func TestUpgradeAddsWPInventorySchemaFrom1030(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+
+	if _, err := DB.Exec(`INSERT INTO websites
+		(name, domain, status, system_user, web_root, log_dir, db_name, db_user, php_pool_path, nginx_conf_path)
+		VALUES ('existing.example.com', 'existing.example.com', 'active', 'wp_existing', '/tmp/www', '/tmp/log', 'db', 'dbuser', '/tmp/php.conf', '/tmp/nginx.conf')`); err != nil {
+		t.Fatalf("insert existing website: %v", err)
+	}
+	for _, table := range []string{
+		"site_wp_inventory_job_warnings",
+		"site_wp_inventory_jobs",
+		"site_wp_component_updates",
+		"site_wp_components",
+		"site_wp_inventory_state",
+	} {
+		if _, err := DB.Exec("DROP TABLE " + table); err != nil {
+			t.Fatalf("drop %s: %v", table, err)
+		}
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.30')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("second RunUpgrades() error = %v", err)
+	}
+
+	var version string
+	if err := DB.QueryRow("SELECT version FROM schema_version ORDER BY updated_at DESC, rowid DESC LIMIT 1").Scan(&version); err != nil {
+		t.Fatalf("query schema version: %v", err)
+	}
+	if version != "1.0.31" {
+		t.Fatalf("schema version = %q, want 1.0.31", version)
+	}
+	var sites int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM websites WHERE domain = 'existing.example.com'").Scan(&sites); err != nil {
+		t.Fatalf("query existing website: %v", err)
+	}
+	if sites != 1 {
+		t.Fatalf("existing websites = %d, want 1", sites)
+	}
+	for _, name := range []string{
+		"ux_site_wp_inventory_jobs_active_site",
+		"ix_site_wp_inventory_jobs_claim",
+		"ix_site_wp_inventory_jobs_finished",
+	} {
+		var exists int
+		if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?", name).Scan(&exists); err != nil {
+			t.Fatalf("query %s index: %v", name, err)
+		}
+		if exists != 1 {
+			t.Fatalf("%s exists = %d, want 1", name, exists)
 		}
 	}
 }
