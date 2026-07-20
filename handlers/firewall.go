@@ -14,6 +14,8 @@ import (
 
 type FirewallHandler struct{}
 
+const firewallBanHistoryLimit = 300
+
 func (h *FirewallHandler) ListBans(c *gin.Context) {
 	db := database.GetDB()
 	isHistory := c.Query("history") == "1"
@@ -36,7 +38,8 @@ func (h *FirewallHandler) ListBans(c *gin.Context) {
 	var args []interface{}
 
 	if isHistory {
-		where = "1=1"
+		where = "id IN (SELECT id FROM firewall_bans ORDER BY banned_at DESC, id DESC LIMIT ?)"
+		args = append(args, firewallBanHistoryLimit)
 	} else {
 		where = "unbanned_at IS NULL AND (expires_at IS NULL OR expires_at > datetime('now'))"
 	}
@@ -71,7 +74,7 @@ func (h *FirewallHandler) ListBans(c *gin.Context) {
 
 	offset := (page - 1) * perPage
 	query := `SELECT id, ip_address, ban_level, reason, source_jail, banned_at, expires_at, unbanned_at, ban_count, is_manual
-	 FROM firewall_bans WHERE ` + where + ` ORDER BY banned_at DESC LIMIT ? OFFSET ?`
+	 FROM firewall_bans WHERE ` + where + ` ORDER BY banned_at DESC, id DESC LIMIT ? OFFSET ?`
 	args = append(args, perPage, offset)
 
 	rows, err := db.Query(query, args...)

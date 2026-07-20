@@ -150,6 +150,16 @@ func TestClassifySecurityEvent(t *testing.T) {
 			wantRisk: "medium",
 		},
 		{
+			name:     "url encoded sensitive file scan",
+			method:   "GET",
+			uri:      "/checkout/%2eenv",
+			ua:       "curl/8.0",
+			ip:       "185.177.72.51",
+			status:   404,
+			wantType: SecurityEventSensitiveFileScan,
+			wantRisk: "medium",
+		},
+		{
 			name:     "suspicious php probe",
 			method:   "GET",
 			uri:      "/wp-content/uploads/2026/shell.php",

@@ -689,6 +689,7 @@
     "rules_help": "防御规则说明",
     "manual_ban_ip": "手动封禁 IP",
     "ip_address": "IP 地址",
+    "lookup_ip": "查询 IP",
     "ban_duration": "封禁时长",
     "duration_10m": "10 分钟",
     "duration_1h": "1 小时",
@@ -739,7 +740,7 @@
     "no_current_bans": "当前无封禁记录",
     "prev_page": "上一页",
     "next_page": "下一页",
-    "ban_history": "历史封禁记录（最近30条）",
+    "ban_history": "历史封禁记录（最近300条）",
     "unbanned_at": "解封时间",
     "no_history": "暂无历史记录"
   },

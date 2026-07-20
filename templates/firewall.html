@@ -138,7 +138,7 @@
         <div class="flex items-end space-x-3">
             <div class="flex-1">
                 <label class="block text-sm text-gray-300 mb-1">{{t .Lang "firewall.ip_address"}}</label>
-                <input type="text" x-model="banIP" class="input-field" placeholder="192.168.1.100">
+                <input type="text" x-ref="banIPInput" x-model="banIP" class="input-field" placeholder="192.168.1.100">
             </div>
             <div>
                 <label class="block text-sm text-gray-300 mb-1">{{t .Lang "firewall.ban_duration"}}</label>
@@ -182,13 +182,18 @@
                         <th class="table-header">{{t .Lang "firewall.count"}}</th>
                         <th class="table-header">{{t .Lang "firewall.last_seen"}}</th>
                         <th class="table-header">{{t .Lang "firewall.path_samples"}}</th>
-                        <th class="table-header">{{t .Lang "firewall.actions"}}</th>
+                        <th class="table-header sticky right-0 z-10 bg-gray-800">{{t .Lang "firewall.actions"}}</th>
                     </tr>
                 </thead>
                 <tbody>
                     <template x-for="item in filteredSecurityReportItems()" :key="item.domain + item.ip_address">
                         <tr class="border-b border-gray-700/50">
-                            <td class="table-cell font-mono text-sm" x-text="item.ip_address"></td>
+                            <td class="table-cell">
+                                <div class="flex items-center gap-2">
+                                    <span class="font-mono text-sm" x-text="item.ip_address"></span>
+                                    <a :href="'https://www.abuseipdb.com/check/' + encodeURIComponent(item.ip_address)" target="_blank" rel="noopener noreferrer" class="btn-secondary text-xs py-1 px-2 shrink-0">{{t .Lang "firewall.lookup_ip"}}</a>
+                                </div>
+                            </td>
                             <td class="table-cell text-sm" x-text="item.domain"></td>
                             <td class="table-cell text-xs">
                                 <template x-for="eventType in (item.types || [])" :key="eventType">
@@ -199,14 +204,14 @@
                             <td class="table-cell"><span :class="riskClass(item.risk_level)" x-text="item.risk_level"></span></td>
                             <td class="table-cell" x-text="item.event_count"></td>
                             <td class="table-cell text-xs" x-text="item.last_seen || '--'"></td>
-                            <td class="table-cell text-xs font-mono">
+                            <td class="table-cell text-xs font-mono max-w-md">
                                 <template x-for="p in item.sample_paths.slice(0, 3)" :key="p">
-                                    <div x-text="p"></div>
+                                    <div class="max-w-md truncate" :title="p" x-text="p"></div>
                                 </template>
                             </td>
-                            <td class="table-cell whitespace-nowrap">
+                            <td class="table-cell whitespace-nowrap sticky right-0 z-10 bg-gray-800">
                                 <button @click="copySecurityReport(item)" class="btn-secondary text-xs py-1 px-2">{{t .Lang "firewall.copy_report"}}</button>
-                                <button @click="banIP = item.ip_address; showToast(t('firewall.ip_filled_notice'), 'success')" class="btn-danger text-xs py-1 px-2 ml-1">{{t .Lang "firewall.fill_ban"}}</button>
+                                <button @click="fillBanIP(item.ip_address)" class="btn-danger text-xs py-1 px-2 ml-1">{{t .Lang "firewall.fill_ban"}}</button>
                             </td>
                         </tr>
                     </template>
@@ -264,7 +269,7 @@
                             <td class="table-cell"><span :class="event.resolved_at ? 'badge-info' : 'badge-danger'" x-text="event.resolved_at ? t('firewall.status_handled') : t('firewall.status_current_risk')"></span></td>
                             <td class="table-cell whitespace-nowrap">
                                 <button @click="copyFileSecurityEvent(event)" class="btn-secondary text-xs py-1 px-2">{{t .Lang "firewall.copy_info"}}</button>
-                                <button x-show="event.ip_address" @click="banIP = event.ip_address; showToast(t('firewall.ip_filled_notice'), 'success')" class="btn-danger text-xs py-1 px-2 ml-1">{{t .Lang "firewall.fill_ban"}}</button>
+                                <button x-show="event.ip_address" @click="fillBanIP(event.ip_address)" class="btn-danger text-xs py-1 px-2 ml-1">{{t .Lang "firewall.fill_ban"}}</button>
                             </td>
                         </tr>
                     </template>
@@ -311,7 +316,7 @@
                     <tr>
                         <th class="table-header">{{t .Lang "firewall.ip_address"}}</th>
                         <th class="table-header">{{t .Lang "firewall.level"}}</th>
-                        <th class="table-header">{{t .Lang "firewall.reason"}}</th>
+                        <th class="table-header w-64">{{t .Lang "firewall.reason"}}</th>
                         <th class="table-header">{{t .Lang "firewall.source"}}</th>
                         <th class="table-header">{{t .Lang "firewall.banned_at"}}</th>
                         <th class="table-header">{{t .Lang "firewall.expires_at"}}</th>
@@ -322,11 +327,18 @@
                 <tbody>
                     <template x-for="ban in bans" :key="ban.id">
                         <tr class="border-b border-gray-700/50">
-                            <td class="table-cell font-mono text-sm" x-text="ban.ip_address"></td>
+                            <td class="table-cell">
+                                <div class="flex items-center gap-2">
+                                    <span class="font-mono text-sm" x-text="ban.ip_address"></span>
+                                    <a :href="'https://www.abuseipdb.com/check/' + encodeURIComponent(ban.ip_address)" target="_blank" rel="noopener noreferrer" class="btn-secondary text-xs py-1 px-2 shrink-0">{{t .Lang "firewall.lookup_ip"}}</a>
+                                </div>
+                            </td>
                             <td class="table-cell">
                                 <span :class="banLevelClass(ban.ban_level)" x-text="banLevelText(ban.ban_level)"></span>
                             </td>
-                            <td class="table-cell text-sm" x-text="ban.reason || '--'"></td>
+                            <td class="table-cell text-sm">
+                                <div class="w-64 truncate" :title="ban.reason || '--'" x-text="ban.reason || '--'"></div>
+                            </td>
                             <td class="table-cell">
                                 <span :class="sourceClass(ban)" class="text-xs" x-text="sourceLabel(ban)"></span>
                             </td>
@@ -358,14 +370,21 @@
     </div>
 
     <div class="card" x-show="activeTab === 'history'" x-cloak>
-        <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "firewall.ban_history"}}</h3>
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
+            <h3 class="text-lg font-semibold text-white">{{t .Lang "firewall.ban_history"}}</h3>
+            <div class="flex flex-wrap items-center gap-2">
+                <input type="text" x-model="historySearchIP" @keydown.enter="historyPage=1;fetchHistory()" class="input-field text-sm py-1.5 w-48" placeholder="{{t .Lang "firewall.search_ip_placeholder"}}">
+                <button @click="historyPage=1;fetchHistory()" class="btn-secondary text-xs py-1.5 px-3">{{t .Lang "firewall.search"}}</button>
+                <button @click="resetHistorySearch()" class="btn-secondary text-xs py-1.5 px-3">{{t .Lang "firewall.reset_filters"}}</button>
+            </div>
+        </div>
         <div class="overflow-x-auto">
             <table class="w-full">
                 <thead class="border-b border-gray-700">
                     <tr>
                         <th class="table-header">{{t .Lang "firewall.ip_address"}}</th>
                         <th class="table-header">{{t .Lang "firewall.level"}}</th>
-                        <th class="table-header">{{t .Lang "firewall.reason"}}</th>
+                        <th class="table-header w-64">{{t .Lang "firewall.reason"}}</th>
                         <th class="table-header">{{t .Lang "firewall.source"}}</th>
                         <th class="table-header">{{t .Lang "firewall.banned_at"}}</th>
                         <th class="table-header">{{t .Lang "firewall.unbanned_at"}}</th>
@@ -378,7 +397,9 @@
                             <td class="table-cell">
                                 <span :class="['','badge-info','badge-warning','badge-danger','badge-danger','badge-danger'][h.ban_level]" x-text="banLevelText(h.ban_level)"></span>
                             </td>
-                            <td class="table-cell text-sm" x-text="h.reason || '--'"></td>
+                            <td class="table-cell text-sm">
+                                <div class="w-64 truncate" :title="h.reason || '--'" x-text="h.reason || '--'"></div>
+                            </td>
                             <td class="table-cell">
                                 <span :class="sourceClass(h)" class="text-xs" x-text="sourceLabel(h)"></span>
                             </td>
@@ -392,6 +413,16 @@
                 </tbody>
             </table>
         </div>
+        <div x-show="historyTotalPages > 1" class="flex items-center justify-between mt-4 pt-3 border-t border-gray-700/50">
+            <span class="text-sm text-gray-400" x-text="t('firewall.total_records', { count: historyTotal })"></span>
+            <div class="flex items-center space-x-1">
+                <button @click="historyGoPage(historyPage-1)" :disabled="historyPage <= 1" class="px-3 py-1 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed">{{t .Lang "firewall.prev_page"}}</button>
+                <template x-for="p in historyPageNumbers" :key="p">
+                    <button @click="historyGoPage(p)" :class="p === historyPage ? 'bg-blue-600 text-white' : 'bg-gray-700 hover:bg-gray-600'" class="px-3 py-1 text-sm rounded" x-text="p"></button>
+                </template>
+                <button @click="historyGoPage(historyPage+1)" :disabled="historyPage >= historyTotalPages" class="px-3 py-1 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed">{{t .Lang "firewall.next_page"}}</button>
+            </div>
+        </div>
 </div>
 
 <script>
@@ -402,6 +433,10 @@ function firewallManager() {
         history: [],
         historyLoaded: false,
         historyLoading: false,
+        historySearchIP: '',
+        historyPage: 1,
+        historyTotalPages: 1,
+        historyTotal: 0,
         banIP: '',
         banDuration: '600',
         banSubmitting: false,
@@ -460,13 +495,38 @@ function firewallManager() {
         async fetchHistory() {
             this.historyLoading = true;
             try {
-                const r = await api('/firewall/bans?history=1', { silent: true });
+                let url = '/firewall/bans?history=1&page=' + this.historyPage;
+                if (this.historySearchIP.trim()) url += '&search=' + encodeURIComponent(this.historySearchIP.trim());
+                const r = await api(url, { silent: true });
                 if (r.success) {
                     this.history = r.data?.data || r.data || [];
+                    this.historyTotal = r.data?.total || this.history.length;
+                    this.historyPage = r.data?.page || 1;
+                    this.historyTotalPages = r.data?.total_pages || 1;
                     this.historyLoaded = true;
                 }
             } catch(e) {}
             finally { this.historyLoading = false; }
+        },
+        resetHistorySearch() {
+            this.historySearchIP = '';
+            this.historyPage = 1;
+            this.fetchHistory();
+        },
+        historyGoPage(p) {
+            if (p < 1 || p > this.historyTotalPages) return;
+            this.historyPage = p;
+            this.fetchHistory();
+        },
+        get historyPageNumbers() {
+            const pages = [];
+            const total = this.historyTotalPages;
+            const current = this.historyPage;
+            let start = Math.max(1, current - 2);
+            let end = Math.min(total, start + 4);
+            if (end - start < 4) start = Math.max(1, end - 4);
+            for (let i = start; i <= end; i++) pages.push(i);
+            return pages;
         },
         async fetchWPSecurityReport() {
             this.securityReportLoading = true;
@@ -613,6 +673,15 @@ function firewallManager() {
                 await navigator.clipboard.writeText(lines.join('\n'));
                 showToast(t('firewall.file_event_copied'), 'success');
             } catch(e) { showToast(t('firewall.copy_failed_manual'), 'error'); }
+        },
+        fillBanIP(ip) {
+            this.banIP = ip;
+            this.activeTab = 'current';
+            this.$nextTick(() => {
+                this.$refs.banIPInput?.focus();
+                this.$refs.banIPInput?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            });
+            showToast(t('firewall.ip_filled_notice'), 'success');
         },
         async manualBan() {
             if (!this.banIP.trim()) { showToast(t('firewall.enter_ip'), 'error'); return; }

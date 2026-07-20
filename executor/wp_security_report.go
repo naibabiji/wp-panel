@@ -301,10 +301,17 @@ func classifySecurityEvent(method, uri, ua, ip string, status int, checker *sear
 		return SecurityEventFakeSearchBot, "medium", "UA 声明为搜索引擎爬虫，但来源 IP 不在官方段"
 	}
 
-	// 3. 敏感文件扫描
-	for _, pattern := range sensitiveFilePatterns {
-		if strings.Contains(lowerURI, pattern) {
-			return SecurityEventSensitiveFileScan, "medium", "敏感文件扫描"
+	// 3. 敏感文件扫描。Nginx 的 $uri 会解码 %2eenv 后决定写入安全日志，
+	// 但 combined 日志保留原始请求 URI，因此这里同时检查解码后的形式。
+	sensitiveURIs := []string{lowerURI}
+	if decoded, err := url.QueryUnescape(uri); err == nil && decoded != uri {
+		sensitiveURIs = append(sensitiveURIs, strings.ToLower(decoded))
+	}
+	for _, candidate := range sensitiveURIs {
+		for _, pattern := range sensitiveFilePatterns {
+			if strings.Contains(candidate, pattern) {
+				return SecurityEventSensitiveFileScan, "medium", "敏感文件扫描"
+			}
 		}
 	}
 
