@@ -19,11 +19,17 @@ func Open(dbPath string) error {
 		return fmt.Errorf("failed to create database directory: %w", err)
 	}
 
-	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)&_pragma=cache_size(-8000)"
+	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)&_pragma=cache_size(-8000)&_pragma=foreign_keys(1)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return fmt.Errorf("failed to open sqlite: %w", err)
 	}
+	initialized := false
+	defer func() {
+		if !initialized {
+			_ = db.Close()
+		}
+	}()
 
 	// WAL 模式下允许多个连接并行读取，单连接会成为全站瓶颈
 	db.SetMaxOpenConns(4)
@@ -35,11 +41,16 @@ func Open(dbPath string) error {
 		return fmt.Errorf("sqlite ping failed: %w", err)
 	}
 
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		return fmt.Errorf("failed to enable foreign keys: %w", err)
+	var foreignKeys int
+	if err := db.QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+		return fmt.Errorf("failed to verify foreign keys: %w", err)
+	}
+	if foreignKeys != 1 {
+		return fmt.Errorf("failed to verify foreign keys: got %d, want 1", foreignKeys)
 	}
 
 	DB = db
+	initialized = true
 	return nil
 }
 
