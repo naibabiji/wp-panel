@@ -128,6 +128,8 @@ func TestWPInventoryRoutesRegistered(t *testing.T) {
 		`protected.GET("/api/websites/:id/wp-inventory", wpInventoryHandler.Summary)`,
 		`protected.POST("/api/websites/:id/wp-inventory/refresh", wpInventoryHandler.Refresh)`,
 		`protected.GET("/api/websites/:id/wp-inventory/tasks/:task_id", wpInventoryHandler.Task)`,
+		`protected.GET("/api/websites/:id/wp-inventory/components", wpInventoryHandler.Components)`,
+		`protected.GET("/api/websites/:id/wp-inventory/updates", wpInventoryHandler.Updates)`,
 	} {
 		if !bytes.Contains(source, []byte(route)) {
 			t.Fatalf("router.go missing protected inventory route %s", route)

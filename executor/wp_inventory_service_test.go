@@ -242,6 +242,218 @@ func TestParseRequiredWPInventoryTimeAcceptsStoreRepresentations(t *testing.T) {
 	}
 }
 
+func TestWPInventoryServicePagesUnknownAndFirstFailureAsEmptyArrays(t *testing.T) {
+	store, siteID := newWPInventoryStoreTest(t)
+	service := newTestWPInventoryService(t, store)
+	ctx := context.Background()
+	options := WPInventoryListOptions{Page: 1, PageSize: 50}
+
+	components, err := service.Components(ctx, siteID, options)
+	if err != nil || components.Total != 0 || len(wpInventoryComponentItems(t, components)) != 0 {
+		t.Fatalf("unknown components = %+v, err = %v", components, err)
+	}
+	updates, err := service.Updates(ctx, siteID, options)
+	if err != nil || updates.Total != 0 || len(wpInventoryUpdateItems(t, updates)) != 0 {
+		t.Fatalf("unknown updates = %+v, err = %v", updates, err)
+	}
+
+	now := time.Date(2026, 7, 21, 4, 0, 0, 0, time.UTC)
+	jobID, _ := enqueueAndClaimInventory(t, store, siteID, "worker-page-first-failure", now)
+	runErr := runError(WPInventoryWordPressBootstrapFailed, WPInventoryStageProtocol, 255, false, errors.New("secret"))
+	if err := store.persistFailure(ctx, jobID, "worker-page-first-failure", runErr, WPInventoryRunMeta{}, now.Add(time.Second)); err != nil {
+		t.Fatalf("persistFailure(): %v", err)
+	}
+	components, err = service.Components(ctx, siteID, options)
+	if err != nil || components.Total != 0 || len(wpInventoryComponentItems(t, components)) != 0 {
+		t.Fatalf("first-failure components = %+v, err = %v", components, err)
+	}
+}
+
+func TestWPInventoryServicePagesCurrentCollectionFiltersSearchAndCoreResponses(t *testing.T) {
+	store, siteID := newWPInventoryStoreTest(t)
+	service := newTestWPInventoryService(t, store)
+	ctx := context.Background()
+	now := time.Date(2026, 7, 21, 4, 15, 0, 0, time.UTC)
+	jobID, identity := enqueueAndClaimInventory(t, store, siteID, "worker-page-success", now)
+	if err := store.persistSuccess(ctx, jobID, "worker-page-success", identity, sampleWPInventoryResult(), now.Add(time.Second)); err != nil {
+		t.Fatalf("persistSuccess(): %v", err)
+	}
+	collected := wpInventoryDBTime(now.Add(time.Second))
+	for _, row := range []struct{ key, name, version string }{
+		{`literal%/plugin.php`, "Percent Plugin", "3.0"},
+		{`literalX/plugin.php`, "Plain Plugin", "3.1"},
+		{`under_score/plugin.php`, "Under Plugin", "4.0"},
+		{`underXscore/plugin.php`, "Plain Under Plugin", "4.1"},
+		{`slash\plugin/plugin.php`, "Slash Plugin", "5.0"},
+	} {
+		if _, err := store.db.Exec(`INSERT INTO site_wp_components
+			(site_id, component_type, component_key, name, version, collection_id, collected_at)
+			VALUES (?, 'plugin', ?, ?, ?, ?, ?)`, siteID, row.key, row.name, row.version, jobID, collected); err != nil {
+			t.Fatalf("insert searchable component %q: %v", row.key, err)
+		}
+	}
+	if _, err := store.db.Exec(`INSERT INTO site_wp_components
+		(site_id, component_type, component_key, name, version, collection_id, collected_at)
+		VALUES (?, 'plugin', 'stale/stale.php', 'Stale', '9.9', 'stale-collection', ?)`, siteID, collected); err != nil {
+		t.Fatalf("insert stale component: %v", err)
+	}
+	for _, response := range []string{"latest", "development", "autoupdate", "", "unknown"} {
+		if _, err := store.db.Exec(`INSERT INTO site_wp_component_updates
+			(site_id, component_type, component_key, target_version, response, locale, collection_id, collected_at)
+			VALUES (?, 'core', 'wordpress', ?, ?, 'zh_CN', ?, ?)`, siteID, "8."+response, response, jobID, collected); err != nil {
+			t.Fatalf("insert core response %q: %v", response, err)
+		}
+	}
+	if _, err := store.db.Exec(`INSERT INTO site_wp_component_updates
+		(site_id, component_type, component_key, target_version, response, locale, collection_id, collected_at)
+		VALUES (?, 'plugin', 'stale/stale.php', '9.9', '', '', 'stale-collection', ?)`, siteID, collected); err != nil {
+		t.Fatalf("insert stale update: %v", err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO site_wp_component_updates
+		(site_id, component_type, component_key, target_version, response, locale, collection_id, collected_at)
+		VALUES (?, 'plugin', 'literal%/plugin.php', '3.2', '', '', ?, ?)`, siteID, jobID, collected); err != nil {
+		t.Fatalf("insert literal-percent update: %v", err)
+	}
+
+	allComponents, err := service.Components(ctx, siteID, WPInventoryListOptions{Page: 1, PageSize: 100})
+	if err != nil || allComponents.Total != 8 || len(wpInventoryComponentItems(t, allComponents)) != 8 {
+		t.Fatalf("all components = %+v, err = %v", allComponents, err)
+	}
+	plugins, err := service.Components(ctx, siteID, WPInventoryListOptions{Page: 2, PageSize: 2, Type: "plugin"})
+	pluginItems := wpInventoryComponentItems(t, plugins)
+	if err != nil || plugins.Total != 7 || len(pluginItems) != 2 || plugins.Page != 2 || plugins.PageSize != 2 {
+		t.Fatalf("plugin page = %+v, err = %v", plugins, err)
+	}
+	themes, err := service.Components(ctx, siteID, WPInventoryListOptions{Page: 1, PageSize: 10, Type: "theme"})
+	if err != nil || themes.Total != 1 || len(wpInventoryComponentItems(t, themes)) != 1 {
+		t.Fatalf("theme page = %+v, err = %v", themes, err)
+	}
+	for _, tc := range []struct {
+		search string
+		key    string
+	}{
+		{search: `%`, key: `literal%/plugin.php`},
+		{search: `_`, key: `under_score/plugin.php`},
+		{search: `\`, key: `slash\plugin/plugin.php`},
+		{search: `  Percent Plugin  `, key: `literal%/plugin.php`},
+		{search: `5.0`, key: `slash\plugin/plugin.php`},
+	} {
+		page, err := service.Components(ctx, siteID, WPInventoryListOptions{Page: 1, PageSize: 10, Search: tc.search})
+		items := wpInventoryComponentItems(t, page)
+		if err != nil || page.Total != 1 || len(items) != 1 || items[0].Key != tc.key {
+			t.Fatalf("component search %q = %+v, err = %v", tc.search, page, err)
+		}
+	}
+
+	updates, err := service.Updates(ctx, siteID, WPInventoryListOptions{Page: 1, PageSize: 100})
+	if err != nil || updates.Total != 4 || len(wpInventoryUpdateItems(t, updates)) != 4 {
+		t.Fatalf("all public updates = %+v, err = %v", updates, err)
+	}
+	core, err := service.Updates(ctx, siteID, WPInventoryListOptions{Page: 1, PageSize: 10, Type: "core"})
+	coreItems := wpInventoryUpdateItems(t, core)
+	if err != nil || core.Total != 1 || len(coreItems) != 1 || coreItems[0].TargetVersion != "7.1" {
+		t.Fatalf("core upgrades = %+v, err = %v", core, err)
+	}
+	themeUpdates, err := service.Updates(ctx, siteID, WPInventoryListOptions{Page: 1, PageSize: 10, Type: "theme"})
+	if err != nil || themeUpdates.Total != 1 || len(wpInventoryUpdateItems(t, themeUpdates)) != 1 {
+		t.Fatalf("theme updates = %+v, err = %v", themeUpdates, err)
+	}
+	pluginUpdates, err := service.Updates(ctx, siteID, WPInventoryListOptions{Page: 1, PageSize: 10, Type: "plugin", Search: "alpha"})
+	if err != nil || pluginUpdates.Total != 1 || len(wpInventoryUpdateItems(t, pluginUpdates)) != 1 {
+		t.Fatalf("plugin update search = %+v, err = %v", pluginUpdates, err)
+	}
+	literalUpdate, err := service.Updates(ctx, siteID, WPInventoryListOptions{Page: 1, PageSize: 10, Search: "%"})
+	literalUpdateItems := wpInventoryUpdateItems(t, literalUpdate)
+	if err != nil || literalUpdate.Total != 1 || len(literalUpdateItems) != 1 || literalUpdateItems[0].Key != "literal%/plugin.php" {
+		t.Fatalf("literal update search = %+v, err = %v", literalUpdate, err)
+	}
+	overflow, err := service.Updates(ctx, siteID, WPInventoryListOptions{Page: 10000, PageSize: 100})
+	if err != nil || overflow.Total != 4 || len(wpInventoryUpdateItems(t, overflow)) != 0 || overflow.Page != 10000 {
+		t.Fatalf("overflow update page = %+v, err = %v", overflow, err)
+	}
+
+	failureAt := now.Add(2 * time.Minute)
+	failureJob, _ := enqueueAndClaimInventory(t, store, siteID, "worker-page-failure", failureAt)
+	runErr := runError(WPInventoryRunnerTimeout, WPInventoryStageExecute, -1, true, errors.New("secret"))
+	if err := store.persistFailure(ctx, failureJob, "worker-page-failure", runErr, WPInventoryRunMeta{}, failureAt.Add(time.Second)); err != nil {
+		t.Fatalf("persist page failure: %v", err)
+	}
+	afterFailure, err := service.Components(ctx, siteID, WPInventoryListOptions{Page: 1, PageSize: 100})
+	if err != nil || afterFailure.Total != 8 || len(wpInventoryComponentItems(t, afterFailure)) != 8 {
+		t.Fatalf("components after failed refresh = %+v, err = %v", afterFailure, err)
+	}
+}
+
+func TestWPInventoryServicePageValidationEligibilityAndTimeFailure(t *testing.T) {
+	store, siteID := newWPInventoryStoreTest(t)
+	service := newTestWPInventoryService(t, store)
+	ctx := context.Background()
+	valid := WPInventoryListOptions{Page: 1, PageSize: 50}
+
+	invalid := []WPInventoryListOptions{
+		{Page: 0, PageSize: 50}, {Page: -1, PageSize: 50}, {Page: 10001, PageSize: 50},
+		{Page: 1, PageSize: 0}, {Page: 1, PageSize: 101}, {Page: 1, PageSize: 50, Type: "core"},
+		{Page: 1, PageSize: 50, Type: "Plugin"}, {Page: 1, PageSize: 50, Search: strings.Repeat("a", 129)},
+		{Page: 1, PageSize: 50, Search: string([]byte{0xff})},
+	}
+	for _, options := range invalid {
+		if _, err := service.Components(ctx, siteID, options); !errors.Is(err, ErrWPInventoryInvalidRequest) {
+			t.Fatalf("Components(%+v) error = %v", options, err)
+		}
+	}
+	if _, err := service.Components(ctx, siteID, WPInventoryListOptions{
+		Page: 1, PageSize: 50, Search: strings.Repeat("a", 128),
+	}); err != nil {
+		t.Fatalf("Components(128-byte search): %v", err)
+	}
+	if _, err := service.Updates(ctx, siteID, WPInventoryListOptions{Page: 1, PageSize: 50, Type: "unknown"}); !errors.Is(err, ErrWPInventoryInvalidRequest) {
+		t.Fatalf("Updates(unknown type) error = %v", err)
+	}
+	if _, err := service.Components(ctx, 999999, valid); !errors.Is(err, ErrWPInventorySiteNotFound) {
+		t.Fatalf("missing Components() error = %v", err)
+	}
+	phpSite := insertWPInventoryServiceSite(t, store, "page-php.example.com", "active", "php")
+	if _, err := service.Updates(ctx, phpSite, valid); !errors.Is(err, ErrWPInventoryUnsupportedSite) {
+		t.Fatalf("PHP Updates() error = %v", err)
+	}
+	creatingSite := insertWPInventoryServiceSite(t, store, "page-creating.example.com", "creating", "wordpress")
+	creating, err := service.Components(ctx, creatingSite, valid)
+	if err != nil || creating.Total != 0 || len(wpInventoryComponentItems(t, creating)) != 0 {
+		t.Fatalf("creating Components() = %+v, err = %v", creating, err)
+	}
+
+	now := time.Date(2026, 7, 21, 5, 0, 0, 0, time.UTC)
+	jobID, identity := enqueueAndClaimInventory(t, store, siteID, "worker-page-time", now)
+	if err := store.persistSuccess(ctx, jobID, "worker-page-time", identity, sampleWPInventoryResult(), now.Add(time.Second)); err != nil {
+		t.Fatalf("persistSuccess(): %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE site_wp_components SET collected_at = 'not-a-time'
+		WHERE site_id = ? AND component_type = 'plugin'`, siteID); err != nil {
+		t.Fatalf("corrupt collected_at: %v", err)
+	}
+	if _, err := service.Components(ctx, siteID, valid); err == nil {
+		t.Fatal("Components() accepted invalid collected_at")
+	}
+}
+
+func wpInventoryComponentItems(t *testing.T, page models.PaginatedResult) []models.WPInventoryComponent {
+	t.Helper()
+	items, ok := page.Items.([]models.WPInventoryComponent)
+	if !ok || items == nil {
+		t.Fatalf("component items type/value = %T/%v", page.Items, page.Items)
+	}
+	return items
+}
+
+func wpInventoryUpdateItems(t *testing.T, page models.PaginatedResult) []models.WPInventoryUpdate {
+	t.Helper()
+	items, ok := page.Items.([]models.WPInventoryUpdate)
+	if !ok || items == nil {
+		t.Fatalf("update items type/value = %T/%v", page.Items, page.Items)
+	}
+	return items
+}
+
 func newTestWPInventoryService(t *testing.T, store *wpInventoryStore) *WPInventoryService {
 	t.Helper()
 	service, err := NewWPInventoryService(store.db)

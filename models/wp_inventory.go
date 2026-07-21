@@ -56,3 +56,22 @@ type WPInventoryRefreshResult struct {
 	Task    WPInventoryTask `json:"task"`
 	Created bool            `json:"created"`
 }
+
+type WPInventoryComponent struct {
+	Type          string    `json:"type"`
+	Key           string    `json:"key"`
+	Name          string    `json:"name"`
+	Version       string    `json:"version"`
+	Active        bool      `json:"active"`
+	NetworkActive bool      `json:"network_active"`
+	CurrentTheme  bool      `json:"current_theme"`
+	CollectedAt   time.Time `json:"collected_at"`
+}
+
+type WPInventoryUpdate struct {
+	Type          string    `json:"type"`
+	Key           string    `json:"key"`
+	TargetVersion string    `json:"target_version"`
+	Locale        string    `json:"locale"`
+	CollectedAt   time.Time `json:"collected_at"`
+}

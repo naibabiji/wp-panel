@@ -520,6 +520,177 @@ func TestWPInventoryStoreMaximumDatasetBudget(t *testing.T) {
 	}
 }
 
+func TestWPInventoryStorePageSnapshotStaysConsistentDuringReplacement(t *testing.T) {
+	store, siteID := newWPInventoryStoreTest(t)
+	service := newTestWPInventoryService(t, store)
+	ctx := context.Background()
+	writePageCollection := func(collection, prefix string, count int) error {
+		tx, err := store.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(ctx, "DELETE FROM site_wp_components WHERE site_id = ?", siteID); err != nil {
+			return err
+		}
+		for i := 0; i < count; i++ {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO site_wp_components
+				(site_id, component_type, component_key, name, version, collection_id, collected_at)
+				VALUES (?, 'plugin', ?, ?, '1.0', ?, '2026-07-21 07:00:00')`,
+				siteID, fmt.Sprintf("%s/%03d.php", prefix, i), prefix, collection); err != nil {
+				return err
+			}
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO site_wp_inventory_state
+			(site_id, status, collection_id, last_attempt_at, last_success_at, updated_at)
+			VALUES (?, 'complete', ?, '2026-07-21 07:00:00', '2026-07-21 07:00:00', '2026-07-21 07:00:00')
+			ON CONFLICT(site_id) DO UPDATE SET status='complete', collection_id=excluded.collection_id,
+			last_attempt_at=excluded.last_attempt_at, last_success_at=excluded.last_success_at,
+			last_error_code='', last_error_stage='', updated_at=excluded.updated_at`, siteID, collection)
+		if err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	if err := writePageCollection("collection-a", "a", 3); err != nil {
+		t.Fatalf("write initial collection: %v", err)
+	}
+
+	writerErrors := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 120; i++ {
+			if i%2 == 0 {
+				if err := writePageCollection("collection-b", "b", 7); err != nil {
+					writerErrors <- err
+					return
+				}
+			} else if err := writePageCollection("collection-a", "a", 3); err != nil {
+				writerErrors <- err
+				return
+			}
+		}
+	}()
+
+	options := WPInventoryListOptions{Page: 1, PageSize: 100}
+	for i := 0; i < 400; i++ {
+		page, err := service.Components(ctx, siteID, options)
+		if err != nil {
+			t.Fatalf("Components() during replacement: %v", err)
+		}
+		items := wpInventoryComponentItems(t, page)
+		if page.Total != len(items) || (page.Total != 3 && page.Total != 7) {
+			t.Fatalf("mixed page total/items = %d/%d", page.Total, len(items))
+		}
+		wantPrefix := "a/"
+		if page.Total == 7 {
+			wantPrefix = "b/"
+		}
+		for _, item := range items {
+			if !strings.HasPrefix(item.Key, wantPrefix) {
+				t.Fatalf("mixed collection total=%d key=%q, want prefix %q", page.Total, item.Key, wantPrefix)
+			}
+		}
+		select {
+		case <-done:
+			if i > 120 {
+				i = 400
+			}
+		default:
+		}
+	}
+	<-done
+	select {
+	case err := <-writerErrors:
+		t.Fatalf("replace collection: %v", err)
+	default:
+	}
+}
+
+func TestWPInventoryPageMaximumDatasetBudget(t *testing.T) {
+	store, siteID := newWPInventoryStoreTest(t)
+	ctx := context.Background()
+	const rowsPerTable = 10000
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx(): %v", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO site_wp_inventory_state
+		(site_id, status, collection_id, last_attempt_at, last_success_at, updated_at)
+		VALUES (?, 'complete', 'page-budget', '2026-07-21 08:00:00', '2026-07-21 08:00:00', '2026-07-21 08:00:00')`, siteID); err != nil {
+		t.Fatalf("insert page state: %v", err)
+	}
+	componentStmt, err := tx.Prepare(`INSERT INTO site_wp_components
+		(site_id, component_type, component_key, name, version, collection_id, collected_at)
+		VALUES (?, 'plugin', ?, ?, '1.0', 'page-budget', '2026-07-21 08:00:00')`)
+	if err != nil {
+		t.Fatalf("prepare components: %v", err)
+	}
+	updateStmt, err := tx.Prepare(`INSERT INTO site_wp_component_updates
+		(site_id, component_type, component_key, target_version, response, locale, collection_id, collected_at)
+		VALUES (?, 'plugin', ?, '2.0', '', '', 'page-budget', '2026-07-21 08:00:00')`)
+	if err != nil {
+		t.Fatalf("prepare updates: %v", err)
+	}
+	for i := 0; i < rowsPerTable; i++ {
+		key := fmt.Sprintf("plugin-%05d/plugin.php", i)
+		if _, err := componentStmt.Exec(siteID, key, fmt.Sprintf("Plugin %05d", i)); err != nil {
+			t.Fatalf("insert component %d: %v", i, err)
+		}
+		if _, err := updateStmt.Exec(siteID, key); err != nil {
+			t.Fatalf("insert update %d: %v", i, err)
+		}
+	}
+	_ = componentStmt.Close()
+	_ = updateStmt.Close()
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit page dataset: %v", err)
+	}
+
+	for _, query := range []struct {
+		name string
+		sql  string
+		args []any
+	}{
+		{name: "components", sql: `EXPLAIN QUERY PLAN SELECT COUNT(*) FROM site_wp_components WHERE ` + wpInventoryComponentPageWhereSQL,
+			args: []any{siteID, "page-budget", "", "", "", "%", "%", "%"}},
+		{name: "updates", sql: `EXPLAIN QUERY PLAN SELECT COUNT(*) FROM site_wp_component_updates WHERE ` + wpInventoryUpdatePageWhereSQL,
+			args: []any{siteID, "page-budget", "", "", "", "%", "%"}},
+	} {
+		rows, err := store.db.Query(query.sql, query.args...)
+		if err != nil {
+			t.Fatalf("EXPLAIN %s: %v", query.name, err)
+		}
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatalf("scan EXPLAIN %s: %v", query.name, err)
+			}
+			t.Logf("%s query plan: %s", query.name, detail)
+		}
+		_ = rows.Close()
+	}
+
+	started := time.Now()
+	components, err := store.getComponentPage(ctx, siteID, "", "plugin-099", 100, 0)
+	componentElapsed := time.Since(started)
+	if err != nil || components.Total != 100 || len(components.Items) != 100 {
+		t.Fatalf("component budget page = %d/%d, err = %v", components.Total, len(components.Items), err)
+	}
+	started = time.Now()
+	updates, err := store.getUpdatePage(ctx, siteID, "", "plugin-099", 100, 0)
+	updateElapsed := time.Since(started)
+	if err != nil || updates.Total != 100 || len(updates.Items) != 100 {
+		t.Fatalf("update budget page = %d/%d, err = %v", updates.Total, len(updates.Items), err)
+	}
+	t.Logf("10000-row page queries: components=%s updates=%s", componentElapsed, updateElapsed)
+	if componentElapsed > 200*time.Millisecond || updateElapsed > 200*time.Millisecond {
+		t.Fatalf("page query budget exceeded: components=%s updates=%s budget=200ms", componentElapsed, updateElapsed)
+	}
+}
+
 func newWPInventoryStoreTest(t *testing.T) (*wpInventoryStore, int) {
 	t.Helper()
 	if database.DB != nil {

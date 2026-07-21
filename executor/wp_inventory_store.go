@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -150,6 +151,28 @@ type wpInventorySummarySnapshot struct {
 	ActiveJob            *wpInventoryJob
 	CoreUpgradeAvailable bool
 }
+
+type wpInventoryComponentPageSnapshot struct {
+	State wpInventoryState
+	Items []wpInventoryStoredComponent
+	Total int
+}
+
+type wpInventoryUpdatePageSnapshot struct {
+	State wpInventoryState
+	Items []wpInventoryStoredUpdate
+	Total int
+}
+
+const wpInventoryComponentPageWhereSQL = `site_id = ? AND collection_id = ?
+	AND component_type IN ('plugin','theme')
+	AND (? = '' OR component_type = ?)
+	AND (? = '' OR component_key LIKE ? ESCAPE '\' OR name LIKE ? ESCAPE '\' OR version LIKE ? ESCAPE '\')`
+
+const wpInventoryUpdatePageWhereSQL = `site_id = ? AND collection_id = ?
+	AND (component_type <> 'core' OR response = 'upgrade')
+	AND (? = '' OR component_type = ?)
+	AND (? = '' OR component_key LIKE ? ESCAPE '\' OR target_version LIKE ? ESCAPE '\')`
 
 func newWPInventoryStore() (*wpInventoryStore, error) {
 	return newWPInventoryStoreWithDB(database.GetDB())
@@ -555,6 +578,112 @@ func (s *wpInventoryStore) getUpdates(ctx context.Context, siteID int) ([]wpInve
 	return items, rows.Err()
 }
 
+func (s *wpInventoryStore) getComponentPage(ctx context.Context, siteID int, componentType, search string, limit, offset int) (wpInventoryComponentPageSnapshot, error) {
+	snapshot := wpInventoryComponentPageSnapshot{Items: make([]wpInventoryStoredComponent, 0)}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return snapshot, err
+	}
+	defer tx.Rollback()
+
+	state, err := loadWPInventoryListState(ctx, tx, siteID)
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.State = state
+	if state.CollectionID == "" {
+		if err := tx.Commit(); err != nil {
+			return snapshot, err
+		}
+		return snapshot, nil
+	}
+
+	pattern := wpInventoryLikePattern(search)
+	args := []any{siteID, state.CollectionID, componentType, componentType, search, pattern, pattern, pattern}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_wp_components WHERE `+wpInventoryComponentPageWhereSQL, args...).Scan(&snapshot.Total); err != nil {
+		return snapshot, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT component_type, component_key, name, version,
+		is_active, is_network_active, is_current_theme, collected_at
+		FROM site_wp_components WHERE `+wpInventoryComponentPageWhereSQL+`
+		ORDER BY component_type, component_key LIMIT ? OFFSET ?`, append(args, limit, offset)...)
+	if err != nil {
+		return snapshot, err
+	}
+	for rows.Next() {
+		var item wpInventoryStoredComponent
+		if err := rows.Scan(&item.Type, &item.Key, &item.Name, &item.Version, &item.Active,
+			&item.NetworkActive, &item.CurrentTheme, &item.CollectedAt); err != nil {
+			_ = rows.Close()
+			return snapshot, err
+		}
+		snapshot.Items = append(snapshot.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return snapshot, err
+	}
+	if err := rows.Close(); err != nil {
+		return snapshot, err
+	}
+	if err := tx.Commit(); err != nil {
+		return snapshot, err
+	}
+	return snapshot, nil
+}
+
+func (s *wpInventoryStore) getUpdatePage(ctx context.Context, siteID int, componentType, search string, limit, offset int) (wpInventoryUpdatePageSnapshot, error) {
+	snapshot := wpInventoryUpdatePageSnapshot{Items: make([]wpInventoryStoredUpdate, 0)}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return snapshot, err
+	}
+	defer tx.Rollback()
+
+	state, err := loadWPInventoryListState(ctx, tx, siteID)
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.State = state
+	if state.CollectionID == "" {
+		if err := tx.Commit(); err != nil {
+			return snapshot, err
+		}
+		return snapshot, nil
+	}
+
+	pattern := wpInventoryLikePattern(search)
+	args := []any{siteID, state.CollectionID, componentType, componentType, search, pattern, pattern}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_wp_component_updates WHERE `+wpInventoryUpdatePageWhereSQL, args...).Scan(&snapshot.Total); err != nil {
+		return snapshot, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT component_type, component_key, target_version, locale, collected_at
+		FROM site_wp_component_updates WHERE `+wpInventoryUpdatePageWhereSQL+`
+		ORDER BY component_type, component_key, target_version, locale, response LIMIT ? OFFSET ?`, append(args, limit, offset)...)
+	if err != nil {
+		return snapshot, err
+	}
+	for rows.Next() {
+		var item wpInventoryStoredUpdate
+		if err := rows.Scan(&item.Type, &item.Key, &item.Version, &item.Locale, &item.CollectedAt); err != nil {
+			_ = rows.Close()
+			return snapshot, err
+		}
+		snapshot.Items = append(snapshot.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return snapshot, err
+	}
+	if err := rows.Close(); err != nil {
+		return snapshot, err
+	}
+	if err := tx.Commit(); err != nil {
+		return snapshot, err
+	}
+	return snapshot, nil
+}
+
 func (s *wpInventoryStore) getJob(ctx context.Context, jobID string) (wpInventoryJob, error) {
 	job, err := loadWPInventoryJob(ctx, s.db, `SELECT id, site_id, trigger_type, status, requested_at, not_before,
 		lease_owner, COALESCE(lease_expires_at, ''), attempt_count, lease_recovery_count,
@@ -696,6 +825,30 @@ func loadWPInventorySiteIdentity(ctx context.Context, queryer wpInventoryQueryer
 		&identity.SystemUser, &identity.WebRoot, &identity.SiteType)
 	identity.Status = models.WebsiteStatus(status)
 	return identity, err
+}
+
+func loadWPInventoryListState(ctx context.Context, tx *sql.Tx, siteID int) (wpInventoryState, error) {
+	if siteID <= 0 {
+		return wpInventoryState{}, ErrWPInventoryInvalidRequest
+	}
+	identity, err := loadWPInventorySiteIdentity(ctx, tx, siteID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return wpInventoryState{}, ErrWPInventorySiteNotFound
+	}
+	if err != nil {
+		return wpInventoryState{}, err
+	}
+	if identity.SiteType != "wordpress" {
+		return wpInventoryState{}, ErrWPInventoryUnsupportedSite
+	}
+	return loadWPInventoryState(ctx, tx, siteID)
+}
+
+func wpInventoryLikePattern(search string) string {
+	escaped := strings.ReplaceAll(search, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `%`, `\%`)
+	escaped = strings.ReplaceAll(escaped, `_`, `\_`)
+	return `%` + escaped + `%`
 }
 
 func fenceWPInventoryJob(ctx context.Context, tx *sql.Tx, jobID, owner, completed string) (int, error) {

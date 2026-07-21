@@ -71,6 +71,50 @@ func (h *WPInventoryHandler) Task(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(task))
 }
 
+func (h *WPInventoryHandler) Components(c *gin.Context) {
+	siteID, ok := wpInventorySiteID(c)
+	if !ok {
+		return
+	}
+	options, ok := wpInventoryListOptions(c)
+	if !ok {
+		return
+	}
+	service, err := executor.NewWPInventoryService(h.DB)
+	if err != nil {
+		wpInventoryError(c, err, "wp_inventory.query_failed")
+		return
+	}
+	result, err := service.Components(c.Request.Context(), siteID, options)
+	if err != nil {
+		wpInventoryError(c, err, "wp_inventory.query_failed")
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(result))
+}
+
+func (h *WPInventoryHandler) Updates(c *gin.Context) {
+	siteID, ok := wpInventorySiteID(c)
+	if !ok {
+		return
+	}
+	options, ok := wpInventoryListOptions(c)
+	if !ok {
+		return
+	}
+	service, err := executor.NewWPInventoryService(h.DB)
+	if err != nil {
+		wpInventoryError(c, err, "wp_inventory.query_failed")
+		return
+	}
+	result, err := service.Updates(c.Request.Context(), siteID, options)
+	if err != nil {
+		wpInventoryError(c, err, "wp_inventory.query_failed")
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(result))
+}
+
 func wpInventorySiteID(c *gin.Context) (int, bool) {
 	siteID, err := strconv.Atoi(c.Param("id"))
 	if err != nil || siteID <= 0 {
@@ -78,6 +122,22 @@ func wpInventorySiteID(c *gin.Context) (int, bool) {
 		return 0, false
 	}
 	return siteID, true
+}
+
+func wpInventoryListOptions(c *gin.Context) (executor.WPInventoryListOptions, bool) {
+	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if err != nil {
+		wpInventoryError(c, executor.ErrWPInventoryInvalidRequest, "wp_inventory.query_failed")
+		return executor.WPInventoryListOptions{}, false
+	}
+	pageSize, err := strconv.Atoi(c.DefaultQuery("page_size", "50"))
+	if err != nil {
+		wpInventoryError(c, executor.ErrWPInventoryInvalidRequest, "wp_inventory.query_failed")
+		return executor.WPInventoryListOptions{}, false
+	}
+	return executor.WPInventoryListOptions{
+		Page: page, PageSize: pageSize, Type: c.Query("type"), Search: c.Query("search"),
+	}, true
 }
 
 func wpInventoryError(c *gin.Context, err error, fallbackKey string) {

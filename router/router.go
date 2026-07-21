@@ -782,6 +782,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/websites/:id/wp-inventory", wpInventoryHandler.Summary)
 	protected.POST("/api/websites/:id/wp-inventory/refresh", wpInventoryHandler.Refresh)
 	protected.GET("/api/websites/:id/wp-inventory/tasks/:task_id", wpInventoryHandler.Task)
+	protected.GET("/api/websites/:id/wp-inventory/components", wpInventoryHandler.Components)
+	protected.GET("/api/websites/:id/wp-inventory/updates", wpInventoryHandler.Updates)
 	protected.DELETE("/api/websites/:id", websiteHandler.Delete)
 	protected.GET("/api/websites/:id/backup-usage", websiteHandler.BackupUsage)
 	protected.PATCH("/api/websites/:id/status", websiteHandler.ToggleStatus)

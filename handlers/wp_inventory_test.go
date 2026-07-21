@@ -29,6 +29,16 @@ type wpInventoryTaskAPIResponse struct {
 	Data    models.WPInventoryTask `json:"data"`
 }
 
+type wpInventoryPageAPIResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Items    []map[string]any `json:"items"`
+		Total    int              `json:"total"`
+		Page     int              `json:"page"`
+		PageSize int              `json:"page_size"`
+	} `json:"data"`
+}
+
 func TestWPInventoryHandlerSummaryRefreshAndTask(t *testing.T) {
 	db := setupWPInventoryHandlerTestDB(t)
 	router := newWPInventoryHandlerTestRouter(db)
@@ -152,6 +162,79 @@ func TestWPInventoryHandlerInternalErrorIsFixed(t *testing.T) {
 	}
 }
 
+func TestWPInventoryHandlerComponentAndUpdatePages(t *testing.T) {
+	db := setupWPInventoryHandlerTestDB(t)
+	if _, err := db.Exec(`INSERT INTO site_wp_inventory_state
+		(site_id, status, collection_id, last_attempt_at, last_success_at, updated_at)
+		VALUES (1, 'complete', 'collection-page', '2026-07-21 06:00:00', '2026-07-21 06:00:00', '2026-07-21 06:00:00')`); err != nil {
+		t.Fatalf("insert inventory state: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO site_wp_components
+		(site_id, component_type, component_key, name, version, collection_id, collected_at)
+		VALUES
+		(1, 'plugin', 'alpha/alpha.php', 'Alpha', '1.0', 'collection-page', '2026-07-21 06:00:00'),
+		(1, 'theme', 'theme-one', 'Theme One', '2.0', 'collection-page', '2026-07-21 06:00:00')`); err != nil {
+		t.Fatalf("insert inventory components: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO site_wp_component_updates
+		(site_id, component_type, component_key, target_version, response, locale, collection_id, collected_at)
+		VALUES
+		(1, 'core', 'wordpress', '7.1', 'upgrade', 'zh_CN', 'collection-page', '2026-07-21 06:00:00'),
+		(1, 'core', 'wordpress', '7.0', 'latest', 'zh_CN', 'collection-page', '2026-07-21 06:00:00'),
+		(1, 'plugin', 'alpha/alpha.php', '1.1', '', '', 'collection-page', '2026-07-21 06:00:00')`); err != nil {
+		t.Fatalf("insert inventory updates: %v", err)
+	}
+	router := newWPInventoryHandlerTestRouter(db)
+
+	componentsRec := performWPInventoryRequest(router, http.MethodGet, "/api/websites/1/wp-inventory/components")
+	var components wpInventoryPageAPIResponse
+	if componentsRec.Code != http.StatusOK || json.Unmarshal(componentsRec.Body.Bytes(), &components) != nil ||
+		!components.Success || components.Data.Total != 2 || len(components.Data.Items) != 2 ||
+		components.Data.Page != 1 || components.Data.PageSize != 50 {
+		t.Fatalf("components status/body = %d/%s", componentsRec.Code, componentsRec.Body.String())
+	}
+	updatesRec := performWPInventoryRequest(router, http.MethodGet,
+		"/api/websites/1/wp-inventory/updates?type=core&search=7.1&page=1&page_size=10&sort=ignored")
+	var updates wpInventoryPageAPIResponse
+	if updatesRec.Code != http.StatusOK || json.Unmarshal(updatesRec.Body.Bytes(), &updates) != nil ||
+		updates.Data.Total != 1 || len(updates.Data.Items) != 1 || updates.Data.Items[0]["target_version"] != "7.1" {
+		t.Fatalf("updates status/body = %d/%s", updatesRec.Code, updatesRec.Body.String())
+	}
+
+	responseText := componentsRec.Body.String() + updatesRec.Body.String()
+	for _, forbidden := range []string{"collection_id", "response", "package", "lease_owner", "runner_hash", "stdout", "max_rss", "/tmp/"} {
+		if strings.Contains(responseText, forbidden) {
+			t.Fatalf("page response exposed %q: %s", forbidden, responseText)
+		}
+	}
+}
+
+func TestWPInventoryHandlerPageValidationAndEmptyArray(t *testing.T) {
+	db := setupWPInventoryHandlerTestDB(t)
+	router := newWPInventoryHandlerTestRouter(db)
+
+	emptyRec := performWPInventoryRequest(router, http.MethodGet, "/api/websites/1/wp-inventory/components")
+	var empty wpInventoryPageAPIResponse
+	if emptyRec.Code != http.StatusOK || json.Unmarshal(emptyRec.Body.Bytes(), &empty) != nil ||
+		empty.Data.Items == nil || len(empty.Data.Items) != 0 || empty.Data.Total != 0 {
+		t.Fatalf("empty page status/body = %d/%s", emptyRec.Code, emptyRec.Body.String())
+	}
+	for _, path := range []string{
+		"/api/websites/1/wp-inventory/components?page=nope",
+		"/api/websites/1/wp-inventory/components?page=0",
+		"/api/websites/1/wp-inventory/components?page=10001",
+		"/api/websites/1/wp-inventory/components?page_size=101",
+		"/api/websites/1/wp-inventory/components?type=core",
+		"/api/websites/1/wp-inventory/updates?type=unknown",
+		"/api/websites/1/wp-inventory/updates?search=" + strings.Repeat("a", 129),
+	} {
+		rec := performWPInventoryRequest(router, http.MethodGet, path)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "库存请求参数无效") {
+			t.Fatalf("invalid page %q = %d/%s", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func setupWPInventoryHandlerTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	oldDB := database.DB
@@ -186,6 +269,8 @@ func newWPInventoryHandlerTestRouter(db *sql.DB) *gin.Engine {
 	router.GET("/api/websites/:id/wp-inventory", handler.Summary)
 	router.POST("/api/websites/:id/wp-inventory/refresh", handler.Refresh)
 	router.GET("/api/websites/:id/wp-inventory/tasks/:task_id", handler.Task)
+	router.GET("/api/websites/:id/wp-inventory/components", handler.Components)
+	router.GET("/api/websites/:id/wp-inventory/updates", handler.Updates)
 	return router
 }
 
