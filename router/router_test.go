@@ -2,6 +2,7 @@ package router
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"os"
@@ -135,6 +136,196 @@ func TestWPInventoryRoutesRegistered(t *testing.T) {
 			t.Fatalf("router.go missing protected inventory route %s", route)
 		}
 	}
+}
+
+func TestWPInventoryPanelIsIsolatedAndWired(t *testing.T) {
+	detail, err := os.ReadFile("../templates/website_detail.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	panel, err := os.ReadFile("../templates/wp_inventory_panel.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := []byte(`{{template "wp_inventory_panel" .}}`)
+	if count := bytes.Count(detail, call); count != 1 {
+		t.Fatalf("website detail inventory template calls = %d, want 1", count)
+	}
+	for _, forbidden := range [][]byte{
+		[]byte(`function wpInventoryPanel()`),
+		[]byte(`/wp-inventory`),
+		[]byte(`pollTimer`),
+	} {
+		if bytes.Contains(detail, forbidden) {
+			t.Fatalf("website detail contains inventory implementation %q", forbidden)
+		}
+	}
+	for _, required := range [][]byte{
+		[]byte(`{{define "wp_inventory_panel"}}`),
+		[]byte(`function wpInventoryPanel()`),
+		[]byte(`x-effect="setSite(site)"`),
+		[]byte(`x-show="site && site.site_type === 'wordpress'"`),
+	} {
+		if !bytes.Contains(panel, required) {
+			t.Fatalf("inventory panel is missing %q", required)
+		}
+	}
+	if bytes.Contains(panel, []byte(`{{template "base" .}}`)) {
+		t.Fatal("inventory panel must not render the base template")
+	}
+	rendered := renderPage(t, "website_detail.html", "websites_detail_content")
+	if !bytes.Contains(rendered, []byte(`function wpInventoryPanel()`)) {
+		t.Fatal("rendered website detail is missing the inventory component")
+	}
+}
+
+func TestWPInventoryPanelAPIContract(t *testing.T) {
+	panel, err := os.ReadFile("../templates/wp_inventory_panel.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range [][]byte{
+		[]byte(`api('/websites/' + siteID + '/wp-inventory'`),
+		[]byte(`api('/websites/' + siteID + '/wp-inventory/refresh', { method: 'POST'`),
+		[]byte(`'/wp-inventory/tasks/' + encodeURIComponent(taskID)`),
+		[]byte(`new URLSearchParams()`),
+		[]byte(`params.set('page_size', String(state.pageSize))`),
+		[]byte(`if (tab === 'plugins') return 'plugin'`),
+		[]byte(`if (tab === 'themes') return 'theme'`),
+		[]byte(`setTimeout(() =>`),
+	} {
+		if !bytes.Contains(panel, required) {
+			t.Fatalf("inventory panel is missing API contract %q", required)
+		}
+	}
+	for _, forbidden := range [][]byte{
+		[]byte(`setInterval(`),
+		[]byte(`params.set('response'`),
+		[]byte(`params.set('sort'`),
+		[]byte(`params.set('order'`),
+		[]byte(`params.set('column'`),
+		[]byte(`params.set('collection_id'`),
+	} {
+		if bytes.Contains(panel, forbidden) {
+			t.Fatalf("inventory panel contains forbidden API behavior %q", forbidden)
+		}
+	}
+}
+
+func TestWPInventoryPanelBehavior(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available")
+	}
+	script := wpInventoryPanelScript(t)
+	harness := []byte(`
+function assert(condition, message) {
+    if (!condition) throw new Error(message);
+}
+global.t = key => key;
+global.fmtTime = value => String(value);
+global.clearTimeout = id => { global.clearedTimer = id; };
+
+(async () => {
+    const panel = wpInventoryPanel();
+    const summary = (status, successful) => ({
+        site_id: 1,
+        collection_status: status,
+        has_successful_inventory: successful,
+        wordpress: {},
+        counts: {},
+        active_task: null,
+        last_error: null
+    });
+
+    panel.summary = summary('unknown', false);
+    assert(panel.statusKey() === 'wp_inventory.status_unknown', 'unknown status');
+    panel.summary = summary('complete', true);
+    assert(panel.statusKey() === 'wp_inventory.status_complete', 'complete status');
+    panel.summary = summary('failed', true);
+    assert(panel.statusKey() === 'wp_inventory.status_failed_stale', 'failed stale status');
+    panel.summary = summary('failed', false);
+    assert(panel.statusKey() === 'wp_inventory.status_failed_empty', 'failed empty status');
+    panel.summary.active_task = { id: 'queued', status: 'queued' };
+    assert(panel.statusKey() === 'wp_inventory.status_queued', 'queued priority');
+    panel.summary.active_task = { id: 'running', status: 'running' };
+    assert(panel.statusKey() === 'wp_inventory.status_running', 'running priority');
+    assert(panel.pollDelay(0) === 2000, 'initial poll delay');
+    assert(panel.pollDelay(29999) === 2000, 'poll delay before 30 seconds');
+    assert(panel.pollDelay(30000) === 5000, 'poll delay after 30 seconds');
+
+    panel.pollTimer = 91;
+    panel.stopPolling();
+    assert(global.clearedTimer === 91 && panel.pollTimer === null, 'timer cleanup');
+    assert(panel.errorKey({ code: 'future_error' }) === 'wp_inventory.error_generic', 'unknown error fallback');
+
+    panel.siteID = 1;
+    panel.requestGeneration = 7;
+    panel.loadSummary = async () => {};
+    await panel.setSite({ id: 2, site_type: 'wordpress' });
+    assert(panel.siteID === 2, 'site switch');
+    assert(panel.requestGeneration === 8, 'site switch invalidates old requests');
+
+    panel.summary = summary('complete', true);
+    panel.summary.site_id = 2;
+    panel.summary.active_task = { id: 'task-id', site_id: 2, status: 'running' };
+    panel.pages.plugins.page = 3;
+    panel.pages.themes.page = 4;
+    panel.pages.updates.page = 5;
+    global.api = async () => ({ data: { id: 'task-id', site_id: 2, status: 'succeeded' } });
+    await panel.pollTask('task-id');
+    assert(panel.pages.plugins.page === 1, 'terminal task resets plugin page');
+    assert(panel.pages.themes.page === 1, 'terminal task resets theme page');
+    assert(panel.pages.updates.page === 1, 'terminal task resets update page');
+})().catch(error => {
+    console.error(error);
+    process.exit(1);
+});
+`)
+	testScript := append(append([]byte{}, script...), harness...)
+	scriptPath := filepath.Join(t.TempDir(), "wp-inventory-panel-behavior.js")
+	if err := os.WriteFile(scriptPath, testScript, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, scriptPath).CombinedOutput(); err != nil {
+		t.Fatalf("inventory panel behavior failed: %v\n%s", err, output)
+	}
+}
+
+func TestWPInventoryEnglishPlaceholders(t *testing.T) {
+	content, err := os.ReadFile("../i18n/locales/en-US.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var locale struct {
+		WPInventory map[string]string `json:"wp_inventory"`
+	}
+	if err := json.Unmarshal(content, &locale); err != nil {
+		t.Fatal(err)
+	}
+	messages := locale.WPInventory
+	if len(messages) == 0 {
+		t.Fatal("en-US is missing wp_inventory messages")
+	}
+	for key, value := range messages {
+		want := "EN_TODO: wp_inventory." + key
+		if value != want {
+			t.Errorf("wp_inventory.%s = %q, want %q", key, value, want)
+		}
+	}
+}
+
+func wpInventoryPanelScript(t *testing.T) []byte {
+	t.Helper()
+	rendered := renderPage(t, "website_detail.html", "websites_detail_content")
+	scriptPattern := regexp.MustCompile(`(?s)<script>(.*?)</script>`)
+	for _, match := range scriptPattern.FindAllSubmatch(rendered, -1) {
+		if bytes.Contains(match[1], []byte(`function wpInventoryPanel()`)) {
+			return match[1]
+		}
+	}
+	t.Fatal("rendered website detail is missing the inventory panel script")
+	return nil
 }
 
 func TestDatabaseManagementRoutesRegistered(t *testing.T) {

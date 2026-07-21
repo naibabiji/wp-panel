@@ -1,0 +1,405 @@
+{{define "wp_inventory_panel"}}
+<section x-data="wpInventoryPanel()" x-init="mount()" x-effect="setSite(site)" x-show="site && site.site_type === 'wordpress'" class="mt-6">
+    <div class="card">
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+                <div class="flex flex-wrap items-center gap-3">
+                    <h3 class="text-lg font-semibold text-white">{{t .Lang "wp_inventory.title"}}</h3>
+                    <span x-show="summary" :class="statusClass()" class="text-xs px-2 py-1 rounded-full" x-text="t(statusKey())"></span>
+                </div>
+                <p class="mt-1 text-sm text-gray-400">{{t .Lang "wp_inventory.description"}}</p>
+            </div>
+            <button @click="refreshInventory()" :disabled="refreshing || summaryLoading || !summary || hasActiveTask()" class="btn-primary whitespace-nowrap" x-text="refreshing ? t('wp_inventory.refreshing') : t('wp_inventory.refresh')"></button>
+        </div>
+
+        <div x-show="summaryError" class="mt-4 flex flex-col gap-3 rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200 sm:flex-row sm:items-center sm:justify-between">
+            <span x-text="summaryError"></span>
+            <button @click="loadSummary()" :disabled="summaryLoading" class="text-left text-red-100 underline hover:text-white sm:text-right">{{t .Lang "wp_inventory.retry"}}</button>
+        </div>
+
+        <div x-show="summaryLoading && !summary" class="py-10 text-center text-sm text-gray-400">
+            <div class="animate-spin w-7 h-7 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-3"></div>
+            <span>{{t .Lang "wp_inventory.loading"}}</span>
+        </div>
+
+        <template x-if="summary">
+            <div>
+                <div class="mt-4 rounded border p-3 text-sm" :class="statusNoticeClass()">
+                    <div class="font-medium" x-text="t(statusKey())"></div>
+                    <p x-show="summary.collection_status === 'failed' && summary.has_successful_inventory" class="mt-1" x-text="t('wp_inventory.stale_notice', { time: displayTime(summary.last_success_at) })"></p>
+                    <p x-show="summary.last_error" class="mt-1">
+                        <span x-text="errorMessage(summary.last_error)"></span>
+                        <code x-show="summary.last_error?.code" class="ml-2 text-xs opacity-70" x-text="summary.last_error?.code"></code>
+                    </p>
+                </div>
+
+                <div x-show="summary.has_successful_inventory" class="mt-5 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.wordpress_version"}}</div>
+                        <div class="mt-1 text-base font-medium text-white" x-text="summary.wordpress.version || t('common.none')"></div>
+                    </div>
+                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.locale"}}</div>
+                        <div class="mt-1 text-base font-medium text-white" x-text="summary.wordpress.locale || t('common.none')"></div>
+                    </div>
+                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.multisite"}}</div>
+                        <div class="mt-1 text-base font-medium text-white" x-text="summary.wordpress.multisite ? t('wp_inventory.yes') : t('wp_inventory.no')"></div>
+                    </div>
+                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.current_theme"}}</div>
+                        <div class="mt-1 break-all text-base font-medium text-white" x-text="summary.wordpress.current_theme_key || t('common.none')"></div>
+                    </div>
+                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.core_update"}}</div>
+                        <div class="mt-1 text-base font-medium" :class="summary.core_upgrade_available ? 'text-yellow-300' : 'text-green-300'" x-text="summary.core_upgrade_available ? t('wp_inventory.core_update_available') : t('wp_inventory.core_update_none')"></div>
+                    </div>
+                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.plugins"}}</div>
+                        <div class="mt-1 text-base font-medium text-white"><span x-text="summary.counts.plugins"></span> <span class="text-xs text-gray-400" x-text="t('wp_inventory.active_plugins', { count: summary.counts.active_plugins })"></span></div>
+                    </div>
+                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.themes"}}</div>
+                        <div class="mt-1 text-base font-medium text-white" x-text="summary.counts.themes"></div>
+                    </div>
+                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.plugin_updates"}}</div>
+                        <div class="mt-1 text-base font-medium text-white" x-text="summary.counts.plugin_updates"></div>
+                    </div>
+                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.theme_updates"}}</div>
+                        <div class="mt-1 text-base font-medium text-white" x-text="summary.counts.theme_updates"></div>
+                    </div>
+                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3 text-sm">
+                        <div><span class="text-gray-500">{{t .Lang "wp_inventory.last_attempt"}}：</span><span class="text-gray-200" x-text="displayTime(summary.last_attempt_at)"></span></div>
+                        <div class="mt-2"><span class="text-gray-500">{{t .Lang "wp_inventory.last_success"}}：</span><span class="text-gray-200" x-text="displayTime(summary.last_success_at)"></span></div>
+                    </div>
+                </div>
+
+                <div x-show="!summary.has_successful_inventory" class="mt-5 rounded-lg border border-dashed border-gray-700 py-10 text-center text-sm text-gray-400">
+                    {{t .Lang "wp_inventory.no_inventory"}}
+                </div>
+
+                <div x-show="summary.has_successful_inventory" class="mt-6 border-t border-gray-700 pt-5">
+                    <div class="flex flex-wrap gap-2 border-b border-gray-700">
+                        <button @click="selectTab('plugins')" :class="activeTab === 'plugins' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_inventory.tab_plugins"}}</button>
+                        <button @click="selectTab('themes')" :class="activeTab === 'themes' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_inventory.tab_themes"}}</button>
+                        <button @click="selectTab('updates')" :class="activeTab === 'updates' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_inventory.tab_updates"}}</button>
+                    </div>
+
+                    <div class="mt-4 flex flex-col gap-2 sm:flex-row">
+                        <input type="search" x-model="currentPage().search" @keydown.enter.prevent="applySearch()" :disabled="currentPage().loading" class="input-field min-w-0 flex-1" placeholder="{{t .Lang "wp_inventory.search_placeholder"}}">
+                        <button @click="applySearch()" :disabled="currentPage().loading" class="btn-primary">{{t .Lang "wp_inventory.search"}}</button>
+                        <button @click="clearSearch()" :disabled="currentPage().loading || (!currentPage().search && !currentPage().appliedSearch)" class="btn-secondary">{{t .Lang "wp_inventory.clear_search"}}</button>
+                    </div>
+
+                    <div x-show="currentPage().error" class="mt-3 rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200" x-text="currentPage().error"></div>
+                    <div x-show="currentPage().loading" class="py-6 text-center text-sm text-gray-400">{{t .Lang "wp_inventory.loading"}}</div>
+
+                    <div x-show="activeTab !== 'updates' && !currentPage().loading" class="mt-4 overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead><tr><th class="table-header">{{t .Lang "wp_inventory.column_name"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_key"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_version"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_status"}}</th></tr></thead>
+                            <tbody>
+                                <template x-for="item in currentPage().items" :key="item.type + ':' + item.key">
+                                    <tr class="table-row">
+                                        <td class="table-cell text-white" x-text="item.name || item.key"></td>
+                                        <td class="table-cell break-all font-mono text-xs" x-text="item.key"></td>
+                                        <td class="table-cell" x-text="item.version || t('common.none')"></td>
+                                        <td class="table-cell">
+                                            <span x-show="item.network_active" class="badge-info" x-text="t('wp_inventory.network_active')"></span>
+                                            <span x-show="!item.network_active && item.active" class="badge-success" x-text="t('wp_inventory.active')"></span>
+                                            <span x-show="!item.network_active && !item.active" class="badge-info" x-text="t('wp_inventory.inactive')"></span>
+                                            <span x-show="item.current_theme" class="badge-success ml-1" x-text="t('wp_inventory.current_theme_badge')"></span>
+                                        </td>
+                                    </tr>
+                                </template>
+                                <tr x-show="currentPage().items.length === 0"><td colspan="4" class="table-cell py-8 text-center text-gray-500">{{t .Lang "wp_inventory.no_components"}}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div x-show="activeTab === 'updates' && !currentPage().loading" class="mt-4 overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead><tr><th class="table-header">{{t .Lang "wp_inventory.column_type"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_key"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_target_version"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_locale"}}</th></tr></thead>
+                            <tbody>
+                                <template x-for="item in currentPage().items" :key="item.type + ':' + item.key + ':' + item.target_version + ':' + item.locale">
+                                    <tr class="table-row"><td class="table-cell"><span class="badge-info" x-text="typeLabel(item.type)"></span></td><td class="table-cell break-all font-mono text-xs" x-text="item.key"></td><td class="table-cell text-white" x-text="item.target_version"></td><td class="table-cell" x-text="item.locale || t('common.none')"></td></tr>
+                                </template>
+                                <tr x-show="currentPage().items.length === 0"><td colspan="4" class="table-cell py-8 text-center text-gray-500">{{t .Lang "wp_inventory.no_updates"}}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div x-show="!currentPage().loading && (currentPage().loaded || currentPage().items.length > 0)" class="mt-4 flex flex-col gap-3 text-sm text-gray-400 sm:flex-row sm:items-center sm:justify-between">
+                        <span x-text="t('wp_inventory.page_summary', { page: currentPage().page, total: currentPage().total })"></span>
+                        <div class="flex gap-2">
+                            <button @click="changePage(-1)" :disabled="currentPage().loading || currentPage().page <= 1" class="btn-secondary text-sm">{{t .Lang "wp_inventory.previous"}}</button>
+                            <button @click="changePage(1)" :disabled="currentPage().loading || currentPage().page * currentPage().pageSize >= currentPage().total" class="btn-secondary text-sm">{{t .Lang "wp_inventory.next"}}</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+</section>
+
+<script>
+function wpInventoryPanel() {
+    const newPage = () => ({ items: [], total: 0, page: 1, pageSize: 50, search: '', appliedSearch: '', loading: false, error: '', loaded: false });
+    return {
+        siteID: null,
+        summary: null,
+        summaryLoading: false,
+        summaryError: '',
+        refreshing: false,
+        activeTab: 'plugins',
+        pages: { plugins: newPage(), themes: newPage(), updates: newPage() },
+        pollTimer: null,
+        pollStartedAt: 0,
+        requestGeneration: 0,
+        pagehideHandler: null,
+        mount() {
+            if (this.pagehideHandler) return;
+            this.pagehideHandler = () => this.teardown();
+            window.addEventListener('pagehide', this.pagehideHandler);
+        },
+        teardown() {
+            this.stopPolling();
+            this.requestGeneration++;
+            if (this.pagehideHandler) window.removeEventListener('pagehide', this.pagehideHandler);
+            this.pagehideHandler = null;
+        },
+        async setSite(site) {
+            const nextID = site && site.site_type === 'wordpress' ? Number(site.id) : null;
+            if (nextID === this.siteID) return;
+            this.stopPolling();
+            this.requestGeneration++;
+            this.siteID = Number.isInteger(nextID) && nextID > 0 ? nextID : null;
+            this.summary = null;
+            this.summaryLoading = false;
+            this.summaryError = '';
+            this.refreshing = false;
+            this.activeTab = 'plugins';
+            this.pages = { plugins: newPage(), themes: newPage(), updates: newPage() };
+            if (this.siteID) await this.loadSummary();
+        },
+        hasActiveTask() {
+            return this.summary?.active_task?.status === 'queued' || this.summary?.active_task?.status === 'running';
+        },
+        statusKey() {
+            if (this.summary?.active_task?.status === 'running') return 'wp_inventory.status_running';
+            if (this.summary?.active_task?.status === 'queued') return 'wp_inventory.status_queued';
+            if (!this.summary) return 'wp_inventory.status_unexpected';
+            if (this.summary.collection_status === 'failed' && this.summary.has_successful_inventory) return 'wp_inventory.status_failed_stale';
+            if (this.summary.collection_status === 'failed') return 'wp_inventory.status_failed_empty';
+            if (this.summary.collection_status === 'complete') return 'wp_inventory.status_complete';
+            if (this.summary.collection_status === 'unknown') return 'wp_inventory.status_unknown';
+            return 'wp_inventory.status_unexpected';
+        },
+        statusClass() {
+            const key = this.statusKey();
+            if (key === 'wp_inventory.status_complete') return 'bg-green-900/60 text-green-200';
+            if (key === 'wp_inventory.status_queued' || key === 'wp_inventory.status_running') return 'bg-blue-900/60 text-blue-200';
+            if (key === 'wp_inventory.status_failed_stale' || key === 'wp_inventory.status_failed_empty') return 'bg-red-900/60 text-red-200';
+            return 'bg-gray-700 text-gray-200';
+        },
+        statusNoticeClass() {
+            const key = this.statusKey();
+            if (key === 'wp_inventory.status_complete') return 'border-green-800 bg-green-950/30 text-green-200';
+            if (key === 'wp_inventory.status_queued' || key === 'wp_inventory.status_running') return 'border-blue-800 bg-blue-950/30 text-blue-200';
+            if (key === 'wp_inventory.status_failed_stale' || key === 'wp_inventory.status_failed_empty') return 'border-red-800 bg-red-950/30 text-red-200';
+            return 'border-gray-700 bg-gray-900/40 text-gray-300';
+        },
+        errorKey(error) {
+            const code = error?.code || '';
+            if (['runner_timeout', 'runner_canceled'].includes(code)) return 'wp_inventory.error_timeout';
+            if (['wordpress_bootstrap_failed', 'wordpress_terminated'].includes(code)) return 'wp_inventory.error_wordpress';
+            if (['unsupported_platform', 'invalid_site', 'invalid_site_path', 'site_user_unavailable', 'insufficient_privileges', 'php_cli_unavailable', 'runuser_unavailable', 'runner_prepare_failed', 'runner_integrity_failed', 'runner_lock_failed', 'runner_start_failed', 'runner_policy_mismatch'].includes(code)) return 'wp_inventory.error_policy';
+            if (['stdout_limit_exceeded', 'stderr_limit_exceeded', 'protocol_limit_exceeded', 'memory_limit_exhausted', 'inventory_limit_exceeded'].includes(code)) return 'wp_inventory.error_capacity';
+            if (code === 'site_changed_during_collection') return 'wp_inventory.error_site_changed';
+            if (code === 'inventory_worker_repeated_crash') return 'wp_inventory.error_worker';
+            return 'wp_inventory.error_generic';
+        },
+        errorMessage(error) {
+            return t(this.errorKey(error));
+        },
+        displayTime(value) {
+            return value ? fmtTime(value) : t('wp_inventory.never');
+        },
+        isSummary(value) {
+            return value && typeof value === 'object' && value.site_id === this.siteID && typeof value.collection_status === 'string' && typeof value.has_successful_inventory === 'boolean' && value.wordpress && typeof value.wordpress === 'object' && value.counts && typeof value.counts === 'object' && (!value.active_task || (typeof value.active_task.id === 'string' && ['queued', 'running'].includes(value.active_task.status)));
+        },
+        async loadSummary() {
+            if (!this.siteID || this.summaryLoading) return;
+            const generation = this.requestGeneration;
+            const siteID = this.siteID;
+            this.summaryLoading = true;
+            this.summaryError = '';
+            try {
+                const response = await api('/websites/' + siteID + '/wp-inventory', { suppressToast: true });
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                if (!this.isSummary(response.data)) throw new Error(t('wp_inventory.load_failed'));
+                this.summary = response.data;
+                if (this.summary.active_task) this.startPolling(this.summary.active_task);
+                if (this.summary.has_successful_inventory && !this.currentPage().loaded) await this.loadPage(this.activeTab);
+            } catch (error) {
+                if (generation === this.requestGeneration && siteID === this.siteID) this.summaryError = error.message || t('wp_inventory.load_failed');
+            } finally {
+                if (generation === this.requestGeneration && siteID === this.siteID) this.summaryLoading = false;
+            }
+        },
+        async refreshInventory() {
+            if (!this.siteID || !this.summary || this.refreshing || this.hasActiveTask()) return;
+            const generation = this.requestGeneration;
+            const siteID = this.siteID;
+            this.refreshing = true;
+            try {
+                const response = await api('/websites/' + siteID + '/wp-inventory/refresh', { method: 'POST', suppressToast: true });
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                const task = response.data?.task;
+                if (!task || typeof task.id !== 'string' || task.site_id !== siteID || !['queued', 'running'].includes(task.status)) throw new Error(t('wp_inventory.load_failed'));
+                this.summary.active_task = task;
+                this.summaryError = '';
+                showToast(t(response.data.created ? 'wp_inventory.refresh_created' : 'wp_inventory.refresh_existing'), 'success');
+                this.startPolling(task);
+            } catch (error) {
+                if (generation === this.requestGeneration && siteID === this.siteID) showToast(error.message || t('wp_inventory.refresh_failed'), 'error');
+            } finally {
+                if (generation === this.requestGeneration && siteID === this.siteID) this.refreshing = false;
+            }
+        },
+        pollDelay(elapsed) {
+            return elapsed < 30000 ? 2000 : 5000;
+        },
+        startPolling(task) {
+            if (!task || !['queued', 'running'].includes(task.status)) return;
+            this.stopPolling();
+            this.pollStartedAt = Date.now();
+            this.schedulePoll(task.id, this.pollDelay(0));
+        },
+        schedulePoll(taskID, delay) {
+            this.stopPolling();
+            this.pollTimer = setTimeout(() => {
+                this.pollTimer = null;
+                this.pollTask(taskID);
+            }, delay);
+        },
+        stopPolling() {
+            if (this.pollTimer !== null) clearTimeout(this.pollTimer);
+            this.pollTimer = null;
+        },
+        async pollTask(taskID) {
+            const generation = this.requestGeneration;
+            const siteID = this.siteID;
+            if (!siteID || !taskID) return;
+            try {
+                const response = await api('/websites/' + siteID + '/wp-inventory/tasks/' + encodeURIComponent(taskID), { suppressToast: true });
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                const task = response.data;
+                if (!task || task.id !== taskID || task.site_id !== siteID) throw new Error(t('wp_inventory.task_read_failed'));
+                if (task.status === 'queued' || task.status === 'running') {
+                    this.summary.active_task = task;
+                    this.summaryError = '';
+                    this.schedulePoll(taskID, this.pollDelay(Date.now() - this.pollStartedAt));
+                    return;
+                }
+                if (task.status === 'succeeded' || task.status === 'failed') {
+                    this.stopPolling();
+                    this.summary.active_task = null;
+                    this.invalidatePages();
+                    await this.loadSummary();
+                    return;
+                }
+                this.stopPolling();
+                this.summary.active_task = null;
+                this.summaryError = t('wp_inventory.task_read_failed');
+            } catch (error) {
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                this.summaryError = t('wp_inventory.task_read_failed');
+                this.schedulePoll(taskID, 5000);
+            }
+        },
+        currentPage() {
+            return this.pages[this.activeTab];
+        },
+        selectTab(tab) {
+            if (!['plugins', 'themes', 'updates'].includes(tab) || tab === this.activeTab) return;
+            this.activeTab = tab;
+            if (!this.currentPage().loaded) this.loadPage(tab);
+        },
+        pagePath(tab) {
+            return tab === 'updates' ? 'updates' : 'components';
+        },
+        pageType(tab) {
+            if (tab === 'plugins') return 'plugin';
+            if (tab === 'themes') return 'theme';
+            return '';
+        },
+        validPageData(value) {
+            return value && Array.isArray(value.items) && Number.isInteger(value.total) && value.total >= 0 && Number.isInteger(value.page) && value.page > 0 && Number.isInteger(value.page_size) && value.page_size > 0 && value.page_size <= 100;
+        },
+        async loadPage(tab, requestedPage, requestedSearch) {
+            const state = this.pages[tab];
+            if (!this.siteID || !state || state.loading || !this.summary?.has_successful_inventory) return;
+            const generation = this.requestGeneration;
+            const siteID = this.siteID;
+            const page = requestedPage || state.page;
+            const search = requestedSearch === undefined ? state.appliedSearch : requestedSearch;
+            const params = new URLSearchParams();
+            params.set('page', String(page));
+            params.set('page_size', String(state.pageSize));
+            const type = this.pageType(tab);
+            if (type) params.set('type', type);
+            if (search) params.set('search', search);
+            state.loading = true;
+            state.error = '';
+            try {
+                const response = await api('/websites/' + siteID + '/wp-inventory/' + this.pagePath(tab) + '?' + params.toString(), { suppressToast: true });
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                if (!this.validPageData(response.data)) throw new Error(t('wp_inventory.load_failed'));
+                state.items = response.data.items;
+                state.total = response.data.total;
+                state.page = response.data.page;
+                state.pageSize = response.data.page_size;
+                state.appliedSearch = search;
+                state.loaded = true;
+            } catch (error) {
+                if (generation === this.requestGeneration && siteID === this.siteID) state.error = error.message || t('wp_inventory.load_failed');
+            } finally {
+                if (generation === this.requestGeneration && siteID === this.siteID) state.loading = false;
+            }
+        },
+        applySearch() {
+            const state = this.currentPage();
+            if (state.loading) return;
+            this.loadPage(this.activeTab, 1, state.search.trim());
+        },
+        clearSearch() {
+            const state = this.currentPage();
+            if (state.loading) return;
+            state.search = '';
+            this.loadPage(this.activeTab, 1, '');
+        },
+        changePage(direction) {
+            const state = this.currentPage();
+            const next = state.page + direction;
+            if (state.loading || next < 1 || (direction > 0 && state.page * state.pageSize >= state.total)) return;
+            this.loadPage(this.activeTab, next, state.appliedSearch);
+        },
+        invalidatePages() {
+            Object.values(this.pages).forEach(page => {
+                page.page = 1;
+                page.loaded = false;
+                page.error = '';
+            });
+        },
+        typeLabel(type) {
+            if (type === 'core') return t('wp_inventory.type_core');
+            if (type === 'plugin') return t('wp_inventory.type_plugin');
+            if (type === 'theme') return t('wp_inventory.type_theme');
+            return t('wp_inventory.error_generic');
+        }
+    };
+}
+</script>
+{{end}}
