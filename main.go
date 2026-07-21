@@ -156,6 +156,7 @@ func main() {
 	executor.InitQueue(cfg)
 	log.Println("任务队列初始化完成")
 	var inventoryWorker *executor.WPInventoryWorker
+	var inventoryScheduler *executor.WPInventoryScheduler
 	if candidate, err := executor.NewWPInventoryWorker(cfg); err != nil {
 		log.Println("WordPress 库存后台任务未启动")
 	} else if err := candidate.Start(); err != nil {
@@ -163,6 +164,14 @@ func main() {
 	} else {
 		inventoryWorker = candidate
 		log.Println("WordPress 库存后台任务已启动")
+		if scheduler, err := executor.NewWPInventoryScheduler(); err != nil {
+			log.Println("WordPress 库存自动刷新未启动")
+		} else if err := scheduler.Start(); err != nil {
+			log.Println("WordPress 库存自动刷新未启动")
+		} else {
+			inventoryScheduler = scheduler
+			log.Println("WordPress 库存自动刷新已启动")
+		}
 	}
 
 	collector.Start()
@@ -252,6 +261,11 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("正在关闭面板...")
+	if inventoryScheduler != nil {
+		if err := inventoryScheduler.Stop(context.Background()); err != nil {
+			log.Println("WordPress 库存自动刷新关闭失败")
+		}
+	}
 	if inventoryWorker != nil {
 		if err := inventoryWorker.Stop(context.Background()); err != nil {
 			log.Println("WordPress 库存后台任务关闭失败")

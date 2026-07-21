@@ -45,9 +45,10 @@ const (
 )
 
 var (
-	errWPInventoryJobNotFound = errors.New("wordpress inventory job not found")
-	errWPInventoryLeaseLost   = errors.New("wordpress inventory job lease lost")
-	errWPInventorySiteChanged = errors.New("wordpress inventory site changed")
+	errWPInventoryJobNotFound             = errors.New("wordpress inventory job not found")
+	errWPInventoryLeaseLost               = errors.New("wordpress inventory job lease lost")
+	errWPInventorySiteChanged             = errors.New("wordpress inventory site changed")
+	errWPInventoryScheduledSiteIneligible = errors.New("wordpress inventory scheduled site ineligible")
 )
 
 type wpInventoryStore struct {
@@ -247,6 +248,97 @@ func (s *wpInventoryStore) enqueueEligibleManual(ctx context.Context, siteID int
 		return wpInventoryJob{}, false, err
 	}
 	return job, created, nil
+}
+
+func (s *wpInventoryStore) enqueueEligibleScheduled(ctx context.Context, siteID int, requestedAt time.Time) (string, bool, error) {
+	if siteID <= 0 || requestedAt.IsZero() {
+		return "", false, errors.New("invalid wordpress inventory scheduled enqueue request")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", false, err
+	}
+	defer tx.Rollback()
+	identity, err := loadWPInventorySiteIdentity(ctx, tx, siteID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, errWPInventoryScheduledSiteIneligible
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if identity.SiteType != "wordpress" {
+		return "", false, errWPInventoryScheduledSiteIneligible
+	}
+	switch identity.Status {
+	case models.StatusActive, models.StatusPaused, models.StatusError:
+	default:
+		return "", false, errWPInventoryScheduledSiteIneligible
+	}
+	jobID, created, err := enqueueWPInventoryJobTx(ctx, tx, siteID, wpInventoryTriggerScheduled, requestedAt, requestedAt)
+	if err != nil {
+		return "", false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", false, err
+	}
+	return jobID, created, nil
+}
+
+func (s *wpInventoryStore) listScheduleCandidates(ctx context.Context, limit int) ([]wpInventoryScheduleSite, error) {
+	if limit <= 0 || limit > wpInventoryScheduleCandidateLimit {
+		return nil, errors.New("invalid wordpress inventory schedule candidate limit")
+	}
+	rows, err := s.db.QueryContext(ctx, `WITH latest_scheduled AS (
+		SELECT site_id, MAX(requested_at) AS last_requested_at
+		FROM site_wp_inventory_jobs
+		WHERE trigger_type = 'scheduled'
+		GROUP BY site_id
+	)
+	SELECT w.id, w.site_type, w.status,
+		COALESCE(s.last_success_at, ''),
+		COALESCE(ls.last_requested_at, '')
+		FROM websites w
+		LEFT JOIN site_wp_inventory_state s ON s.site_id = w.id
+		LEFT JOIN latest_scheduled ls ON ls.site_id = w.id
+		WHERE w.site_type = 'wordpress'
+			AND w.status IN ('active','paused','error')
+			AND NOT EXISTS (SELECT 1 FROM site_wp_inventory_jobs active_job
+				WHERE active_job.site_id = w.id AND active_job.status IN ('queued','running'))
+		ORDER BY CASE WHEN s.last_success_at IS NULL AND ls.last_requested_at IS NULL THEN 0 ELSE 1 END,
+			CASE
+				WHEN ls.last_requested_at IS NULL THEN s.last_success_at
+				WHEN s.last_success_at IS NULL THEN ls.last_requested_at
+				WHEN ls.last_requested_at > s.last_success_at THEN ls.last_requested_at
+				ELSE s.last_success_at
+			END,
+			w.id
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	candidates := make([]wpInventoryScheduleSite, 0)
+	for rows.Next() {
+		var site wpInventoryScheduleSite
+		var status, lastSuccess, lastScheduled string
+		if err := rows.Scan(&site.ID, &site.SiteType, &status, &lastSuccess, &lastScheduled); err != nil {
+			return nil, err
+		}
+		site.Status = models.WebsiteStatus(status)
+		site.LastSuccess, err = parseOptionalWPInventoryTime(lastSuccess)
+		if err != nil {
+			return nil, err
+		}
+		site.LastScheduledRequest, err = parseOptionalWPInventoryTime(lastScheduled)
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, site)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return candidates, nil
 }
 
 func (s *wpInventoryStore) claim(ctx context.Context, owner string, now time.Time, lease time.Duration) (*wpInventoryJob, error) {
