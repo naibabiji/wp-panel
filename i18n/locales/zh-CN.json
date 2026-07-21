@@ -36,6 +36,14 @@
     "operation_failed": "操作失败",
     "operation_success": "操作成功"
   },
+  "wp_inventory": {
+    "invalid_request": "库存请求参数无效",
+    "task_not_found": "库存任务不存在",
+    "wordpress_only": "只有 WordPress 网站支持组件库存",
+    "site_unavailable": "网站当前状态不允许刷新库存",
+    "query_failed": "读取 WordPress 库存失败",
+    "refresh_failed": "提交 WordPress 库存刷新失败"
+  },
   "name": "名称",
   "size": "大小",
   "time": "时间",

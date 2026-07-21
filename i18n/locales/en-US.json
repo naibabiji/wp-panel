@@ -36,6 +36,14 @@
     "operation_failed": "Operation failed",
     "operation_success": "Operation successful"
   },
+  "wp_inventory": {
+    "invalid_request": "EN_TODO: wp_inventory.invalid_request",
+    "task_not_found": "EN_TODO: wp_inventory.task_not_found",
+    "wordpress_only": "EN_TODO: wp_inventory.wordpress_only",
+    "site_unavailable": "EN_TODO: wp_inventory.site_unavailable",
+    "query_failed": "EN_TODO: wp_inventory.query_failed",
+    "refresh_failed": "EN_TODO: wp_inventory.refresh_failed"
+  },
   "name": "Name",
   "size": "Size",
   "time": "Time",

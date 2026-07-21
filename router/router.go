@@ -774,10 +774,14 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/auth/csrf-token", authHandler.CSRFToken)
 
 	websiteHandler := &handlers.WebsiteHandler{DB: db}
+	wpInventoryHandler := &handlers.WPInventoryHandler{DB: db}
 	protected.GET("/api/websites", websiteHandler.List)
 	protected.POST("/api/websites", websiteHandler.Create)
 	protected.POST("/api/websites/ssl-preflight", websiteHandler.SSLPreflight)
 	protected.GET("/api/websites/:id", websiteHandler.Get)
+	protected.GET("/api/websites/:id/wp-inventory", wpInventoryHandler.Summary)
+	protected.POST("/api/websites/:id/wp-inventory/refresh", wpInventoryHandler.Refresh)
+	protected.GET("/api/websites/:id/wp-inventory/tasks/:task_id", wpInventoryHandler.Task)
 	protected.DELETE("/api/websites/:id", websiteHandler.Delete)
 	protected.GET("/api/websites/:id/backup-usage", websiteHandler.BackupUsage)
 	protected.PATCH("/api/websites/:id/status", websiteHandler.ToggleStatus)

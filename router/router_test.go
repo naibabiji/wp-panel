@@ -119,6 +119,22 @@ func TestWebsiteProtectionRoutesRegistered(t *testing.T) {
 	}
 }
 
+func TestWPInventoryRoutesRegistered(t *testing.T) {
+	source, err := os.ReadFile("router.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []string{
+		`protected.GET("/api/websites/:id/wp-inventory", wpInventoryHandler.Summary)`,
+		`protected.POST("/api/websites/:id/wp-inventory/refresh", wpInventoryHandler.Refresh)`,
+		`protected.GET("/api/websites/:id/wp-inventory/tasks/:task_id", wpInventoryHandler.Task)`,
+	} {
+		if !bytes.Contains(source, []byte(route)) {
+			t.Fatalf("router.go missing protected inventory route %s", route)
+		}
+	}
+}
+
 func TestDatabaseManagementRoutesRegistered(t *testing.T) {
 	source, err := os.ReadFile("router.go")
 	if err != nil {

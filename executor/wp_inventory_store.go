@@ -53,6 +53,10 @@ type wpInventoryStore struct {
 	db *sql.DB
 }
 
+type wpInventoryQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 type wpInventorySiteIdentity struct {
 	ID         int
 	Domain     string
@@ -140,6 +144,13 @@ type wpInventoryStoredUpdate struct {
 	CollectedAt  string
 }
 
+type wpInventorySummarySnapshot struct {
+	Identity             wpInventorySiteIdentity
+	State                wpInventoryState
+	ActiveJob            *wpInventoryJob
+	CoreUpgradeAvailable bool
+}
+
 func newWPInventoryStore() (*wpInventoryStore, error) {
 	return newWPInventoryStoreWithDB(database.GetDB())
 }
@@ -155,40 +166,64 @@ func (s *wpInventoryStore) enqueue(ctx context.Context, siteID int, trigger wpIn
 	if siteID <= 0 || !validWPInventoryTrigger(trigger) || requestedAt.IsZero() || notBefore.IsZero() {
 		return "", false, errors.New("invalid wordpress inventory enqueue request")
 	}
-	jobID, err := newWPInventoryJobID()
-	if err != nil {
-		return "", false, err
-	}
-	requested := wpInventoryDBTime(requestedAt)
-	notBeforeValue := wpInventoryDBTime(notBefore)
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", false, err
 	}
 	defer tx.Rollback()
-
-	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO site_wp_inventory_jobs
-		(id, site_id, trigger_type, status, requested_at, not_before, created_at, updated_at)
-		VALUES (?, ?, ?, 'queued', ?, ?, ?, ?)`,
-		jobID, siteID, trigger, requested, notBeforeValue, requested, requested)
+	jobID, created, err := enqueueWPInventoryJobTx(ctx, tx, siteID, trigger, requestedAt, notBefore)
 	if err != nil {
 		return "", false, err
-	}
-	inserted, err := result.RowsAffected()
-	if err != nil {
-		return "", false, err
-	}
-	if inserted == 0 {
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM site_wp_inventory_jobs
-			WHERE site_id = ? AND status IN ('queued','running') LIMIT 1`, siteID).Scan(&jobID); err != nil {
-			return "", false, err
-		}
 	}
 	if err := tx.Commit(); err != nil {
 		return "", false, err
 	}
-	return jobID, inserted == 1, nil
+	return jobID, created, nil
+}
+
+func (s *wpInventoryStore) enqueueEligibleManual(ctx context.Context, siteID int, requestedAt time.Time) (wpInventoryJob, bool, error) {
+	if siteID <= 0 || requestedAt.IsZero() {
+		return wpInventoryJob{}, false, ErrWPInventoryInvalidRequest
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return wpInventoryJob{}, false, err
+	}
+	defer tx.Rollback()
+
+	identity, err := loadWPInventorySiteIdentity(ctx, tx, siteID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return wpInventoryJob{}, false, ErrWPInventorySiteNotFound
+	}
+	if err != nil {
+		return wpInventoryJob{}, false, err
+	}
+	if identity.SiteType != "wordpress" {
+		return wpInventoryJob{}, false, ErrWPInventoryUnsupportedSite
+	}
+	switch identity.Status {
+	case models.StatusActive, models.StatusPaused, models.StatusError:
+	default:
+		return wpInventoryJob{}, false, ErrWPInventorySiteUnavailable
+	}
+
+	jobID, created, err := enqueueWPInventoryJobTx(ctx, tx, siteID, wpInventoryTriggerManual, requestedAt, requestedAt)
+	if err != nil {
+		return wpInventoryJob{}, false, err
+	}
+	job, err := loadWPInventoryJob(ctx, tx, `SELECT id, site_id, trigger_type, status, requested_at, not_before,
+		lease_owner, COALESCE(lease_expires_at, ''), attempt_count, lease_recovery_count,
+		COALESCE(started_at, ''), error_code, error_stage, COALESCE(finished_at, ''),
+		timed_out, exit_code, wall_time_ms, user_cpu_ms, system_cpu_ms, max_rss_kib,
+		stdout_bytes, stderr_bytes, protocol_bytes, runner_hash, runner_version, inventory_schema_version
+		FROM site_wp_inventory_jobs WHERE id = ? AND site_id = ?`, jobID, siteID)
+	if err != nil {
+		return wpInventoryJob{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return wpInventoryJob{}, false, err
+	}
+	return job, created, nil
 }
 
 func (s *wpInventoryStore) claim(ctx context.Context, owner string, now time.Time, lease time.Duration) (*wpInventoryJob, error) {
@@ -405,8 +440,12 @@ func (s *wpInventoryStore) persistFailure(ctx context.Context, jobID, owner stri
 }
 
 func (s *wpInventoryStore) getState(ctx context.Context, siteID int) (wpInventoryState, error) {
+	return loadWPInventoryState(ctx, s.db, siteID)
+}
+
+func loadWPInventoryState(ctx context.Context, queryer wpInventoryQueryer, siteID int) (wpInventoryState, error) {
 	state := wpInventoryState{SiteID: siteID, Status: "unknown"}
-	err := s.db.QueryRowContext(ctx, `SELECT site_id, status, wordpress_version, wordpress_locale,
+	err := queryer.QueryRowContext(ctx, `SELECT site_id, status, wordpress_version, wordpress_locale,
 		is_multisite, current_theme_key, plugin_count, active_plugin_count, theme_count,
 		core_update_count, plugin_update_count, theme_update_count,
 		core_updates_transient_present, core_updates_last_checked, core_version_checked,
@@ -425,6 +464,56 @@ func (s *wpInventoryStore) getState(ctx context.Context, siteID int) (wpInventor
 		return state, nil
 	}
 	return state, err
+}
+
+func (s *wpInventoryStore) getSummarySnapshot(ctx context.Context, siteID int) (wpInventorySummarySnapshot, error) {
+	if siteID <= 0 {
+		return wpInventorySummarySnapshot{}, ErrWPInventoryInvalidRequest
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return wpInventorySummarySnapshot{}, err
+	}
+	defer tx.Rollback()
+
+	identity, err := loadWPInventorySiteIdentity(ctx, tx, siteID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return wpInventorySummarySnapshot{}, ErrWPInventorySiteNotFound
+	}
+	if err != nil {
+		return wpInventorySummarySnapshot{}, err
+	}
+	if identity.SiteType != "wordpress" {
+		return wpInventorySummarySnapshot{}, ErrWPInventoryUnsupportedSite
+	}
+	state, err := loadWPInventoryState(ctx, tx, siteID)
+	if err != nil {
+		return wpInventorySummarySnapshot{}, err
+	}
+	activeJob, err := loadOptionalWPInventoryJob(ctx, tx, `SELECT id, site_id, trigger_type, status, requested_at, not_before,
+		lease_owner, COALESCE(lease_expires_at, ''), attempt_count, lease_recovery_count,
+		COALESCE(started_at, ''), error_code, error_stage, COALESCE(finished_at, ''),
+		timed_out, exit_code, wall_time_ms, user_cpu_ms, system_cpu_ms, max_rss_kib,
+		stdout_bytes, stderr_bytes, protocol_bytes, runner_hash, runner_version, inventory_schema_version
+		FROM site_wp_inventory_jobs WHERE site_id = ? AND status IN ('queued','running') LIMIT 1`, siteID)
+	if err != nil {
+		return wpInventorySummarySnapshot{}, err
+	}
+	coreUpgradeAvailable := false
+	if state.CollectionID != "" {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM site_wp_component_updates
+			WHERE site_id = ? AND collection_id = ? AND component_type = 'core' AND response = 'upgrade'
+		)`, siteID, state.CollectionID).Scan(&coreUpgradeAvailable); err != nil {
+			return wpInventorySummarySnapshot{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return wpInventorySummarySnapshot{}, err
+	}
+	return wpInventorySummarySnapshot{
+		Identity: identity, State: state, ActiveJob: activeJob, CoreUpgradeAvailable: coreUpgradeAvailable,
+	}, nil
 }
 
 func (s *wpInventoryStore) getComponents(ctx context.Context, siteID int) ([]wpInventoryStoredComponent, error) {
@@ -467,23 +556,53 @@ func (s *wpInventoryStore) getUpdates(ctx context.Context, siteID int) ([]wpInve
 }
 
 func (s *wpInventoryStore) getJob(ctx context.Context, jobID string) (wpInventoryJob, error) {
-	job := wpInventoryJob{}
-	err := s.db.QueryRowContext(ctx, `SELECT id, site_id, trigger_type, status, requested_at, not_before,
+	job, err := loadWPInventoryJob(ctx, s.db, `SELECT id, site_id, trigger_type, status, requested_at, not_before,
 		lease_owner, COALESCE(lease_expires_at, ''), attempt_count, lease_recovery_count,
 		COALESCE(started_at, ''), error_code, error_stage, COALESCE(finished_at, ''),
 		timed_out, exit_code, wall_time_ms, user_cpu_ms, system_cpu_ms, max_rss_kib,
 		stdout_bytes, stderr_bytes, protocol_bytes, runner_hash, runner_version, inventory_schema_version
-		FROM site_wp_inventory_jobs WHERE id = ?`, jobID).Scan(
-		&job.ID, &job.SiteID, &job.Trigger, &job.Status, &job.RequestedAt, &job.NotBefore, &job.LeaseOwner,
-		&job.LeaseExpiresAt, &job.AttemptCount, &job.LeaseRecoveryCount,
-		&job.StartedAt, &job.ErrorCode, &job.ErrorStage, &job.FinishedAt,
-		&job.TimedOut, &job.ExitCode, &job.WallTimeMS, &job.UserCPUMS, &job.SystemCPUMS,
-		&job.MaxRSSKiB, &job.StdoutBytes, &job.StderrBytes, &job.ProtocolBytes,
-		&job.RunnerHash, &job.RunnerVersion, &job.SchemaVersion)
+		FROM site_wp_inventory_jobs WHERE id = ?`, jobID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return job, errWPInventoryJobNotFound
 	}
 	return job, err
+}
+
+func (s *wpInventoryStore) getJobForSite(ctx context.Context, siteID int, jobID string) (wpInventoryJob, error) {
+	if siteID <= 0 {
+		return wpInventoryJob{}, ErrWPInventoryInvalidRequest
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return wpInventoryJob{}, err
+	}
+	defer tx.Rollback()
+	identity, err := loadWPInventorySiteIdentity(ctx, tx, siteID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return wpInventoryJob{}, ErrWPInventorySiteNotFound
+	}
+	if err != nil {
+		return wpInventoryJob{}, err
+	}
+	if identity.SiteType != "wordpress" {
+		return wpInventoryJob{}, ErrWPInventoryUnsupportedSite
+	}
+	job, err := loadWPInventoryJob(ctx, tx, `SELECT id, site_id, trigger_type, status, requested_at, not_before,
+		lease_owner, COALESCE(lease_expires_at, ''), attempt_count, lease_recovery_count,
+		COALESCE(started_at, ''), error_code, error_stage, COALESCE(finished_at, ''),
+		timed_out, exit_code, wall_time_ms, user_cpu_ms, system_cpu_ms, max_rss_kib,
+		stdout_bytes, stderr_bytes, protocol_bytes, runner_hash, runner_version, inventory_schema_version
+		FROM site_wp_inventory_jobs WHERE id = ? AND site_id = ?`, jobID, siteID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return wpInventoryJob{}, ErrWPInventoryTaskNotFound
+	}
+	if err != nil {
+		return wpInventoryJob{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return wpInventoryJob{}, err
+	}
+	return job, nil
 }
 
 func (s *wpInventoryStore) getWarnings(ctx context.Context, jobID string) ([]WPInventoryWarning, error) {
@@ -519,9 +638,57 @@ func (s *wpInventoryStore) prune(ctx context.Context, before time.Time, limit in
 	return result.RowsAffected()
 }
 
-func loadWPInventorySiteIdentity(ctx context.Context, queryer interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, siteID int) (wpInventorySiteIdentity, error) {
+func enqueueWPInventoryJobTx(ctx context.Context, tx *sql.Tx, siteID int, trigger wpInventoryTrigger, requestedAt, notBefore time.Time) (string, bool, error) {
+	jobID, err := newWPInventoryJobID()
+	if err != nil {
+		return "", false, err
+	}
+	requested := wpInventoryDBTime(requestedAt)
+	notBeforeValue := wpInventoryDBTime(notBefore)
+	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO site_wp_inventory_jobs
+		(id, site_id, trigger_type, status, requested_at, not_before, created_at, updated_at)
+		VALUES (?, ?, ?, 'queued', ?, ?, ?, ?)`,
+		jobID, siteID, trigger, requested, notBeforeValue, requested, requested)
+	if err != nil {
+		return "", false, err
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return "", false, err
+	}
+	if inserted == 0 {
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM site_wp_inventory_jobs
+			WHERE site_id = ? AND status IN ('queued','running') LIMIT 1`, siteID).Scan(&jobID); err != nil {
+			return "", false, err
+		}
+	}
+	return jobID, inserted == 1, nil
+}
+
+func loadWPInventoryJob(ctx context.Context, queryer wpInventoryQueryer, query string, args ...any) (wpInventoryJob, error) {
+	job := wpInventoryJob{}
+	err := queryer.QueryRowContext(ctx, query, args...).Scan(
+		&job.ID, &job.SiteID, &job.Trigger, &job.Status, &job.RequestedAt, &job.NotBefore, &job.LeaseOwner,
+		&job.LeaseExpiresAt, &job.AttemptCount, &job.LeaseRecoveryCount,
+		&job.StartedAt, &job.ErrorCode, &job.ErrorStage, &job.FinishedAt,
+		&job.TimedOut, &job.ExitCode, &job.WallTimeMS, &job.UserCPUMS, &job.SystemCPUMS,
+		&job.MaxRSSKiB, &job.StdoutBytes, &job.StderrBytes, &job.ProtocolBytes,
+		&job.RunnerHash, &job.RunnerVersion, &job.SchemaVersion)
+	return job, err
+}
+
+func loadOptionalWPInventoryJob(ctx context.Context, queryer wpInventoryQueryer, query string, args ...any) (*wpInventoryJob, error) {
+	job, err := loadWPInventoryJob(ctx, queryer, query, args...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &job, nil
+}
+
+func loadWPInventorySiteIdentity(ctx context.Context, queryer wpInventoryQueryer, siteID int) (wpInventorySiteIdentity, error) {
 	var identity wpInventorySiteIdentity
 	var status string
 	err := queryer.QueryRowContext(ctx, `SELECT id, domain, status, system_user, web_root, site_type
