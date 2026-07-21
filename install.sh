@@ -727,6 +727,9 @@ done
 systemctl daemon-reload
 log_info "systemd 进程守护配置完成"
 
+systemctl_start_required php8.3-fpm
+systemctl_start_required nginx
+
 # ============================================================
 # Nginx 基础配置
 # ============================================================
