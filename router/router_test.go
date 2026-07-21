@@ -138,6 +138,17 @@ func TestWPInventoryRoutesRegistered(t *testing.T) {
 	}
 }
 
+func TestWPFleetOverviewRouteRegistered(t *testing.T) {
+	source, err := os.ReadFile("router.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := []byte(`protected.GET("/api/wp-fleet/overview", wpFleetOverviewHandler.Overview)`)
+	if !bytes.Contains(source, route) {
+		t.Fatalf("router.go missing protected fleet overview route %s", route)
+	}
+}
+
 func TestWPInventoryPanelIsIsolatedAndWired(t *testing.T) {
 	detail, err := os.ReadFile("../templates/website_detail.html")
 	if err != nil {

@@ -816,7 +816,9 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 
 	websiteHandler := &handlers.WebsiteHandler{DB: db}
 	wpInventoryHandler := &handlers.WPInventoryHandler{DB: db}
+	wpFleetOverviewHandler := &handlers.WPFleetOverviewHandler{DB: db}
 	protected.GET("/api/websites", websiteHandler.List)
+	protected.GET("/api/wp-fleet/overview", wpFleetOverviewHandler.Overview)
 	protected.POST("/api/websites", websiteHandler.Create)
 	protected.POST("/api/websites/ssl-preflight", websiteHandler.SSLPreflight)
 	protected.GET("/api/websites/:id", websiteHandler.Get)

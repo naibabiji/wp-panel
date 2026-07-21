@@ -112,6 +112,9 @@
     "error_worker": "EN_TODO: wp_inventory.error_worker",
     "error_generic": "EN_TODO: wp_inventory.error_generic"
   },
+  "wp_fleet": {
+    "overview_failed": "EN_TODO: wp_fleet.overview_failed"
+  },
   "name": "Name",
   "size": "Size",
   "time": "Time",

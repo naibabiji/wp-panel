@@ -112,6 +112,9 @@
     "error_worker": "库存任务多次异常中断，请检查面板服务状态。",
     "error_generic": "库存采集出现内部错误，请稍后重试。"
   },
+  "wp_fleet": {
+    "overview_failed": "读取站群概览失败"
+  },
   "name": "名称",
   "size": "大小",
   "time": "时间",
