@@ -149,6 +149,300 @@ func TestWPFleetOverviewRouteRegistered(t *testing.T) {
 	}
 }
 
+func TestWPFleetOverviewPanelIsIsolatedAndWired(t *testing.T) {
+	websites, err := os.ReadFile("../templates/websites.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	panel, err := os.ReadFile("../templates/wp_fleet_overview.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := []byte(`{{template "wp_fleet_overview" .}}`)
+	if count := bytes.Count(websites, call); count != 1 {
+		t.Fatalf("websites fleet overview template calls = %d, want 1", count)
+	}
+	for _, forbidden := range [][]byte{
+		[]byte(`function wpFleetOverview()`),
+		[]byte(`/wp-fleet/overview`),
+		[]byte(`healthFilter`),
+		[]byte(`inventoryFilter`),
+		[]byte(`api('/websites')`),
+		[]byte(`websites: []`),
+		[]byte(`fetchList()`),
+	} {
+		if bytes.Contains(websites, forbidden) {
+			t.Fatalf("websites template contains fleet implementation %q", forbidden)
+		}
+	}
+	for _, required := range [][]byte{
+		[]byte(`{{define "wp_fleet_overview"}}`),
+		[]byte(`function wpFleetOverview()`),
+		[]byte(`x-data="wpFleetOverview()"`),
+		[]byte(`@wp-fleet-site-deleted.window="siteDeleted($event.detail.siteId)"`),
+		[]byte(`@click="toggleStatus(site)"`),
+		[]byte(`@click="reinstallWP(site)"`),
+		[]byte(`@click="deleteSite(site)"`),
+	} {
+		if !bytes.Contains(panel, required) {
+			t.Fatalf("fleet overview panel is missing %q", required)
+		}
+	}
+	for _, forbidden := range [][]byte{
+		[]byte(`api('/websites/'`),
+		[]byte(`function toggleStatus(`),
+		[]byte(`function reinstallWP(`),
+		[]byte(`function deleteSite(`),
+		[]byte(`{{template "base" .}}`),
+	} {
+		if bytes.Contains(panel, forbidden) {
+			t.Fatalf("fleet overview panel contains duplicated write behavior %q", forbidden)
+		}
+	}
+	rendered := renderPage(t, "websites.html", "websites_content")
+	if !bytes.Contains(rendered, []byte(`function wpFleetOverview()`)) {
+		t.Fatal("rendered websites page is missing the fleet overview component")
+	}
+}
+
+func TestWPFleetOverviewPanelAPIContract(t *testing.T) {
+	panel, err := os.ReadFile("../templates/wp_fleet_overview.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range [][]byte{
+		[]byte(`api('/wp-fleet/overview', { signal: controller.signal, suppressToast: true })`),
+		[]byte(`new TextEncoder().encode(query).length > 128`),
+		[]byte(`toLocaleDateString(currentLocale())`),
+		[]byte(`toLocaleString(currentLocale())`),
+	} {
+		if !bytes.Contains(panel, required) {
+			t.Fatalf("fleet overview panel is missing API contract %q", required)
+		}
+	}
+	for _, forbidden := range [][]byte{
+		[]byte(`setInterval(`),
+		[]byte(`setTimeout(`),
+		[]byte(`/wp-inventory`),
+		[]byte(`method: 'POST'`),
+		[]byte(`toLocaleDateString('zh-CN')`),
+		[]byte(`toLocaleString('zh-CN')`),
+		[]byte(`api('/websites`),
+	} {
+		if bytes.Contains(panel, forbidden) {
+			t.Fatalf("fleet overview panel contains forbidden API behavior %q", forbidden)
+		}
+	}
+}
+
+func TestWPFleetOverviewPanelBehavior(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available")
+	}
+	script := wpFleetOverviewPanelScript(t)
+	harness := []byte(`
+function assert(condition, message) {
+    if (!condition) throw new Error(message);
+}
+global.t = (key, params = {}) => key + (params.count === undefined ? '' : ':' + params.count);
+global.currentLocale = () => 'en-US';
+
+const inventory = (status, successful, updates, stale = false) => ({
+    status,
+    has_successful_inventory: successful,
+    wordpress_version: successful ? '7.0' : '',
+    plugin_updates: updates,
+    theme_updates: 0,
+    core_upgrade_available: false,
+    update_total: updates,
+    last_attempt_at: '2026-07-21T00:00:00Z',
+    last_success_at: successful ? '2026-07-21T00:00:00Z' : null,
+    stale,
+});
+const site = (id, domain, siteType, status, health, siteInventory, createdAt) => ({
+    id,
+    name: domain.split('.')[0],
+    domain,
+    site_type: siteType,
+    status,
+    created_at: createdAt || '2026-07-21T00:00:00Z',
+    expires_at: null,
+    ssl_enabled: false,
+    ssl_state: 'disabled',
+    monitoring_enabled: false,
+    backup_enabled: false,
+    file_lock_enabled: false,
+    fastcgi_cache_enabled: false,
+    access_log_mode: 'off',
+    health: { level: health, issues: [] },
+    inventory: siteInventory,
+});
+const sites = [
+    site(1, 'alpha.example', 'wordpress', 'active', 'critical', inventory('complete', true, 1), '2026-07-20T00:00:00Z'),
+    site(2, 'beta.example', 'wordpress', 'paused', 'warning', inventory('failed', true, 2, true), '2026-07-19T00:00:00Z'),
+    site(3, 'gamma.example', 'wordpress', 'creating', 'unknown', inventory('unknown', false, 0), '2026-07-18T00:00:00Z'),
+    site(4, 'delta.example', 'php', 'active', 'healthy', null, '2026-07-17T00:00:00Z'),
+    site(5, 'epsilon.example', 'wordpress', 'deleting', 'healthy', inventory('complete', true, 0), '2026-07-21T00:00:00Z'),
+];
+const counts = {
+    total_sites: 5,
+    wordpress_sites: 4,
+    critical_sites: 1,
+    warning_sites: 1,
+    unknown_sites: 1,
+    healthy_sites: 2,
+    update_sites: 2,
+    failed_inventory_sites: 1,
+    stale_inventory_sites: 1,
+    inventory_attention_sites: 1,
+    uncollected_sites: 1,
+};
+const data = (nextSites = sites, nextCounts = counts) => ({ generated_at: '2026-07-21T00:00:00Z', counts: nextCounts, sites: nextSites });
+
+(async () => {
+    const panel = wpFleetOverview();
+    panel.overview = data();
+
+    assert(panel.filteredSites().map(item => item.id).join(',') === '1,2,3,4,5', 'attention sorting');
+    panel.siteTypeFilter = 'wordpress';
+    panel.healthFilter = 'warning';
+    panel.inventoryFilter = 'failed';
+    panel.updateFilter = 'has_updates';
+    panel.statusFilter = 'paused';
+    panel.search = ' beta ';
+    assert(panel.filteredSites().map(item => item.id).join(',') === '2', 'combined filtering');
+
+    panel.siteTypeFilter = 'all';
+    panel.healthFilter = 'all';
+    panel.inventoryFilter = 'all';
+    panel.updateFilter = 'all';
+    panel.statusFilter = 'all';
+    panel.search = 'a'.repeat(128);
+    panel.filteredSites();
+    assert(panel.searchError === '', '128 byte search accepted');
+    panel.search = '测'.repeat(43);
+    assert(panel.filteredSites().length === 0 && panel.searchError === 'wp_fleet.search_too_long', '129 byte search rejected');
+
+    panel.search = '';
+    panel.sortMode = 'domain';
+    assert(panel.filteredSites().map(item => item.id).join(',') === '1,2,4,5,3', 'domain sorting');
+    panel.sortMode = 'created';
+    assert(panel.filteredSites()[0].id === 5, 'created sorting');
+
+    assert(['active', 'paused', 'error', 'creating', 'deleting'].map(value => panel.statusKey(value)).join(',') === [
+        'wp_fleet.status_active', 'wp_fleet.status_paused', 'wp_fleet.status_error', 'wp_fleet.status_creating', 'wp_fleet.status_deleting'
+    ].join(','), 'five website statuses');
+
+    let usedLocale = '';
+    const originalDate = Date.prototype.toLocaleDateString;
+    Date.prototype.toLocaleDateString = function(locale) { usedLocale = locale; return 'date'; };
+    assert(panel.displayDate('2026-07-21T00:00:00Z') === 'date' && usedLocale === 'en-US', 'current locale date');
+    Date.prototype.toLocaleDateString = originalDate;
+
+    let resolveFirst;
+    let resolveSecond;
+    let calls = 0;
+    global.api = () => new Promise(resolve => {
+        calls++;
+        if (calls === 1) resolveFirst = resolve;
+        else resolveSecond = resolve;
+    });
+    const first = panel.reloadOverview();
+    const second = panel.reloadOverview();
+    const secondData = data([sites[4]], { ...counts, total_sites: 1, critical_sites: 0, warning_sites: 0, unknown_sites: 0, healthy_sites: 1 });
+    resolveSecond({ data: secondData });
+    await second;
+    resolveFirst({ data: data([sites[0]]) });
+    await first;
+    assert(panel.overview === secondData && panel.overview.sites[0].id === 5, 'old response discarded');
+    assert(panel.overview.counts.total_sites === 1, 'counts use API response');
+
+    const previous = panel.overview;
+    global.api = async () => { throw new Error('reload failed'); };
+    await panel.reloadOverview();
+    assert(panel.overview === previous && panel.staleOverview && panel.loadError === 'reload failed', 'reload failure preserves old overview');
+
+    const initialFailure = wpFleetOverview();
+    global.api = async () => { throw new Error('initial failed'); };
+    await initialFailure.reloadOverview();
+    assert(initialFailure.overview === null && !initialFailure.staleOverview && initialFailure.loadError === 'initial failed', 'initial failure state');
+
+    const empty = wpFleetOverview();
+    global.api = async () => ({ data: data([], { ...counts, total_sites: 0, critical_sites: 0, warning_sites: 0, unknown_sites: 0, healthy_sites: 0 }) });
+    await empty.reloadOverview();
+    assert(Array.isArray(empty.overview.sites) && empty.overview.sites.length === 0, 'empty state');
+
+    global.api = async () => { throw new Error('post-delete reload failed'); };
+    panel.overview = data();
+    await panel.siteDeleted(1);
+    assert(!panel.overview.sites.some(item => item.id === 1), 'delete removes site before reload');
+    assert(panel.overview.counts.total_sites === 4 && panel.overview.counts.critical_sites === 0 && panel.overview.counts.update_sites === 1, 'delete removes counts before reload');
+
+    const many = [];
+    for (let index = 0; index < 300; index++) many.push(site(index + 10, 'site-' + index + '.example', 'wordpress', 'active', index % 2 ? 'healthy' : 'warning', inventory('complete', true, index % 3), '2026-07-21T00:00:00Z'));
+    panel.overview = data(many, counts);
+    panel.search = 'site';
+    panel.sortMode = 'attention';
+    const started = performance.now();
+    assert(panel.filteredSites().length === 300, '300 site filtering');
+    const filterElapsed = performance.now() - started;
+    assert(filterElapsed < 50, '300 site filtering budget');
+    console.log('fleet-filter-300-ms=' + filterElapsed.toFixed(3));
+})().catch(error => {
+    console.error(error);
+    process.exit(1);
+});
+`)
+	testScript := append(append([]byte{}, script...), harness...)
+	scriptPath := filepath.Join(t.TempDir(), "wp-fleet-overview-behavior.js")
+	if err := os.WriteFile(scriptPath, testScript, 0600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := exec.Command(node, scriptPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("fleet overview behavior failed: %v\n%s", err, output)
+	}
+	if output = bytes.TrimSpace(output); len(output) > 0 {
+		t.Log(string(output))
+	}
+}
+
+func TestWPFleetEnglishPlaceholders(t *testing.T) {
+	content, err := os.ReadFile("../i18n/locales/en-US.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var locale struct {
+		WPFleet map[string]string `json:"wp_fleet"`
+	}
+	if err := json.Unmarshal(content, &locale); err != nil {
+		t.Fatal(err)
+	}
+	if len(locale.WPFleet) == 0 {
+		t.Fatal("en-US is missing wp_fleet messages")
+	}
+	for key, value := range locale.WPFleet {
+		want := "EN_TODO: wp_fleet." + key
+		if value != want {
+			t.Errorf("wp_fleet.%s = %q, want %q", key, value, want)
+		}
+	}
+}
+
+func wpFleetOverviewPanelScript(t *testing.T) []byte {
+	t.Helper()
+	rendered := renderPage(t, "websites.html", "websites_content")
+	scriptPattern := regexp.MustCompile(`(?s)<script>(.*?)</script>`)
+	for _, match := range scriptPattern.FindAllSubmatch(rendered, -1) {
+		if bytes.Contains(match[1], []byte(`function wpFleetOverview()`)) {
+			return match[1]
+		}
+	}
+	t.Fatal("rendered websites page is missing the fleet overview script")
+	return nil
+}
+
 func TestWPInventoryPanelIsIsolatedAndWired(t *testing.T) {
 	detail, err := os.ReadFile("../templates/website_detail.html")
 	if err != nil {

@@ -1,6 +1,6 @@
 {{template "base" .}}
 {{define "websites_content"}}
-<div x-data="websiteList()" x-init="fetchList()">
+<div x-data="websiteList()">
     <div class="flex items-center justify-between mb-6">
         <h2 class="text-xl font-bold text-white">{{t .Lang "nav.websites"}}</h2>
         <a href="/{{.RandomSuffix}}/websites/new" class="btn-primary">{{t .Lang "website.create_site"}}</a>
@@ -52,89 +52,12 @@
         </div>
     </div>
 
-    <div class="card">
-        <div class="overflow-x-auto">
-            <table class="w-full">
-                <thead class="border-b border-gray-700">
-                    <tr>
-                        <th class="table-header">{{t .Lang "website.domain"}}</th>
-                        <th class="table-header">{{t .Lang "website.status"}}</th>
-                        <th class="table-header">{{t .Lang "website.file_lock_column"}}</th>
-                        <th class="table-header">SSL</th>
-                        <th class="table-header">{{t .Lang "website.monitoring"}}</th>
-                        <th class="table-header">{{t .Lang "website.cache"}}</th>
-                        <th class="table-header">{{t .Lang "website.logs"}}</th>
-                        <th class="table-header">{{t .Lang "website.db_backup"}}</th>
-                        <th class="table-header">{{t .Lang "website.created_at"}}</th>
-                        <th class="table-header">{{t .Lang "website.expiry_time"}}</th>
-                        <th class="table-header">{{t .Lang "website.actions"}}</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <template x-for="site in websites" :key="site.id">
-                        <tr class="border-b border-gray-700/50">
-                            <td class="table-cell font-medium">
-                                <a :href="'http://' + site.domain" target="_blank" class="text-blue-400 hover:text-blue-300 hover:underline" x-text="site.domain"></a>
-                            </td>
-                            <td class="table-cell">
-                                <span :class="site.status === 'active' ? 'badge-success' : 'badge-warning'"
-                                      x-text="site.status === 'active' ? t('website.status_running') : t('website.status_paused')"></span>
-                            </td>
-                            <td class="table-cell">
-                                <span :class="site.file_lock_enabled ? 'badge-warning' : 'badge-success'"
-                                      x-text="site.file_lock_enabled ? t('website.file_locked') : t('website.file_unlocked')"></span>
-                            </td>
-                            <td class="table-cell">
-                                <div class="space-y-1">
-                                    <span :class="site.ssl_enabled ? 'badge-success' : site.ssl_last_error ? 'badge-warning' : 'badge-info'"
-                                          x-text="site.ssl_enabled ? t('website.ssl_enabled') : site.ssl_last_error ? t('website.ssl_pending') : t('website.ssl_not_enabled')"></span>
-                                    <p x-show="!site.ssl_enabled && site.ssl_last_error" class="text-xs text-yellow-400 max-w-48 truncate" :title="site.ssl_last_error" x-text="site.ssl_last_error"></p>
-                                </div>
-                            </td>
-                            <td class="table-cell">
-                                <span :class="site.monitoring_enabled ? 'badge-success' : 'badge-info'"
-                                      x-text="site.monitoring_enabled ? t('website.monitoring_enabled') : t('website.monitoring_disabled')"></span>
-                            </td>
-                            <td class="table-cell">
-                                <span :class="site.fastcgi_cache_enabled ? 'badge-success' : 'badge-info'"
-                                      x-text="site.fastcgi_cache_enabled ? t('website.enabled') : t('website.disabled')"></span>
-                            </td>
-                            <td class="table-cell">
-                                <span :class="site.access_log_mode === 'full' ? 'badge-success' : site.access_log_mode === 'error_only' ? 'badge-warning' : 'badge-info'"
-                                      x-text="site.access_log_mode === 'full' ? t('website.access_log_full') : site.access_log_mode === 'error_only' ? t('website.access_log_error_only') : t('website.access_log_off')"></span>
-                            </td>
-                            <td class="table-cell">
-                                <span :class="site.backup_enabled ? 'badge-success' : 'badge-info'"
-                                      x-text="site.backup_enabled ? t('website.enabled') : t('website.disabled')"></span>
-                            </td>
-                            <td class="table-cell" x-text="new Date(site.created_at).toLocaleDateString('zh-CN')"></td>
-                            <td class="table-cell text-xs" x-text="site.expires_at ? new Date(site.expires_at).toLocaleDateString('zh-CN') : t('website.never_expires')"></td>
-                            <td class="table-cell">
-                                <div class="flex space-x-2">
-                                    <a :href="'/{{$.RandomSuffix}}/websites/' + site.id" class="btn-secondary text-xs py-1 px-2">{{t .Lang "website.details"}}</a>
-                                    <a :href="'/{{$.RandomSuffix}}/files?site_id=' + site.id" class="text-xs py-1 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">{{t .Lang "website.file_short"}}</a>
-                                    <button @click="toggleStatus(site)" class="text-xs py-1 px-2 rounded"
-                                            :class="site.status === 'active' ? 'btn-warning bg-yellow-700 hover:bg-yellow-600 text-white' : 'btn-success text-xs'"
-                                            x-text="site.status === 'active' ? t('website.site_pause') : t('website.site_enable')"></button>
-                                    <button x-show="site.site_type === 'wordpress'" @click="reinstallWP(site)" :disabled="reinstallingId === site.id" class="text-xs py-1 px-2 rounded" style="background-color: #7f1d1d; color: #fca5a5;" x-text="reinstallingId === site.id ? t('website.reinstalling') : t('website.reinstall')"></button>
-                                    <button @click="deleteSite(site)" class="btn-danger text-xs py-1 px-2">{{t .Lang "website.delete"}}</button>
-                                </div>
-                            </td>
-                        </tr>
-                    </template>
-                    <tr x-show="websites.length === 0">
-                        <td colspan="11" class="table-cell text-center text-gray-500 py-8">{{t .Lang "website.no_websites"}}</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-    </div>
+    {{template "wp_fleet_overview" .}}
 </div>
 
 <script>
 function websiteList() {
     return {
-        websites: [],
         reinstallingId: null,
         reinstallModal: {
             show: false,
@@ -145,12 +68,6 @@ function websiteList() {
             installThemes: [],
             installPlugins: [],
         },
-        async fetchList() {
-            try {
-                const resp = await api('/websites');
-                if (resp.success) this.websites = resp.data || [];
-            } catch (e) { showToast(e.message, 'error'); }
-        },
         async toggleStatus(site) {
             const action = site.status === 'active' ? 'pause' : 'enable';
             try {
@@ -158,6 +75,7 @@ function websiteList() {
                 if (resp.success) {
                     site.status = action === 'pause' ? 'paused' : 'active';
                     showToast(resp.message || t('common.operation_success'), 'success');
+                    window.dispatchEvent(new CustomEvent('wp-fleet-reload'));
                 }
             } catch (e) { showToast(e.message, 'error'); }
         },
@@ -220,7 +138,7 @@ function websiteList() {
             try {
                 const resp = await api('/websites/' + site.id, { method: 'DELETE' });
                 if (resp.success) {
-                    this.websites = this.websites.filter(s => s.id !== site.id);
+                    window.dispatchEvent(new CustomEvent('wp-fleet-site-deleted', { detail: { siteId: site.id } }));
                     showToast(t('website.delete_success'), 'success');
                 }
             } catch (e) { showToast(e.message, 'error'); }
