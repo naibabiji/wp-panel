@@ -506,6 +506,41 @@ func (s *wpUpdateStore) advanceOwnedStage(ctx context.Context, id, owner, expect
 	return tx.Commit()
 }
 
+func (s *wpUpdateStore) recordPluginPrepared(ctx context.Context, id, owner string, wasActive bool, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stamp := wpUpdateDBTime(now)
+	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET stage='unlocking',updated_at=?
+		WHERE id=? AND component_type='plugin' AND lease_owner=? AND status='running' AND stage='backups_ready'`, stamp, id, owner)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return errors.New("update task ownership lost")
+	}
+	code := "plugin_observed_inactive"
+	if wasActive {
+		code = "plugin_observed_active"
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, "prepare", "info", code, stamp); err != nil {
+		return err
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, "unlocking", "info", "", stamp); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *wpUpdateStore) ownsRunningTask(ctx context.Context, id, owner string) (bool, error) {
+	var owned int
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM wp_update_tasks
+		WHERE id=? AND lease_owner=? AND status='running')`, id, owner).Scan(&owned)
+	return owned == 1, err
+}
+
 func (s *wpUpdateStore) beginAutomaticRollback(ctx context.Context, id, owner, failureStage string, now time.Time) error {
 	if failureStage == "" {
 		return errors.New("failure stage is required")
