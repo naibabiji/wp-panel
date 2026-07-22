@@ -31,6 +31,15 @@ var (
 	BuildTime = "unknown"
 )
 
+const wpCoreUpdateWorkerShutdownTimeout = 30 * time.Second
+
+type wpCoreUpdateWorkerLifecycle interface {
+	Start() error
+	Stop(context.Context) error
+}
+
+type wpCoreUpdateWorkerFactory func(*config.Config) (wpCoreUpdateWorkerLifecycle, error)
+
 func main() {
 	configPath := flag.String("config", "/www/server/panel/config.json", "配置文件路径")
 	resetPass := flag.String("passwd", "", "重置管理员密码（8位以上）")
@@ -171,6 +180,7 @@ func main() {
 	log.Println("任务队列初始化完成")
 	var inventoryWorker *executor.WPInventoryWorker
 	var inventoryScheduler *executor.WPInventoryScheduler
+	var coreUpdateWorker wpCoreUpdateWorkerLifecycle
 	if candidate, err := executor.NewWPInventoryWorker(cfg); err != nil {
 		log.Println("WordPress 库存后台任务未启动")
 	} else if err := candidate.Start(); err != nil {
@@ -186,6 +196,14 @@ func main() {
 			inventoryScheduler = scheduler
 			log.Println("WordPress 库存自动刷新已启动")
 		}
+	}
+	if candidate, err := startWPCoreUpdateWorker(cfg, func(cfg *config.Config) (wpCoreUpdateWorkerLifecycle, error) {
+		return executor.NewWPCoreUpdateWorker(cfg)
+	}); err != nil {
+		log.Println("WordPress 核心更新后台任务未启动")
+	} else {
+		coreUpdateWorker = candidate
+		log.Println("WordPress 核心更新后台任务已启动")
 	}
 
 	collector.Start()
@@ -275,6 +293,11 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("正在关闭面板...")
+	if coreUpdateWorker != nil {
+		if err := stopWPCoreUpdateWorker(coreUpdateWorker, wpCoreUpdateWorkerShutdownTimeout); err != nil {
+			log.Println("WordPress 核心更新后台任务关闭超时")
+		}
+	}
 	if inventoryScheduler != nil {
 		if err := inventoryScheduler.Stop(context.Background()); err != nil {
 			log.Println("WordPress 库存自动刷新关闭失败")
@@ -286,6 +309,32 @@ func main() {
 		}
 	}
 	executor.StopWPSecurityEventIngestor()
+}
+
+func startWPCoreUpdateWorker(cfg *config.Config, factory wpCoreUpdateWorkerFactory) (wpCoreUpdateWorkerLifecycle, error) {
+	if cfg == nil || factory == nil {
+		return nil, fmt.Errorf("invalid core update worker startup")
+	}
+	worker, err := factory(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if worker == nil {
+		return nil, fmt.Errorf("core update worker unavailable")
+	}
+	if err := worker.Start(); err != nil {
+		return nil, err
+	}
+	return worker, nil
+}
+
+func stopWPCoreUpdateWorker(worker wpCoreUpdateWorkerLifecycle, timeout time.Duration) error {
+	if worker == nil || timeout <= 0 {
+		return fmt.Errorf("invalid core update worker shutdown")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return worker.Stop(ctx)
 }
 
 func handleFail2banCLI(configPath, banIP, unbanIP, recordIP, jail string) {

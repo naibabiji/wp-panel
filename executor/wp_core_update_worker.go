@@ -6,8 +6,12 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/naibabiji/wp-panel/config"
+	"github.com/naibabiji/wp-panel/database"
 )
 
 const (
@@ -59,6 +63,67 @@ type wpCoreUpdateWorkerOptions struct {
 	heartbeatInterval time.Duration
 	sweepInterval     time.Duration
 	now               func() time.Time
+}
+
+func NewWPCoreUpdateWorker(cfg *config.Config) (*WPCoreUpdateWorker, error) {
+	if cfg == nil || database.GetDB() == nil || !validWPCoreUpdateRoot(cfg.Panel.BackupDir) || !filepath.IsAbs(cfg.Paths.WWWRoot) {
+		return nil, errors.New("invalid core update worker configuration")
+	}
+	root := filepath.Join(filepath.Clean(cfg.Panel.BackupDir), "wp-updates")
+	store := newWPUpdateStore(database.GetDB())
+	backups, err := newWPUpdateArtifactService(store, root, defaultWPUpdateDatabaseDumper)
+	if err != nil {
+		return nil, errors.New("core update backup service unavailable")
+	}
+	ops, err := newDefaultWPCoreSystemOperations(filepath.Clean(cfg.Paths.WWWRoot))
+	if err != nil {
+		return nil, errors.New("core update operations unavailable")
+	}
+	executor, err := newWPCoreUpdateExecutor(store, root, ops)
+	if err != nil {
+		return nil, errors.New("core update executor unavailable")
+	}
+	owner, err := newWPCoreUpdateWorkerOwner()
+	if err != nil {
+		return nil, errors.New("core update worker identity unavailable")
+	}
+	return newWPCoreUpdateWorker(wpCoreUpdateWorkerOptions{
+		store: store, backups: backups, executor: executor,
+		observeVersion: func(ctx context.Context, siteID int) (string, error) {
+			return observeWPCoreUpdateVersion(ctx, store, siteID)
+		},
+		owner: owner, pollInterval: wpCoreUpdateWorkerPollInterval,
+		heartbeatInterval: wpCoreUpdateWorkerHeartbeatInterval,
+		sweepInterval:     wpCoreUpdateWorkerSweepInterval, now: time.Now,
+	})
+}
+
+func validWPCoreUpdateRoot(backupDir string) bool {
+	if !filepath.IsAbs(backupDir) {
+		return false
+	}
+	clean := filepath.Clean(backupDir)
+	if clean == string(filepath.Separator) {
+		return false
+	}
+	resolved, err := filepath.EvalSymlinks(clean)
+	return err == nil && resolved == clean
+}
+
+func observeWPCoreUpdateVersion(ctx context.Context, store *wpUpdateStore, siteID int) (string, error) {
+	if store == nil || store.db == nil || siteID <= 0 {
+		return "", errors.New("invalid core update version observation")
+	}
+	var webRoot string
+	if err := store.db.QueryRowContext(ctx, `SELECT web_root FROM websites
+		WHERE id=? AND site_type='wordpress' AND status='active'`, siteID).Scan(&webRoot); err != nil || !filepath.IsAbs(webRoot) {
+		return "", errors.New("core update site unavailable")
+	}
+	identity, err := readInstalledWordPressIdentity(filepath.Clean(webRoot))
+	if err != nil {
+		return "", errors.New("installed WordPress version unavailable")
+	}
+	return identity.Version, nil
 }
 
 func newWPCoreUpdateWorker(opts wpCoreUpdateWorkerOptions) (*WPCoreUpdateWorker, error) {

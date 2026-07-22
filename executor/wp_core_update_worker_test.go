@@ -2,10 +2,78 @@ package executor
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/naibabiji/wp-panel/config"
 )
+
+func TestNewWPCoreUpdateWorkerBuildsInertProductionGraph(t *testing.T) {
+	store, _ := newWPUpdateStoreTest(t)
+	backupRoot := t.TempDir()
+	wwwRoot := t.TempDir()
+	cfg := &config.Config{Panel: config.PanelConfig{BackupDir: backupRoot}, Paths: config.PathsConfig{WWWRoot: wwwRoot}}
+	worker, err := NewWPCoreUpdateWorker(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, ok := worker.backups.(*wpUpdateArtifactService)
+	wantRoot := filepath.Join(backupRoot, "wp-updates")
+	if !ok || worker.store.db != store.db || artifact.root != wantRoot {
+		t.Fatalf("production graph store/root mismatch: artifact=%T root=%q", worker.backups, artifact.root)
+	}
+	if err := worker.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	stopWPCoreUpdateWorker(t, worker)
+	entries, err := os.ReadDir(wantRoot)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("empty worker created task artifacts: entries=%v err=%v", entries, err)
+	}
+}
+
+func TestNewWPCoreUpdateWorkerRejectsUnsafeBackupRoots(t *testing.T) {
+	newWPUpdateStoreTest(t)
+	wwwRoot := t.TempDir()
+	for _, root := range []string{"relative", string(filepath.Separator)} {
+		cfg := &config.Config{Panel: config.PanelConfig{BackupDir: root}, Paths: config.PathsConfig{WWWRoot: wwwRoot}}
+		if _, err := NewWPCoreUpdateWorker(cfg); err == nil {
+			t.Fatalf("accepted unsafe backup root %q", root)
+		}
+	}
+	realRoot := t.TempDir()
+	link := filepath.Join(t.TempDir(), "backup-link")
+	if err := os.Symlink(realRoot, link); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Panel: config.PanelConfig{BackupDir: link}, Paths: config.PathsConfig{WWWRoot: wwwRoot}}
+	if _, err := NewWPCoreUpdateWorker(cfg); err == nil {
+		t.Fatal("accepted symlink backup root")
+	}
+}
+
+func TestObserveWPCoreUpdateVersionReadsActiveWordPressOnly(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	root := filepath.Join(t.TempDir(), "site")
+	writeVersionFixture(t, root, "7.0.2", "zh_CN")
+	if _, err := store.db.Exec(`UPDATE websites SET web_root=? WHERE id=?`, root, siteID); err != nil {
+		t.Fatal(err)
+	}
+	version, err := observeWPCoreUpdateVersion(context.Background(), store, siteID)
+	if err != nil || version != "7.0.2" {
+		t.Fatalf("version=%q err=%v", version, err)
+	}
+	if _, err := store.db.Exec(`UPDATE websites SET status='paused' WHERE id=?`, siteID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := observeWPCoreUpdateVersion(context.Background(), store, siteID); err == nil {
+		t.Fatal("observed paused site")
+	}
+}
 
 type fakeWPCoreWorkerBackups struct {
 	store    *wpUpdateStore
