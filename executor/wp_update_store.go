@@ -257,6 +257,80 @@ func (s *wpUpdateStore) markFailure(ctx context.Context, id, owner, failureStage
 	return s.finishOwned(ctx, id, owner, wpUpdateFailed, failureStage, failureStage, attention, now)
 }
 
+func (s *wpUpdateStore) advanceOwnedStage(ctx context.Context, id, owner, expectedStage, nextStage string, now time.Time) error {
+	if expectedStage == "" || nextStage == "" || expectedStage == nextStage {
+		return errors.New("update stage is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stamp := wpUpdateDBTime(now)
+	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET stage=?,updated_at=?
+		WHERE id=? AND lease_owner=? AND status='running' AND stage=?`, nextStage, stamp, id, owner, expectedStage)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return errors.New("update task ownership lost")
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, nextStage, "info", "", stamp); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *wpUpdateStore) beginAutomaticRollback(ctx context.Context, id, owner, failureStage string, now time.Time) error {
+	if failureStage == "" {
+		return errors.New("failure stage is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stamp := wpUpdateDBTime(now)
+	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET stage='rollback',failure_stage=?,rollback_status='pending',updated_at=?
+		WHERE id=? AND lease_owner=? AND status='running' AND rollback_status='not_required'`, failureStage, stamp, id, owner)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return errors.New("update task ownership lost")
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, "rollback", "info", "automatic_rollback_started", stamp); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *wpUpdateStore) finishAutomaticRollback(ctx context.Context, id, owner string, succeeded bool, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stamp := wpUpdateDBTime(now)
+	rollbackStatus, attention, resultType, code := "success", 0, "success", "automatic_rollback_succeeded"
+	if !succeeded {
+		rollbackStatus, attention, resultType, code = "failed", 1, "failed", "automatic_rollback_failed"
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET status='failed',stage='rollback',rollback_status=?,requires_attention=?,
+		lease_owner='',lease_expires_at=NULL,finished_at=?,updated_at=? WHERE id=? AND lease_owner=? AND status='running' AND rollback_status='pending'`,
+		rollbackStatus, attention, stamp, stamp, id, owner)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return errors.New("update task ownership lost")
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, "rollback", resultType, code, stamp); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *wpUpdateStore) finishOwned(ctx context.Context, id, owner, status, stage, failureStage string, attention bool, now time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
