@@ -1514,6 +1514,13 @@
     "upload_package": "Upload package",
     "upload_success": "Upload successful",
     "uploading": "Uploading...",
+    "wp_package_busy": "A package operation is already in progress. Try again later.",
+    "wp_package_download_failed": "The server could not reach WordPress.org. Try again or upload the package manually.",
+    "wp_package_download_invalid": "The downloaded package failed security validation. Try again or upload it manually.",
+    "wp_package_download_timeout": "The download or validation timed out. Try again or upload the package manually.",
+    "wp_package_invalid": "The file is not a valid full WordPress package.",
+    "wp_package_publish_failed": "Package persistence could not be fully confirmed. Refresh its status before retrying.",
+    "wp_package_too_large": "The file exceeds the 100 MB limit.",
     "zip_only": "Only .zip format is supported"
   },
   "2006-01-02": "2006-01-02",

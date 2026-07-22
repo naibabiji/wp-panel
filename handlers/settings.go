@@ -15,13 +15,17 @@ import (
 
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
+	"github.com/naibabiji/wp-panel/executor"
+	"github.com/naibabiji/wp-panel/i18n"
 	"github.com/naibabiji/wp-panel/models"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 )
 
-type SettingsHandler struct{}
+type SettingsHandler struct {
+	WPPackageService *executor.WPPackageService
+}
 
 func (h *SettingsHandler) GetSettings(c *gin.Context) {
 	db := database.GetDB()
@@ -446,104 +450,74 @@ func (h *SettingsHandler) UploadWPPackage(c *gin.Context) {
 
 	// 限制文件大小（WordPress 安装包通常 25-30MB，上限 100MB）
 	if file.Size > 100*1024*1024 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("文件过大，上限 100MB"))
+		c.JSON(http.StatusRequestEntityTooLarge, models.ErrorResponse(i18n.TE(c.Request, "settings.wp_package_too_large")))
 		return
 	}
-
-	cfg := config.AppConfig
-	pkgPath := cfg.Paths.WordPressPackage
-	pkgDir := filepath.Dir(pkgPath)
-
-	if err := os.MkdirAll(pkgDir, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建目录失败"))
+	if h.WPPackageService == nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "settings.wp_package_publish_failed")))
 		return
 	}
-
-	// 先写入临时文件，校验成功后再替换
-	tmpPath := pkgPath + ".upload_tmp"
-	if err := c.SaveUploadedFile(file, tmpPath); err != nil {
-		os.Remove(tmpPath)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存文件失败"))
+	src, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "settings.wp_package_invalid")))
 		return
 	}
-
-	// 基本校验：用 unzip -t 测试压缩包完整性
-	if out, err := exec.Command("unzip", "-t", tmpPath).CombinedOutput(); err != nil {
-		os.Remove(tmpPath)
-		log.Printf("上传的 ZIP 校验失败: %s, %v", string(out), err)
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("文件校验失败，不是有效的 ZIP 压缩包"))
+	defer src.Close()
+	report, err := h.WPPackageService.PublishUpload(c.Request.Context(), src, file.Size)
+	if err != nil {
+		code := executor.ArchiveErrorCode(err)
+		log.Printf("WordPress package upload rejected: code=%s", code)
+		writeWPPackageError(c, code, false)
 		return
 	}
-
-	// 替换旧文件
-	os.Remove(pkgPath)
-	if err := os.Rename(tmpPath, pkgPath); err != nil {
-		os.Remove(tmpPath)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("替换安装包失败"))
-		return
-	}
-
-	log.Printf("WordPress 安装包已通过上传更新: %s (%s)", pkgPath, formatFileSize(file.Size))
+	log.Printf("WordPress package published from upload: version=%s entries=%d archive_bytes=%d", report.Version, report.Inspection.EntryCount, report.Inspection.ArchiveBytes)
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"message": "安装包上传成功",
+		"message": i18n.TE(c.Request, "settings.upload_success"),
 	}))
 }
 
 func (h *SettingsHandler) DownloadWPPackage(c *gin.Context) {
-	cfg := config.AppConfig
-	pkgPath := cfg.Paths.WordPressPackage
-	pkgDir := filepath.Dir(pkgPath)
-
-	if err := os.MkdirAll(pkgDir, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建目录失败"))
+	if h.WPPackageService == nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "settings.wp_package_publish_failed")))
 		return
 	}
-
-	tmpPath := pkgPath + ".download_tmp"
-	if out, err := exec.Command("wget", "-q", "-T", "30", "-t", "3", "-O", tmpPath,
-		"https://wordpress.org/latest.zip").CombinedOutput(); err != nil {
-		os.Remove(tmpPath)
-		log.Printf("在线下载 WordPress 安装包失败: %s, %v", string(out), err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("下载失败，请检查服务器网络或手动上传安装包"))
+	report, err := h.WPPackageService.DownloadLatest(c.Request.Context())
+	if err != nil {
+		code := executor.ArchiveErrorCode(err)
+		log.Printf("WordPress package download rejected: code=%s", code)
+		writeWPPackageError(c, code, true)
 		return
 	}
-
-	// 校验下载的文件
-	if info, err := os.Stat(tmpPath); err != nil || info.Size() == 0 {
-		os.Remove(tmpPath)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("下载的文件无效"))
-		return
-	}
-
-	// 校验 ZIP 完整性
-	if out, err := exec.Command("unzip", "-t", tmpPath).CombinedOutput(); err != nil {
-		os.Remove(tmpPath)
-		log.Printf("下载的 ZIP 校验失败: %s, %v", string(out), err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("下载的文件校验失败，请重试或手动上传"))
-		return
-	}
-
-	// 替换旧文件
-	os.Remove(pkgPath)
-	if err := os.Rename(tmpPath, pkgPath); err != nil {
-		os.Remove(tmpPath)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("替换安装包失败"))
-		return
-	}
-
-	// 更新文件时间戳为当前时间（wget 默认保留远程 Last-Modified，导致 mtime 不反映实际下载时间）
-	os.Chtimes(pkgPath, time.Now(), time.Now())
-
-	info, _ := os.Stat(pkgPath)
-	sizeText := ""
-	if info != nil {
-		sizeText = formatFileSize(info.Size())
-	}
-
-	log.Printf("WordPress 安装包已通过在线下载更新: %s (%s)", pkgPath, sizeText)
+	log.Printf("WordPress package published from official download: version=%s entries=%d archive_bytes=%d", report.Version, report.Inspection.EntryCount, report.Inspection.ArchiveBytes)
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"message": "安装包下载成功",
+		"message": i18n.TE(c.Request, "settings.package_download_complete"),
 	}))
+}
+
+func writeWPPackageError(c *gin.Context, code string, download bool) {
+	status := http.StatusBadRequest
+	key := "settings.wp_package_invalid"
+	switch code {
+	case "archive_upload_too_large", "archive_too_large":
+		if download {
+			status, key = http.StatusBadGateway, "settings.wp_package_download_invalid"
+		} else {
+			status, key = http.StatusRequestEntityTooLarge, "settings.wp_package_too_large"
+		}
+	case "package_busy":
+		status, key = http.StatusConflict, "settings.wp_package_busy"
+	case "package_download_timeout", "archive_validation_timeout":
+		status, key = http.StatusGatewayTimeout, "settings.wp_package_download_timeout"
+	case "package_download_failed":
+		status, key = http.StatusBadGateway, "settings.wp_package_download_failed"
+	case "package_publish_failed":
+		status, key = http.StatusInternalServerError, "settings.wp_package_publish_failed"
+	default:
+		if download {
+			status, key = http.StatusBadGateway, "settings.wp_package_download_invalid"
+		}
+	}
+	c.JSON(status, models.ErrorResponse(i18n.TE(c.Request, key)))
 }
 
 func (h *SettingsHandler) DeleteWPPackage(c *gin.Context) {

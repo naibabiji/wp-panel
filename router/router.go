@@ -4,11 +4,13 @@ import (
 	"embed"
 	"html/template"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
+	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/handlers"
 	"github.com/naibabiji/wp-panel/i18n"
 	"github.com/naibabiji/wp-panel/middleware"
@@ -988,7 +990,11 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/files/mkdir", fileHandler.CreateDir)
 	protected.POST("/api/files/fix-permissions", fileHandler.FixPermissions)
 
-	settingsHandler := &handlers.SettingsHandler{}
+	wpPackageService, err := executor.NewWPPackageService(cfg.Paths.WordPressPackage, nil)
+	if err != nil {
+		log.Printf("WordPress package service disabled: code=%s", executor.ArchiveErrorCode(err))
+	}
+	settingsHandler := &handlers.SettingsHandler{WPPackageService: wpPackageService}
 	aiHandler := &handlers.AIHandler{}
 	protected.GET("/api/settings", settingsHandler.GetSettings)
 	protected.PUT("/api/settings", settingsHandler.UpdateSettings)
