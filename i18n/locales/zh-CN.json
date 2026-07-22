@@ -62,6 +62,7 @@
     "task_invalid": "核心更新任务状态格式异常",
     "submit_failed": "核心更新任务提交失败，请重新检查",
     "submitted": "核心更新任务已提交",
+    "submission_recovered": "提交响应未能确认，但已找到刚创建的更新任务并恢复跟踪",
     "task_read_failed": "暂时无法读取更新任务，系统将继续重试",
     "stage_value": "当前阶段：{{stage}}",
     "stage_queued": "等待执行",

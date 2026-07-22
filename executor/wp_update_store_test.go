@@ -94,6 +94,26 @@ func TestWPUpdateStoreCannotFailSealedPlanAsPreparing(t *testing.T) {
 	}
 }
 
+func TestWPUpdateStoreLatestCoreUpdateTaskIsSiteScoped(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	first, err := store.createCoreManualPlan(context.Background(), WPUpdatePlan{
+		SiteID: siteID, CurrentVersion: "7.0.1", TargetVersion: "7.0.2", PackageSource: "wordpress.org",
+		DownloadURL: "https://downloads.wordpress.org/release/wordpress-7.0.2.zip",
+	}, now)
+	if err != nil || store.failPreparingPlan(context.Background(), first.ID, "package_prepare_failed", now) != nil {
+		t.Fatalf("first task=%+v err=%v", first, err)
+	}
+	task := createAndSealUpdateTask(t, store, siteID, now)
+	latest, err := store.latestCoreUpdateTask(context.Background(), siteID)
+	if err != nil || latest.ID != task.ID {
+		t.Fatalf("latest=%+v err=%v", latest, err)
+	}
+	if _, err := store.latestCoreUpdateTask(context.Background(), siteID+1); err == nil {
+		t.Fatal("cross-site latest task lookup succeeded")
+	}
+}
+
 func TestWPUpdateStoreBlocksConcurrentAndUnresolvedTasks(t *testing.T) {
 	store, siteID := newWPUpdateStoreTest(t)
 	ctx := context.Background()

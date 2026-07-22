@@ -763,6 +763,7 @@ var i18nKeys = []string{
 	"wp_core_update.status_unknown",
 	"wp_core_update.submit_failed",
 	"wp_core_update.submitted",
+	"wp_core_update.submission_recovered",
 	"wp_core_update.submitting",
 	"wp_core_update.task_invalid",
 	"wp_core_update.task_read_failed",
@@ -909,6 +910,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/websites/:id/wp-inventory/updates", wpInventoryHandler.Updates)
 	protected.GET("/api/websites/:id/wp-core-update/preview", wpCoreUpdateHandler.Preview)
 	protected.POST("/api/websites/:id/wp-core-update/confirm", wpCoreUpdateHandler.Confirm)
+	protected.GET("/api/websites/:id/wp-core-update/tasks/latest", wpCoreUpdateHandler.LatestTask)
 	protected.GET("/api/websites/:id/wp-core-update/tasks/:task_id", wpCoreUpdateHandler.Task)
 	protected.DELETE("/api/websites/:id", websiteHandler.Delete)
 	protected.GET("/api/websites/:id/backup-usage", websiteHandler.BackupUsage)

@@ -62,6 +62,7 @@
     "task_invalid": "EN_TODO: wp_core_update.task_invalid",
     "submit_failed": "EN_TODO: wp_core_update.submit_failed",
     "submitted": "EN_TODO: wp_core_update.submitted",
+    "submission_recovered": "EN_TODO: wp_core_update.submission_recovered",
     "task_read_failed": "EN_TODO: wp_core_update.task_read_failed",
     "stage_value": "EN_TODO: wp_core_update.stage_value",
     "stage_queued": "EN_TODO: wp_core_update.stage_queued",

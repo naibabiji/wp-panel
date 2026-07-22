@@ -148,6 +148,20 @@ func (s *WPCoreUpdateService) Task(ctx context.Context, siteID int, taskID strin
 	return s.taskModel(ctx, task, true)
 }
 
+func (s *WPCoreUpdateService) LatestTask(ctx context.Context, siteID int) (models.WPCoreUpdateTask, error) {
+	if s == nil || siteID <= 0 {
+		return models.WPCoreUpdateTask{}, ErrWPCoreUpdateInvalid
+	}
+	task, err := s.store.latestCoreUpdateTask(ctx, siteID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.WPCoreUpdateTask{}, ErrWPCoreUpdateNotFound
+	}
+	if err != nil {
+		return models.WPCoreUpdateTask{}, err
+	}
+	return s.taskModel(ctx, task, true)
+}
+
 func (s *WPCoreUpdateService) loadCandidate(ctx context.Context, siteID int) (wpCoreUpdateCandidate, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {

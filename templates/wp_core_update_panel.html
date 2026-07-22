@@ -71,23 +71,35 @@ function wpCoreUpdatePanel() {
             this.preview = null;
             this.task = null;
             this.error = '';
-            if (this.siteID) this.resumeTask();
+            if (this.siteID) this.loadLatestTask();
         },
-        storageKey() {
-            return this.siteID ? 'wp-panel-core-update-task:' + this.siteID : '';
-        },
-        rememberTask(taskID) {
-            try { window.sessionStorage.setItem(this.storageKey(), taskID); } catch (_) {}
-        },
-        forgetTask() {
-            try { window.sessionStorage.removeItem(this.storageKey()); } catch (_) {}
-        },
-        async resumeTask() {
-            let taskID = '';
-            try { taskID = window.sessionStorage.getItem(this.storageKey()) || ''; } catch (_) {}
-            if (!taskID || !this.siteID) return;
-            this.task = { task_id: taskID, site_id: this.siteID, component_type: 'core', task_kind: 'update', status: 'queued', stage: 'queued' };
-            await this.pollTask();
+        async loadLatestTask(expected = null) {
+            if (!this.siteID) return false;
+            const generation = this.generation;
+            const siteID = this.siteID;
+            try {
+                const response = await api('/websites/' + siteID + '/wp-core-update/tasks/latest', { suppressToast: true, timeout: 15000 });
+                if (generation !== this.generation || siteID !== this.siteID || !this.validTask(response.data)) return false;
+                const task = response.data;
+                if (expected) {
+                    const requestedAt = Date.parse(task.requested_at || '');
+                    if (task.task_id === expected.previousTaskID || task.current_version !== expected.preview.current_version || task.target_version !== expected.preview.target_version ||
+                        !Number.isFinite(requestedAt) || requestedAt < expected.since - 60000) return false;
+                }
+                this.task = task;
+                this.error = '';
+                if (this.isActive()) {
+                    this.schedulePoll(3000);
+                }
+                return true;
+            } catch (error) {
+                if (generation !== this.generation || siteID !== this.siteID) return false;
+                if (error.status === 404) {
+                    this.stopPolling();
+                    this.task = null;
+                }
+                return false;
+            }
         },
         validPreview(value) {
             return value && value.available === true && value.site_id === this.siteID &&
@@ -129,6 +141,8 @@ function wpCoreUpdatePanel() {
             if (!accepted || this.preview !== preview) return;
             const generation = this.generation;
             const siteID = this.siteID;
+            const submittedAt = Date.now();
+            const previousTaskID = this.task?.task_id || '';
             this.confirming = true;
             this.error = '';
             try {
@@ -142,13 +156,17 @@ function wpCoreUpdatePanel() {
                 if (!this.validTask(response.data) || response.data.status !== 'queued') throw new Error(t('wp_core_update.task_invalid'));
                 this.preview = null;
                 this.task = response.data;
-                this.rememberTask(this.task.task_id);
                 showToast(t('wp_core_update.submitted'), 'success');
                 this.schedulePoll(2000);
             } catch (error) {
                 if (generation === this.generation && siteID === this.siteID) {
                     this.preview = null;
-                    this.error = error.message || t('wp_core_update.submit_failed');
+                    const recovered = await this.loadLatestTask({ preview, since: submittedAt, previousTaskID });
+                    if (recovered) {
+                        showToast(t('wp_core_update.submission_recovered'), 'warning');
+                    } else {
+                        this.error = error.message || t('wp_core_update.submit_failed');
+                    }
                 }
             } finally {
                 if (generation === this.generation && siteID === this.siteID) this.confirming = false;
@@ -179,14 +197,12 @@ function wpCoreUpdatePanel() {
                     this.schedulePoll(3000);
                 } else {
                     this.stopPolling();
-                    this.forgetTask();
                 }
             } catch (error) {
                 if (generation !== this.generation || siteID !== this.siteID) return;
                 this.error = error.message || t('wp_core_update.task_read_failed');
                 if (error.status === 404) {
                     this.stopPolling();
-                    this.forgetTask();
                     this.task = null;
                     return;
                 }

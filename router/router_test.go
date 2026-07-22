@@ -148,6 +148,7 @@ func TestWPCoreUpdateRoutesRegisteredOnProtectedGroup(t *testing.T) {
 	for _, route := range []string{
 		`protected.GET("/api/websites/:id/wp-core-update/preview", wpCoreUpdateHandler.Preview)`,
 		`protected.POST("/api/websites/:id/wp-core-update/confirm", wpCoreUpdateHandler.Confirm)`,
+		`protected.GET("/api/websites/:id/wp-core-update/tasks/latest", wpCoreUpdateHandler.LatestTask)`,
 		`protected.GET("/api/websites/:id/wp-core-update/tasks/:task_id", wpCoreUpdateHandler.Task)`,
 	} {
 		if !bytes.Contains(source, []byte(route)) {
@@ -534,6 +535,7 @@ func TestWPCoreUpdatePanelIsWiredAndUsesFixedAPIContract(t *testing.T) {
 		[]byte(`{{template "wp_core_update_panel" .}}`),
 		[]byte(`api('/websites/' + siteID + '/wp-core-update/preview'`),
 		[]byte(`api('/websites/' + siteID + '/wp-core-update/confirm'`),
+		[]byte(`api('/websites/' + siteID + '/wp-core-update/tasks/latest'`),
 		[]byte(`'/wp-core-update/tasks/' + encodeURIComponent(taskID)`),
 		[]byte(`confirmation_token: preview.confirmation_token`),
 		[]byte(`target_version: preview.target_version`),
@@ -552,6 +554,7 @@ func TestWPCoreUpdatePanelIsWiredAndUsesFixedAPIContract(t *testing.T) {
 		[]byte(`download_url`),
 		[]byte(`package_snapshot_path`),
 		[]byte(`downloaded_sha256`),
+		[]byte(`sessionStorage`),
 		[]byte(`setInterval(`),
 	} {
 		if bytes.Contains(panel, forbidden) {
@@ -584,12 +587,7 @@ func TestWPCoreUpdatePanelBehavior(t *testing.T) {
 	harness := []byte(`
 function assert(condition, message) { if (!condition) throw new Error(message); }
 global.t = (key, params = {}) => key;
-const storage = new Map();
-global.window = { sessionStorage: {
-    getItem: key => storage.get(key) || null,
-    setItem: (key, value) => storage.set(key, value),
-    removeItem: key => storage.delete(key),
-} };
+global.window = {};
 (async () => {
     const panel = wpCoreUpdatePanel();
     panel.siteID = 7;
@@ -606,21 +604,56 @@ global.window = { sessionStorage: {
     assert(panel.stageText() === 'wp_core_update.stage_health_check', 'health-check stage mapping');
 
     panel.task = { task_id: 'stale', site_id: 7, component_type: 'core', task_kind: 'update', status: 'queued', stage: 'queued' };
-    panel.rememberTask('stale');
     let scheduled = 0;
     panel.schedulePoll = () => { scheduled++; };
     global.api = async () => { const error = new Error('not found'); error.status = 404; throw error; };
     await panel.pollTask();
     assert(panel.task === null, '404 task was not cleared');
-    assert(storage.size === 0, '404 task remained in session storage');
     assert(scheduled === 0, '404 task scheduled another poll');
 
     panel.task = { task_id: 'done', site_id: 7, component_type: 'core', task_kind: 'update', status: 'queued', stage: 'queued' };
-    panel.rememberTask('done');
     global.api = async () => ({ data: { task_id: 'done', site_id: 7, component_type: 'core', task_kind: 'update', status: 'success', stage: 'complete' } });
     await panel.pollTask();
     assert(panel.task.status === 'success', 'terminal task not retained for display');
-    assert(storage.size === 0, 'terminal task remained in session storage');
+
+    scheduled = 0;
+    panel.task = null;
+    const recent = new Date().toISOString();
+    global.api = async () => ({ data: {
+        task_id: 'latest', site_id: 7, component_type: 'core', task_kind: 'update', status: 'running', stage: 'updating_core',
+        current_version: '7.0.1', target_version: '7.0.2', requested_at: recent
+    } });
+    const recovered = await panel.loadLatestTask({ preview: { current_version: '7.0.1', target_version: '7.0.2' }, since: Date.now() });
+    assert(recovered === true && panel.task.task_id === 'latest', 'recent matching task was not recovered');
+    assert(scheduled === 1, 'active recovered task was not scheduled');
+
+    panel.stopPolling();
+    panel.task = null;
+    global.api = async () => ({ data: {
+        task_id: 'old', site_id: 7, component_type: 'core', task_kind: 'update', status: 'success', stage: 'complete',
+        current_version: '7.0.1', target_version: '7.0.2', requested_at: '2020-01-01T00:00:00Z'
+    } });
+    const stale = await panel.loadLatestTask({ preview: { current_version: '7.0.1', target_version: '7.0.2' }, since: Date.now() });
+    assert(stale === false && panel.task === null, 'old matching task was accepted as confirmation recovery');
+
+    global.api = async () => ({ data: {
+        task_id: 'previous', site_id: 7, component_type: 'core', task_kind: 'update', status: 'success', stage: 'complete',
+        current_version: '7.0.1', target_version: '7.0.2', requested_at: new Date().toISOString()
+    } });
+    const previous = await panel.loadLatestTask({ preview: { current_version: '7.0.1', target_version: '7.0.2' }, since: Date.now(), previousTaskID: 'previous' });
+    assert(previous === false && panel.task === null, 'pre-existing task was accepted as confirmation recovery');
+
+    for (const mismatch of [
+        { id: 'wrong-current', current: '7.0.0', target: '7.0.2' },
+        { id: 'wrong-target', current: '7.0.1', target: '7.0.3' },
+    ]) {
+        global.api = async () => ({ data: {
+            task_id: mismatch.id, site_id: 7, component_type: 'core', task_kind: 'update', status: 'running', stage: 'updating_core',
+            current_version: mismatch.current, target_version: mismatch.target, requested_at: new Date().toISOString()
+        } });
+        const versionMismatch = await panel.loadLatestTask({ preview: { current_version: '7.0.1', target_version: '7.0.2' }, since: Date.now() });
+        assert(versionMismatch === false && panel.task === null, mismatch.id + ' task was accepted as confirmation recovery');
+    }
 })().catch(error => { console.error(error); process.exit(1); });
 `)
 	testScript := append(append([]byte{}, script...), harness...)

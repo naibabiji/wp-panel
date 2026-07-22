@@ -21,6 +21,7 @@ type wpCoreUpdateService interface {
 	Preview(context.Context, int, string) (models.WPCoreUpdatePreview, error)
 	Confirm(context.Context, int, string, string, string) (models.WPCoreUpdateTask, error)
 	Task(context.Context, int, string) (models.WPCoreUpdateTask, error)
+	LatestTask(context.Context, int) (models.WPCoreUpdateTask, error)
 }
 
 func (h *WPCoreUpdateHandler) Preview(c *gin.Context) {
@@ -78,6 +79,23 @@ func (h *WPCoreUpdateHandler) Task(c *gin.Context) {
 		return
 	}
 	task, err := h.Service.Task(c.Request.Context(), siteID, c.Param("task_id"))
+	if err != nil {
+		wpCoreUpdateError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(task))
+}
+
+func (h *WPCoreUpdateHandler) LatestTask(c *gin.Context) {
+	siteID, _, ok := wpCoreUpdateIdentity(c)
+	if !ok {
+		return
+	}
+	if h == nil || h.Service == nil {
+		wpCoreUpdateError(c, executor.ErrWPCoreUpdateUnavailable)
+		return
+	}
+	task, err := h.Service.LatestTask(c.Request.Context(), siteID)
 	if err != nil {
 		wpCoreUpdateError(c, err)
 		return

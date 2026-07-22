@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +51,19 @@ func TestWPCoreUpdateTaskModelDoesNotExposeSecrets(t *testing.T) {
 		if strings.Contains(string(body), forbidden) {
 			t.Fatalf("response leaked %q: %s", forbidden, body)
 		}
+	}
+}
+
+func TestWPCoreUpdateLatestTaskUsesPublicSiteScopedModel(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	task := createAndSealUpdateTask(t, store, siteID, time.Now().UTC())
+	service := &WPCoreUpdateService{db: store.db, store: store}
+	latest, err := service.LatestTask(context.Background(), siteID)
+	if err != nil || latest.ID != task.ID || latest.SiteID != siteID {
+		t.Fatalf("latest=%+v err=%v", latest, err)
+	}
+	if _, err := service.LatestTask(context.Background(), siteID+1); !errors.Is(err, ErrWPCoreUpdateNotFound) {
+		t.Fatalf("cross-site latest error=%v", err)
 	}
 }
 
