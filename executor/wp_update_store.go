@@ -210,16 +210,75 @@ func (s *wpUpdateStore) heartbeat(ctx context.Context, id, owner string, now tim
 	return changed == 1, err
 }
 
+func (s *wpUpdateStore) nextQueuedCoreUpdate(ctx context.Context) (WPUpdateTask, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM wp_update_tasks
+		WHERE status='queued' AND task_kind='update' AND component_type='core'
+		ORDER BY requested_at,id LIMIT 1`).Scan(&id)
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	return s.getTask(ctx, id)
+}
+
+func (s *wpUpdateStore) interruptOwned(ctx context.Context, id, owner, code string, now time.Time) (bool, error) {
+	if owner == "" || code == "" {
+		return false, errors.New("invalid update interruption")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	stamp := wpUpdateDBTime(now)
+	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET status='interrupted_unknown',stage='interrupted',
+		requires_attention=1,lease_owner='',lease_expires_at=NULL,finished_at=?,updated_at=?
+		WHERE id=? AND lease_owner=? AND status='running'`, stamp, stamp, id, owner)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed == 0 {
+		return false, err
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, "interrupted", "interrupted", code, stamp); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *wpUpdateStore) recoverExpired(ctx context.Context, now time.Time) (int64, error) {
+	return s.recoverRunning(ctx, "lease_expired", now, false)
+}
+
+func (s *wpUpdateStore) recoverAfterRestart(ctx context.Context, now time.Time) (int64, error) {
+	return s.recoverRunning(ctx, "worker_restarted", now, true)
+}
+
+func (s *wpUpdateStore) recoverRunning(ctx context.Context, code string, now time.Time, allRunning bool) (int64, error) {
+	if code == "" {
+		return 0, errors.New("invalid update recovery")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
 	stamp := wpUpdateDBTime(now)
-	rows, err := tx.QueryContext(ctx, `UPDATE wp_update_tasks SET status='interrupted_unknown',stage='interrupted',
+	query := `UPDATE wp_update_tasks SET status='interrupted_unknown',stage='interrupted',
 		requires_attention=1,lease_owner='',lease_expires_at=NULL,finished_at=?,updated_at=?
-		WHERE status='running' AND lease_expires_at<=? RETURNING id`, stamp, stamp, stamp)
+		WHERE status='running' AND lease_expires_at<=? RETURNING id`
+	queryArgs := []any{stamp, stamp, stamp}
+	if allRunning {
+		query = `UPDATE wp_update_tasks SET status='interrupted_unknown',stage='interrupted',
+			requires_attention=1,lease_owner='',lease_expires_at=NULL,finished_at=?,updated_at=?
+			WHERE status='running' RETURNING id`
+		queryArgs = []any{stamp, stamp}
+	}
+	rows, err := tx.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return 0, err
 	}
@@ -236,7 +295,7 @@ func (s *wpUpdateStore) recoverExpired(ctx context.Context, now time.Time) (int6
 		return 0, err
 	}
 	for _, id := range ids {
-		if err := insertWPUpdateEvent(ctx, tx, id, "interrupted", "interrupted", "lease_expired", stamp); err != nil {
+		if err := insertWPUpdateEvent(ctx, tx, id, "interrupted", "interrupted", code, stamp); err != nil {
 			return 0, err
 		}
 	}
