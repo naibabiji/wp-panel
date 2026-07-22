@@ -82,6 +82,12 @@
                         </svg>
                         {{t .Lang "nav.databases"}}
                     </a>
+                    <a href="/{{$.RandomSuffix}}/wordpress-overview" class="sidebar-link {{if eq .Active "wordpress_overview"}}active{{end}}">
+                        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a2 2 0 012-2h12a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm4 4h8M8 13h8M8 17h5"/>
+                        </svg>
+                        {{t .Lang "nav.wordpress_overview"}}
+                    </a>
                     <a href="/{{$.RandomSuffix}}/backups" class="sidebar-link {{if eq .Active "backups"}}active{{end}}">
                         <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v1a2 2 0 01-2 2M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8M10 12h4"/>
@@ -168,8 +174,10 @@
             <main class="flex-1 overflow-y-auto p-4 md:p-6 lg:pt-6">
                 {{if eq .ContentTemplate "dashboard_content"}}{{template "dashboard_content" .}}{{end}}
                 {{if eq .ContentTemplate "websites_content"}}{{template "websites_content" .}}{{end}}
+                {{if eq .ContentTemplate "wordpress_overview_content"}}{{template "wordpress_overview_content" .}}{{end}}
                 {{if eq .ContentTemplate "websites_new_content"}}{{template "websites_new_content" .}}{{end}}
                 {{if eq .ContentTemplate "websites_detail_content"}}{{template "websites_detail_content" .}}{{end}}
+                {{if eq .ContentTemplate "wordpress_site_detail_content"}}{{template "wordpress_site_detail_content" .}}{{end}}
                 {{if eq .ContentTemplate "databases_content"}}{{template "databases_content" .}}{{end}}
                 {{if eq .ContentTemplate "database_detail_content"}}{{template "database_detail_content" .}}{{end}}
                 {{if eq .ContentTemplate "ai_diagnostics_content"}}{{template "ai_diagnostics_content" .}}{{end}}

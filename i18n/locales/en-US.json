@@ -234,6 +234,7 @@
     "menu": "Menu",
     "dashboard": "Dashboard",
     "websites": "Websites",
+    "wordpress_overview": "EN_TODO: nav.wordpress_overview",
     "databases": "Databases",
     "ai_diagnostics": "AI Diagnostics",
     "cron": "Cron Jobs",
@@ -932,6 +933,8 @@
     "site_url_warning": "This changes only siteurl and home in the WordPress database. It does not replace old domains in post or media content. If redirects or styles break, check caches and permalink settings."
   },
   "website": {
+    "loading": "Loading website...",
+    "manage": "Website management",
     "create_title": "Create Website",
     "detail_title": "Website Details",
     "reinstall_wordpress": "Reinstall WordPress",

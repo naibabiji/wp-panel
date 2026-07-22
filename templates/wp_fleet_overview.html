@@ -1,5 +1,5 @@
 {{define "wp_fleet_overview"}}
-<section x-data="wpFleetOverview()" x-init="mount()" @wp-fleet-reload.window="reloadOverview()" @wp-fleet-site-deleted.window="siteDeleted($event.detail.siteId)" class="space-y-5">
+<section x-data="wpFleetOverview()" x-init="mount()" class="space-y-5">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <h3 class="text-lg font-semibold text-white">{{t .Lang "wp_fleet.title"}}</h3>
@@ -15,7 +15,6 @@
     </div>
 
     <div x-show="loading && !overview" class="card py-12 text-center text-sm text-gray-400">
-        <div class="animate-spin mx-auto mb-3 h-7 w-7 rounded-full border-4 border-blue-500 border-t-transparent"></div>
         <span>{{t .Lang "wp_fleet.loading"}}</span>
     </div>
 
@@ -50,14 +49,6 @@
                         <label class="mb-1 block text-xs text-gray-400">{{t .Lang "wp_fleet.search"}}</label>
                         <input type="search" x-model="search" class="input-field w-full" placeholder="{{t .Lang "wp_fleet.search_placeholder"}}">
                         <p x-show="searchError" class="mt-1 text-xs text-red-300" x-text="searchError"></p>
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-xs text-gray-400">{{t .Lang "wp_fleet.site_type"}}</label>
-                        <select x-model="siteTypeFilter" class="input-field w-full">
-                            <option value="all">{{t .Lang "wp_fleet.filter_all"}}</option>
-                            <option value="wordpress">{{t .Lang "wp_fleet.filter_wordpress"}}</option>
-                            <option value="php">{{t .Lang "wp_fleet.filter_php"}}</option>
-                        </select>
                     </div>
                     <div>
                         <label class="mb-1 block text-xs text-gray-400">{{t .Lang "wp_fleet.health"}}</label>
@@ -105,7 +96,6 @@
                         <select x-model="sortMode" class="input-field w-full">
                             <option value="attention">{{t .Lang "wp_fleet.sort_attention"}}</option>
                             <option value="domain">{{t .Lang "wp_fleet.sort_domain"}}</option>
-                            <option value="created">{{t .Lang "wp_fleet.sort_created"}}</option>
                         </select>
                     </div>
                 </div>
@@ -113,14 +103,13 @@
                 <div class="text-xs text-gray-400" x-text="t('wp_fleet.showing_sites', { count: filteredSites().length, total: overview.sites.length })"></div>
 
                 <div class="max-w-full overflow-x-auto">
-                    <table class="w-full min-w-[1180px] text-sm">
+                    <table class="w-full min-w-[860px] text-sm">
                         <thead class="border-b border-gray-700">
                             <tr>
                                 <th class="table-header">{{t .Lang "wp_fleet.site"}}</th>
                                 <th class="table-header">{{t .Lang "wp_fleet.management_status"}}</th>
                                 <th class="table-header">WordPress</th>
                                 <th class="table-header">{{t .Lang "wp_fleet.updates"}}</th>
-                                <th class="table-header">{{t .Lang "wp_fleet.configuration"}}</th>
                                 <th class="table-header">{{t .Lang "wp_fleet.last_inventory"}}</th>
                                 <th class="table-header">{{t .Lang "website.actions"}}</th>
                             </tr>
@@ -130,12 +119,6 @@
                                 <tr class="border-b border-gray-700/50 align-top">
                                     <td class="table-cell min-w-52">
                                         <a :href="(site.ssl_enabled ? 'https://' : 'http://') + site.domain" target="_blank" class="font-medium text-blue-400 hover:text-blue-300 hover:underline" x-text="site.domain"></a>
-                                        <div class="mt-1 text-xs text-gray-400" x-text="site.name || site.domain"></div>
-                                        <div class="mt-2 flex flex-wrap gap-1">
-                                            <span class="badge-info" x-text="site.site_type === 'wordpress' ? t('wp_fleet.filter_wordpress') : t('wp_fleet.filter_php')"></span>
-                                            <span class="text-xs text-gray-500" x-text="displayDate(site.created_at)"></span>
-                                            <span x-show="site.expires_at" class="text-xs text-gray-500" x-text="t('wp_fleet.expires_at', { time: displayDate(site.expires_at) })"></span>
-                                        </div>
                                     </td>
                                     <td class="table-cell min-w-48">
                                         <div class="flex flex-wrap gap-1">
@@ -151,13 +134,7 @@
                                     </td>
                                     <td class="table-cell min-w-40">
                                         <template x-if="site.inventory">
-                                            <div>
-                                                <div class="font-medium text-white" x-text="site.inventory.wordpress_version || t('wp_fleet.inventory_unknown')"></div>
-                                                <div class="mt-1 flex flex-wrap gap-1">
-                                                    <span :class="inventoryClass(site.inventory)" class="rounded px-2 py-1 text-xs" x-text="t(inventoryKey(site.inventory))"></span>
-                                                    <span x-show="site.inventory.status === 'failed' && site.inventory.has_successful_inventory" class="rounded bg-yellow-950/50 px-2 py-1 text-xs text-yellow-200">{{t .Lang "wp_fleet.showing_previous_inventory"}}</span>
-                                                </div>
-                                            </div>
+                                            <div class="font-medium text-white" x-text="site.inventory.wordpress_version || t('wp_fleet.inventory_unknown')"></div>
                                         </template>
                                         <span x-show="!site.inventory" class="text-gray-500">{{t .Lang "wp_fleet.inventory_not_applicable"}}</span>
                                     </td>
@@ -171,33 +148,21 @@
                                         </template>
                                         <span x-show="!site.inventory || site.inventory.update_total === 0" class="text-gray-500">{{t .Lang "wp_fleet.no_updates"}}</span>
                                     </td>
-                                    <td class="table-cell min-w-64">
-                                        <div class="flex flex-wrap gap-1 text-xs">
-                                            <span :class="sslClass(site.ssl_state)" class="rounded px-2 py-1" x-text="t(sslKey(site.ssl_state))"></span>
-                                            <span :class="site.monitoring_enabled ? 'badge-success' : 'badge-info'" x-text="site.monitoring_enabled ? t('website.monitoring_enabled') : t('website.monitoring_disabled')"></span>
-                                            <span :class="site.backup_enabled ? 'badge-success' : 'badge-info'" x-text="t('wp_fleet.backup', { state: site.backup_enabled ? t('website.enabled') : t('website.disabled') })"></span>
-                                            <span :class="site.file_lock_enabled ? 'badge-warning' : 'badge-success'" x-text="site.file_lock_enabled ? t('website.file_locked') : t('website.file_unlocked')"></span>
-                                            <span :class="site.fastcgi_cache_enabled ? 'badge-success' : 'badge-info'" x-text="t('wp_fleet.cache', { state: site.fastcgi_cache_enabled ? t('website.enabled') : t('website.disabled') })"></span>
-                                            <span class="badge-info" x-text="accessLogLabel(site.access_log_mode)"></span>
-                                        </div>
-                                    </td>
                                     <td class="table-cell min-w-36 text-xs">
                                         <div x-text="site.inventory && site.inventory.last_success_at ? displayTime(site.inventory.last_success_at) : t('wp_fleet.never')"></div>
+                                        <div x-show="site.inventory && site.inventory.status === 'failed' && site.inventory.has_successful_inventory" class="mt-1 text-yellow-300">{{t .Lang "wp_fleet.showing_previous_inventory"}}</div>
                                         <div x-show="site.inventory && site.inventory.stale" class="mt-1 text-yellow-300">{{t .Lang "wp_fleet.inventory_stale"}}</div>
                                     </td>
                                     <td class="table-cell min-w-72">
                                         <div class="flex flex-wrap gap-2">
-                                            <a :href="'/{{$.RandomSuffix}}/websites/' + site.id" class="btn-secondary px-2 py-1 text-xs">{{t .Lang "website.details"}}</a>
-                                            <a :href="'/{{$.RandomSuffix}}/files?site_id=' + site.id" class="rounded px-2 py-1 text-xs" style="background-color:#1e3a5f;color:#93c5fd;">{{t .Lang "website.file_short"}}</a>
-                                            <button @click="toggleStatus(site)" :disabled="site.status === 'creating' || site.status === 'deleting'" :class="site.status === 'active' ? 'bg-yellow-700 hover:bg-yellow-600 text-white' : 'btn-success'" class="rounded px-2 py-1 text-xs" x-text="site.status === 'active' ? t('website.site_pause') : t('website.site_enable')"></button>
-                                            <button x-show="site.site_type === 'wordpress'" @click="reinstallWP(site)" :disabled="reinstallingId === site.id" class="rounded px-2 py-1 text-xs" style="background-color:#7f1d1d;color:#fca5a5;" x-text="reinstallingId === site.id ? t('website.reinstalling') : t('website.reinstall')"></button>
-                                            <button @click="deleteSite(site)" class="btn-danger px-2 py-1 text-xs">{{t .Lang "website.delete"}}</button>
+                                            <a :href="'/{{$.RandomSuffix}}/websites/' + site.id + '/wordpress'" class="btn-secondary px-2 py-1 text-xs">{{t .Lang "website.details"}}</a>
+                                            <a :href="'/{{$.RandomSuffix}}/websites/' + site.id" class="rounded bg-blue-900/60 px-2 py-1 text-xs text-blue-200 hover:bg-blue-800/70">{{t .Lang "website.manage"}}</a>
                                         </div>
                                     </td>
                                 </tr>
                             </template>
                             <tr x-show="filteredSites().length === 0">
-                                <td colspan="7" class="table-cell py-10 text-center text-gray-500" x-text="overview.sites.length === 0 ? t('wp_fleet.empty') : t('wp_fleet.no_matches')"></td>
+                                <td colspan="6" class="table-cell py-10 text-center text-gray-500" x-text="overview.sites.length === 0 ? t('wp_fleet.empty') : t('wp_fleet.no_matches')"></td>
                             </tr>
                         </tbody>
                     </table>
@@ -221,7 +186,6 @@ function wpFleetOverview() {
         overview: null,
         search: '',
         searchError: '',
-        siteTypeFilter: 'all',
         healthFilter: 'all',
         inventoryFilter: 'all',
         updateFilter: 'all',
@@ -242,7 +206,7 @@ function wpFleetOverview() {
                 const response = await api('/wp-fleet/overview', { signal: controller.signal, suppressToast: true });
                 if (generation !== this.requestGeneration) return;
                 if (!response.data || !Array.isArray(response.data.sites) || !response.data.counts) throw new Error(t('wp_fleet.overview_failed'));
-                this.overview = response.data;
+                this.overview = this.wordpressOnlyOverview(response.data);
                 this.loadError = '';
                 this.staleOverview = false;
             } catch (error) {
@@ -256,32 +220,33 @@ function wpFleetOverview() {
                 }
             }
         },
-        siteDeleted(siteID) {
-            if (this.overview) {
-                const removed = this.overview.sites.find(site => site.id === siteID);
-                if (removed) {
-                    this.overview = {
-                        ...this.overview,
-                        counts: this.countsAfterRemoving(this.overview.counts, removed),
-                        sites: this.overview.sites.filter(site => site.id !== siteID),
-                    };
-                }
+        wordpressOnlyOverview(data) {
+            const sites = data.sites.filter(site => site.site_type === 'wordpress');
+            const counts = {
+                total_sites: sites.length,
+                wordpress_sites: sites.length,
+                critical_sites: 0,
+                warning_sites: 0,
+                unknown_sites: 0,
+                healthy_sites: 0,
+                update_sites: 0,
+                failed_inventory_sites: 0,
+                stale_inventory_sites: 0,
+                inventory_attention_sites: 0,
+                uncollected_sites: 0,
+            };
+            for (const site of sites) {
+                const healthKey = site.health.level + '_sites';
+                if (Object.hasOwn(counts, healthKey)) counts[healthKey]++;
+                const inventory = site.inventory;
+                if (!inventory || !inventory.has_successful_inventory) counts.uncollected_sites++;
+                if (!inventory) continue;
+                if (inventory.update_total > 0) counts.update_sites++;
+                if (inventory.status === 'failed') counts.failed_inventory_sites++;
+                if (inventory.stale) counts.stale_inventory_sites++;
+                if (inventory.status === 'failed' || inventory.stale) counts.inventory_attention_sites++;
             }
-            return this.reloadOverview();
-        },
-        countsAfterRemoving(current, site) {
-            const counts = { ...current, total_sites: Math.max(0, current.total_sites - 1) };
-            const healthKey = site.health.level + '_sites';
-            if (typeof counts[healthKey] === 'number') counts[healthKey] = Math.max(0, counts[healthKey] - 1);
-            if (!site.inventory) return counts;
-            counts.wordpress_sites = Math.max(0, counts.wordpress_sites - 1);
-            if (site.inventory.update_total > 0) counts.update_sites = Math.max(0, counts.update_sites - 1);
-            const failed = site.inventory.status === 'failed';
-            if (failed) counts.failed_inventory_sites = Math.max(0, counts.failed_inventory_sites - 1);
-            if (site.inventory.stale) counts.stale_inventory_sites = Math.max(0, counts.stale_inventory_sites - 1);
-            if (failed || site.inventory.stale) counts.inventory_attention_sites = Math.max(0, counts.inventory_attention_sites - 1);
-            if (!site.inventory.has_successful_inventory) counts.uncollected_sites = Math.max(0, counts.uncollected_sites - 1);
-            return counts;
+            return { ...data, counts, sites };
         },
         filteredSites() {
             if (!this.overview) return [];
@@ -295,7 +260,6 @@ function wpFleetOverview() {
             const sites = this.overview.sites.filter(site => {
                 const inventory = site.inventory;
                 if (normalized && !(site.name || '').toLocaleLowerCase(currentLocale()).includes(normalized) && !site.domain.toLocaleLowerCase(currentLocale()).includes(normalized)) return false;
-                if (this.siteTypeFilter !== 'all' && site.site_type !== this.siteTypeFilter) return false;
                 if (this.healthFilter !== 'all' && site.health.level !== this.healthFilter) return false;
                 if (this.statusFilter !== 'all' && site.status !== this.statusFilter) return false;
                 if (this.updateFilter === 'has_updates' && (!inventory || inventory.update_total === 0)) return false;
@@ -330,28 +294,6 @@ function wpFleetOverview() {
             return 'bg-gray-700 text-gray-200';
         },
         issueKey(issue) { return 'wp_fleet.issue_' + issue; },
-        inventoryKey(inventory) {
-            if (inventory.stale) return 'wp_fleet.inventory_stale';
-            return 'wp_fleet.inventory_' + inventory.status;
-        },
-        inventoryClass(inventory) {
-            if (inventory.status === 'failed' || inventory.stale) return 'bg-yellow-900/60 text-yellow-200';
-            if (inventory.status === 'complete') return 'bg-green-900/60 text-green-200';
-            if (inventory.status === 'queued' || inventory.status === 'running') return 'bg-blue-900/60 text-blue-200';
-            return 'bg-gray-700 text-gray-200';
-        },
-        sslKey(state) { return 'wp_fleet.ssl_' + state; },
-        sslClass(state) {
-            if (state === 'expired' || state === 'pending_error') return 'bg-red-900/60 text-red-200';
-            if (state === 'expiring' || state === 'expiry_unknown') return 'bg-yellow-900/60 text-yellow-200';
-            if (state === 'valid') return 'bg-green-900/60 text-green-200';
-            return 'bg-gray-700 text-gray-200';
-        },
-        accessLogLabel(mode) {
-            if (mode === 'full') return t('website.access_log_full');
-            if (mode === 'error_only') return t('website.access_log_error_only');
-            return t('website.access_log_off');
-        },
         displayDate(value) { return value ? new Date(value).toLocaleDateString(currentLocale()) : t('wp_fleet.never'); },
         displayTime(value) { return value ? new Date(value).toLocaleString(currentLocale()) : t('wp_fleet.never'); },
     };

@@ -18,7 +18,6 @@
         </div>
 
         <div x-show="summaryLoading && !summary" class="py-10 text-center text-sm text-gray-400">
-            <div class="animate-spin w-7 h-7 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-3"></div>
             <span>{{t .Lang "wp_inventory.loading"}}</span>
         </div>
 
@@ -106,9 +105,9 @@
                                         <td class="table-cell break-all font-mono text-xs" x-text="item.key"></td>
                                         <td class="table-cell" x-text="item.version || t('common.none')"></td>
                                         <td class="table-cell">
-                                            <span x-show="item.network_active" class="badge-info" x-text="t('wp_inventory.network_active')"></span>
-                                            <span x-show="!item.network_active && item.active" class="badge-success" x-text="t('wp_inventory.active')"></span>
-                                            <span x-show="!item.network_active && !item.active" class="badge-info" x-text="t('wp_inventory.inactive')"></span>
+                                            <span x-show="!item.current_theme && item.network_active" class="badge-info" x-text="t('wp_inventory.network_active')"></span>
+                                            <span x-show="!item.current_theme && !item.network_active && item.active" class="badge-success" x-text="t('wp_inventory.active')"></span>
+                                            <span x-show="!item.network_active && !item.active && !item.current_theme" class="badge-info" x-text="t('wp_inventory.inactive')"></span>
                                             <span x-show="item.current_theme" class="badge-success ml-1" x-text="t('wp_inventory.current_theme_badge')"></span>
                                         </td>
                                     </tr>
@@ -120,17 +119,17 @@
 
                     <div x-show="activeTab === 'updates' && !currentPage().loading" class="mt-4 overflow-x-auto">
                         <table class="w-full text-sm">
-                            <thead><tr><th class="table-header">{{t .Lang "wp_inventory.column_type"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_key"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_target_version"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_locale"}}</th></tr></thead>
+                            <thead><tr><th class="table-header">{{t .Lang "wp_inventory.column_type"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_key"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_version"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_target_version"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_locale"}}</th></tr></thead>
                             <tbody>
                                 <template x-for="item in currentPage().items" :key="item.type + ':' + item.key + ':' + item.target_version + ':' + item.locale">
-                                    <tr class="table-row"><td class="table-cell"><span class="badge-info" x-text="typeLabel(item.type)"></span></td><td class="table-cell break-all font-mono text-xs" x-text="item.key"></td><td class="table-cell text-white" x-text="item.target_version"></td><td class="table-cell" x-text="item.locale || t('common.none')"></td></tr>
+                                    <tr class="table-row"><td class="table-cell"><span class="badge-info" x-text="typeLabel(item.type)"></span></td><td class="table-cell break-all font-mono text-xs" x-text="item.key"></td><td class="table-cell" x-text="item.current_version || t('common.none')"></td><td class="table-cell text-white" x-text="item.target_version"></td><td class="table-cell" x-text="item.locale || t('common.none')"></td></tr>
                                 </template>
-                                <tr x-show="currentPage().items.length === 0"><td colspan="4" class="table-cell py-8 text-center text-gray-500">{{t .Lang "wp_inventory.no_updates"}}</td></tr>
+                                <tr x-show="currentPage().items.length === 0"><td colspan="5" class="table-cell py-8 text-center text-gray-500">{{t .Lang "wp_inventory.no_updates"}}</td></tr>
                             </tbody>
                         </table>
                     </div>
 
-                    <div x-show="!currentPage().loading && (currentPage().loaded || currentPage().items.length > 0)" class="mt-4 flex flex-col gap-3 text-sm text-gray-400 sm:flex-row sm:items-center sm:justify-between">
+                    <div x-show="!currentPage().loading && currentPage().total > currentPage().pageSize" class="mt-4 flex flex-col gap-3 text-sm text-gray-400 sm:flex-row sm:items-center sm:justify-between">
                         <span x-text="t('wp_inventory.page_summary', { page: currentPage().page, total: currentPage().total })"></span>
                         <div class="flex gap-2">
                             <button @click="changePage(-1)" :disabled="currentPage().loading || currentPage().page <= 1" class="btn-secondary text-sm">{{t .Lang "wp_inventory.previous"}}</button>

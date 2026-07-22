@@ -137,13 +137,14 @@ type wpInventoryStoredComponent struct {
 }
 
 type wpInventoryStoredUpdate struct {
-	Type         string
-	Key          string
-	Version      string
-	Response     string
-	Locale       string
-	CollectionID string
-	CollectedAt  string
+	Type           string
+	Key            string
+	CurrentVersion string
+	Version        string
+	Response       string
+	Locale         string
+	CollectionID   string
+	CollectedAt    string
 }
 
 type wpInventorySummarySnapshot struct {
@@ -170,10 +171,10 @@ const wpInventoryComponentPageWhereSQL = `site_id = ? AND collection_id = ?
 	AND (? = '' OR component_type = ?)
 	AND (? = '' OR component_key LIKE ? ESCAPE '\' OR name LIKE ? ESCAPE '\' OR version LIKE ? ESCAPE '\')`
 
-const wpInventoryUpdatePageWhereSQL = `site_id = ? AND collection_id = ?
-	AND (component_type <> 'core' OR response = 'upgrade')
-	AND (? = '' OR component_type = ?)
-	AND (? = '' OR component_key LIKE ? ESCAPE '\' OR target_version LIKE ? ESCAPE '\')`
+const wpInventoryUpdatePageWhereSQL = `u.site_id = ? AND u.collection_id = ?
+	AND (u.component_type <> 'core' OR u.response = 'upgrade')
+	AND (? = '' OR u.component_type = ?)
+	AND (? = '' OR u.component_key LIKE ? ESCAPE '\' OR u.target_version LIKE ? ESCAPE '\')`
 
 func newWPInventoryStore() (*wpInventoryStore, error) {
 	return newWPInventoryStoreWithDB(database.GetDB())
@@ -746,18 +747,25 @@ func (s *wpInventoryStore) getUpdatePage(ctx context.Context, siteID int, compon
 
 	pattern := wpInventoryLikePattern(search)
 	args := []any{siteID, state.CollectionID, componentType, componentType, search, pattern, pattern}
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_wp_component_updates WHERE `+wpInventoryUpdatePageWhereSQL, args...).Scan(&snapshot.Total); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_wp_component_updates u WHERE `+wpInventoryUpdatePageWhereSQL, args...).Scan(&snapshot.Total); err != nil {
 		return snapshot, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT component_type, component_key, target_version, locale, collected_at
-		FROM site_wp_component_updates WHERE `+wpInventoryUpdatePageWhereSQL+`
-		ORDER BY component_type, component_key, target_version, locale, response LIMIT ? OFFSET ?`, append(args, limit, offset)...)
+	queryArgs := append([]any{state.WordPressVersion}, args...)
+	queryArgs = append(queryArgs, limit, offset)
+	rows, err := tx.QueryContext(ctx, `SELECT u.component_type, u.component_key,
+		CASE WHEN u.component_type = 'core' THEN ? ELSE COALESCE(c.version, '') END,
+		u.target_version, u.locale, u.collected_at
+		FROM site_wp_component_updates u
+		LEFT JOIN site_wp_components c ON c.site_id = u.site_id AND c.collection_id = u.collection_id
+			AND c.component_type = u.component_type AND c.component_key = u.component_key
+		WHERE `+wpInventoryUpdatePageWhereSQL+`
+		ORDER BY u.component_type, u.component_key, u.target_version, u.locale, u.response LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
 		return snapshot, err
 	}
 	for rows.Next() {
 		var item wpInventoryStoredUpdate
-		if err := rows.Scan(&item.Type, &item.Key, &item.Version, &item.Locale, &item.CollectedAt); err != nil {
+		if err := rows.Scan(&item.Type, &item.Key, &item.CurrentVersion, &item.Version, &item.Locale, &item.CollectedAt); err != nil {
 			_ = rows.Close()
 			return snapshot, err
 		}

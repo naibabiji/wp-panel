@@ -134,7 +134,7 @@ func (s *WPInventoryService) Updates(ctx context.Context, siteID int, options WP
 			return models.PaginatedResult{}, err
 		}
 		items = append(items, models.WPInventoryUpdate{
-			Type: item.Type, Key: item.Key, TargetVersion: item.Version,
+			Type: item.Type, Key: item.Key, CurrentVersion: item.CurrentVersion, TargetVersion: item.Version,
 			Locale: item.Locale, CollectedAt: collectedAt,
 		})
 	}

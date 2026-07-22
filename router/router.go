@@ -732,6 +732,7 @@ var i18nKeys = []string{
 	"wp_inventory.type_core",
 	"wp_inventory.type_plugin",
 	"wp_inventory.type_theme",
+	"wp_inventory.wordpress_only",
 	"wp_inventory.yes",
 	"wp_inventory.no",
 }
@@ -1026,11 +1027,17 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/websites", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "websites.html", pageData(suffix, "websites", "websites_content", c))
 	})
+	protected.GET("/wordpress-overview", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "wordpress_overview.html", pageData(suffix, "wordpress_overview", "wordpress_overview_content", c))
+	})
 	protected.GET("/websites/new", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "website_new.html", pageData(suffix, "websites", "websites_new_content", c))
 	})
 	protected.GET("/websites/:id", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "website_detail.html", pageData(suffix, "websites", "websites_detail_content", c))
+	})
+	protected.GET("/websites/:id/wordpress", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "wordpress_site_detail.html", pageData(suffix, "wordpress_overview", "wordpress_site_detail_content", c))
 	})
 	protected.GET("/databases", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "databases.html", pageData(suffix, "databases", "databases_content", c))
@@ -1094,20 +1101,21 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 }
 
 var pageTitleKeys = map[string]string{
-	"dashboard":      "nav.dashboard",
-	"websites":       "nav.websites",
-	"databases":      "nav.databases",
-	"ai-diagnostics": "nav.ai_diagnostics",
-	"cron":           "nav.cron",
-	"backups":        "nav.backups",
-	"firewall":       "nav.firewall",
-	"security":       "nav.security",
-	"files":          "nav.files",
-	"software":       "nav.software",
-	"alert":          "nav.alert",
-	"extensions":     "nav.extensions",
-	"settings":       "nav.settings",
-	"help":           "nav.help",
+	"dashboard":          "nav.dashboard",
+	"websites":           "nav.websites",
+	"wordpress_overview": "nav.wordpress_overview",
+	"databases":          "nav.databases",
+	"ai-diagnostics":     "nav.ai_diagnostics",
+	"cron":               "nav.cron",
+	"backups":            "nav.backups",
+	"firewall":           "nav.firewall",
+	"security":           "nav.security",
+	"files":              "nav.files",
+	"software":           "nav.software",
+	"alert":              "nav.alert",
+	"extensions":         "nav.extensions",
+	"settings":           "nav.settings",
+	"help":               "nav.help",
 }
 
 func pageData(suffix string, active string, contentTpl string, c *gin.Context) gin.H {

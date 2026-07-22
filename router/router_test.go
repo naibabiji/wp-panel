@@ -15,24 +15,26 @@ import (
 )
 
 var pageTemplates = map[string]string{
-	"login.html":           "",
-	"dashboard.html":       "dashboard_content",
-	"websites.html":        "websites_content",
-	"website_new.html":     "websites_new_content",
-	"website_detail.html":  "websites_detail_content",
-	"databases.html":       "databases_content",
-	"database_detail.html": "database_detail_content",
-	"ai_diagnostics.html":  "ai_diagnostics_content",
-	"cron.html":            "cron_content",
-	"backups.html":         "backups_content",
-	"firewall.html":        "firewall_content",
-	"files.html":           "files_content",
-	"security.html":        "security_content",
-	"settings.html":        "settings_content",
-	"alert.html":           "alert_content",
-	"extension.html":       "extensions_content",
-	"software.html":        "software_content",
-	"help.html":            "help_content",
+	"login.html":                 "",
+	"dashboard.html":             "dashboard_content",
+	"websites.html":              "websites_content",
+	"wordpress_overview.html":    "wordpress_overview_content",
+	"website_new.html":           "websites_new_content",
+	"website_detail.html":        "websites_detail_content",
+	"wordpress_site_detail.html": "wordpress_site_detail_content",
+	"databases.html":             "databases_content",
+	"database_detail.html":       "database_detail_content",
+	"ai_diagnostics.html":        "ai_diagnostics_content",
+	"cron.html":                  "cron_content",
+	"backups.html":               "backups_content",
+	"firewall.html":              "firewall_content",
+	"files.html":                 "files_content",
+	"security.html":              "security_content",
+	"settings.html":              "settings_content",
+	"alert.html":                 "alert_content",
+	"extension.html":             "extensions_content",
+	"software.html":              "software_content",
+	"help.html":                  "help_content",
 }
 
 func TestPageTemplatesRender(t *testing.T) {
@@ -47,8 +49,8 @@ func TestPageTemplatesRender(t *testing.T) {
 
 func TestContentTemplatesRender(t *testing.T) {
 	contents := []string{
-		"dashboard_content", "websites_content", "websites_new_content",
-		"websites_detail_content", "databases_content", "database_detail_content", "ai_diagnostics_content", "cron_content", "backups_content", "firewall_content",
+		"dashboard_content", "websites_content", "wordpress_overview_content", "websites_new_content",
+		"websites_detail_content", "wordpress_site_detail_content", "databases_content", "database_detail_content", "ai_diagnostics_content", "cron_content", "backups_content", "firewall_content",
 		"files_content", "security_content", "settings_content",
 		"alert_content", "extensions_content", "software_content", "help_content",
 	}
@@ -158,18 +160,31 @@ func TestWPFleetOverviewPanelIsIsolatedAndWired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	overviewPage, err := os.ReadFile("../templates/wordpress_overview.html")
+	if err != nil {
+		t.Fatal(err)
+	}
 	call := []byte(`{{template "wp_fleet_overview" .}}`)
-	if count := bytes.Count(websites, call); count != 1 {
-		t.Fatalf("websites fleet overview template calls = %d, want 1", count)
+	if count := bytes.Count(websites, call); count != 0 {
+		t.Fatalf("websites fleet overview template calls = %d, want 0", count)
+	}
+	if count := bytes.Count(overviewPage, call); count != 1 {
+		t.Fatalf("WordPress overview fleet template calls = %d, want 1", count)
+	}
+	for _, required := range [][]byte{
+		[]byte(`api('/websites')`),
+		[]byte(`websites: []`),
+		[]byte(`fetchList()`),
+	} {
+		if !bytes.Contains(websites, required) {
+			t.Fatalf("websites template is missing restored list behavior %q", required)
+		}
 	}
 	for _, forbidden := range [][]byte{
 		[]byte(`function wpFleetOverview()`),
 		[]byte(`/wp-fleet/overview`),
 		[]byte(`healthFilter`),
 		[]byte(`inventoryFilter`),
-		[]byte(`api('/websites')`),
-		[]byte(`websites: []`),
-		[]byte(`fetchList()`),
 	} {
 		if bytes.Contains(websites, forbidden) {
 			t.Fatalf("websites template contains fleet implementation %q", forbidden)
@@ -179,10 +194,8 @@ func TestWPFleetOverviewPanelIsIsolatedAndWired(t *testing.T) {
 		[]byte(`{{define "wp_fleet_overview"}}`),
 		[]byte(`function wpFleetOverview()`),
 		[]byte(`x-data="wpFleetOverview()"`),
-		[]byte(`@wp-fleet-site-deleted.window="siteDeleted($event.detail.siteId)"`),
-		[]byte(`@click="toggleStatus(site)"`),
-		[]byte(`@click="reinstallWP(site)"`),
-		[]byte(`@click="deleteSite(site)"`),
+		[]byte(`wordpressOnlyOverview(response.data)`),
+		[]byte(`site.site_type === 'wordpress'`),
 	} {
 		if !bytes.Contains(panel, required) {
 			t.Fatalf("fleet overview panel is missing %q", required)
@@ -194,14 +207,19 @@ func TestWPFleetOverviewPanelIsIsolatedAndWired(t *testing.T) {
 		[]byte(`function reinstallWP(`),
 		[]byte(`function deleteSite(`),
 		[]byte(`{{template "base" .}}`),
+		[]byte(`siteTypeFilter`),
+		[]byte(`filter_php`),
+		[]byte(`@click="toggleStatus(site)"`),
+		[]byte(`@click="reinstallWP(site)"`),
+		[]byte(`@click="deleteSite(site)"`),
 	} {
 		if bytes.Contains(panel, forbidden) {
 			t.Fatalf("fleet overview panel contains duplicated write behavior %q", forbidden)
 		}
 	}
-	rendered := renderPage(t, "websites.html", "websites_content")
+	rendered := renderPage(t, "wordpress_overview.html", "wordpress_overview_content")
 	if !bytes.Contains(rendered, []byte(`function wpFleetOverview()`)) {
-		t.Fatal("rendered websites page is missing the fleet overview component")
+		t.Fatal("rendered WordPress overview page is missing the fleet overview component")
 	}
 }
 
@@ -302,10 +320,10 @@ const data = (nextSites = sites, nextCounts = counts) => ({ generated_at: '2026-
 
 (async () => {
     const panel = wpFleetOverview();
-    panel.overview = data();
+    panel.overview = panel.wordpressOnlyOverview(data());
 
-    assert(panel.filteredSites().map(item => item.id).join(',') === '1,2,3,4,5', 'attention sorting');
-    panel.siteTypeFilter = 'wordpress';
+    assert(panel.filteredSites().map(item => item.id).join(',') === '1,2,3,5', 'PHP sites automatically excluded');
+    assert(panel.overview.counts.total_sites === 4 && panel.overview.counts.healthy_sites === 1, 'WordPress-only counts');
     panel.healthFilter = 'warning';
     panel.inventoryFilter = 'failed';
     panel.updateFilter = 'has_updates';
@@ -313,7 +331,6 @@ const data = (nextSites = sites, nextCounts = counts) => ({ generated_at: '2026-
     panel.search = ' beta ';
     assert(panel.filteredSites().map(item => item.id).join(',') === '2', 'combined filtering');
 
-    panel.siteTypeFilter = 'all';
     panel.healthFilter = 'all';
     panel.inventoryFilter = 'all';
     panel.updateFilter = 'all';
@@ -326,7 +343,7 @@ const data = (nextSites = sites, nextCounts = counts) => ({ generated_at: '2026-
 
     panel.search = '';
     panel.sortMode = 'domain';
-    assert(panel.filteredSites().map(item => item.id).join(',') === '1,2,4,5,3', 'domain sorting');
+    assert(panel.filteredSites().map(item => item.id).join(',') === '1,2,5,3', 'domain sorting');
     panel.sortMode = 'created';
     assert(panel.filteredSites()[0].id === 5, 'created sorting');
 
@@ -355,7 +372,7 @@ const data = (nextSites = sites, nextCounts = counts) => ({ generated_at: '2026-
     await second;
     resolveFirst({ data: data([sites[0]]) });
     await first;
-    assert(panel.overview === secondData && panel.overview.sites[0].id === 5, 'old response discarded');
+    assert(panel.overview.sites[0].id === 5, 'old response discarded');
     assert(panel.overview.counts.total_sites === 1, 'counts use API response');
 
     const previous = panel.overview;
@@ -372,12 +389,6 @@ const data = (nextSites = sites, nextCounts = counts) => ({ generated_at: '2026-
     global.api = async () => ({ data: data([], { ...counts, total_sites: 0, critical_sites: 0, warning_sites: 0, unknown_sites: 0, healthy_sites: 0 }) });
     await empty.reloadOverview();
     assert(Array.isArray(empty.overview.sites) && empty.overview.sites.length === 0, 'empty state');
-
-    global.api = async () => { throw new Error('post-delete reload failed'); };
-    panel.overview = data();
-    await panel.siteDeleted(1);
-    assert(!panel.overview.sites.some(item => item.id === 1), 'delete removes site before reload');
-    assert(panel.overview.counts.total_sites === 4 && panel.overview.counts.critical_sites === 0 && panel.overview.counts.update_sites === 1, 'delete removes counts before reload');
 
     const many = [];
     for (let index = 0; index < 300; index++) many.push(site(index + 10, 'site-' + index + '.example', 'wordpress', 'active', index % 2 ? 'healthy' : 'warning', inventory('complete', true, index % 3), '2026-07-21T00:00:00Z'));
@@ -432,14 +443,14 @@ func TestWPFleetEnglishPlaceholders(t *testing.T) {
 
 func wpFleetOverviewPanelScript(t *testing.T) []byte {
 	t.Helper()
-	rendered := renderPage(t, "websites.html", "websites_content")
+	rendered := renderPage(t, "wordpress_overview.html", "wordpress_overview_content")
 	scriptPattern := regexp.MustCompile(`(?s)<script>(.*?)</script>`)
 	for _, match := range scriptPattern.FindAllSubmatch(rendered, -1) {
 		if bytes.Contains(match[1], []byte(`function wpFleetOverview()`)) {
 			return match[1]
 		}
 	}
-	t.Fatal("rendered websites page is missing the fleet overview script")
+	t.Fatal("rendered WordPress overview page is missing the fleet overview script")
 	return nil
 }
 
@@ -452,9 +463,16 @@ func TestWPInventoryPanelIsIsolatedAndWired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wordpressDetail, err := os.ReadFile("../templates/wordpress_site_detail.html")
+	if err != nil {
+		t.Fatal(err)
+	}
 	call := []byte(`{{template "wp_inventory_panel" .}}`)
-	if count := bytes.Count(detail, call); count != 1 {
-		t.Fatalf("website detail inventory template calls = %d, want 1", count)
+	if count := bytes.Count(detail, call); count != 0 {
+		t.Fatalf("website management inventory template calls = %d, want 0", count)
+	}
+	if count := bytes.Count(wordpressDetail, call); count != 1 {
+		t.Fatalf("WordPress detail inventory template calls = %d, want 1", count)
 	}
 	for _, forbidden := range [][]byte{
 		[]byte(`function wpInventoryPanel()`),
@@ -478,9 +496,12 @@ func TestWPInventoryPanelIsIsolatedAndWired(t *testing.T) {
 	if bytes.Contains(panel, []byte(`{{template "base" .}}`)) {
 		t.Fatal("inventory panel must not render the base template")
 	}
-	rendered := renderPage(t, "website_detail.html", "websites_detail_content")
+	rendered := renderPage(t, "wordpress_site_detail.html", "wordpress_site_detail_content")
 	if !bytes.Contains(rendered, []byte(`function wpInventoryPanel()`)) {
-		t.Fatal("rendered website detail is missing the inventory component")
+		t.Fatal("rendered WordPress detail is missing the inventory component")
+	}
+	if !bytes.Contains(rendered, []byte(`function wordpressSiteDetail()`)) {
+		t.Fatal("rendered WordPress detail is missing its site loader")
 	}
 }
 
@@ -495,6 +516,9 @@ func TestWPInventoryPanelAPIContract(t *testing.T) {
 		[]byte(`'/wp-inventory/tasks/' + encodeURIComponent(taskID)`),
 		[]byte(`new URLSearchParams()`),
 		[]byte(`params.set('page_size', String(state.pageSize))`),
+		[]byte(`currentPage().total > currentPage().pageSize`),
+		[]byte(`item.current_version || t('common.none')`),
+		[]byte(`!item.network_active && !item.active && !item.current_theme`),
 		[]byte(`if (tab === 'plugins') return 'plugin'`),
 		[]byte(`if (tab === 'themes') return 'theme'`),
 		[]byte(`setTimeout(() =>`),
@@ -622,14 +646,14 @@ func TestWPInventoryEnglishPlaceholders(t *testing.T) {
 
 func wpInventoryPanelScript(t *testing.T) []byte {
 	t.Helper()
-	rendered := renderPage(t, "website_detail.html", "websites_detail_content")
+	rendered := renderPage(t, "wordpress_site_detail.html", "wordpress_site_detail_content")
 	scriptPattern := regexp.MustCompile(`(?s)<script>(.*?)</script>`)
 	for _, match := range scriptPattern.FindAllSubmatch(rendered, -1) {
 		if bytes.Contains(match[1], []byte(`function wpInventoryPanel()`)) {
 			return match[1]
 		}
 	}
-	t.Fatal("rendered website detail is missing the inventory panel script")
+	t.Fatal("rendered WordPress detail is missing the inventory panel script")
 	return nil
 }
 

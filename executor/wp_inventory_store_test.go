@@ -655,7 +655,7 @@ func TestWPInventoryPageMaximumDatasetBudget(t *testing.T) {
 	}{
 		{name: "components", sql: `EXPLAIN QUERY PLAN SELECT COUNT(*) FROM site_wp_components WHERE ` + wpInventoryComponentPageWhereSQL,
 			args: []any{siteID, "page-budget", "", "", "", "%", "%", "%"}},
-		{name: "updates", sql: `EXPLAIN QUERY PLAN SELECT COUNT(*) FROM site_wp_component_updates WHERE ` + wpInventoryUpdatePageWhereSQL,
+		{name: "updates", sql: `EXPLAIN QUERY PLAN SELECT COUNT(*) FROM site_wp_component_updates u WHERE ` + wpInventoryUpdatePageWhereSQL,
 			args: []any{siteID, "page-budget", "", "", "", "%", "%"}},
 	} {
 		rows, err := store.db.Query(query.sql, query.args...)

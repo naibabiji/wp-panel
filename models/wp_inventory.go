@@ -69,9 +69,10 @@ type WPInventoryComponent struct {
 }
 
 type WPInventoryUpdate struct {
-	Type          string    `json:"type"`
-	Key           string    `json:"key"`
-	TargetVersion string    `json:"target_version"`
-	Locale        string    `json:"locale"`
-	CollectedAt   time.Time `json:"collected_at"`
+	Type           string    `json:"type"`
+	Key            string    `json:"key"`
+	CurrentVersion string    `json:"current_version"`
+	TargetVersion  string    `json:"target_version"`
+	Locale         string    `json:"locale"`
+	CollectedAt    time.Time `json:"collected_at"`
 }

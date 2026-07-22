@@ -351,7 +351,7 @@ func TestWPInventoryServicePagesCurrentCollectionFiltersSearchAndCoreResponses(t
 	}
 	core, err := service.Updates(ctx, siteID, WPInventoryListOptions{Page: 1, PageSize: 10, Type: "core"})
 	coreItems := wpInventoryUpdateItems(t, core)
-	if err != nil || core.Total != 1 || len(coreItems) != 1 || coreItems[0].TargetVersion != "7.1" {
+	if err != nil || core.Total != 1 || len(coreItems) != 1 || coreItems[0].CurrentVersion != "7.0" || coreItems[0].TargetVersion != "7.1" {
 		t.Fatalf("core upgrades = %+v, err = %v", core, err)
 	}
 	themeUpdates, err := service.Updates(ctx, siteID, WPInventoryListOptions{Page: 1, PageSize: 10, Type: "theme"})
@@ -359,7 +359,8 @@ func TestWPInventoryServicePagesCurrentCollectionFiltersSearchAndCoreResponses(t
 		t.Fatalf("theme updates = %+v, err = %v", themeUpdates, err)
 	}
 	pluginUpdates, err := service.Updates(ctx, siteID, WPInventoryListOptions{Page: 1, PageSize: 10, Type: "plugin", Search: "alpha"})
-	if err != nil || pluginUpdates.Total != 1 || len(wpInventoryUpdateItems(t, pluginUpdates)) != 1 {
+	pluginUpdateItems := wpInventoryUpdateItems(t, pluginUpdates)
+	if err != nil || pluginUpdates.Total != 1 || len(pluginUpdateItems) != 1 || pluginUpdateItems[0].CurrentVersion != "1.0" || pluginUpdateItems[0].TargetVersion != "1.1" {
 		t.Fatalf("plugin update search = %+v, err = %v", pluginUpdates, err)
 	}
 	literalUpdate, err := service.Updates(ctx, siteID, WPInventoryListOptions{Page: 1, PageSize: 10, Search: "%"})

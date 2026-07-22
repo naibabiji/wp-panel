@@ -109,12 +109,12 @@ func TestWPInventoryHandlerErrorMapping(t *testing.T) {
 		status int
 		text   string
 	}{
-		{name: "invalid site", method: http.MethodGet, path: "/api/websites/nope/wp-inventory", status: 400, text: "库存请求参数无效"},
+		{name: "invalid site", method: http.MethodGet, path: "/api/websites/nope/wp-inventory", status: 400, text: "组件扫描请求无效"},
 		{name: "missing site", method: http.MethodGet, path: "/api/websites/999/wp-inventory", status: 404, text: "未找到"},
-		{name: "php summary", method: http.MethodGet, path: "/api/websites/2/wp-inventory", status: 409, text: "只有 WordPress 网站支持组件库存"},
-		{name: "creating refresh", method: http.MethodPost, path: "/api/websites/3/wp-inventory/refresh", status: 409, text: "网站当前状态不允许刷新库存"},
-		{name: "invalid task", method: http.MethodGet, path: "/api/websites/1/wp-inventory/tasks/not-a-task", status: 400, text: "库存请求参数无效"},
-		{name: "missing task", method: http.MethodGet, path: "/api/websites/1/wp-inventory/tasks/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", status: 404, text: "库存任务不存在"},
+		{name: "php summary", method: http.MethodGet, path: "/api/websites/2/wp-inventory", status: 409, text: "只有 WordPress 网站支持组件扫描"},
+		{name: "creating refresh", method: http.MethodPost, path: "/api/websites/3/wp-inventory/refresh", status: 409, text: "网站当前状态不允许扫描组件信息"},
+		{name: "invalid task", method: http.MethodGet, path: "/api/websites/1/wp-inventory/tasks/not-a-task", status: 400, text: "组件扫描请求无效"},
+		{name: "missing task", method: http.MethodGet, path: "/api/websites/1/wp-inventory/tasks/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", status: 404, text: "组件扫描任务不存在"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -140,7 +140,7 @@ func TestWPInventoryHandlerTaskCannotCrossSites(t *testing.T) {
 		t.Fatalf("refresh = %d/%s", refreshRec.Code, refreshRec.Body.String())
 	}
 	rec := performWPInventoryRequest(router, http.MethodGet, "/api/websites/2/wp-inventory/tasks/"+refresh.Data.Task.ID)
-	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "库存任务不存在") {
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "组件扫描任务不存在") {
 		t.Fatalf("cross-site task = %d/%s", rec.Code, rec.Body.String())
 	}
 }
@@ -152,7 +152,7 @@ func TestWPInventoryHandlerInternalErrorIsFixed(t *testing.T) {
 		t.Fatalf("close test DB: %v", err)
 	}
 	rec := performWPInventoryRequest(router, http.MethodGet, "/api/websites/1/wp-inventory")
-	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "读取 WordPress 库存失败") {
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "读取 WordPress 组件信息失败") {
 		t.Fatalf("internal error = %d/%s", rec.Code, rec.Body.String())
 	}
 	for _, forbidden := range []string{"closed", "database", "SQL", "site_wp_", "/tmp/"} {
@@ -165,8 +165,8 @@ func TestWPInventoryHandlerInternalErrorIsFixed(t *testing.T) {
 func TestWPInventoryHandlerComponentAndUpdatePages(t *testing.T) {
 	db := setupWPInventoryHandlerTestDB(t)
 	if _, err := db.Exec(`INSERT INTO site_wp_inventory_state
-		(site_id, status, collection_id, last_attempt_at, last_success_at, updated_at)
-		VALUES (1, 'complete', 'collection-page', '2026-07-21 06:00:00', '2026-07-21 06:00:00', '2026-07-21 06:00:00')`); err != nil {
+		(site_id, status, wordpress_version, collection_id, last_attempt_at, last_success_at, updated_at)
+		VALUES (1, 'complete', '7.0.2', 'collection-page', '2026-07-21 06:00:00', '2026-07-21 06:00:00', '2026-07-21 06:00:00')`); err != nil {
 		t.Fatalf("insert inventory state: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO site_wp_components
@@ -197,7 +197,7 @@ func TestWPInventoryHandlerComponentAndUpdatePages(t *testing.T) {
 		"/api/websites/1/wp-inventory/updates?type=core&search=7.1&page=1&page_size=10&sort=ignored")
 	var updates wpInventoryPageAPIResponse
 	if updatesRec.Code != http.StatusOK || json.Unmarshal(updatesRec.Body.Bytes(), &updates) != nil ||
-		updates.Data.Total != 1 || len(updates.Data.Items) != 1 || updates.Data.Items[0]["target_version"] != "7.1" {
+		updates.Data.Total != 1 || len(updates.Data.Items) != 1 || updates.Data.Items[0]["current_version"] != "7.0.2" || updates.Data.Items[0]["target_version"] != "7.1" {
 		t.Fatalf("updates status/body = %d/%s", updatesRec.Code, updatesRec.Body.String())
 	}
 
@@ -229,7 +229,7 @@ func TestWPInventoryHandlerPageValidationAndEmptyArray(t *testing.T) {
 		"/api/websites/1/wp-inventory/updates?search=" + strings.Repeat("a", 129),
 	} {
 		rec := performWPInventoryRequest(router, http.MethodGet, path)
-		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "库存请求参数无效") {
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "组件扫描请求无效") {
 			t.Fatalf("invalid page %q = %d/%s", path, rec.Code, rec.Body.String())
 		}
 	}
