@@ -150,6 +150,31 @@ func (s *wpUpdateStore) sealPlan(ctx context.Context, id, sha256, verification, 
 	return s.getTask(ctx, id)
 }
 
+func (s *wpUpdateStore) failPreparingPlan(ctx context.Context, id, code string, now time.Time) error {
+	if !wpUpdateTaskIDPattern.MatchString(id) || code == "" {
+		return errors.New("invalid preparing update failure")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stamp := wpUpdateDBTime(now)
+	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET status='failed',stage='package_prepare',
+		failure_stage='package_prepare',finished_at=?,updated_at=?
+		WHERE id=? AND task_kind='update' AND status='preparing' AND plan_sealed_at IS NULL`, stamp, stamp, id)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return errors.New("preparing update plan not failed")
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, "package_prepare", "failed", code, stamp); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *wpUpdateStore) claimCoreUpdate(ctx context.Context, id, owner, observedVersion string, now time.Time) (WPUpdateTask, error) {
 	if owner == "" || observedVersion == "" {
 		return WPUpdateTask{}, errors.New("invalid claim")

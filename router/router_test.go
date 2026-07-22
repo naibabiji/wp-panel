@@ -140,6 +140,29 @@ func TestWPInventoryRoutesRegistered(t *testing.T) {
 	}
 }
 
+func TestWPCoreUpdateRoutesRegisteredOnProtectedGroup(t *testing.T) {
+	source, err := os.ReadFile("router.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []string{
+		`protected.GET("/api/websites/:id/wp-core-update/preview", wpCoreUpdateHandler.Preview)`,
+		`protected.POST("/api/websites/:id/wp-core-update/confirm", wpCoreUpdateHandler.Confirm)`,
+		`protected.GET("/api/websites/:id/wp-core-update/tasks/:task_id", wpCoreUpdateHandler.Task)`,
+	} {
+		if !bytes.Contains(source, []byte(route)) {
+			t.Fatalf("missing protected route %s", route)
+		}
+	}
+}
+
+func TestWPCoreUpdateHandlerKeepsNilInterfaceWhenConstructionFails(t *testing.T) {
+	handler := newWPCoreUpdateHandler(nil, "")
+	if handler == nil || handler.Service != nil {
+		t.Fatalf("failed construction left a typed nil service: %#v", handler)
+	}
+}
+
 func TestWPFleetOverviewRouteRegistered(t *testing.T) {
 	source, err := os.ReadFile("router.go")
 	if err != nil {

@@ -36,6 +36,14 @@
     "operation_failed": "Operation failed",
     "operation_success": "Operation successful"
   },
+  "wp_core_update": {
+    "invalid_request": "EN_TODO: wp_core_update.invalid_request",
+    "not_found": "EN_TODO: wp_core_update.not_found",
+    "conflict": "EN_TODO: wp_core_update.conflict",
+    "busy": "EN_TODO: wp_core_update.busy",
+    "unavailable": "EN_TODO: wp_core_update.unavailable",
+    "internal_error": "EN_TODO: wp_core_update.internal_error"
+  },
   "wp_inventory": {
     "invalid_request": "EN_TODO: wp_inventory.invalid_request",
     "task_not_found": "EN_TODO: wp_inventory.task_not_found",

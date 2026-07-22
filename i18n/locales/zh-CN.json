@@ -36,6 +36,14 @@
     "operation_failed": "操作失败",
     "operation_success": "操作成功"
   },
+  "wp_core_update": {
+    "invalid_request": "核心更新请求无效",
+    "not_found": "核心更新任务不存在",
+    "conflict": "网站状态、组件信息或更新候选已经变化，请重新检查",
+    "busy": "核心更新确认请求过多，请稍后重试",
+    "unavailable": "暂时无法连接 WordPress.org 或准备更新包，请稍后重试",
+    "internal_error": "核心更新服务暂时不可用"
+  },
   "wp_inventory": {
     "invalid_request": "组件扫描请求无效",
     "task_not_found": "组件扫描任务不存在",

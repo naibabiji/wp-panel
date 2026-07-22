@@ -58,6 +58,42 @@ func TestWPUpdateStoreSealedPlanIsImmutable(t *testing.T) {
 	}
 }
 
+func TestWPUpdateStoreFailPreparingPlan(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	task, err := store.createCoreManualPlan(context.Background(), WPUpdatePlan{
+		SiteID: siteID, CurrentVersion: "7.0.1", TargetVersion: "7.0.2",
+		PackageSource: "wordpress.org", DownloadURL: "https://downloads.wordpress.org/release/wordpress-7.0.2.zip",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.failPreparingPlan(context.Background(), task.ID, "package_prepare_failed", now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := store.getTask(context.Background(), task.ID)
+	if err != nil || failed.Status != wpUpdateFailed || failed.FailureStage != "package_prepare" || failed.FinishedAt == "" {
+		t.Fatalf("failed task=%+v err=%v", failed, err)
+	}
+	var events int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM wp_update_task_events WHERE task_id=? AND stage='package_prepare' AND result='failed'`, task.ID).Scan(&events); err != nil || events != 1 {
+		t.Fatalf("failed events=%d err=%v", events, err)
+	}
+}
+
+func TestWPUpdateStoreCannotFailSealedPlanAsPreparing(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	task := createAndSealUpdateTask(t, store, siteID, now)
+	if err := store.failPreparingPlan(context.Background(), task.ID, "package_prepare_failed", now.Add(time.Second)); err == nil {
+		t.Fatal("sealed plan was changed by preparing failure path")
+	}
+	current, err := store.getTask(context.Background(), task.ID)
+	if err != nil || current.Status != wpUpdateQueued {
+		t.Fatalf("current task=%+v err=%v", current, err)
+	}
+}
+
 func TestWPUpdateStoreBlocksConcurrentAndUnresolvedTasks(t *testing.T) {
 	store, siteID := newWPUpdateStoreTest(t)
 	ctx := context.Background()

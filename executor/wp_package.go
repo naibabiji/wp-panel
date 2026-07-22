@@ -90,12 +90,20 @@ func (s *WPPackageService) PublishUpload(ctx context.Context, src io.Reader, dec
 }
 
 func (s *WPPackageService) DownloadLatest(ctx context.Context) (WPPackageReport, error) {
+	return s.download(ctx, wordpressLatestURL)
+}
+
+func (s *WPPackageService) download(ctx context.Context, rawURL string) (WPPackageReport, error) {
 	if !s.mu.TryLock() {
 		return WPPackageReport{}, archiveError("package_busy", nil)
 	}
 	defer s.mu.Unlock()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, wordpressLatestURL, nil)
+	u, err := url.Parse(rawURL)
+	if err != nil || !allowedWordPressURL(u) {
+		return WPPackageReport{}, archiveError("package_download_failed", nil)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return WPPackageReport{}, archiveError("package_download_failed", err)
 	}

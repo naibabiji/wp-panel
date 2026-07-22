@@ -1,6 +1,7 @@
 package router
 
 import (
+	"database/sql"
 	"embed"
 	"html/template"
 	"io/fs"
@@ -867,6 +868,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	websiteHandler := &handlers.WebsiteHandler{DB: db}
 	wpInventoryHandler := &handlers.WPInventoryHandler{DB: db}
 	wpFleetOverviewHandler := &handlers.WPFleetOverviewHandler{DB: db}
+	wpCoreUpdateHandler := newWPCoreUpdateHandler(db, cfg.Panel.BackupDir)
 	protected.GET("/api/websites", websiteHandler.List)
 	protected.GET("/api/wp-fleet/overview", wpFleetOverviewHandler.Overview)
 	protected.POST("/api/websites", websiteHandler.Create)
@@ -877,6 +879,9 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/websites/:id/wp-inventory/tasks/:task_id", wpInventoryHandler.Task)
 	protected.GET("/api/websites/:id/wp-inventory/components", wpInventoryHandler.Components)
 	protected.GET("/api/websites/:id/wp-inventory/updates", wpInventoryHandler.Updates)
+	protected.GET("/api/websites/:id/wp-core-update/preview", wpCoreUpdateHandler.Preview)
+	protected.POST("/api/websites/:id/wp-core-update/confirm", wpCoreUpdateHandler.Confirm)
+	protected.GET("/api/websites/:id/wp-core-update/tasks/:task_id", wpCoreUpdateHandler.Task)
 	protected.DELETE("/api/websites/:id", websiteHandler.Delete)
 	protected.GET("/api/websites/:id/backup-usage", websiteHandler.BackupUsage)
 	protected.PATCH("/api/websites/:id/status", websiteHandler.ToggleStatus)
@@ -1104,6 +1109,17 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	r.SetHTMLTemplate(tmpl)
 
 	return r
+}
+
+func newWPCoreUpdateHandler(db *sql.DB, backupDir string) *handlers.WPCoreUpdateHandler {
+	handler := &handlers.WPCoreUpdateHandler{}
+	service, err := executor.NewWPCoreUpdateService(db, backupDir)
+	if err != nil {
+		log.Println("WordPress 核心更新 API 未启用")
+		return handler
+	}
+	handler.Service = service
+	return handler
 }
 
 var pageTitleKeys = map[string]string{
