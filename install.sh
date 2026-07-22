@@ -733,7 +733,7 @@ elif $INSTALL_TRACES; then
 fi
 
 if $REPAIR_MODE; then
-    for required_cmd in sqlite3 openssl systemctl sha256sum; do
+    for required_cmd in openssl systemctl sha256sum; do
         command -v "$required_cmd" >/dev/null 2>&1 || log_error "repair缺少必要命令: ${required_cmd}"
     done
     prepare_panel_candidate
@@ -748,6 +748,13 @@ if $REPAIR_MODE; then
         *'"tls_certificate_expired"'*) log_warn "现有面板TLS证书已过期；repair将保留证书身份，请另行更新" ;;
         *'"tls_certificate_expires_soon"'*) log_warn "现有面板TLS证书将在30天内到期；repair将保留证书身份" ;;
     esac
+    if ! command -v sqlite3 >/dev/null 2>&1; then
+        log_warn "repair需要sqlite3创建面板数据库在线备份，正在自动安装"
+        command -v apt-get >/dev/null 2>&1 || log_error "repair缺少apt-get，无法自动安装sqlite3"
+        DEBIAN_FRONTEND=noninteractive apt-get install -y sqlite3 || \
+            log_error "repair自动安装sqlite3失败，请检查APT后重试"
+        command -v sqlite3 >/dev/null 2>&1 || log_error "repair安装sqlite3后仍无法找到该命令"
+    fi
     if systemctl is-active --quiet wp-panel 2>/dev/null; then
         REPAIR_SERVICE_WAS_ACTIVE=true
     fi
@@ -849,10 +856,12 @@ for svc in nginx php8.3-fpm mariadb redis-server; do
     DROPDIR="/etc/systemd/system/${svc}.service.d"
     mkdir -p "$DROPDIR"
     cat > "$DROPDIR/wp-panel.conf" << SYSTEMDEOF
+[Unit]
+StartLimitIntervalSec=0
+
 [Service]
 Restart=always
 RestartSec=5s
-StartLimitIntervalSec=0
 SYSTEMDEOF
 done
 

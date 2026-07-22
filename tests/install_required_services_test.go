@@ -56,6 +56,24 @@ func TestInstallRequiredWebServicesUseSharedStartHelper(t *testing.T) {
 	}
 }
 
+func TestManagedServiceDropInUsesSystemdSections(t *testing.T) {
+	script := readInstallScript(t, installScriptPath)
+	required := `cat > "$DROPDIR/wp-panel.conf" << SYSTEMDEOF
+[Unit]
+StartLimitIntervalSec=0
+
+[Service]
+Restart=always
+RestartSec=5s
+SYSTEMDEOF`
+	if got := strings.Count(script, required); got != 1 {
+		t.Fatalf("managed-service systemd drop-in definitions = %d, want exact [Unit]/[Service] layout once", got)
+	}
+	if strings.Contains(script, "[Service]\nRestart=always\nRestartSec=5s\nStartLimitIntervalSec=0") {
+		t.Fatal("StartLimitIntervalSec must not be emitted in the [Service] section")
+	}
+}
+
 func readInstallScript(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

@@ -32,6 +32,26 @@ func TestInstallRepairPreflightRunsBeforeAPT(t *testing.T) {
 	}
 }
 
+func TestInstallRepairInstallsSQLiteOnlyAfterSafeConfigCheck(t *testing.T) {
+	script := readInstallScript(t, installScriptPath)
+	configCheck := requiredIndex(t, script, `--repair-config-check --config "$CONFIG_FILE"`)
+	sqliteInstall := requiredIndex(t, script, `DEBIAN_FRONTEND=noninteractive apt-get install -y sqlite3`)
+	backupAfterInstall := strings.Index(script[sqliteInstall:], "\n    create_repair_backup")
+	if backupAfterInstall < 0 {
+		t.Fatal("repair sqlite dependency install must be followed by create_repair_backup call")
+	}
+	backup := sqliteInstall + backupAfterInstall
+	if !(configCheck < sqliteInstall && sqliteInstall < backup) {
+		t.Fatalf("repair sqlite dependency order is invalid: config_check=%d sqlite_install=%d backup=%d", configCheck, sqliteInstall, backup)
+	}
+
+	componentInstall := requiredIndex(t, script, "apt-get install -y \\\n    nginx \\")
+	componentComplete := requiredIndex(t, script, `log_info "基础组件安装完成"`)
+	if strings.Contains(script[componentInstall:componentComplete], "sqlite3") {
+		t.Fatal("fresh install must not install repair-only sqlite3 dependency")
+	}
+}
+
 func TestRepairRollbackFaultInjection(t *testing.T) {
 	script := readInstallScript(t, installScriptPath)
 	rollback := extractShellFunction(t, script, "repair_rollback", "apt_package_available")
