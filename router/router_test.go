@@ -196,6 +196,7 @@ func TestWPFleetOverviewPanelIsIsolatedAndWired(t *testing.T) {
 		[]byte(`x-data="wpFleetOverview()"`),
 		[]byte(`wordpressOnlyOverview(response.data)`),
 		[]byte(`site.site_type === 'wordpress'`),
+		[]byte(`overview.sites.length > 10`),
 	} {
 		if !bytes.Contains(panel, required) {
 			t.Fatalf("fleet overview panel is missing %q", required)
@@ -325,16 +326,12 @@ const data = (nextSites = sites, nextCounts = counts) => ({ generated_at: '2026-
     assert(panel.filteredSites().map(item => item.id).join(',') === '1,2,3,5', 'PHP sites automatically excluded');
     assert(panel.overview.counts.total_sites === 4 && panel.overview.counts.healthy_sites === 1, 'WordPress-only counts');
     panel.healthFilter = 'warning';
-    panel.inventoryFilter = 'failed';
     panel.updateFilter = 'has_updates';
-    panel.statusFilter = 'paused';
     panel.search = ' beta ';
     assert(panel.filteredSites().map(item => item.id).join(',') === '2', 'combined filtering');
 
     panel.healthFilter = 'all';
-    panel.inventoryFilter = 'all';
     panel.updateFilter = 'all';
-    panel.statusFilter = 'all';
     panel.search = 'a'.repeat(128);
     panel.filteredSites();
     assert(panel.searchError === '', '128 byte search accepted');
@@ -342,10 +339,7 @@ const data = (nextSites = sites, nextCounts = counts) => ({ generated_at: '2026-
     assert(panel.filteredSites().length === 0 && panel.searchError === 'wp_fleet.search_too_long', '129 byte search rejected');
 
     panel.search = '';
-    panel.sortMode = 'domain';
-    assert(panel.filteredSites().map(item => item.id).join(',') === '1,2,5,3', 'domain sorting');
-    panel.sortMode = 'created';
-    assert(panel.filteredSites()[0].id === 5, 'created sorting');
+    assert(panel.filteredSites().map(item => item.id).join(',') === '1,2,3,5', 'attention sorting remains fixed');
 
     assert(['active', 'paused', 'error', 'creating', 'deleting'].map(value => panel.statusKey(value)).join(',') === [
         'wp_fleet.status_active', 'wp_fleet.status_paused', 'wp_fleet.status_error', 'wp_fleet.status_creating', 'wp_fleet.status_deleting'
@@ -394,7 +388,6 @@ const data = (nextSites = sites, nextCounts = counts) => ({ generated_at: '2026-
     for (let index = 0; index < 300; index++) many.push(site(index + 10, 'site-' + index + '.example', 'wordpress', 'active', index % 2 ? 'healthy' : 'warning', inventory('complete', true, index % 3), '2026-07-21T00:00:00Z'));
     panel.overview = data(many, counts);
     panel.search = 'site';
-    panel.sortMode = 'attention';
     const started = performance.now();
     assert(panel.filteredSites().length === 300, '300 site filtering');
     const filterElapsed = performance.now() - started;

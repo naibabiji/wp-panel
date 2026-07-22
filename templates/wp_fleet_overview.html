@@ -44,8 +44,8 @@
             </div>
 
             <div class="card space-y-4">
-                <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                    <div class="xl:col-span-2">
+                <div x-show="overview.sites.length > 10" class="grid gap-3 md:grid-cols-3">
+                    <div>
                         <label class="mb-1 block text-xs text-gray-400">{{t .Lang "wp_fleet.search"}}</label>
                         <input type="search" x-model="search" class="input-field w-full" placeholder="{{t .Lang "wp_fleet.search_placeholder"}}">
                         <p x-show="searchError" class="mt-1 text-xs text-red-300" x-text="searchError"></p>
@@ -61,18 +61,6 @@
                         </select>
                     </div>
                     <div>
-                        <label class="mb-1 block text-xs text-gray-400">{{t .Lang "wp_fleet.inventory"}}</label>
-                        <select x-model="inventoryFilter" class="input-field w-full">
-                            <option value="all">{{t .Lang "wp_fleet.filter_all"}}</option>
-                            <option value="uncollected">{{t .Lang "wp_fleet.inventory_unknown"}}</option>
-                            <option value="queued">{{t .Lang "wp_fleet.inventory_queued"}}</option>
-                            <option value="running">{{t .Lang "wp_fleet.inventory_running"}}</option>
-                            <option value="complete">{{t .Lang "wp_fleet.inventory_complete"}}</option>
-                            <option value="failed">{{t .Lang "wp_fleet.inventory_failed"}}</option>
-                            <option value="stale">{{t .Lang "wp_fleet.inventory_stale"}}</option>
-                        </select>
-                    </div>
-                    <div>
                         <label class="mb-1 block text-xs text-gray-400">{{t .Lang "wp_fleet.updates"}}</label>
                         <select x-model="updateFilter" class="input-field w-full">
                             <option value="all">{{t .Lang "wp_fleet.filter_all"}}</option>
@@ -80,27 +68,9 @@
                             <option value="no_updates">{{t .Lang "wp_fleet.filter_no_updates"}}</option>
                         </select>
                     </div>
-                    <div>
-                        <label class="mb-1 block text-xs text-gray-400">{{t .Lang "wp_fleet.site_status"}}</label>
-                        <select x-model="statusFilter" class="input-field w-full">
-                            <option value="all">{{t .Lang "wp_fleet.filter_all"}}</option>
-                            <option value="active">{{t .Lang "wp_fleet.status_active"}}</option>
-                            <option value="paused">{{t .Lang "wp_fleet.status_paused"}}</option>
-                            <option value="error">{{t .Lang "wp_fleet.status_error"}}</option>
-                            <option value="creating">{{t .Lang "wp_fleet.status_creating"}}</option>
-                            <option value="deleting">{{t .Lang "wp_fleet.status_deleting"}}</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-xs text-gray-400">{{t .Lang "wp_fleet.sort"}}</label>
-                        <select x-model="sortMode" class="input-field w-full">
-                            <option value="attention">{{t .Lang "wp_fleet.sort_attention"}}</option>
-                            <option value="domain">{{t .Lang "wp_fleet.sort_domain"}}</option>
-                        </select>
-                    </div>
                 </div>
 
-                <div class="text-xs text-gray-400" x-text="t('wp_fleet.showing_sites', { count: filteredSites().length, total: overview.sites.length })"></div>
+                <div x-show="overview.sites.length > 10" class="text-xs text-gray-400" x-text="t('wp_fleet.showing_sites', { count: filteredSites().length, total: overview.sites.length })"></div>
 
                 <div class="max-w-full overflow-x-auto">
                     <table class="w-full min-w-[860px] text-sm">
@@ -187,10 +157,7 @@ function wpFleetOverview() {
         search: '',
         searchError: '',
         healthFilter: 'all',
-        inventoryFilter: 'all',
         updateFilter: 'all',
-        statusFilter: 'all',
-        sortMode: 'attention',
         requestGeneration: 0,
         requestController: null,
         mount() {
@@ -261,18 +228,12 @@ function wpFleetOverview() {
                 const inventory = site.inventory;
                 if (normalized && !(site.name || '').toLocaleLowerCase(currentLocale()).includes(normalized) && !site.domain.toLocaleLowerCase(currentLocale()).includes(normalized)) return false;
                 if (this.healthFilter !== 'all' && site.health.level !== this.healthFilter) return false;
-                if (this.statusFilter !== 'all' && site.status !== this.statusFilter) return false;
                 if (this.updateFilter === 'has_updates' && (!inventory || inventory.update_total === 0)) return false;
                 if (this.updateFilter === 'no_updates' && inventory && inventory.update_total > 0) return false;
-                if (this.inventoryFilter === 'uncollected' && (!inventory || inventory.has_successful_inventory)) return false;
-                if (this.inventoryFilter === 'stale' && (!inventory || !inventory.stale)) return false;
-                if (!['all', 'uncollected', 'stale'].includes(this.inventoryFilter) && (!inventory || inventory.status !== this.inventoryFilter)) return false;
                 return true;
             });
             const priority = { critical: 0, warning: 1, unknown: 2, healthy: 3 };
             return sites.slice().sort((left, right) => {
-                if (this.sortMode === 'created') return new Date(right.created_at) - new Date(left.created_at) || left.domain.localeCompare(right.domain, currentLocale());
-                if (this.sortMode === 'domain') return left.domain.localeCompare(right.domain, currentLocale());
                 return priority[left.health.level] - priority[right.health.level] || left.domain.localeCompare(right.domain, currentLocale());
             });
         },
