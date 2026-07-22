@@ -13,7 +13,10 @@
     <div x-show="error" class="card py-8 text-center text-sm text-red-300" x-text="error"></div>
 
     <template x-if="site && site.site_type === 'wordpress'">
-        <div>{{template "wp_inventory_panel" .}}</div>
+        <div>
+            {{template "wp_core_update_panel" .}}
+            {{template "wp_inventory_panel" .}}
+        </div>
     </template>
 </div>
 

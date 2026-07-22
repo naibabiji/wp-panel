@@ -40,21 +40,28 @@ function api(path, options = {}) {
         .then(async (resp) => {
             if (resp.status === 401 && path !== '/auth/login') {
                 window.location.href = prefix + '/login';
-                throw new Error(t('auth.session_expired'));
+                const err = new Error(t('auth.session_expired'));
+                err.status = resp.status;
+                throw err;
             }
             if (resp.status === 503) {
-                throw new Error(t('common.service_busy'));
+                const err = new Error(t('common.service_busy'));
+                err.status = resp.status;
+                throw err;
             }
             const contentType = resp.headers.get('content-type') || '';
             if (!contentType.includes('application/json')) {
                 const text = await resp.text();
                 console.error('Non-JSON response:', resp.status, text.substring(0, 200));
-                throw new Error(t('common.service_exception', { status: resp.status }));
+                const err = new Error(t('common.service_exception', { status: resp.status }));
+                err.status = resp.status;
+                throw err;
             }
             const data = await resp.json();
             if (!resp.ok) {
                 console.error('API error:', resp.status, data);
                 const err = new Error(data.message || 'Request failed (' + resp.status + ')');
+                err.status = resp.status;
                 if (data.conflicts) err.conflicts = data.conflicts;
                 throw err;
             }
@@ -72,6 +79,7 @@ function api(path, options = {}) {
             const message = friendlyAPIError(err);
             const displayErr = message === err.message ? err : new Error(message);
             if (err.conflicts) displayErr.conflicts = err.conflicts;
+            if (Number.isInteger(err.status)) displayErr.status = err.status;
             if (message !== t('auth.session_expired') && !displayErr.conflicts && !silent && !suppressToast) {
                 console.error('Fetch failed:', err.message, 'URL:', url);
                 showToast(displayErr.message, 'error');

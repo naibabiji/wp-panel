@@ -1,0 +1,224 @@
+{{define "wp_core_update_panel"}}
+<section x-data="wpCoreUpdatePanel()" x-init="mount()" x-effect="setSite(site)" x-show="site && site.site_type === 'wordpress'" class="mt-6">
+    <div class="card">
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+                <h3 class="text-lg font-semibold text-white">{{t .Lang "wp_core_update.title"}}</h3>
+                <p class="mt-1 text-sm text-gray-400">{{t .Lang "wp_core_update.description"}}</p>
+            </div>
+            <button @click="loadPreview()" :disabled="loading || confirming || isActive()" class="btn-primary whitespace-nowrap" x-text="loading ? t('wp_core_update.checking') : t('wp_core_update.check')"></button>
+        </div>
+
+        <div x-show="error" class="mt-4 rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200" x-text="error"></div>
+
+        <div x-show="preview" class="mt-4 rounded-lg border border-blue-800 bg-blue-950/20 p-4">
+            <div class="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <div><div class="text-xs text-gray-500">{{t .Lang "wp_core_update.current_version"}}</div><div class="mt-1 font-medium text-white" x-text="preview?.current_version"></div></div>
+                <div><div class="text-xs text-gray-500">{{t .Lang "wp_core_update.target_version"}}</div><div class="mt-1 font-medium text-blue-200" x-text="preview?.target_version"></div></div>
+                <div><div class="text-xs text-gray-500">{{t .Lang "wp_core_update.verification"}}</div><div class="mt-1 text-green-300">{{t .Lang "wp_core_update.official_verified"}}</div></div>
+                <div><div class="text-xs text-gray-500">{{t .Lang "wp_core_update.backup_scope"}}</div><div class="mt-1 text-gray-200">{{t .Lang "wp_core_update.backup_scope_value"}}</div></div>
+            </div>
+            <p class="mt-4 text-sm text-yellow-200">{{t .Lang "wp_core_update.confirm_warning"}}</p>
+            <div class="mt-4 flex justify-end gap-2">
+                <button @click="discardPreview()" :disabled="confirming" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
+                <button @click="confirmUpdate()" :disabled="confirming" class="btn-primary" x-text="confirming ? t('wp_core_update.submitting') : t('wp_core_update.start_update')"></button>
+            </div>
+        </div>
+
+        <div x-show="task" class="mt-4 rounded-lg border p-4" :class="taskNoticeClass()">
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                    <div class="font-medium" x-text="taskStatusText()"></div>
+                    <div class="mt-1 text-sm opacity-80" x-text="t('wp_core_update.stage_value', { stage: stageText() })"></div>
+                </div>
+                <span class="text-sm" x-text="task ? task.current_version + ' → ' + task.target_version : ''"></span>
+            </div>
+            <p x-show="task?.requires_attention" class="mt-3 text-sm font-medium text-red-200">{{t .Lang "wp_core_update.requires_attention"}}</p>
+            <p x-show="task?.status === 'success'" class="mt-3 text-sm text-green-200">{{t .Lang "wp_core_update.rescan_after_success"}}</p>
+        </div>
+    </div>
+</section>
+
+<script>
+function wpCoreUpdatePanel() {
+    return {
+        siteID: null,
+        preview: null,
+        task: null,
+        loading: false,
+        confirming: false,
+        error: '',
+        pollTimer: null,
+        generation: 0,
+        pagehideHandler: null,
+        mount() {
+            if (this.pagehideHandler) return;
+            this.pagehideHandler = () => this.teardown();
+            window.addEventListener('pagehide', this.pagehideHandler);
+        },
+        teardown() {
+            this.stopPolling();
+            this.generation++;
+            if (this.pagehideHandler) window.removeEventListener('pagehide', this.pagehideHandler);
+            this.pagehideHandler = null;
+        },
+        setSite(site) {
+            const next = site && site.site_type === 'wordpress' ? Number(site.id) : null;
+            if (next === this.siteID) return;
+            this.stopPolling();
+            this.generation++;
+            this.siteID = Number.isInteger(next) && next > 0 ? next : null;
+            this.preview = null;
+            this.task = null;
+            this.error = '';
+            if (this.siteID) this.resumeTask();
+        },
+        storageKey() {
+            return this.siteID ? 'wp-panel-core-update-task:' + this.siteID : '';
+        },
+        rememberTask(taskID) {
+            try { window.sessionStorage.setItem(this.storageKey(), taskID); } catch (_) {}
+        },
+        forgetTask() {
+            try { window.sessionStorage.removeItem(this.storageKey()); } catch (_) {}
+        },
+        async resumeTask() {
+            let taskID = '';
+            try { taskID = window.sessionStorage.getItem(this.storageKey()) || ''; } catch (_) {}
+            if (!taskID || !this.siteID) return;
+            this.task = { task_id: taskID, site_id: this.siteID, component_type: 'core', task_kind: 'update', status: 'queued', stage: 'queued' };
+            await this.pollTask();
+        },
+        validPreview(value) {
+            return value && value.available === true && value.site_id === this.siteID &&
+                typeof value.current_version === 'string' && value.current_version !== '' &&
+                typeof value.target_version === 'string' && value.target_version !== '' &&
+                typeof value.confirmation_token === 'string' && value.confirmation_token !== '' &&
+                value.verification_required === 'official_verified' && value.database_backup === true &&
+                value.core_files_backup === true && value.uploads_included === false;
+        },
+        validTask(value) {
+            return value && typeof value.task_id === 'string' && value.task_id !== '' && value.site_id === this.siteID &&
+                value.component_type === 'core' && value.task_kind === 'update' && typeof value.status === 'string';
+        },
+        async loadPreview() {
+            if (!this.siteID || this.loading || this.confirming || this.isActive()) return;
+            const generation = this.generation;
+            const siteID = this.siteID;
+            this.loading = true;
+            this.preview = null;
+            this.error = '';
+            try {
+                const response = await api('/websites/' + siteID + '/wp-core-update/preview', { suppressToast: true, timeout: 30000 });
+                if (generation !== this.generation || siteID !== this.siteID) return;
+                if (!this.validPreview(response.data)) throw new Error(t('wp_core_update.preview_invalid'));
+                this.preview = response.data;
+            } catch (error) {
+                if (generation === this.generation && siteID === this.siteID) this.error = error.message || t('wp_core_update.preview_failed');
+            } finally {
+                if (generation === this.generation && siteID === this.siteID) this.loading = false;
+            }
+        },
+        discardPreview() {
+            if (!this.confirming) this.preview = null;
+        },
+        async confirmUpdate() {
+            if (!this.preview || this.confirming || !this.siteID) return;
+            const preview = this.preview;
+            const accepted = await confirmModal(t('wp_core_update.confirm_message', { current: preview.current_version, target: preview.target_version }));
+            if (!accepted || this.preview !== preview) return;
+            const generation = this.generation;
+            const siteID = this.siteID;
+            this.confirming = true;
+            this.error = '';
+            try {
+                const response = await api('/websites/' + siteID + '/wp-core-update/confirm', {
+                    method: 'POST',
+                    timeout: 120000,
+                    suppressToast: true,
+                    body: { confirmation_token: preview.confirmation_token, target_version: preview.target_version, confirm: true },
+                });
+                if (generation !== this.generation || siteID !== this.siteID) return;
+                if (!this.validTask(response.data) || response.data.status !== 'queued') throw new Error(t('wp_core_update.task_invalid'));
+                this.preview = null;
+                this.task = response.data;
+                this.rememberTask(this.task.task_id);
+                showToast(t('wp_core_update.submitted'), 'success');
+                this.schedulePoll(2000);
+            } catch (error) {
+                if (generation === this.generation && siteID === this.siteID) {
+                    this.preview = null;
+                    this.error = error.message || t('wp_core_update.submit_failed');
+                }
+            } finally {
+                if (generation === this.generation && siteID === this.siteID) this.confirming = false;
+            }
+        },
+        isActive() {
+            return this.task && ['queued', 'running'].includes(this.task.status);
+        },
+        schedulePoll(delay) {
+            this.stopPolling();
+            this.pollTimer = setTimeout(() => { this.pollTimer = null; this.pollTask(); }, delay);
+        },
+        stopPolling() {
+            if (this.pollTimer !== null) clearTimeout(this.pollTimer);
+            this.pollTimer = null;
+        },
+        async pollTask() {
+            if (!this.isActive() || !this.siteID) return;
+            const generation = this.generation;
+            const siteID = this.siteID;
+            const taskID = this.task.task_id;
+            try {
+                const response = await api('/websites/' + siteID + '/wp-core-update/tasks/' + encodeURIComponent(taskID), { suppressToast: true, timeout: 15000 });
+                if (generation !== this.generation || siteID !== this.siteID) return;
+                if (!this.validTask(response.data) || response.data.task_id !== taskID) throw new Error(t('wp_core_update.task_invalid'));
+                this.task = response.data;
+                if (this.isActive()) {
+                    this.schedulePoll(3000);
+                } else {
+                    this.stopPolling();
+                    this.forgetTask();
+                }
+            } catch (error) {
+                if (generation !== this.generation || siteID !== this.siteID) return;
+                this.error = error.message || t('wp_core_update.task_read_failed');
+                if (error.status === 404) {
+                    this.stopPolling();
+                    this.forgetTask();
+                    this.task = null;
+                    return;
+                }
+                this.schedulePoll(5000);
+            }
+        },
+        stageText() {
+            const stage = this.task?.stage || 'queued';
+            const keys = {
+                queued: 'wp_core_update.stage_queued', claimed: 'wp_core_update.stage_claimed',
+                backups_ready: 'wp_core_update.stage_backups_ready', unlocking: 'wp_core_update.stage_unlocking',
+                updating_core: 'wp_core_update.stage_updating_core', health_check: 'wp_core_update.stage_health_check',
+                restoring_file_lock: 'wp_core_update.stage_restoring_file_lock', rollback: 'wp_core_update.stage_rollback',
+                complete: 'wp_core_update.stage_complete',
+            };
+            return t(keys[stage] || 'wp_core_update.stage_unknown');
+        },
+        taskStatusText() {
+            const status = this.task?.status || 'queued';
+            const keys = {
+                queued: 'wp_core_update.status_queued', running: 'wp_core_update.status_running',
+                success: 'wp_core_update.status_success', failed: 'wp_core_update.status_failed',
+                interrupted_unknown: 'wp_core_update.status_interrupted_unknown',
+            };
+            return t(keys[status] || 'wp_core_update.status_unknown');
+        },
+        taskNoticeClass() {
+            if (this.task?.status === 'success') return 'border-green-800 bg-green-950/30 text-green-200';
+            if (this.task?.status === 'failed' || this.task?.status === 'interrupted_unknown') return 'border-red-800 bg-red-950/30 text-red-200';
+            return 'border-blue-800 bg-blue-950/30 text-blue-200';
+        },
+    };
+}
+</script>
+{{end}}

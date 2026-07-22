@@ -521,6 +521,156 @@ func TestWPInventoryPanelIsIsolatedAndWired(t *testing.T) {
 	}
 }
 
+func TestWPCoreUpdatePanelIsWiredAndUsesFixedAPIContract(t *testing.T) {
+	panel, err := os.ReadFile("../templates/wp_core_update_panel.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := os.ReadFile("../templates/wordpress_site_detail.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range [][]byte{
+		[]byte(`{{template "wp_core_update_panel" .}}`),
+		[]byte(`api('/websites/' + siteID + '/wp-core-update/preview'`),
+		[]byte(`api('/websites/' + siteID + '/wp-core-update/confirm'`),
+		[]byte(`'/wp-core-update/tasks/' + encodeURIComponent(taskID)`),
+		[]byte(`confirmation_token: preview.confirmation_token`),
+		[]byte(`target_version: preview.target_version`),
+		[]byte(`confirm: true`),
+		[]byte(`confirmModal(`),
+	} {
+		source := panel
+		if bytes.HasPrefix(required, []byte(`{{template`)) {
+			source = detail
+		}
+		if !bytes.Contains(source, required) {
+			t.Fatalf("core update UI is missing %q", required)
+		}
+	}
+	for _, forbidden := range [][]byte{
+		[]byte(`download_url`),
+		[]byte(`package_snapshot_path`),
+		[]byte(`downloaded_sha256`),
+		[]byte(`setInterval(`),
+	} {
+		if bytes.Contains(panel, forbidden) {
+			t.Fatalf("core update UI contains forbidden behavior %q", forbidden)
+		}
+	}
+	rendered := renderPage(t, "wordpress_site_detail.html", "wordpress_site_detail_content")
+	if !bytes.Contains(rendered, []byte(`function wpCoreUpdatePanel()`)) {
+		t.Fatal("rendered WordPress detail is missing the core update component")
+	}
+}
+
+func TestWPCoreUpdatePanelBehavior(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available")
+	}
+	rendered := renderPage(t, "wordpress_site_detail.html", "wordpress_site_detail_content")
+	scriptPattern := regexp.MustCompile(`(?s)<script>(.*?)</script>`)
+	var script []byte
+	for _, match := range scriptPattern.FindAllSubmatch(rendered, -1) {
+		if bytes.Contains(match[1], []byte(`function wpCoreUpdatePanel()`)) {
+			script = match[1]
+			break
+		}
+	}
+	if len(script) == 0 {
+		t.Fatal("core update panel script not found")
+	}
+	harness := []byte(`
+function assert(condition, message) { if (!condition) throw new Error(message); }
+global.t = (key, params = {}) => key;
+const storage = new Map();
+global.window = { sessionStorage: {
+    getItem: key => storage.get(key) || null,
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: key => storage.delete(key),
+} };
+(async () => {
+    const panel = wpCoreUpdatePanel();
+    panel.siteID = 7;
+    assert(panel.validPreview({
+        available: true, site_id: 7, current_version: '7.0.1', target_version: '7.0.2',
+        confirmation_token: 'opaque', verification_required: 'official_verified',
+        database_backup: true, core_files_backup: true, uploads_included: false
+    }), 'valid preview rejected');
+    assert(!panel.validPreview({ available: true, site_id: 8 }), 'cross-site preview accepted');
+    assert(panel.validTask({ task_id: 'wpu_test', site_id: 7, component_type: 'core', task_kind: 'update', status: 'queued' }), 'valid task rejected');
+    assert(!panel.validTask({ task_id: 'wpu_test', site_id: 8, component_type: 'core', task_kind: 'update', status: 'queued' }), 'cross-site task accepted');
+    panel.task = { status: 'interrupted_unknown', stage: 'health_check' };
+    assert(panel.taskStatusText() === 'wp_core_update.status_interrupted_unknown', 'interrupted status mapping');
+    assert(panel.stageText() === 'wp_core_update.stage_health_check', 'health-check stage mapping');
+
+    panel.task = { task_id: 'stale', site_id: 7, component_type: 'core', task_kind: 'update', status: 'queued', stage: 'queued' };
+    panel.rememberTask('stale');
+    let scheduled = 0;
+    panel.schedulePoll = () => { scheduled++; };
+    global.api = async () => { const error = new Error('not found'); error.status = 404; throw error; };
+    await panel.pollTask();
+    assert(panel.task === null, '404 task was not cleared');
+    assert(storage.size === 0, '404 task remained in session storage');
+    assert(scheduled === 0, '404 task scheduled another poll');
+
+    panel.task = { task_id: 'done', site_id: 7, component_type: 'core', task_kind: 'update', status: 'queued', stage: 'queued' };
+    panel.rememberTask('done');
+    global.api = async () => ({ data: { task_id: 'done', site_id: 7, component_type: 'core', task_kind: 'update', status: 'success', stage: 'complete' } });
+    await panel.pollTask();
+    assert(panel.task.status === 'success', 'terminal task not retained for display');
+    assert(storage.size === 0, 'terminal task remained in session storage');
+})().catch(error => { console.error(error); process.exit(1); });
+`)
+	testScript := append(append([]byte{}, script...), harness...)
+	scriptPath := filepath.Join(t.TempDir(), "wp-core-update-panel-behavior.js")
+	if err := os.WriteFile(scriptPath, testScript, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, scriptPath).CombinedOutput(); err != nil {
+		t.Fatalf("core update panel behavior failed: %v\n%s", err, output)
+	}
+}
+
+func TestAPIErrorPreservesHTTPStatus(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available")
+	}
+	app, err := os.ReadFile("../static/js/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness := []byte(`
+global.window = { WP_PANEL_I18N: { lang: 'zh-CN', messages: {} }, location: {} };
+global.document = {
+    body: { dataset: { panelPrefix: '/panel' } },
+    querySelector: () => ({ content: 'csrf' }),
+};
+global.fetch = async () => ({
+    status: 404,
+    ok: false,
+    headers: { get: () => 'application/json' },
+    json: async () => ({ success: false, message: 'not found' }),
+});
+api('/missing', { suppressToast: true }).then(
+    () => { throw new Error('request unexpectedly succeeded'); },
+    error => {
+        if (error.status !== 404) throw new Error('HTTP status was not preserved');
+    }
+).catch(error => { console.error(error); process.exit(1); });
+`)
+	testScript := append(append([]byte{}, app...), harness...)
+	scriptPath := filepath.Join(t.TempDir(), "api-status.js")
+	if err := os.WriteFile(scriptPath, testScript, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, scriptPath).CombinedOutput(); err != nil {
+		t.Fatalf("API status behavior failed: %v\n%s", err, output)
+	}
+}
+
 func TestWPInventoryPanelAPIContract(t *testing.T) {
 	panel, err := os.ReadFile("../templates/wp_inventory_panel.html")
 	if err != nil {
