@@ -77,37 +77,42 @@ func InspectZIP(ctx context.Context, filename string, policy ZIPPolicy) (ZIPInsp
 		return report, archiveError("archive_open_failed", err)
 	}
 	defer f.Close()
+	report, _, err = inspectOpenZIP(ctx, f, policy)
+	return report, err
+}
 
+func inspectOpenZIP(ctx context.Context, f *os.File, policy ZIPPolicy) (ZIPInspection, *zip.Reader, error) {
+	var report ZIPInspection
 	info, err := f.Stat()
 	if err != nil {
-		return report, archiveError("archive_open_failed", err)
+		return report, nil, archiveError("archive_open_failed", err)
 	}
 	report.ArchiveBytes = info.Size()
 	if info.Size() <= 0 {
-		return report, archiveError("archive_invalid_zip", nil)
+		return report, nil, archiveError("archive_invalid_zip", nil)
 	}
 	if info.Size() > policy.MaxArchiveBytes {
-		return report, archiveError("archive_too_large", nil)
+		return report, nil, archiveError("archive_too_large", nil)
 	}
 
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return report, archiveError("archive_open_failed", err)
+		return report, nil, archiveError("archive_open_failed", err)
 	}
 	hash := sha256.New()
 	if _, err := io.Copy(hash, f); err != nil {
-		return report, archiveError("archive_open_failed", err)
+		return report, nil, archiveError("archive_open_failed", err)
 	}
 	report.SHA256 = hex.EncodeToString(hash.Sum(nil))
 
 	zr, err := zip.NewReader(f, info.Size())
 	if err != nil {
-		return report, archiveError("archive_invalid_zip", err)
+		return report, nil, archiveError("archive_invalid_zip", err)
 	}
 	if len(zr.File) == 0 {
-		return report, archiveError("archive_invalid_zip", nil)
+		return report, nil, archiveError("archive_invalid_zip", nil)
 	}
 	if len(zr.File) > policy.MaxEntries {
-		return report, archiveError("archive_too_many_entries", nil)
+		return report, nil, archiveError("archive_too_many_entries", nil)
 	}
 
 	types := make(map[string]bool, len(zr.File)) // true means directory.
@@ -118,49 +123,49 @@ func InspectZIP(ctx context.Context, filename string, policy ZIPPolicy) (ZIPInsp
 	var compressed uint64
 	for _, zf := range zr.File {
 		if err := ctx.Err(); err != nil {
-			return report, archiveError("archive_validation_timeout", err)
+			return report, nil, archiveError("archive_validation_timeout", err)
 		}
 		name, isDir, err := normalizeZIPName(zf.Name, policy.RequireUTF8Names)
 		if err != nil {
-			return report, err
+			return report, nil, err
 		}
 		if _, exists := types[name]; exists {
-			return report, archiveError("archive_duplicate_path", nil)
+			return report, nil, archiveError("archive_duplicate_path", nil)
 		}
 		if err := validatePathConflicts(types, usedAsParent, name, isDir); err != nil {
-			return report, err
+			return report, nil, err
 		}
 		if zf.Flags&1 != 0 || (zf.Method != zip.Store && zf.Method != zip.Deflate) {
-			return report, archiveError("archive_type_forbidden", nil)
+			return report, nil, archiveError("archive_type_forbidden", nil)
 		}
 		mode := zf.Mode()
 		if isDir {
 			if !mode.IsDir() {
-				return report, archiveError("archive_type_forbidden", nil)
+				return report, nil, archiveError("archive_type_forbidden", nil)
 			}
 		} else if !mode.IsRegular() {
-			return report, archiveError("archive_type_forbidden", nil)
+			return report, nil, archiveError("archive_type_forbidden", nil)
 		}
 		if zf.UncompressedSize64 > policy.MaxEntryUncompressed {
-			return report, archiveError("archive_entry_too_large", nil)
+			return report, nil, archiveError("archive_entry_too_large", nil)
 		}
 		if math.MaxUint64-declared < zf.UncompressedSize64 {
-			return report, archiveError("archive_total_too_large", nil)
+			return report, nil, archiveError("archive_total_too_large", nil)
 		}
 		declared += zf.UncompressedSize64
 		if declared > policy.MaxTotalUncompressed {
-			return report, archiveError("archive_total_too_large", nil)
+			return report, nil, archiveError("archive_total_too_large", nil)
 		}
 		if math.MaxUint64-compressed < zf.CompressedSize64 {
-			return report, archiveError("archive_ratio_exceeded", nil)
+			return report, nil, archiveError("archive_ratio_exceeded", nil)
 		}
 		compressed += zf.CompressedSize64
 		if exceedsRatio(zf.UncompressedSize64, zf.CompressedSize64, policy.MaxCompressionRatio) {
-			return report, archiveError("archive_ratio_exceeded", nil)
+			return report, nil, archiveError("archive_ratio_exceeded", nil)
 		}
 		start, end, err := validateLocalHeader(f, info.Size(), zf)
 		if err != nil {
-			return report, err
+			return report, nil, err
 		}
 		ranges = append(ranges, byteRange{start: start, end: end})
 		types[name] = isDir
@@ -168,12 +173,12 @@ func InspectZIP(ctx context.Context, filename string, policy ZIPPolicy) (ZIPInsp
 		report.NormalizedNames = append(report.NormalizedNames, name)
 	}
 	if exceedsRatio(declared, compressed, policy.MaxCompressionRatio) {
-		return report, archiveError("archive_ratio_exceeded", nil)
+		return report, nil, archiveError("archive_ratio_exceeded", nil)
 	}
 	sort.Slice(ranges, func(i, j int) bool { return ranges[i].start < ranges[j].start })
 	for i := 1; i < len(ranges); i++ {
 		if ranges[i].start < ranges[i-1].end {
-			return report, archiveError("archive_header_mismatch", nil)
+			return report, nil, archiveError("archive_header_mismatch", nil)
 		}
 	}
 
@@ -185,41 +190,41 @@ func InspectZIP(ctx context.Context, filename string, policy ZIPPolicy) (ZIPInsp
 		}
 		rc, err := zf.Open()
 		if err != nil {
-			return report, archiveError("archive_crc_failed", err)
+			return report, nil, archiveError("archive_crc_failed", err)
 		}
 		var entry uint64
 		for {
 			if err := ctx.Err(); err != nil {
 				rc.Close()
-				return report, archiveError("archive_validation_timeout", err)
+				return report, nil, archiveError("archive_validation_timeout", err)
 			}
 			n, readErr := rc.Read(buf)
 			entry += uint64(n)
 			verified += uint64(n)
 			if entry > policy.MaxEntryUncompressed {
 				rc.Close()
-				return report, archiveError("archive_entry_too_large", nil)
+				return report, nil, archiveError("archive_entry_too_large", nil)
 			}
 			if verified > policy.MaxTotalUncompressed {
 				rc.Close()
-				return report, archiveError("archive_total_too_large", nil)
+				return report, nil, archiveError("archive_total_too_large", nil)
 			}
 			if readErr == io.EOF {
 				break
 			}
 			if readErr != nil {
 				rc.Close()
-				return report, archiveError("archive_crc_failed", readErr)
+				return report, nil, archiveError("archive_crc_failed", readErr)
 			}
 		}
 		if err := rc.Close(); err != nil || entry != zf.UncompressedSize64 {
-			return report, archiveError("archive_crc_failed", err)
+			return report, nil, archiveError("archive_crc_failed", err)
 		}
 	}
 	report.EntryCount = len(zr.File)
 	report.DeclaredUncompressed = declared
 	report.VerifiedUncompressed = verified
-	return report, nil
+	return report, zr, nil
 }
 
 func normalizeZIPName(name string, requireUTF8 bool) (string, bool, error) {
