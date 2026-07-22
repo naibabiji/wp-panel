@@ -2,6 +2,7 @@ package executor
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -12,9 +13,175 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestWPUpdateArtifactServiceValidatesPluginSnapshotBeforeSealing(t *testing.T) {
+	service, store, task := preparePluginSnapshotPlan(t)
+	source := writePluginPackageFixture(t, "sample", "sample.php", "1.1.0")
+	digest, _, err := hashRegularFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, report, err := service.snapshotValidateAndSealPluginPackage(context.Background(), task.ID, source, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sealed.Status != wpUpdateQueued || sealed.VerificationLevel != "structure_only" || report.MainFile != "sample/sample.php" || report.Version != "1.1.0" {
+		t.Fatalf("sealed=%+v report=%+v", sealed, report)
+	}
+	current, err := store.getTask(context.Background(), task.ID)
+	if err != nil || current.PackageSnapshotPath == "" {
+		t.Fatalf("current=%+v err=%v", current, err)
+	}
+}
+
+func TestWPUpdateArtifactServiceRejectsPluginIdentityBeforeSealing(t *testing.T) {
+	service, store, task := preparePluginSnapshotPlan(t)
+	source := writePluginPackageFixture(t, "other", "sample.php", "1.1.0")
+	digest, _, err := hashRegularFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.snapshotValidateAndSealPluginPackage(context.Background(), task.ID, source, digest); err == nil {
+		t.Fatal("plugin identity drift was accepted")
+	}
+	current, err := store.getTask(context.Background(), task.ID)
+	if err != nil || current.Status != wpUpdatePreparing || current.PlanSealedAt != "" {
+		t.Fatalf("current=%+v err=%v", current, err)
+	}
+	if entries, _ := os.ReadDir(service.root); len(entries) != 0 {
+		t.Fatalf("failed snapshot left %d task directories", len(entries))
+	}
+}
+
+func TestWPUpdateArtifactServiceCannotSealPluginThroughUncheckedEntryPoint(t *testing.T) {
+	service, store, task := preparePluginSnapshotPlan(t)
+	source := filepath.Join(t.TempDir(), "not-a-zip")
+	data := []byte("not a validated plugin package")
+	if err := os.WriteFile(source, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(data))
+	if _, err := service.snapshotAndSealPackage(context.Background(), task.ID, source, digest, "structure_only"); err == nil {
+		t.Fatal("plugin task was sealed through unchecked snapshot entry point")
+	}
+	current, err := store.getTask(context.Background(), task.ID)
+	if err != nil || current.Status != wpUpdatePreparing || current.PlanSealedAt != "" {
+		t.Fatalf("current=%+v err=%v", current, err)
+	}
+	if entries, _ := os.ReadDir(service.root); len(entries) != 0 {
+		t.Fatalf("unchecked plugin snapshot left %d task directories", len(entries))
+	}
+}
+
+func TestWPUpdateArtifactServiceRejectsSnapshotChangedByValidator(t *testing.T) {
+	service, store, task := preparePluginSnapshotPlan(t)
+	source := filepath.Join(t.TempDir(), "source.zip")
+	data := []byte("original")
+	if err := os.WriteFile(source, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(data))
+	_, err := service.snapshotAndSealPackageChecked(context.Background(), task.ID, source, digest, "structure_only", func(snapshot string) error {
+		return os.WriteFile(snapshot, []byte("modified"), 0600)
+	})
+	if err == nil {
+		t.Fatal("snapshot changed during validation was sealed")
+	}
+	current, lookupErr := store.getTask(context.Background(), task.ID)
+	if lookupErr != nil || current.Status != wpUpdatePreparing || current.PlanSealedAt != "" {
+		t.Fatalf("current=%+v err=%v", current, lookupErr)
+	}
+}
+
+func TestWPUpdateArtifactServiceValidatesAndClaimsPluginSnapshot(t *testing.T) {
+	service, _, task := preparePluginSnapshotPlan(t)
+	source := writePluginPackageFixture(t, "sample", "sample.php", "1.1.0")
+	digest, _, _ := hashRegularFile(source)
+	sealed, _, err := service.snapshotValidateAndSealPluginPackage(context.Background(), task.ID, source, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := service.validateAndClaimPluginUpdate(context.Background(), sealed.ID, "plugin-worker", "1.0.0")
+	if err != nil || claimed.Status != wpUpdateRunning || claimed.LeaseOwner != "plugin-worker" {
+		t.Fatalf("claimed=%+v err=%v", claimed, err)
+	}
+}
+
+func TestWPUpdateArtifactServiceFailsClosedWhenPluginSnapshotChanges(t *testing.T) {
+	service, store, task := preparePluginSnapshotPlan(t)
+	source := writePluginPackageFixture(t, "sample", "sample.php", "1.1.0")
+	digest, _, _ := hashRegularFile(source)
+	sealed, _, err := service.snapshotValidateAndSealPluginPackage(context.Background(), task.ID, source, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sealed.PackageSnapshotPath, []byte("changed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.validateAndClaimPluginUpdate(context.Background(), sealed.ID, "plugin-worker", "1.0.0"); err == nil {
+		t.Fatal("changed plugin snapshot was claimed")
+	}
+	failed, err := store.getTask(context.Background(), sealed.ID)
+	if err != nil || failed.Status != wpUpdateFailed || failed.FailureStage != "precheck" {
+		t.Fatalf("failed=%+v err=%v", failed, err)
+	}
+}
+
+func TestWPUpdateArtifactServiceFailsPluginClaimOnVersionDrift(t *testing.T) {
+	service, store, task := preparePluginSnapshotPlan(t)
+	source := writePluginPackageFixture(t, "sample", "sample.php", "1.1.0")
+	digest, _, _ := hashRegularFile(source)
+	sealed, _, err := service.snapshotValidateAndSealPluginPackage(context.Background(), task.ID, source, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.validateAndClaimPluginUpdate(context.Background(), sealed.ID, "plugin-worker", "0.9.0"); err == nil {
+		t.Fatal("plugin version drift was claimed")
+	}
+	failed, err := store.getTask(context.Background(), sealed.ID)
+	if err != nil || failed.Status != wpUpdateFailed || failed.FailureStage != "precheck" {
+		t.Fatalf("failed=%+v err=%v", failed, err)
+	}
+}
+
+func TestWPUpdateArtifactServiceOnlyOneConcurrentPluginClaimSucceeds(t *testing.T) {
+	service, _, task := preparePluginSnapshotPlan(t)
+	source := writePluginPackageFixture(t, "sample", "sample.php", "1.1.0")
+	digest, _, _ := hashRegularFile(source)
+	sealed, _, err := service.snapshotValidateAndSealPluginPackage(context.Background(), task.ID, source, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const workers = 8
+	start := make(chan struct{})
+	results := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			<-start
+			_, err := service.validateAndClaimPluginUpdate(context.Background(), sealed.ID, fmt.Sprintf("plugin-worker-%d", worker), "1.0.0")
+			results <- err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	succeeded := 0
+	for err := range results {
+		if err == nil {
+			succeeded++
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("successful plugin claims=%d, want 1", succeeded)
+	}
+}
 
 func TestWPUpdateArtifactServiceSnapshotsPackageAndSealsPlan(t *testing.T) {
 	store, siteID := newWPUpdateStoreTest(t)
@@ -345,17 +512,16 @@ func prepareRunningPluginArtifactTask(t *testing.T, dumper wpUpdateDatabaseDumpe
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := filepath.Join(t.TempDir(), "source.zip")
-	data := []byte("validated plugin package")
-	if err := os.WriteFile(source, data, 0600); err != nil {
-		t.Fatal(err)
-	}
+	source := writePluginPackageFixture(t, "sample", "sample.php", "1.1.0")
 	service, err := newWPUpdateArtifactService(store, filepath.Join(t.TempDir(), "artifacts"), dumper)
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest := fmt.Sprintf("%x", sha256.Sum256(data))
-	task, err = service.snapshotAndSealPackage(context.Background(), task.ID, source, digest, "structure_only")
+	digest, _, err := hashRegularFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _, err = service.snapshotValidateAndSealPluginPackage(context.Background(), task.ID, source, digest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,6 +535,48 @@ func prepareRunningPluginArtifactTask(t *testing.T, dumper wpUpdateDatabaseDumpe
 		t.Fatal(err)
 	}
 	return service, store, task, webRoot
+}
+
+func preparePluginSnapshotPlan(t *testing.T) (*wpUpdateArtifactService, *wpUpdateStore, WPUpdateTask) {
+	t.Helper()
+	store, siteID := newWPUpdateStoreTest(t)
+	seedPluginUpdateCandidate(t, store, siteID, "sample/sample.php", "1.0.0", "1.1.0", "collection-plugin")
+	task, err := store.createPluginManualPlan(context.Background(), WPUpdatePlan{
+		SiteID: siteID, ComponentKey: "sample/sample.php", CurrentVersion: "1.0.0", TargetVersion: "1.1.0",
+		PackageSource: "wordpress.org", DownloadURL: "https://downloads.wordpress.org/plugin/sample.1.1.0.zip",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := newWPUpdateArtifactService(store, filepath.Join(t.TempDir(), "artifacts"), fakeUpdateDump)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service, store, task
+}
+
+func writePluginPackageFixture(t *testing.T, slug, mainFile, version string) string {
+	t.Helper()
+	name := filepath.Join(t.TempDir(), "plugin.zip")
+	f, err := os.Create(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	w, err := zw.Create(slug + "/" + mainFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(w, "<?php\n/*\nPlugin Name: Sample\nVersion: %s\n*/\n", version); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return name
 }
 
 func fakeUpdateDump(_ context.Context, dbName, target string) error {

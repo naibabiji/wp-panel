@@ -14,6 +14,50 @@ import (
 	"strings"
 )
 
+func (s *wpUpdateArtifactService) snapshotValidateAndSealPluginPackage(ctx context.Context, taskID, sourcePath, expectedSHA string) (WPUpdateTask, WPComponentPackageReport, error) {
+	task, err := s.store.getTask(ctx, taskID)
+	if err != nil || task.Status != wpUpdatePreparing || task.TaskKind != "update" || task.ComponentType != "plugin" ||
+		!validWPPluginComponentKey(task.ComponentKey) || !wpComponentVersionPattern.MatchString(task.TargetVersion) {
+		return WPUpdateTask{}, WPComponentPackageReport{}, errors.New("plugin update plan is not snapshot-ready")
+	}
+	slug := strings.Split(task.ComponentKey, "/")[0]
+	var report WPComponentPackageReport
+	sealed, err := s.snapshotAndSealPackageChecked(ctx, taskID, sourcePath, expectedSHA, "structure_only", func(snapshot string) error {
+		var validateErr error
+		report, validateErr = ValidateWPComponentPackage(ctx, snapshot, WPComponentPackageExpectation{
+			ComponentType: "plugin", ComponentKey: task.ComponentKey, OfficialSlug: slug, TargetVersion: task.TargetVersion,
+		})
+		return validateErr
+	})
+	if err != nil {
+		return WPUpdateTask{}, WPComponentPackageReport{}, err
+	}
+	return sealed, report, nil
+}
+
+func (s *wpUpdateArtifactService) validateAndClaimPluginUpdate(ctx context.Context, taskID, owner, observedVersion string) (WPUpdateTask, error) {
+	task, err := s.store.getTask(ctx, taskID)
+	if err != nil || task.Status != wpUpdateQueued || task.ComponentType != "plugin" || task.TaskKind != "update" ||
+		!validWPPluginComponentKey(task.ComponentKey) || !filepath.IsAbs(task.PackageSnapshotPath) {
+		return WPUpdateTask{}, errors.New("plugin update task is not claimable")
+	}
+	sha, _, err := hashRegularFile(task.PackageSnapshotPath)
+	if err != nil || sha != task.DownloadedSHA256 {
+		return s.store.failPluginClaim(ctx, taskID, "package_digest_mismatch", s.now().UTC())
+	}
+	slug := strings.Split(task.ComponentKey, "/")[0]
+	if _, err := ValidateWPComponentPackage(ctx, task.PackageSnapshotPath, WPComponentPackageExpectation{
+		ComponentType: "plugin", ComponentKey: task.ComponentKey, OfficialSlug: slug, TargetVersion: task.TargetVersion,
+	}); err != nil {
+		return s.store.failPluginClaim(ctx, taskID, "package_validation_failed", s.now().UTC())
+	}
+	validatedSHA, _, err := hashRegularFile(task.PackageSnapshotPath)
+	if err != nil || validatedSHA != sha {
+		return s.store.failPluginClaim(ctx, taskID, "package_digest_mismatch", s.now().UTC())
+	}
+	return s.store.claimPluginUpdate(ctx, taskID, owner, observedVersion, validatedSHA, s.now().UTC())
+}
+
 func (s *wpUpdateArtifactService) preparePluginBackups(ctx context.Context, taskID, owner string) error {
 	if !wpUpdateTaskIDPattern.MatchString(taskID) || owner == "" {
 		return errors.New("invalid plugin backup request")

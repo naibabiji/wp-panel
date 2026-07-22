@@ -293,6 +293,79 @@ func (s *wpUpdateStore) claimCoreUpdate(ctx context.Context, id, owner, observed
 	return s.getTask(ctx, id)
 }
 
+func (s *wpUpdateStore) claimPluginUpdate(ctx context.Context, id, owner, observedVersion, observedSHA string, now time.Time) (WPUpdateTask, error) {
+	if owner == "" || observedVersion == "" || !wpUpdateSHA256Pattern.MatchString(observedSHA) {
+		return WPUpdateTask{}, errors.New("invalid plugin claim")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	defer tx.Rollback()
+	var status, currentVersion, sha, verification, snapshot, siteType, siteStatus, componentKey string
+	err = tx.QueryRowContext(ctx, `SELECT t.status,t.current_version,t.downloaded_sha256,t.verification_level,
+		t.package_snapshot_path,w.site_type,w.status,t.component_key FROM wp_update_tasks t
+		JOIN websites w ON w.id=t.site_id WHERE t.id=? AND t.task_kind='update' AND t.component_type='plugin'`, id).
+		Scan(&status, &currentVersion, &sha, &verification, &snapshot, &siteType, &siteStatus, &componentKey)
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	if status != wpUpdateQueued || siteType != "wordpress" || siteStatus != "active" ||
+		currentVersion != observedVersion || sha != observedSHA || verification != "structure_only" ||
+		!filepath.IsAbs(snapshot) || !validWPPluginComponentKey(componentKey) {
+		return s.failPluginClaimTx(ctx, tx, id, status, "precheck_failed", now)
+	}
+	stamp := wpUpdateDBTime(now)
+	leaseUntil := wpUpdateDBTime(now.Add(wpUpdateLease))
+	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET status='running',stage='claimed',lease_owner=?,
+		lease_expires_at=?,started_at=?,updated_at=? WHERE id=? AND status='queued' AND component_type='plugin'`,
+		owner, leaseUntil, stamp, stamp, id)
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return WPUpdateTask{}, errors.New("plugin update task was not claimed")
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, "claimed", "success", "", stamp); err != nil {
+		return WPUpdateTask{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return WPUpdateTask{}, err
+	}
+	return s.getTask(ctx, id)
+}
+
+func (s *wpUpdateStore) failPluginClaim(ctx context.Context, id, code string, now time.Time) (WPUpdateTask, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	defer tx.Rollback()
+	return s.failPluginClaimTx(ctx, tx, id, wpUpdateQueued, code, now)
+}
+
+func (s *wpUpdateStore) failPluginClaimTx(ctx context.Context, tx *sql.Tx, id, status, code string, now time.Time) (WPUpdateTask, error) {
+	if status != wpUpdateQueued || code == "" {
+		return WPUpdateTask{}, errors.New("plugin update claim precheck failed")
+	}
+	stamp := wpUpdateDBTime(now)
+	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET status='failed',stage='precheck',failure_stage='precheck',
+		finished_at=?,updated_at=? WHERE id=? AND status='queued' AND component_type='plugin'`, stamp, stamp, id)
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return WPUpdateTask{}, errors.New("plugin update claim precheck failed")
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, "precheck", "failed", code, stamp); err != nil {
+		return WPUpdateTask{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return WPUpdateTask{}, err
+	}
+	return WPUpdateTask{}, errors.New("plugin update claim precheck failed")
+}
+
 func (s *wpUpdateStore) heartbeat(ctx context.Context, id, owner string, now time.Time) (bool, error) {
 	result, err := s.db.ExecContext(ctx, `UPDATE wp_update_tasks SET lease_expires_at=?,updated_at=?
 		WHERE id=? AND lease_owner=? AND status='running'`, wpUpdateDBTime(now.Add(wpUpdateLease)), wpUpdateDBTime(now), id, owner)

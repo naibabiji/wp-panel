@@ -48,12 +48,19 @@ func newWPUpdateArtifactService(store *wpUpdateStore, root string, dumpDB wpUpda
 }
 
 func (s *wpUpdateArtifactService) snapshotAndSealPackage(ctx context.Context, taskID, sourcePath, expectedSHA, verification string) (WPUpdateTask, error) {
+	return s.snapshotAndSealPackageChecked(ctx, taskID, sourcePath, expectedSHA, verification, nil)
+}
+
+func (s *wpUpdateArtifactService) snapshotAndSealPackageChecked(ctx context.Context, taskID, sourcePath, expectedSHA, verification string, validate func(string) error) (WPUpdateTask, error) {
 	if !wpUpdateTaskIDPattern.MatchString(taskID) || !filepath.IsAbs(sourcePath) || !wpUpdateSHA256Pattern.MatchString(expectedSHA) {
 		return WPUpdateTask{}, errors.New("invalid package snapshot request")
 	}
 	task, err := s.store.getTask(ctx, taskID)
 	if err != nil || task.Status != wpUpdatePreparing || task.TaskKind != "update" {
 		return WPUpdateTask{}, errors.New("update plan is not snapshot-ready")
+	}
+	if task.ComponentType == "plugin" && validate == nil {
+		return WPUpdateTask{}, errors.New("plugin package validation is required")
 	}
 	taskDir, err := s.createTaskDir(taskID)
 	if err != nil {
@@ -72,6 +79,15 @@ func (s *wpUpdateArtifactService) snapshotAndSealPackage(ctx context.Context, ta
 	}
 	if actual != expectedSHA {
 		return WPUpdateTask{}, errors.New("package snapshot digest mismatch")
+	}
+	if validate != nil {
+		if err := validate(target); err != nil {
+			return WPUpdateTask{}, err
+		}
+		validatedSHA, _, err := hashRegularFile(target)
+		if err != nil || validatedSHA != actual {
+			return WPUpdateTask{}, errors.New("package snapshot changed during validation")
+		}
 	}
 	sealed, err := s.store.sealPlan(ctx, taskID, actual, verification, target, s.now().UTC())
 	if err != nil {
