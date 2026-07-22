@@ -86,6 +86,9 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 		"site_wp_component_updates",
 		"site_wp_inventory_jobs",
 		"site_wp_inventory_job_warnings",
+		"wp_update_tasks",
+		"wp_update_task_events",
+		"wp_update_task_backups",
 	} {
 		var exists int
 		if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&exists); err != nil {
@@ -168,8 +171,8 @@ func TestUpgradeAddsWPInventorySchemaFrom1030(t *testing.T) {
 	if err := DB.QueryRow("SELECT version FROM schema_version ORDER BY updated_at DESC, rowid DESC LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("query schema version: %v", err)
 	}
-	if version != "1.0.31" {
-		t.Fatalf("schema version = %q, want 1.0.31", version)
+	if version != LatestVersion() {
+		t.Fatalf("schema version = %q, want %s", version, LatestVersion())
 	}
 	var sites int
 	if err := DB.QueryRow("SELECT COUNT(*) FROM websites WHERE domain = 'existing.example.com'").Scan(&sites); err != nil {
@@ -190,6 +193,42 @@ func TestUpgradeAddsWPInventorySchemaFrom1030(t *testing.T) {
 		if exists != 1 {
 			t.Fatalf("%s exists = %d, want 1", name, exists)
 		}
+	}
+}
+
+func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"wp_update_task_events", "wp_update_task_backups", "wp_update_tasks"} {
+		if _, err := DB.Exec("DROP TABLE " + table); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version(version) VALUES ('1.0.31')"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("repeated upgrade: %v", err)
+	}
+	for _, table := range []string{"wp_update_tasks", "wp_update_task_events", "wp_update_task_backups"} {
+		var exists int
+		if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&exists); err != nil || exists != 1 {
+			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
+		}
+	}
+	if got := LatestVersion(); got != "1.0.32" {
+		t.Fatalf("LatestVersion=%q", got)
 	}
 }
 

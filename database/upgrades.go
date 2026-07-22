@@ -428,6 +428,11 @@ var upgrades = []Upgrade{
 		Description: "新增 WordPress 组件库存与可恢复采集任务表",
 		SQL:         wpInventorySchemaStatements,
 	},
+	{
+		Version:     "1.0.32",
+		Description: "新增持久化 WordPress 更新任务、事件与专用备份表",
+		SQL:         wpUpdateSchemaStatements,
+	},
 }
 
 func ensureFileLockModeColumns() error {

@@ -533,7 +533,7 @@ var migrations = append([]string{
 		('alert_wp_fake_search_bot',     'false', '伪装搜索引擎爬虫告警（默认关闭）'),
 		('alert_wp_security_threshold',  '10',    'WordPress 安全探测告警阈值（每 IP 触发次数，默认 10）'),
 		('alert_wp_security_window_hours','24',   'WordPress 安全探测告警统计窗口（小时，默认 24）')`,
-}, wpInventorySchemaStatements...)
+}, append(wpInventorySchemaStatements, wpUpdateSchemaStatements...)...)
 
 // wpInventorySchemaStatements 同时供全新安装和 1.0.31 增量升级使用，避免两条路径的
 // 表结构、约束或索引随维护产生漂移。
