@@ -228,6 +228,70 @@ func TestWPUpdateArtifactServiceRejectsCoreSymlink(t *testing.T) {
 	}
 }
 
+func TestWPUpdateArtifactServicePreparesPluginDatabaseAndDirectoryBackups(t *testing.T) {
+	service, store, task, webRoot := prepareRunningPluginArtifactTask(t, fakeUpdateDump)
+	pluginRoot := filepath.Join(webRoot, "wp-content", "plugins", "sample")
+	if err := os.MkdirAll(filepath.Join(pluginRoot, "assets"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"sample.php": "<?php /* Plugin Name: Sample */", "assets/app.js": "ok"} {
+		if err := os.WriteFile(filepath.Join(pluginRoot, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := service.preparePluginBackups(context.Background(), task.ID, "worker-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.getTask(context.Background(), task.ID)
+	if err != nil || !current.BackupReady || current.Stage != "backups_ready" {
+		t.Fatalf("task=%+v err=%v", current, err)
+	}
+	var kinds string
+	if err := store.db.QueryRow(`SELECT group_concat(kind, ',') FROM
+		(SELECT kind FROM wp_update_task_backups WHERE task_id=? ORDER BY kind)`, task.ID).Scan(&kinds); err != nil {
+		t.Fatal(err)
+	}
+	if kinds != "database,plugin_files" {
+		t.Fatalf("backup kinds=%q", kinds)
+	}
+	names := readTarNames(t, filepath.Join(service.root, task.ID, "plugin-files.tar.gz"))
+	if !containsUpdateArtifactName(names, "sample/sample.php") || !containsUpdateArtifactName(names, "sample/assets/app.js") {
+		t.Fatalf("plugin archive names=%v", names)
+	}
+}
+
+func TestWPUpdateArtifactServiceRejectsPluginSymlinkWithoutCommittingBackups(t *testing.T) {
+	service, store, task, webRoot := prepareRunningPluginArtifactTask(t, fakeUpdateDump)
+	pluginRoot := filepath.Join(webRoot, "wp-content", "plugins", "sample")
+	if err := os.MkdirAll(pluginRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginRoot, "sample.php"), []byte("plugin"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(pluginRoot, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.preparePluginBackups(context.Background(), task.ID, "worker-plugin"); err == nil {
+		t.Fatal("expected plugin symlink rejection")
+	}
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM wp_update_task_backups WHERE task_id=?`, task.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("backup rows=%d err=%v", count, err)
+	}
+	entries, err := os.ReadDir(filepath.Join(service.root, task.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "package.zip" {
+		t.Fatalf("partial plugin artifacts remain: %v", entries)
+	}
+}
+
 func prepareClaimedArtifactTask(t *testing.T, dumper wpUpdateDatabaseDumper) (*wpUpdateArtifactService, *wpUpdateStore, WPUpdateTask, string) {
 	t.Helper()
 	store, siteID := newWPUpdateStoreTest(t)
@@ -257,6 +321,50 @@ func prepareClaimedArtifactTask(t *testing.T, dumper wpUpdateDatabaseDumper) (*w
 		t.Fatal(err)
 	}
 	task, err = store.claimCoreUpdate(context.Background(), task.ID, "worker-a", "7.0.1", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service, store, task, webRoot
+}
+
+func prepareRunningPluginArtifactTask(t *testing.T, dumper wpUpdateDatabaseDumper) (*wpUpdateArtifactService, *wpUpdateStore, WPUpdateTask, string) {
+	t.Helper()
+	store, siteID := newWPUpdateStoreTest(t)
+	seedPluginUpdateCandidate(t, store, siteID, "sample/sample.php", "1.0.0", "1.1.0", "collection-plugin")
+	webRoot := filepath.Join(t.TempDir(), "wordpress")
+	if err := os.MkdirAll(filepath.Join(webRoot, "wp-content", "plugins"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE websites SET web_root=?,db_name='wordpress_db' WHERE id=?`, webRoot, siteID); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.createPluginManualPlan(context.Background(), WPUpdatePlan{
+		SiteID: siteID, ComponentKey: "sample/sample.php", CurrentVersion: "1.0.0", TargetVersion: "1.1.0",
+		PackageSource: "wordpress.org", DownloadURL: "https://downloads.wordpress.org/plugin/sample.1.1.0.zip",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "source.zip")
+	data := []byte("validated plugin package")
+	if err := os.WriteFile(source, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	service, err := newWPUpdateArtifactService(store, filepath.Join(t.TempDir(), "artifacts"), dumper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(data))
+	task, err = service.snapshotAndSealPackage(context.Background(), task.ID, source, digest, "structure_only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := wpUpdateDBTime(time.Now().UTC())
+	if _, err := store.db.Exec(`UPDATE wp_update_tasks SET status='running',stage='claimed',lease_owner='worker-plugin',
+		lease_expires_at=?,started_at=?,updated_at=? WHERE id=? AND status='queued'`, stamp, stamp, stamp, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	task, err = store.getTask(context.Background(), task.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

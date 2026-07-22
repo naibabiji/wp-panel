@@ -57,10 +57,78 @@ type WPUpdateTask struct {
 
 type WPUpdatePlan struct {
 	SiteID         int
+	ComponentKey   string
 	CurrentVersion string
 	TargetVersion  string
 	PackageSource  string
 	DownloadURL    string
+}
+
+func (s *wpUpdateStore) createPluginManualPlan(ctx context.Context, plan WPUpdatePlan, now time.Time) (WPUpdateTask, error) {
+	if s == nil || s.db == nil || plan.SiteID <= 0 || !validWPPluginComponentKey(plan.ComponentKey) ||
+		!wpComponentVersionPattern.MatchString(plan.CurrentVersion) || !wpComponentVersionPattern.MatchString(plan.TargetVersion) ||
+		plan.CurrentVersion == plan.TargetVersion || plan.PackageSource != "wordpress.org" ||
+		!validWPPluginDownloadURL(plan.DownloadURL, strings.Split(plan.ComponentKey, "/")[0], plan.TargetVersion) {
+		return WPUpdateTask{}, errors.New("invalid plugin update plan")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	defer tx.Rollback()
+	var siteType, siteStatus, inventoryStatus, collectionID, componentVersion string
+	var multisite int
+	err = tx.QueryRowContext(ctx, `SELECT w.site_type,w.status,COALESCE(i.status,''),COALESCE(i.collection_id,''),
+		COALESCE(i.is_multisite,0),COALESCE(c.version,'') FROM websites w
+		LEFT JOIN site_wp_inventory_state i ON i.site_id=w.id
+		LEFT JOIN site_wp_components c ON c.site_id=w.id AND c.component_type='plugin'
+			AND c.component_key=? AND c.collection_id=i.collection_id WHERE w.id=?`, plan.ComponentKey, plan.SiteID).
+		Scan(&siteType, &siteStatus, &inventoryStatus, &collectionID, &multisite, &componentVersion)
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	if siteType != "wordpress" || siteStatus != "active" || inventoryStatus != "complete" ||
+		multisite != 0 || collectionID == "" || componentVersion != plan.CurrentVersion {
+		return WPUpdateTask{}, errors.New("site is not eligible for plugin update")
+	}
+	var candidate int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_wp_component_updates
+		WHERE site_id=? AND component_type='plugin' AND component_key=? AND target_version=? AND collection_id=?`,
+		plan.SiteID, plan.ComponentKey, plan.TargetVersion, collectionID).Scan(&candidate); err != nil {
+		return WPUpdateTask{}, err
+	}
+	if candidate == 0 {
+		return WPUpdateTask{}, errors.New("plugin update candidate is not current")
+	}
+	var blocked int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM wp_update_tasks WHERE site_id=? AND (
+		status IN ('preparing','queued','running') OR
+		(status='interrupted_unknown' AND manual_disposition=''))`, plan.SiteID).Scan(&blocked); err != nil {
+		return WPUpdateTask{}, err
+	}
+	if blocked != 0 {
+		return WPUpdateTask{}, errors.New("site has blocking update task")
+	}
+	id, err := newWPUpdateTaskID()
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	stamp := wpUpdateDBTime(now)
+	_, err = tx.ExecContext(ctx, `INSERT INTO wp_update_tasks
+		(id,site_id,component_type,component_key,task_kind,trigger_type,status,stage,
+		 current_version,target_version,package_source,download_url,requested_at,created_at,updated_at)
+		VALUES (?,?,'plugin',?,'update','manual','preparing','plan',?,?,?,?,?,?,?)`,
+		id, plan.SiteID, plan.ComponentKey, plan.CurrentVersion, plan.TargetVersion, plan.PackageSource, plan.DownloadURL, stamp, stamp, stamp)
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, "plan", "info", "", stamp); err != nil {
+		return WPUpdateTask{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return WPUpdateTask{}, err
+	}
+	return s.getTask(ctx, id)
 }
 
 type wpUpdateStore struct{ db *sql.DB }
@@ -517,7 +585,16 @@ type wpUpdateBackupRecord struct {
 }
 
 func (s *wpUpdateStore) markBackupsReady(ctx context.Context, id, owner string, records []wpUpdateBackupRecord, now time.Time) error {
-	if len(records) != 2 || records[0].Kind != "database" || records[1].Kind != "core_files" {
+	return s.markComponentBackupsReady(ctx, id, owner, "core", "core_files", records, now)
+}
+
+func (s *wpUpdateStore) markPluginBackupsReady(ctx context.Context, id, owner string, records []wpUpdateBackupRecord, now time.Time) error {
+	return s.markComponentBackupsReady(ctx, id, owner, "plugin", "plugin_files", records, now)
+}
+
+func (s *wpUpdateStore) markComponentBackupsReady(ctx context.Context, id, owner, componentType, fileKind string, records []wpUpdateBackupRecord, now time.Time) error {
+	validPair := (componentType == "core" && fileKind == "core_files") || (componentType == "plugin" && fileKind == "plugin_files")
+	if !validPair || len(records) != 2 || records[0].Kind != "database" || records[1].Kind != fileKind {
 		return errors.New("invalid update backup records")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -537,7 +614,7 @@ func (s *wpUpdateStore) markBackupsReady(ctx context.Context, id, owner string, 
 		}
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET backup_ready=1,stage='backups_ready',updated_at=?
-		WHERE id=? AND task_kind='update' AND component_type='core' AND status='running' AND lease_owner=? AND backup_ready=0`, stamp, id, owner)
+		WHERE id=? AND task_kind='update' AND component_type=? AND status='running' AND lease_owner=? AND backup_ready=0`, stamp, id, componentType, owner)
 	if err != nil {
 		return err
 	}
@@ -576,4 +653,19 @@ func boolInt(value bool) int {
 func validWPUpdateDownloadURL(raw string) bool {
 	u, err := url.Parse(raw)
 	return err == nil && allowedWordPressURL(u)
+}
+
+func validWPPluginComponentKey(key string) bool {
+	if strings.Contains(key, `\`) || strings.Count(key, "/") != 1 {
+		return false
+	}
+	parts := strings.Split(key, "/")
+	return wpComponentSlugPattern.MatchString(parts[0]) && wpComponentPHPFilePattern.MatchString(parts[1])
+}
+
+func validWPPluginDownloadURL(raw, slug, targetVersion string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Hostname() == "downloads.wordpress.org" &&
+		(u.Port() == "" || u.Port() == "443") && u.User == nil && u.RawQuery == "" && u.Fragment == "" &&
+		u.EscapedPath() == "/plugin/"+slug+"."+targetVersion+".zip"
 }

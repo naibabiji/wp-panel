@@ -49,6 +49,46 @@ func TestWPUpdateStorePlanSealClaimAndSuccess(t *testing.T) {
 	}
 }
 
+func TestWPUpdateStoreCreatesPluginPlanFromCurrentInventoryCandidate(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	seedPluginUpdateCandidate(t, store, siteID, "sample/sample.php", "1.0.0", "1.1.0", "collection-a")
+	task, err := store.createPluginManualPlan(context.Background(), WPUpdatePlan{
+		SiteID: siteID, ComponentKey: "sample/sample.php", CurrentVersion: "1.0.0", TargetVersion: "1.1.0",
+		PackageSource: "wordpress.org", DownloadURL: "https://downloads.wordpress.org/plugin/sample.1.1.0.zip",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.ComponentType != "plugin" || task.ComponentKey != "sample/sample.php" || task.Status != wpUpdatePreparing {
+		t.Fatalf("plugin task=%+v", task)
+	}
+}
+
+func TestWPUpdateStoreRejectsStaleOrUnsafePluginPlan(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	seedPluginUpdateCandidate(t, store, siteID, "sample/sample.php", "1.0.0", "1.1.0", "collection-a")
+	cases := []WPUpdatePlan{
+		{SiteID: siteID, ComponentKey: "sample/sample.php", CurrentVersion: "0.9.0", TargetVersion: "1.1.0", PackageSource: "wordpress.org", DownloadURL: "https://downloads.wordpress.org/plugin/sample.1.1.0.zip"},
+		{SiteID: siteID, ComponentKey: "sample/sample.php", CurrentVersion: "1.0.0", TargetVersion: "1.2.0", PackageSource: "wordpress.org", DownloadURL: "https://downloads.wordpress.org/plugin/sample.1.2.0.zip"},
+		{SiteID: siteID, ComponentKey: "hello.php", CurrentVersion: "1.0.0", TargetVersion: "1.1.0", PackageSource: "wordpress.org", DownloadURL: "https://downloads.wordpress.org/plugin/hello.1.1.0.zip"},
+		{SiteID: siteID, ComponentKey: "sample/sample.php", CurrentVersion: "1.0.0", TargetVersion: "1.1.0", PackageSource: "wordpress.org", DownloadURL: "https://evil.example/sample.zip"},
+	}
+	for _, plan := range cases {
+		if _, err := store.createPluginManualPlan(context.Background(), plan, time.Now().UTC()); err == nil {
+			t.Fatalf("unsafe plugin plan accepted: %+v", plan)
+		}
+	}
+	if _, err := store.db.Exec(`UPDATE site_wp_inventory_state SET collection_id='collection-b' WHERE site_id=?`, siteID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.createPluginManualPlan(context.Background(), WPUpdatePlan{
+		SiteID: siteID, ComponentKey: "sample/sample.php", CurrentVersion: "1.0.0", TargetVersion: "1.1.0",
+		PackageSource: "wordpress.org", DownloadURL: "https://downloads.wordpress.org/plugin/sample.1.1.0.zip",
+	}, time.Now().UTC()); err == nil {
+		t.Fatal("stale collection plugin plan accepted")
+	}
+}
+
 func TestWPUpdateStoreSealedPlanIsImmutable(t *testing.T) {
 	store, siteID := newWPUpdateStoreTest(t)
 	now := time.Now().UTC()
@@ -249,4 +289,22 @@ func createAndSealUpdateTask(t *testing.T, store *wpUpdateStore, siteID int, now
 		t.Fatal(err)
 	}
 	return task
+}
+
+func seedPluginUpdateCandidate(t *testing.T, store *wpUpdateStore, siteID int, key, current, target, collection string) {
+	t.Helper()
+	now := wpUpdateDBTime(time.Now().UTC())
+	if _, err := store.db.Exec(`UPDATE site_wp_inventory_state SET collection_id=? WHERE site_id=?`, collection, siteID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO site_wp_components
+		(site_id,component_type,component_key,name,version,collection_id,collected_at)
+		VALUES (?,'plugin',?,'Sample',?,?,?)`, siteID, key, current, collection, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO site_wp_component_updates
+		(site_id,component_type,component_key,target_version,response,locale,collection_id,collected_at)
+		VALUES (?,'plugin',?,?,'upgrade','',?,?)`, siteID, key, target, collection, now); err != nil {
+		t.Fatal(err)
+	}
 }
