@@ -46,6 +46,7 @@ type WPUpdateTask struct {
 	DownloadedSHA256    string
 	VerificationLevel   string
 	PackageSnapshotPath string
+	BackupReady         bool
 	PlanSealedAt        string
 	LeaseOwner          string
 	LeaseExpiresAt      string
@@ -319,19 +320,61 @@ func (s *wpUpdateStore) hasEffectiveManualSuccess(ctx context.Context, siteID in
 
 func (s *wpUpdateStore) getTask(ctx context.Context, id string) (WPUpdateTask, error) {
 	var task WPUpdateTask
-	var attention int
+	var attention, backupReady int
 	err := s.db.QueryRowContext(ctx, `SELECT id,site_id,component_type,component_key,task_kind,COALESCE(parent_task_id,''),
 		trigger_type,status,stage,failure_stage,rollback_status,requires_attention,manual_disposition,current_version,target_version,
-		package_source,download_url,downloaded_sha256,verification_level,package_snapshot_path,COALESCE(plan_sealed_at,''),
+		package_source,download_url,downloaded_sha256,verification_level,package_snapshot_path,backup_ready,COALESCE(plan_sealed_at,''),
 		lease_owner,COALESCE(lease_expires_at,''),requested_at,COALESCE(started_at,''),COALESCE(finished_at,'')
 		FROM wp_update_tasks WHERE id=?`, id).Scan(&task.ID, &task.SiteID, &task.ComponentType, &task.ComponentKey,
 		&task.TaskKind, &task.ParentTaskID, &task.TriggerType, &task.Status, &task.Stage, &task.FailureStage,
 		&task.RollbackStatus, &attention, &task.ManualDisposition, &task.CurrentVersion, &task.TargetVersion,
 		&task.PackageSource, &task.DownloadURL, &task.DownloadedSHA256, &task.VerificationLevel,
-		&task.PackageSnapshotPath, &task.PlanSealedAt, &task.LeaseOwner, &task.LeaseExpiresAt,
+		&task.PackageSnapshotPath, &backupReady, &task.PlanSealedAt, &task.LeaseOwner, &task.LeaseExpiresAt,
 		&task.RequestedAt, &task.StartedAt, &task.FinishedAt)
 	task.RequiresAttention = attention != 0
+	task.BackupReady = backupReady != 0
 	return task, err
+}
+
+type wpUpdateBackupRecord struct {
+	Kind     string
+	FilePath string
+	FileSize int64
+	SHA256   string
+}
+
+func (s *wpUpdateStore) markBackupsReady(ctx context.Context, id, owner string, records []wpUpdateBackupRecord, now time.Time) error {
+	if len(records) != 2 || records[0].Kind != "database" || records[1].Kind != "core_files" {
+		return errors.New("invalid update backup records")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stamp := wpUpdateDBTime(now)
+	for _, record := range records {
+		if !filepath.IsAbs(record.FilePath) || record.FileSize <= 0 || !wpUpdateSHA256Pattern.MatchString(record.SHA256) {
+			return errors.New("invalid update backup record")
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO wp_update_task_backups
+			(task_id,kind,file_path,file_size,sha256,protected,created_at) VALUES (?,?,?,?,?,1,?)`,
+			id, record.Kind, filepath.Clean(record.FilePath), record.FileSize, record.SHA256, stamp); err != nil {
+			return err
+		}
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET backup_ready=1,stage='backups_ready',updated_at=?
+		WHERE id=? AND task_kind='update' AND component_type='core' AND status='running' AND lease_owner=? AND backup_ready=0`, stamp, id, owner)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return errors.New("update task ownership lost")
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, "backups_ready", "success", "", stamp); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func insertWPUpdateEvent(ctx context.Context, tx *sql.Tx, id, stage, result, code, stamp string) error {
