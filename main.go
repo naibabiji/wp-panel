@@ -44,8 +44,22 @@ func main() {
 	fileBackup := flag.String("file-backup", "", "执行文件备份: siteID:mode")
 	runAutoBackup := flag.Bool("run-auto-backup", false, "手动触发自动备份（测试用）")
 	showInfo := flag.Bool("info", false, "查看面板信息")
+	repairConfigCheck := flag.Bool("repair-config-check", false, "内部使用：只读校验 repair 配置")
 	updateWatchdog := flag.String("update-watchdog", "", "内部使用：面板更新健康检查守护")
 	flag.Parse()
+
+	if *repairConfigCheck {
+		result, err := config.CheckRepairConfig(*configPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+			fmt.Fprintln(os.Stderr, "repair_config_output_failed")
+			os.Exit(1)
+		}
+		return
+	}
 
 	if *banIPNginx != "" || *unbanIPNginx != "" || *recordFail2banIP != "" {
 		handleFail2banCLI(*configPath, *banIPNginx, *unbanIPNginx, *recordFail2banIP, *banJail)

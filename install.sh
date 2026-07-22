@@ -23,6 +23,15 @@ MYSQL_PASS=""
 GHPROXY="https://gh.wp-panel.org"
 PREFER_CN=false
 PHP_SOURCE_MODE="${WP_PANEL_PHP_SOURCE:-auto}"
+REPAIR_MODE=false
+REPAIR_BACKUP_DIR=""
+REPAIR_SERVICE_WAS_ACTIVE=false
+REPAIR_COMMITTED=false
+PANEL_CANDIDATE=""
+REPAIR_BIN_EXISTED=false
+REPAIR_UNIT_EXISTED=false
+REPAIR_TLS_EXISTED=false
+REPAIR_MUTATED=false
 
 if [[ "${WP_PANEL_PREFER_CN_MIRROR:-0}" == "1" ]] || [[ "${WP_PANEL_PREFER_CN_MIRROR:-}" == "true" ]]; then
     PREFER_CN=true
@@ -144,7 +153,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # 异常退出时显示友好反馈提示
-trap 'e=$?; if [[ $e -ne 0 ]]; then echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; echo -e "${RED}  安装未完成${NC}"; echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; echo -e "  请将上方错误信息截图发送至："; echo -e "  blog@naibabiji.com"; echo -e "  微信 vv15_zhi"; echo ""; fi' EXIT
+trap 'e=$?; rm -f "${PANEL_CANDIDATE:-}"; if [[ $e -ne 0 ]]; then repair_rollback; echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; echo -e "${RED}  安装未完成${NC}"; echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; echo -e "  请将上方错误信息截图发送至："; echo -e "  blog@naibabiji.com"; echo -e "  微信 vv15_zhi"; echo ""; fi' EXIT
 
 # ============================================================
 # PHP 8.3 源选择（官方源 + 国内镜像多重兜底）
@@ -187,6 +196,91 @@ download_file() {
     fi
     rm -f "$output"
     return 1
+}
+
+prepare_panel_candidate() {
+    local script_dir=""
+    local github_release="https://github.com/naibabiji/wp-panel/releases/latest/download/wp-panel"
+    local proxy_release="${GHPROXY}/${github_release}"
+
+    [[ -n "$PANEL_CANDIDATE" ]] && [[ -x "$PANEL_CANDIDATE" ]] && return 0
+    PANEL_CANDIDATE="/tmp/wp-panel.$$.candidate"
+    script_dir="$(cd "$(dirname "$0")" && pwd)"
+
+    if [[ -s "$script_dir/wp-panel" ]]; then
+        cp "$script_dir/wp-panel" "$PANEL_CANDIDATE"
+    elif $PREFER_CN; then
+        download_file "$proxy_release" "$PANEL_CANDIDATE" 60 || \
+            download_file "$github_release" "$PANEL_CANDIDATE" 60 || \
+            log_error "无法获取用于安装校验的面板二进制"
+    else
+        download_file "$github_release" "$PANEL_CANDIDATE" 60 || \
+            download_file "$proxy_release" "$PANEL_CANDIDATE" 60 || \
+            log_error "无法获取用于安装校验的面板二进制"
+    fi
+    chmod 0755 "$PANEL_CANDIDATE"
+}
+
+create_repair_backup() {
+    local timestamp=""
+    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+    REPAIR_BACKUP_DIR="$INSTALL_DIR/backups/install-repair/${timestamp}-$$"
+    [[ -s "$BIN_PATH" ]] && REPAIR_BIN_EXISTED=true
+    [[ -f "$SERVICE_PATH" ]] && REPAIR_UNIT_EXISTED=true
+    if [[ -f "$INSTALL_DIR/certs/panel.crt" ]] && [[ -f "$INSTALL_DIR/certs/panel.key" ]]; then
+        REPAIR_TLS_EXISTED=true
+    fi
+    install -d -m 0700 "$REPAIR_BACKUP_DIR"
+
+    install -m 0600 "$CONFIG_FILE" "$REPAIR_BACKUP_DIR/config.json"
+    if [[ -f "$DB_PATH" ]]; then
+        sqlite3 "$DB_PATH" ".timeout 10000" ".backup $REPAIR_BACKUP_DIR/panel.db"
+        [[ "$(sqlite3 "$REPAIR_BACKUP_DIR/panel.db" 'PRAGMA integrity_check;')" == "ok" ]] || \
+            log_error "repair备份SQLite完整性检查失败"
+    fi
+    if $REPAIR_BIN_EXISTED; then
+        install -m 0755 "$BIN_PATH" "$REPAIR_BACKUP_DIR/wp-panel"
+    fi
+    if $REPAIR_UNIT_EXISTED; then
+        install -m 0644 "$SERVICE_PATH" "$REPAIR_BACKUP_DIR/wp-panel.service"
+    fi
+    if $REPAIR_TLS_EXISTED; then
+        install -m 0644 "$INSTALL_DIR/certs/panel.crt" "$REPAIR_BACKUP_DIR/panel.crt"
+        install -m 0600 "$INSTALL_DIR/certs/panel.key" "$REPAIR_BACKUP_DIR/panel.key"
+    fi
+    find "$REPAIR_BACKUP_DIR" -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > "$REPAIR_BACKUP_DIR/SHA256SUMS"
+    sha256sum -c "$REPAIR_BACKUP_DIR/SHA256SUMS" >/dev/null || log_error "repair备份校验失败"
+}
+
+repair_rollback() {
+    [[ "$REPAIR_MODE" == true ]] || return 0
+    [[ "$REPAIR_COMMITTED" == false ]] || return 0
+    [[ "$REPAIR_MUTATED" == true ]] || return 0
+    [[ -n "$REPAIR_BACKUP_DIR" ]] && [[ -d "$REPAIR_BACKUP_DIR" ]] || return 0
+
+    log_warn "repair未完成，正在恢复本次替换的面板文件"
+    if $REPAIR_BIN_EXISTED; then
+        install -m 0755 "$REPAIR_BACKUP_DIR/wp-panel" "$BIN_PATH"
+    else
+        rm -f "$BIN_PATH"
+    fi
+    if $REPAIR_UNIT_EXISTED; then
+        install -m 0644 "$REPAIR_BACKUP_DIR/wp-panel.service" "$SERVICE_PATH"
+    else
+        rm -f "$SERVICE_PATH"
+    fi
+    if $REPAIR_TLS_EXISTED; then
+        install -m 0644 "$REPAIR_BACKUP_DIR/panel.crt" "$INSTALL_DIR/certs/panel.crt"
+        install -m 0600 "$REPAIR_BACKUP_DIR/panel.key" "$INSTALL_DIR/certs/panel.key"
+    elif [[ "${REPAIR_TLS_ACTION:-}" == "generate" ]]; then
+        rm -f "$INSTALL_DIR/certs/panel.crt" "$INSTALL_DIR/certs/panel.key"
+    fi
+    systemctl daemon-reload 2>/dev/null || true
+    if $REPAIR_SERVICE_WAS_ACTIVE; then
+        systemctl start wp-panel 2>/dev/null || true
+    else
+        systemctl stop wp-panel 2>/dev/null || true
+    fi
 }
 
 apt_package_available() {
@@ -540,6 +634,8 @@ do_purge() {
 if [[ $EUID -ne 0 ]]; then
     log_error "请使用 root 权限运行此脚本"
 fi
+exec 9>/run/lock/wp-panel-install.lock
+flock -n 9 || log_error "另一个WP Panel安装或repair进程正在运行"
 log_info "权限检查通过"
 
 # ============================================================
@@ -562,52 +658,20 @@ if $INSTALL_COMPLETE; then
     echo -e "${YELLOW}  检测到 WP Panel 已安装${NC}"
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
-    echo -e "  1) 卸载后重新安装（${GREEN}保留网站/数据库/SSL/软件${NC}）"
-    echo -e "  2) 仅卸载面板（${GREEN}保留网站/数据库/SSL/软件${NC}）"
-    echo -e "  3) 彻底清空（${RED}删除所有数据并卸载软件${NC}）"
-    echo -e "  4) 退出"
+    echo -e "  1) 继续/修复安装（${GREEN}保留面板配置、凭据和TLS身份${NC}）"
+    echo -e "  2) 卸载后重新安装（${YELLOW}重建面板身份和状态${NC}）"
+    echo -e "  3) 仅卸载面板（${GREEN}保留网站/数据库/SSL/软件${NC}）"
+    echo -e "  4) 彻底清空（${RED}删除所有数据并卸载软件${NC}）"
+    echo -e "  5) 退出"
     echo ""
     echo -e "  输入数字后回车进行选择。"
 
     read -p "  > " choice < /dev/tty 2>/dev/null || read choice
 
-    case "${choice:-4}" in
+    case "${choice:-5}" in
         1)
-            do_uninstall
-            log_info "开始重新安装..."
-            ;;
-        2)
-            do_uninstall
-            exit 0
-            ;;
-        3)
-            do_purge
-            exit 0
-            ;;
-        *)
-            echo -e "${GREEN}已取消，面板保持现有状态${NC}"
-            exit 0
-            ;;
-    esac
-elif $INSTALL_TRACES; then
-    echo ""
-    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${YELLOW}  检测到 WP Panel 上次安装未完成或存在残留${NC}"
-    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo ""
-    echo -e "  1) 继续/修复安装（${GREEN}默认推荐${NC}）"
-    echo -e "  2) 清理面板残留后重新安装（${GREEN}保留网站/数据库/SSL/软件${NC}）"
-    echo -e "  3) 仅卸载面板残留（${GREEN}保留网站/数据库/SSL/软件${NC}）"
-    echo -e "  4) 彻底清空（${RED}删除所有数据并卸载软件${NC}）"
-    echo -e "  5) 退出"
-    echo ""
-    echo -e "  直接回车将继续/修复安装。"
-
-    read -p "  > " choice < /dev/tty 2>/dev/null || read choice
-
-    case "${choice:-1}" in
-        1)
-            log_info "继续/修复安装..."
+            REPAIR_MODE=true
+            log_info "继续/修复安装：将保留现有面板身份和配置"
             ;;
         2)
             do_uninstall
@@ -622,10 +686,73 @@ elif $INSTALL_TRACES; then
             exit 0
             ;;
         *)
-            echo -e "${GREEN}已取消，系统保持现有状态${NC}"
+            echo -e "${GREEN}已取消，面板保持现有状态${NC}"
             exit 0
             ;;
     esac
+elif $INSTALL_TRACES; then
+    echo ""
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}  检测到 WP Panel 上次安装未完成或存在残留${NC}"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    if [[ -f "$CONFIG_FILE" ]]; then
+        echo -e "  1) 继续/修复安装（${GREEN}保留面板配置、凭据和TLS身份${NC}）"
+        echo -e "  2) 清理面板残留后重新安装（${YELLOW}重建面板身份和状态${NC}）"
+        echo -e "  3) 仅卸载面板残留（${GREEN}保留网站/数据库/SSL/软件${NC}）"
+        echo -e "  4) 彻底清空（${RED}删除所有数据并卸载软件${NC}）"
+        echo -e "  5) 退出"
+        echo ""
+        echo -e "  直接回车将继续/修复安装。"
+    else
+        echo -e "${RED}  检测到面板状态但缺少config.json，无法安全repair。${NC}"
+        echo -e "  1) 清理面板残留后重新安装（${YELLOW}重建面板身份和状态${NC}）"
+        echo -e "  2) 仅卸载面板残留（${GREEN}保留网站/数据库/SSL/软件${NC}）"
+        echo -e "  3) 彻底清空（${RED}删除所有数据并卸载软件${NC}）"
+        echo -e "  4) 退出"
+    fi
+
+    read -p "  > " choice < /dev/tty 2>/dev/null || read choice
+
+    if [[ -f "$CONFIG_FILE" ]]; then
+        case "${choice:-1}" in
+            1) REPAIR_MODE=true; log_info "继续/修复安装：将保留现有面板身份和配置" ;;
+            2) do_uninstall; log_info "开始重新安装..." ;;
+            3) do_uninstall; exit 0 ;;
+            4) do_purge; exit 0 ;;
+            *) echo -e "${GREEN}已取消，系统保持现有状态${NC}"; exit 0 ;;
+        esac
+    else
+        case "${choice:-4}" in
+            1) do_uninstall; log_info "开始重新安装..." ;;
+            2) do_uninstall; exit 0 ;;
+            3) do_purge; exit 0 ;;
+            *) echo -e "${GREEN}已取消，系统保持现有状态${NC}"; exit 0 ;;
+        esac
+    fi
+fi
+
+if $REPAIR_MODE; then
+    for required_cmd in sqlite3 openssl systemctl sha256sum; do
+        command -v "$required_cmd" >/dev/null 2>&1 || log_error "repair缺少必要命令: ${required_cmd}"
+    done
+    prepare_panel_candidate
+    repair_check=$($PANEL_CANDIDATE --repair-config-check --config "$CONFIG_FILE") || \
+        log_error "现有config.json未通过repair安全校验，未修改服务器状态"
+    case "$repair_check" in
+        *'"tls_action":"preserve"'*) REPAIR_TLS_ACTION="preserve" ;;
+        *'"tls_action":"generate"'*) REPAIR_TLS_ACTION="generate" ;;
+        *) log_error "repair配置检查返回未知TLS状态" ;;
+    esac
+    case "$repair_check" in
+        *'"tls_certificate_expired"'*) log_warn "现有面板TLS证书已过期；repair将保留证书身份，请另行更新" ;;
+        *'"tls_certificate_expires_soon"'*) log_warn "现有面板TLS证书将在30天内到期；repair将保留证书身份" ;;
+    esac
+    if systemctl is-active --quiet wp-panel 2>/dev/null; then
+        REPAIR_SERVICE_WAS_ACTIVE=true
+    fi
+    create_repair_backup
+    log_info "repair预检与备份完成"
 fi
 
 # ============================================================
@@ -672,6 +799,7 @@ fi
 log_info "Debian 版本: ${DEBIAN_CODENAME}"
 
 # 国内模式会优先选择 Debian 镜像，并同时覆盖 debian-security / debian-updates。
+if ! $REPAIR_MODE; then
 select_debian_source "$DEBIAN_CODENAME"
 
 # 安装基础依赖
@@ -707,12 +835,16 @@ apt-get install -y \
     php8.3-cli
 
 log_info "基础组件安装完成"
+else
+    log_info "repair模式保留APT源和现有软件包，不执行安装或升级"
+fi
 
 # ============================================================
 # systemd 进程守护配置
 # ============================================================
 log_info "配置 systemd 进程守护..."
 
+if ! $REPAIR_MODE; then
 for svc in nginx php8.3-fpm mariadb redis-server; do
     DROPDIR="/etc/systemd/system/${svc}.service.d"
     mkdir -p "$DROPDIR"
@@ -729,12 +861,16 @@ log_info "systemd 进程守护配置完成"
 
 systemctl_start_required php8.3-fpm
 systemctl_start_required nginx
+else
+    log_info "repair模式保留Nginx、PHP-FPM、MariaDB和Redis的systemd配置与状态"
+fi
 
 # ============================================================
 # Nginx 基础配置
 # ============================================================
 log_info "配置 Nginx 基础..."
 
+if ! $REPAIR_MODE; then
 mkdir -p /etc/nginx/conf.d
 
 cat > /etc/nginx/conf.d/wppanel-ratelimit.conf << 'RATELIMITEOF'
@@ -761,12 +897,16 @@ CACHEEOF
 
 nginx -t && nginx -s reload 2>/dev/null || true
 log_info "Nginx 基础配置完成"
+else
+    log_info "repair模式不改写或reload Nginx配置"
+fi
 
 # ============================================================
 # 防火墙放行 8443 面板端口
 # ============================================================
 log_info "放行面板端口 8443..."
 
+if ! $REPAIR_MODE; then
 # nftables
 if command -v nft &>/dev/null && nft list ruleset 2>/dev/null | grep -q "hook input"; then
     nft add rule inet filter input tcp dport 8443 accept 2>/dev/null || \
@@ -779,43 +919,47 @@ if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: activ
     ufw allow 8443/tcp 2>/dev/null || true
     log_info "ufw 已放行 8443"
 fi
+else
+    log_info "repair模式保留现有防火墙规则"
+fi
 
 # ============================================================
 # MariaDB 安全加固
 # ============================================================
 log_info "配置 MariaDB..."
 
-systemctl_start_required mariadb
-systemctl_enable_best_effort mariadb
-
-# 优先读取已有密码（防止上次安装中断导致密码不一致）
-if [[ -f "$CONFIG_FILE" ]]; then
-    MYSQL_PASS=$(grep -o '"root_password": "[^"]*"' "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f4 || true)
-fi
-if [[ -z "$MYSQL_PASS" ]]; then
-    MYSQL_PASS=$(head -c 24 /dev/urandom | sha256sum | head -c 32)
+if ! $REPAIR_MODE; then
+    systemctl_start_required mariadb
+    systemctl_enable_best_effort mariadb
 fi
 
-if mysql -u root -p"${MYSQL_PASS}" -e "SELECT 1" 2>/dev/null; then
-    log_info "MariaDB root 密码已验证"
-elif mysql -u root -e "SELECT 1" 2>/dev/null; then
-    mysqladmin -u root password "${MYSQL_PASS}" 2>/dev/null
-    log_info "MariaDB root 密码已设置"
+if $REPAIR_MODE; then
+    log_info "repair模式保留现有MariaDB身份与配置"
 else
-    log_warn "MariaDB 密码状态异常，面板首次启动时将自动修复"
-fi
+    if [[ -z "$MYSQL_PASS" ]]; then
+        MYSQL_PASS=$(head -c 24 /dev/urandom | sha256sum | head -c 32)
+    fi
 
-mysql -u root -p"${MYSQL_PASS}" -e "
-    DELETE FROM mysql.user WHERE User='';
-    DELETE FROM mysql.user WHERE User='root' AND Host!='localhost';
-    DROP DATABASE IF EXISTS test;
-    DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
-    FLUSH PRIVILEGES;
-" 2>/dev/null || log_warn "部分安全加固跳过(密码可能已设置)"
+    if mysql -u root -p"${MYSQL_PASS}" -e "SELECT 1" 2>/dev/null; then
+        log_info "MariaDB root 密码已验证"
+    elif mysql -u root -e "SELECT 1" 2>/dev/null; then
+        mysqladmin -u root password "${MYSQL_PASS}" 2>/dev/null
+        log_info "MariaDB root 密码已设置"
+    else
+        log_warn "MariaDB 密码状态异常，面板首次启动时将自动修复"
+    fi
 
-if [[ $TOTAL_MEM_MB -le 1024 ]]; then
-    log_info "低内存环境，优化 MariaDB 配置..."
-    cat > /etc/mysql/mariadb.conf.d/99-wp-panel.cnf << 'MARIADBEOF'
+    mysql -u root -p"${MYSQL_PASS}" -e "
+        DELETE FROM mysql.user WHERE User='';
+        DELETE FROM mysql.user WHERE User='root' AND Host!='localhost';
+        DROP DATABASE IF EXISTS test;
+        DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+        FLUSH PRIVILEGES;
+    " 2>/dev/null || log_warn "部分安全加固跳过(密码可能已设置)"
+
+    if [[ $TOTAL_MEM_MB -le 1024 ]]; then
+        log_info "低内存环境，优化 MariaDB 配置..."
+        cat > /etc/mysql/mariadb.conf.d/99-wp-panel.cnf << 'MARIADBEOF'
 [mysqld]
 innodb_buffer_pool_size = 128M
 innodb_log_buffer_size = 8M
@@ -823,7 +967,8 @@ table_open_cache = 128
 max_connections = 30
 performance_schema = OFF
 MARIADBEOF
-    systemctl restart mariadb || systemctl_start_required mariadb
+        systemctl restart mariadb || systemctl_start_required mariadb
+    fi
 fi
 
 # ============================================================
@@ -840,49 +985,64 @@ chmod 700 "$INSTALL_DIR"
 # ============================================================
 # 生成自签名 SSL 证书（有效期 10 年）
 # ============================================================
-log_info "生成自签名 SSL 证书..."
+log_info "检查面板 TLS 证书..."
 
 CERT_DIR="$INSTALL_DIR/certs"
 CERT_FILE="$CERT_DIR/panel.crt"
 KEY_FILE="$CERT_DIR/panel.key"
 
-openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
-    -keyout "$KEY_FILE" \
-    -out "$CERT_FILE" \
-    -subj "/C=CN/ST=Shanghai/L=Shanghai/O=WP Panel/OU=IT/CN=WP-Panel-SelfSigned" \
-    -addext "subjectAltName=IP:127.0.0.1" \
-    2>/dev/null
-
-chmod 600 "$KEY_FILE"
-chmod 644 "$CERT_FILE"
-log_info "自签名证书已生成（有效期 10 年）"
+if $REPAIR_MODE && [[ "$REPAIR_TLS_ACTION" == "preserve" ]]; then
+    log_info "repair模式保留现有TLS证书与私钥"
+else
+    TLS_TMP_DIR=$(mktemp -d "$CERT_DIR/.repair-tls.XXXXXX")
+    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+        -keyout "$TLS_TMP_DIR/panel.key" \
+        -out "$TLS_TMP_DIR/panel.crt" \
+        -subj "/C=CN/ST=Shanghai/L=Shanghai/O=WP Panel/OU=IT/CN=WP-Panel-SelfSigned" \
+        -addext "subjectAltName=IP:127.0.0.1" \
+        2>/dev/null
+    openssl x509 -in "$TLS_TMP_DIR/panel.crt" -noout >/dev/null
+    openssl pkey -in "$TLS_TMP_DIR/panel.key" -noout >/dev/null
+    chmod 600 "$TLS_TMP_DIR/panel.key"
+    chmod 644 "$TLS_TMP_DIR/panel.crt"
+    if $REPAIR_MODE; then REPAIR_MUTATED=true; fi
+    mv "$TLS_TMP_DIR/panel.key" "$KEY_FILE"
+    mv "$TLS_TMP_DIR/panel.crt" "$CERT_FILE"
+    rmdir "$TLS_TMP_DIR"
+    log_info "自签名证书已生成（有效期 10 年）"
+fi
 
 # ============================================================
 # 下载 WordPress 备用包
 # ============================================================
-log_info "下载 WordPress 备用包..."
+log_info "检查 WordPress 备用包..."
 WP_ZIP="$INSTALL_DIR/packages/wordpress.zip"
 WP_ZIP_TMP="${WP_ZIP}.download"
-for i in 1 2 3; do
-    if download_file "https://wordpress.org/latest.zip" "$WP_ZIP_TMP" 60; then
-        mv "$WP_ZIP_TMP" "$WP_ZIP"
-        log_info "WordPress 下载完成"
-        break
+if $REPAIR_MODE && [[ -s "$WP_ZIP" ]]; then
+    log_info "repair模式保留现有WordPress备用包"
+else
+    for i in 1 2 3; do
+        if download_file "https://wordpress.org/latest.zip" "$WP_ZIP_TMP" 60; then
+            mv "$WP_ZIP_TMP" "$WP_ZIP"
+            log_info "WordPress 下载完成"
+            break
+        fi
+        log_warn "下载失败，重试 ($i/3)..."
+        sleep 3
+    done
+    rm -f "$WP_ZIP_TMP"
+    if [[ ! -s "$WP_ZIP" ]]; then
+        rm -f "$WP_ZIP"
+        log_warn "WordPress 下载失败，将在首次建站时使用联网下载"
     fi
-    log_warn "下载失败，重试 ($i/3)..."
-    sleep 3
-done
-rm -f "$WP_ZIP_TMP"
-if [[ ! -s "$WP_ZIP" ]]; then
-    rm -f "$WP_ZIP"
-    log_warn "WordPress 下载失败，将在首次建站时使用联网下载"
 fi
 
 # ============================================================
 # 生成面板安全凭证
 # ============================================================
-log_info "生成安全凭证..."
+log_info "检查安全凭证..."
 
+if ! $REPAIR_MODE; then
 PANEL_SUFFIX=$(head -c 20 /dev/urandom | sha256sum | head -c 8)
 
 BASIC_USER="admin"
@@ -905,12 +1065,16 @@ if [[ -z "$BASIC_HASH" ]]; then
     BASIC_HASH='$2a$12$00000000000000000000000000000000000000000000000000000'
     WEB_HASH='$2a$12$00000000000000000000000000000000000000000000000000000'
 fi
+else
+    log_info "repair模式保留现有登录凭据和安全入口"
+fi
 
 # ============================================================
 # 写入 config.json
 # ============================================================
-log_info "写入配置文件..."
+log_info "检查配置文件..."
 
+if ! $REPAIR_MODE; then
 cat > "$CONFIG_FILE" << CONFIGEOF
 {
   "panel": {
@@ -970,64 +1134,29 @@ cat > "$CONFIG_FILE" << CONFIGEOF
 CONFIGEOF
 
 chmod 600 "$CONFIG_FILE"
+else
+    log_info "repair模式保持config.json字节不变"
+fi
 
 # ============================================================
 # 部署 Go 二进制
 # ============================================================
 log_info "部署面板二进制..."
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-GITHUB_RELEASE="https://github.com/naibabiji/wp-panel/releases/latest/download/wp-panel"
-GHPROXY_RELEASE="${GHPROXY}/${GITHUB_RELEASE}"
-
-install_downloaded_binary() {
-    local url="$1"
-    local label="$2"
-    local tmp_bin="/tmp/wp-panel.$$.download"
-
-    log_info "尝试下载面板二进制: ${label}"
-    if download_file "$url" "$tmp_bin" 60; then
-        chmod +x "$tmp_bin"
-        mv "$tmp_bin" "$BIN_PATH"
-        log_info "面板二进制下载完成: ${label}"
-        return 0
-    fi
-    rm -f "$tmp_bin"
-    log_warn "${label} 下载失败"
-    return 1
-}
-
-if [[ -s "$SCRIPT_DIR/wp-panel" ]]; then
-    cp "$SCRIPT_DIR/wp-panel" "$BIN_PATH"
-    chmod +x "$BIN_PATH"
-    log_info "面板二进制已部署（本地文件）"
-else
-    DOWNLOAD_OK=false
-    if $PREFER_CN; then
-        install_downloaded_binary "$GHPROXY_RELEASE" "gh.wp-panel.org 反代" && DOWNLOAD_OK=true
-        if ! $DOWNLOAD_OK; then
-            install_downloaded_binary "$GITHUB_RELEASE" "GitHub Releases 直连" && DOWNLOAD_OK=true
-        fi
-    else
-        install_downloaded_binary "$GITHUB_RELEASE" "GitHub Releases 直连" && DOWNLOAD_OK=true
-        if ! $DOWNLOAD_OK; then
-            install_downloaded_binary "$GHPROXY_RELEASE" "gh.wp-panel.org 反代" && DOWNLOAD_OK=true
-        fi
-    fi
-
-    if ! $DOWNLOAD_OK; then
-        log_error "无法获取正式版二进制。解决方案：
-  1. 检查服务器能否访问 GitHub Releases 或 gh.wp-panel.org
-  2. 手动下载 release 附件 wp-panel 后，和 install.sh 放在同一目录重新运行
-  3. 或在本机编译后上传：go build -o wp-panel ."
-    fi
-fi
+prepare_panel_candidate
+BIN_TMP="${BIN_PATH}.repair.$$"
+install -m 0755 "$PANEL_CANDIDATE" "$BIN_TMP"
+if $REPAIR_MODE; then REPAIR_MUTATED=true; fi
+mv "$BIN_TMP" "$BIN_PATH"
+log_info "面板二进制已原子部署"
 
 # ============================================================
 # 创建 systemd 服务
 # ============================================================
-log_info "创建 systemd 服务..."
+log_info "检查 systemd 服务..."
 
+if ! $REPAIR_MODE || [[ ! -f "$SERVICE_PATH" ]]; then
+if $REPAIR_MODE; then REPAIR_MUTATED=true; fi
 cat > "$SERVICE_PATH" << SYSTEMDEOF
 [Unit]
 Description=WordPress Server Management Panel
@@ -1048,12 +1177,22 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 SYSTEMDEOF
+else
+    log_info "repair模式保留现有systemd unit"
+fi
 
 systemctl daemon-reload
-systemctl_enable_best_effort wp-panel
-systemctl_start_required wp-panel
-
-apply_system_tuning
+if $REPAIR_MODE; then
+    if $REPAIR_SERVICE_WAS_ACTIVE; then
+        systemctl restart wp-panel || log_error "wp-panel重启失败"
+    else
+        log_info "repair前wp-panel未运行，保持inactive状态"
+    fi
+else
+    systemctl_enable_best_effort wp-panel
+    systemctl_start_required wp-panel
+    apply_system_tuning
+fi
 
 # ============================================================
 # 端口监听检测
@@ -1079,6 +1218,17 @@ else
     STATUS="${RED}未运行${NC}"
 fi
 
+if $REPAIR_MODE; then
+    if $REPAIR_SERVICE_WAS_ACTIVE; then
+        systemctl is-active --quiet wp-panel || log_error "repair后面板服务未运行"
+    elif systemctl is-active --quiet wp-panel; then
+        log_error "repair改变了面板服务原始inactive状态"
+    fi
+    "$BIN_PATH" --repair-config-check --config "$CONFIG_FILE" >/dev/null || \
+        log_error "repair后配置复核失败"
+    REPAIR_COMMITTED=true
+fi
+
 LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 [[ -z "$LOCAL_IP" ]] && LOCAL_IP="<未知>"
 
@@ -1098,7 +1248,9 @@ echo ""
 echo -e "公网 IP:     ${BOLD}${PUBLIC_IP}${NC}"
 echo -e "内网 IP:     ${BOLD}${LOCAL_IP}${NC}"
 echo ""
-if [[ "$PUBLIC_IP" != "<未知>" ]]; then
+if $REPAIR_MODE; then
+    echo -e "面板地址和两层登录凭据已保持不变，本次repair不重新显示秘密。"
+elif [[ "$PUBLIC_IP" != "<未知>" ]]; then
     echo -e "面板地址:    ${BOLD}https://${PUBLIC_IP}:8443/${PANEL_SUFFIX}/${NC}"
     if [[ "$LOCAL_IP" != "<未知>" && "$LOCAL_IP" != "$PUBLIC_IP" ]]; then
         echo -e "内网地址:    ${BOLD}https://${LOCAL_IP}:8443/${PANEL_SUFFIX}/${NC}"
@@ -1112,26 +1264,28 @@ if $PORT_OK; then
 else
     echo -e "端口监听:    ${YELLOW}8443 未检测到监听，请查看日志: journalctl -u wp-panel -n 20${NC}"
 fi
-echo ""
-echo -e "  ┌─────────────────────────────────────────┐"
-echo -e "  │  第 1 层 — BasicAuth（浏览器弹窗）       │"
-echo -e "  ├─────────────────────────────────────────┤"
-echo -e "  │  用户名:  ${BOLD}${BASIC_USER}${NC}"
-echo -e "  │  密  码:  ${BOLD}${BASIC_PASS}${NC}"
-echo -e "  └─────────────────────────────────────────┘"
-echo ""
-echo -e "  ┌─────────────────────────────────────────┐"
-echo -e "  │  第 2 层 — Web 登录（面板内表单）         │"
-echo -e "  ├─────────────────────────────────────────┤"
-echo -e "  │  用户名:  ${BOLD}${WEB_USER}${NC}"
-echo -e "  │  密  码:  ${BOLD}${WEB_PASS}${NC}"
-echo -e "  └─────────────────────────────────────────┘"
-echo ""
-echo -e "  ${BOLD}登录流程：${NC}"
-echo -e "  1. 浏览器打开上方地址 → 弹出 BasicAuth 对话框"
-echo -e "     → 输入 ${BOLD}第 1 层${NC} 的用户名和密码"
-echo -e "  2. 通过后看到登录页面 → 输入 ${BOLD}第 2 层${NC} 的用户名和密码"
-echo -e "  3. 进入控制台"
+if ! $REPAIR_MODE; then
+    echo ""
+    echo -e "  ┌─────────────────────────────────────────┐"
+    echo -e "  │  第 1 层 — BasicAuth（浏览器弹窗）       │"
+    echo -e "  ├─────────────────────────────────────────┤"
+    echo -e "  │  用户名:  ${BOLD}${BASIC_USER}${NC}"
+    echo -e "  │  密  码:  ${BOLD}${BASIC_PASS}${NC}"
+    echo -e "  └─────────────────────────────────────────┘"
+    echo ""
+    echo -e "  ┌─────────────────────────────────────────┐"
+    echo -e "  │  第 2 层 — Web 登录（面板内表单）         │"
+    echo -e "  ├─────────────────────────────────────────┤"
+    echo -e "  │  用户名:  ${BOLD}${WEB_USER}${NC}"
+    echo -e "  │  密  码:  ${BOLD}${WEB_PASS}${NC}"
+    echo -e "  └─────────────────────────────────────────┘"
+    echo ""
+    echo -e "  ${BOLD}登录流程：${NC}"
+    echo -e "  1. 浏览器打开上方地址 → 弹出 BasicAuth 对话框"
+    echo -e "     → 输入 ${BOLD}第 1 层${NC} 的用户名和密码"
+    echo -e "  2. 通过后看到登录页面 → 输入 ${BOLD}第 2 层${NC} 的用户名和密码"
+    echo -e "  3. 进入控制台"
+fi
 echo ""
 echo -e "${YELLOW}⚠ 当前使用自签名证书，浏览器会提示「不安全」${NC}"
 echo -e "${YELLOW}  请点击「高级」→「继续访问」即可进入面板${NC}"
@@ -1158,7 +1312,9 @@ echo -e "  wp password     一键重置管理员密码"
 echo -e "  wp unban        一键清空所有IP封禁"
 echo -e "  wp status       查看运行状态"
 echo ""
-echo -e "${YELLOW}请立即保存以上凭据，此信息仅显示一次${NC}"
+if ! $REPAIR_MODE; then
+    echo -e "${YELLOW}请立即保存以上凭据，此信息仅显示一次${NC}"
+fi
 echo ""
 echo -e "${BOLD}匿名安装统计${NC}"
 echo -e "  面板会每天上报一次匿名安装统计，内容仅包含："
