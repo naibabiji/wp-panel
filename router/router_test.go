@@ -164,6 +164,30 @@ func TestWPCoreUpdateHandlerKeepsNilInterfaceWhenConstructionFails(t *testing.T)
 	}
 }
 
+func TestWPPluginUpdateRoutesRegisteredOnProtectedGroup(t *testing.T) {
+	source, err := os.ReadFile("router.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []string{
+		`protected.GET("/api/websites/:id/wp-plugin-update/preview", wpPluginUpdateHandler.Preview)`,
+		`protected.POST("/api/websites/:id/wp-plugin-update/confirm", wpPluginUpdateHandler.Confirm)`,
+		`protected.GET("/api/websites/:id/wp-plugin-update/tasks/latest", wpPluginUpdateHandler.LatestTask)`,
+		`protected.GET("/api/websites/:id/wp-plugin-update/tasks/:task_id", wpPluginUpdateHandler.Task)`,
+	} {
+		if !bytes.Contains(source, []byte(route)) {
+			t.Fatalf("missing protected route %s", route)
+		}
+	}
+}
+
+func TestWPPluginUpdateHandlerKeepsNilInterfaceWhenConstructionFails(t *testing.T) {
+	handler := newWPPluginUpdateHandler(nil, "")
+	if handler == nil || handler.Service != nil {
+		t.Fatalf("failed construction left a typed nil service: %#v", handler)
+	}
+}
+
 func TestWPFleetOverviewRouteRegistered(t *testing.T) {
 	source, err := os.ReadFile("router.go")
 	if err != nil {
@@ -720,6 +744,13 @@ func TestWPInventoryPanelAPIContract(t *testing.T) {
 		[]byte(`!item.network_active && !item.active && !item.current_theme`),
 		[]byte(`if (tab === 'plugins') return 'plugin'`),
 		[]byte(`if (tab === 'themes') return 'theme'`),
+		[]byte(`'/wp-plugin-update/preview?component_key=' + encodeURIComponent(item.key)`),
+		[]byte(`api('/websites/' + siteID + '/wp-plugin-update/confirm'`),
+		[]byte(`'/wp-plugin-update/tasks/latest?component_key=' + encodeURIComponent(componentKey)`),
+		[]byte(`'/wp-plugin-update/tasks/' + encodeURIComponent(taskID)`),
+		[]byte(`confirmation_token: preview.confirmation_token`),
+		[]byte(`target_version: preview.target_version`),
+		[]byte(`confirm: true`),
 		[]byte(`setTimeout(() =>`),
 	} {
 		if !bytes.Contains(panel, required) {
@@ -733,6 +764,9 @@ func TestWPInventoryPanelAPIContract(t *testing.T) {
 		[]byte(`params.set('order'`),
 		[]byte(`params.set('column'`),
 		[]byte(`params.set('collection_id'`),
+		[]byte(`sessionStorage`),
+		[]byte(`localStorage`),
+		[]byte(`download_url`),
 	} {
 		if bytes.Contains(panel, forbidden) {
 			t.Fatalf("inventory panel contains forbidden API behavior %q", forbidden)
@@ -805,6 +839,57 @@ global.clearTimeout = id => { global.clearedTimer = id; };
     assert(panel.pages.plugins.page === 1, 'terminal task resets plugin page');
     assert(panel.pages.themes.page === 1, 'terminal task resets theme page');
     assert(panel.pages.updates.page === 1, 'terminal task resets update page');
+
+    const candidate = { type: 'plugin', key: 'classic-editor/classic-editor.php', current_version: '1.6', target_version: '1.7' };
+    assert(panel.canUpdatePlugin(candidate), 'official directory plugin candidate rejected');
+    assert(!panel.canUpdatePlugin({ ...candidate, type: 'theme' }), 'theme candidate accepted by plugin updater');
+    assert(!panel.canUpdatePlugin({ ...candidate, key: 'hello.php' }), 'unsupported single-file plugin accepted');
+
+    panel.pluginUpdate.componentKey = candidate.key;
+    assert(panel.validPluginPreview({
+        available: true, site_id: 2, component_key: candidate.key, current_version: '1.6', target_version: '1.7',
+        confirmation_token: 'opaque', package_source: 'wordpress.org', verification_required: 'structure_only',
+        database_backup: true, plugin_files_backup: true
+    }), 'valid plugin preview rejected');
+    assert(!panel.validPluginPreview({
+        available: true, site_id: 1, component_key: candidate.key, current_version: '1.6', target_version: '1.7',
+        confirmation_token: 'opaque', package_source: 'wordpress.org', verification_required: 'structure_only',
+        database_backup: true, plugin_files_backup: true
+    }), 'cross-site plugin preview accepted');
+
+    panel.pluginUpdate.task = {
+        task_id: 'plugin-stale', site_id: 2, component_type: 'plugin', component_key: candidate.key,
+        task_kind: 'update', status: 'queued', stage: 'queued'
+    };
+    let pluginScheduled = 0;
+    panel.schedulePluginPoll = () => { pluginScheduled++; };
+    global.api = async () => { const error = new Error('not found'); error.status = 404; throw error; };
+    await panel.pollPluginTask();
+    assert(panel.pluginUpdate.task === null, '404 plugin task was not cleared');
+    assert(pluginScheduled === 0, '404 plugin task scheduled another poll');
+
+    panel.pluginUpdate.task = {
+        task_id: 'plugin-done', site_id: 2, component_type: 'plugin', component_key: candidate.key,
+        task_kind: 'update', status: 'queued', stage: 'queued'
+    };
+    global.api = async () => ({ data: {
+        task_id: 'plugin-done', site_id: 2, component_type: 'plugin', component_key: candidate.key,
+        task_kind: 'update', status: 'success', stage: 'complete'
+    } });
+    await panel.pollPluginTask();
+    assert(panel.pluginUpdate.task.status === 'success', 'terminal plugin task not retained');
+
+    panel.pluginUpdate.task = null;
+    global.api = async () => ({ data: {
+        task_id: 'plugin-latest', site_id: 2, component_type: 'plugin', component_key: candidate.key,
+        task_kind: 'update', status: 'running', stage: 'updating_component',
+        current_version: '1.6', target_version: '1.7', requested_at: new Date().toISOString()
+    } });
+    const recovered = await panel.loadLatestPluginTask(candidate.key, {
+        componentKey: candidate.key, currentVersion: '1.6', targetVersion: '1.7', since: Date.now(), previousTaskID: ''
+    });
+    assert(recovered === true && panel.pluginUpdate.task.task_id === 'plugin-latest', 'recent plugin task was not recovered');
+    assert(pluginScheduled === 1, 'active recovered plugin task was not scheduled');
 })().catch(error => {
     console.error(error);
     process.exit(1);

@@ -820,6 +820,21 @@ func (s *wpUpdateStore) latestCoreUpdateTask(ctx context.Context, siteID int) (W
 	return s.getTask(ctx, id)
 }
 
+func (s *wpUpdateStore) latestPluginUpdateTask(ctx context.Context, siteID int, componentKey string) (WPUpdateTask, error) {
+	if s == nil || s.db == nil || siteID <= 0 || !validWPPluginComponentKey(componentKey) {
+		return WPUpdateTask{}, errors.New("invalid plugin update task lookup")
+	}
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT t.id FROM wp_update_tasks t
+		JOIN websites w ON w.id=t.site_id
+		WHERE t.site_id=? AND t.task_kind='update' AND t.component_type='plugin' AND t.component_key=?
+		ORDER BY t.created_at DESC,t.rowid DESC LIMIT 1`, siteID, componentKey).Scan(&id)
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	return s.getTask(ctx, id)
+}
+
 type wpUpdateBackupRecord struct {
 	Kind     string
 	FilePath string

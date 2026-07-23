@@ -767,6 +767,38 @@ var i18nKeys = []string{
 	"wp_core_update.submitting",
 	"wp_core_update.task_invalid",
 	"wp_core_update.task_read_failed",
+	"wp_plugin_update.action",
+	"wp_plugin_update.checking",
+	"wp_plugin_update.confirm",
+	"wp_plugin_update.not_found",
+	"wp_plugin_update.preview_failed",
+	"wp_plugin_update.preview_invalid",
+	"wp_plugin_update.stage_backups_ready",
+	"wp_plugin_update.stage_claimed",
+	"wp_plugin_update.stage_complete",
+	"wp_plugin_update.stage_health_check",
+	"wp_plugin_update.stage_queued",
+	"wp_plugin_update.stage_reactivating",
+	"wp_plugin_update.stage_restoring_file_lock",
+	"wp_plugin_update.stage_rollback",
+	"wp_plugin_update.stage_unknown",
+	"wp_plugin_update.stage_unlocking",
+	"wp_plugin_update.stage_updating_component",
+	"wp_plugin_update.stage_value",
+	"wp_plugin_update.status_failed",
+	"wp_plugin_update.status_interrupted_unknown",
+	"wp_plugin_update.status_preparing",
+	"wp_plugin_update.status_queued",
+	"wp_plugin_update.status_running",
+	"wp_plugin_update.status_success",
+	"wp_plugin_update.status_unknown",
+	"wp_plugin_update.submit_failed",
+	"wp_plugin_update.submitted",
+	"wp_plugin_update.submission_recovered",
+	"wp_plugin_update.submitting",
+	"wp_plugin_update.task_invalid",
+	"wp_plugin_update.task_read_failed",
+	"wp_plugin_update.tracking",
 }
 
 func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version string, configPath string) *gin.Engine {
@@ -898,6 +930,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	wpInventoryHandler := &handlers.WPInventoryHandler{DB: db}
 	wpFleetOverviewHandler := &handlers.WPFleetOverviewHandler{DB: db}
 	wpCoreUpdateHandler := newWPCoreUpdateHandler(db, cfg.Panel.BackupDir)
+	wpPluginUpdateHandler := newWPPluginUpdateHandler(db, cfg.Panel.BackupDir)
 	protected.GET("/api/websites", websiteHandler.List)
 	protected.GET("/api/wp-fleet/overview", wpFleetOverviewHandler.Overview)
 	protected.POST("/api/websites", websiteHandler.Create)
@@ -912,6 +945,10 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/websites/:id/wp-core-update/confirm", wpCoreUpdateHandler.Confirm)
 	protected.GET("/api/websites/:id/wp-core-update/tasks/latest", wpCoreUpdateHandler.LatestTask)
 	protected.GET("/api/websites/:id/wp-core-update/tasks/:task_id", wpCoreUpdateHandler.Task)
+	protected.GET("/api/websites/:id/wp-plugin-update/preview", wpPluginUpdateHandler.Preview)
+	protected.POST("/api/websites/:id/wp-plugin-update/confirm", wpPluginUpdateHandler.Confirm)
+	protected.GET("/api/websites/:id/wp-plugin-update/tasks/latest", wpPluginUpdateHandler.LatestTask)
+	protected.GET("/api/websites/:id/wp-plugin-update/tasks/:task_id", wpPluginUpdateHandler.Task)
 	protected.DELETE("/api/websites/:id", websiteHandler.Delete)
 	protected.GET("/api/websites/:id/backup-usage", websiteHandler.BackupUsage)
 	protected.PATCH("/api/websites/:id/status", websiteHandler.ToggleStatus)
@@ -1146,6 +1183,17 @@ func newWPCoreUpdateHandler(db *sql.DB, backupDir string) *handlers.WPCoreUpdate
 	service, err := executor.NewWPCoreUpdateService(db, backupDir)
 	if err != nil {
 		log.Println("WordPress 核心更新 API 未启用")
+		return handler
+	}
+	handler.Service = service
+	return handler
+}
+
+func newWPPluginUpdateHandler(db *sql.DB, backupDir string) *handlers.WPPluginUpdateHandler {
+	handler := &handlers.WPPluginUpdateHandler{}
+	service, err := executor.NewWPPluginUpdateService(db, backupDir)
+	if err != nil {
+		log.Println("WordPress 插件更新 API 未启用")
 		return handler
 	}
 	handler.Service = service

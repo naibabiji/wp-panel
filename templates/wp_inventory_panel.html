@@ -119,12 +119,22 @@
 
                     <div x-show="activeTab === 'updates' && !currentPage().loading" class="mt-4 overflow-x-auto">
                         <table class="w-full text-sm">
-                            <thead><tr><th class="table-header">{{t .Lang "wp_inventory.column_type"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_key"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_version"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_target_version"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_locale"}}</th></tr></thead>
+                            <thead><tr><th class="table-header">{{t .Lang "wp_inventory.column_type"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_key"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_version"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_target_version"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_locale"}}</th><th class="table-header text-right">{{t .Lang "wp_plugin_update.column_action"}}</th></tr></thead>
                             <tbody>
                                 <template x-for="item in currentPage().items" :key="item.type + ':' + item.key + ':' + item.target_version + ':' + item.locale">
-                                    <tr class="table-row"><td class="table-cell"><span class="badge-info" x-text="typeLabel(item.type)"></span></td><td class="table-cell break-all font-mono text-xs" x-text="item.key"></td><td class="table-cell" x-text="item.current_version || t('common.none')"></td><td class="table-cell text-white" x-text="item.target_version"></td><td class="table-cell" x-text="item.locale || t('common.none')"></td></tr>
+                                    <tr class="table-row">
+                                        <td class="table-cell"><span class="badge-info" x-text="typeLabel(item.type)"></span></td>
+                                        <td class="table-cell break-all font-mono text-xs" x-text="item.key"></td>
+                                        <td class="table-cell" x-text="item.current_version || t('common.none')"></td>
+                                        <td class="table-cell text-white" x-text="item.target_version"></td>
+                                        <td class="table-cell" x-text="item.locale || t('common.none')"></td>
+                                        <td class="table-cell text-right">
+                                            <button x-show="canUpdatePlugin(item)" @click="openPluginUpdate(item)" :disabled="pluginUpdate.loading || pluginUpdate.submitting || (pluginTaskActive() && pluginUpdate.componentKey !== item.key)" class="btn-primary text-sm" x-text="pluginUpdate.loading && pluginUpdate.componentKey === item.key ? t('wp_plugin_update.checking') : (pluginTaskActive() && pluginUpdate.componentKey === item.key ? t('wp_plugin_update.tracking') : t('wp_plugin_update.action'))"></button>
+                                            <span x-show="item.type !== 'plugin'" class="text-gray-600">—</span>
+                                        </td>
+                                    </tr>
                                 </template>
-                                <tr x-show="currentPage().items.length === 0"><td colspan="5" class="table-cell py-8 text-center text-gray-500">{{t .Lang "wp_inventory.no_updates"}}</td></tr>
+                                <tr x-show="currentPage().items.length === 0"><td colspan="6" class="table-cell py-8 text-center text-gray-500">{{t .Lang "wp_inventory.no_updates"}}</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -140,11 +150,55 @@
             </div>
         </template>
     </div>
+
+    <div x-cloak x-show="pluginUpdate.open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" @keydown.escape.window="closePluginUpdate()">
+        <div class="w-full max-w-xl rounded-lg border border-gray-700 bg-gray-900 p-5 shadow-2xl" @click.outside="closePluginUpdate()">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <h3 class="text-lg font-semibold text-white">{{t .Lang "wp_plugin_update.title"}}</h3>
+                    <p class="mt-1 text-sm text-gray-400">{{t .Lang "wp_plugin_update.description"}}</p>
+                </div>
+                <button @click="closePluginUpdate()" :disabled="pluginUpdate.submitting" class="text-xl text-gray-400 hover:text-white" aria-label="{{t .Lang "common.cancel"}}">×</button>
+            </div>
+
+            <div x-show="pluginUpdate.error" class="mt-4 rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200" x-text="pluginUpdate.error"></div>
+            <div x-show="pluginUpdate.loading" class="py-8 text-center text-sm text-gray-400">{{t .Lang "wp_plugin_update.checking"}}</div>
+
+            <div x-show="pluginUpdate.preview && !pluginUpdate.task && !pluginUpdate.loading" class="mt-5 space-y-4">
+                <div class="grid grid-cols-1 gap-3 rounded border border-gray-700 bg-gray-950/40 p-4 sm:grid-cols-2">
+                    <div><div class="text-xs text-gray-500">{{t .Lang "wp_plugin_update.plugin"}}</div><div class="mt-1 break-all text-sm text-white" x-text="pluginUpdate.preview?.name || pluginUpdate.componentKey"></div></div>
+                    <div><div class="text-xs text-gray-500">{{t .Lang "wp_plugin_update.component_key"}}</div><div class="mt-1 break-all font-mono text-xs text-gray-300" x-text="pluginUpdate.componentKey"></div></div>
+                    <div><div class="text-xs text-gray-500">{{t .Lang "wp_plugin_update.current_version"}}</div><div class="mt-1 text-white" x-text="pluginUpdate.preview?.current_version"></div></div>
+                    <div><div class="text-xs text-gray-500">{{t .Lang "wp_plugin_update.target_version"}}</div><div class="mt-1 text-white" x-text="pluginUpdate.preview?.target_version"></div></div>
+                    <div><div class="text-xs text-gray-500">{{t .Lang "wp_plugin_update.verification"}}</div><div class="mt-1 text-green-300">{{t .Lang "wp_plugin_update.structure_only"}}</div></div>
+                    <div><div class="text-xs text-gray-500">{{t .Lang "wp_plugin_update.backup_scope"}}</div><div class="mt-1 text-gray-200">{{t .Lang "wp_plugin_update.backup_scope_value"}}</div></div>
+                </div>
+                <div class="rounded border border-yellow-800 bg-yellow-950/30 p-3 text-sm text-yellow-200">{{t .Lang "wp_plugin_update.confirm_warning"}}</div>
+                <div class="flex justify-end gap-3">
+                    <button @click="closePluginUpdate()" :disabled="pluginUpdate.submitting" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
+                    <button @click="confirmPluginUpdate()" :disabled="pluginUpdate.submitting" class="btn-primary" x-text="pluginUpdate.submitting ? t('wp_plugin_update.submitting') : t('wp_plugin_update.confirm')"></button>
+                </div>
+            </div>
+
+            <div x-show="pluginUpdate.task && !pluginUpdate.loading" class="mt-5 space-y-4">
+                <div class="rounded border p-4" :class="pluginTaskNoticeClass()">
+                    <div class="font-medium" x-text="pluginTaskStatusText()"></div>
+                    <div class="mt-1 text-sm" x-text="t('wp_plugin_update.stage_value', { stage: pluginTaskStageText() })"></div>
+                    <div x-show="pluginUpdate.task?.requires_attention" class="mt-3 text-sm font-medium">{{t .Lang "wp_plugin_update.requires_attention"}}</div>
+                </div>
+                <div x-show="pluginUpdate.task?.status === 'success'" class="rounded border border-blue-800 bg-blue-950/30 p-3 text-sm text-blue-200">{{t .Lang "wp_plugin_update.rescan_after_success"}}</div>
+                <div class="flex justify-end">
+                    <button @click="closePluginUpdate()" class="btn-secondary">{{t .Lang "wp_plugin_update.close"}}</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </section>
 
 <script>
 function wpInventoryPanel() {
     const newPage = () => ({ items: [], total: 0, page: 1, pageSize: 50, search: '', appliedSearch: '', loading: false, error: '', loaded: false });
+    const newPluginUpdate = () => ({ open: false, loading: false, submitting: false, componentKey: '', preview: null, task: null, error: '', pollStartedAt: 0 });
     return {
         siteID: null,
         summary: null,
@@ -155,6 +209,8 @@ function wpInventoryPanel() {
         pages: { plugins: newPage(), themes: newPage(), updates: newPage() },
         pollTimer: null,
         pollStartedAt: 0,
+        pluginUpdate: newPluginUpdate(),
+        pluginPollTimer: null,
         requestGeneration: 0,
         pagehideHandler: null,
         mount() {
@@ -164,6 +220,7 @@ function wpInventoryPanel() {
         },
         teardown() {
             this.stopPolling();
+            this.stopPluginPolling();
             this.requestGeneration++;
             if (this.pagehideHandler) window.removeEventListener('pagehide', this.pagehideHandler);
             this.pagehideHandler = null;
@@ -172,6 +229,7 @@ function wpInventoryPanel() {
             const nextID = site && site.site_type === 'wordpress' ? Number(site.id) : null;
             if (nextID === this.siteID) return;
             this.stopPolling();
+            this.stopPluginPolling();
             this.requestGeneration++;
             this.siteID = Number.isInteger(nextID) && nextID > 0 ? nextID : null;
             this.summary = null;
@@ -180,6 +238,7 @@ function wpInventoryPanel() {
             this.refreshing = false;
             this.activeTab = 'plugins';
             this.pages = { plugins: newPage(), themes: newPage(), updates: newPage() };
+            this.pluginUpdate = newPluginUpdate();
             if (this.siteID) await this.loadSummary();
         },
         hasActiveTask() {
@@ -391,6 +450,217 @@ function wpInventoryPanel() {
                 page.loaded = false;
                 page.error = '';
             });
+        },
+        canUpdatePlugin(item) {
+            return item?.type === 'plugin' &&
+                typeof item.key === 'string' &&
+                /^[a-z0-9]+(?:-[a-z0-9]+)*\/[A-Za-z0-9][A-Za-z0-9._-]*\.php$/.test(item.key) &&
+                typeof item.current_version === 'string' && item.current_version !== '' &&
+                typeof item.target_version === 'string' && item.target_version !== '';
+        },
+        validPluginPreview(value) {
+            return value && value.available === true && value.site_id === this.siteID &&
+                value.component_key === this.pluginUpdate.componentKey &&
+                typeof value.current_version === 'string' && value.current_version !== '' &&
+                typeof value.target_version === 'string' && value.target_version !== '' &&
+                typeof value.confirmation_token === 'string' && value.confirmation_token !== '' &&
+                value.package_source === 'wordpress.org' &&
+                value.verification_required === 'structure_only' &&
+                value.database_backup === true && value.plugin_files_backup === true;
+        },
+        validPluginTask(value) {
+            return value && typeof value.task_id === 'string' && value.task_id !== '' &&
+                value.site_id === this.siteID && value.component_type === 'plugin' &&
+                value.component_key === this.pluginUpdate.componentKey && value.task_kind === 'update' &&
+                ['preparing', 'queued', 'running', 'success', 'failed', 'interrupted_unknown'].includes(value.status);
+        },
+        pluginTaskActive() {
+            return ['preparing', 'queued', 'running'].includes(this.pluginUpdate.task?.status);
+        },
+        async openPluginUpdate(item) {
+            if (!this.siteID || !this.canUpdatePlugin(item) || this.pluginUpdate.loading || this.pluginUpdate.submitting) return;
+            if (this.pluginTaskActive()) {
+                if (this.pluginUpdate.componentKey === item.key) this.pluginUpdate.open = true;
+                return;
+            }
+            this.stopPluginPolling();
+            this.pluginUpdate = newPluginUpdate();
+            this.pluginUpdate.open = true;
+            this.pluginUpdate.loading = true;
+            this.pluginUpdate.componentKey = item.key;
+            const generation = this.requestGeneration;
+            const siteID = this.siteID;
+            try {
+                const response = await api('/websites/' + siteID + '/wp-plugin-update/preview?component_key=' + encodeURIComponent(item.key), { suppressToast: true, timeout: 30000 });
+                if (generation !== this.requestGeneration || siteID !== this.siteID || item.key !== this.pluginUpdate.componentKey) return;
+                if (!this.validPluginPreview(response.data)) throw new Error(t('wp_plugin_update.preview_invalid'));
+                this.pluginUpdate.preview = response.data;
+            } catch (error) {
+                if (generation !== this.requestGeneration || siteID !== this.siteID || item.key !== this.pluginUpdate.componentKey) return;
+                if (error?.status === 409 && await this.loadLatestPluginTask(item.key)) {
+                    this.pluginUpdate.error = '';
+                } else {
+                    this.pluginUpdate.error = error.message || t('wp_plugin_update.preview_failed');
+                }
+            } finally {
+                if (generation === this.requestGeneration && siteID === this.siteID && item.key === this.pluginUpdate.componentKey) this.pluginUpdate.loading = false;
+            }
+        },
+        closePluginUpdate() {
+            if (this.pluginUpdate.submitting) return;
+            if (this.pluginTaskActive()) {
+                this.pluginUpdate.open = false;
+                return;
+            }
+            this.stopPluginPolling();
+            this.pluginUpdate = newPluginUpdate();
+        },
+        async confirmPluginUpdate() {
+            const preview = this.pluginUpdate.preview;
+            if (!this.siteID || !this.validPluginPreview(preview) || this.pluginUpdate.submitting) return;
+            const generation = this.requestGeneration;
+            const siteID = this.siteID;
+            const componentKey = this.pluginUpdate.componentKey;
+            const expected = {
+                componentKey,
+                currentVersion: preview.current_version,
+                targetVersion: preview.target_version,
+                since: Date.now(),
+                previousTaskID: this.pluginUpdate.task?.task_id || ''
+            };
+            this.pluginUpdate.submitting = true;
+            this.pluginUpdate.error = '';
+            try {
+                const response = await api('/websites/' + siteID + '/wp-plugin-update/confirm', {
+                    method: 'POST',
+                    suppressToast: true,
+                    timeout: 120000,
+                    body: {
+                        component_key: componentKey,
+                        confirmation_token: preview.confirmation_token,
+                        target_version: preview.target_version,
+                        confirm: true
+                    }
+                });
+                if (generation !== this.requestGeneration || siteID !== this.siteID || componentKey !== this.pluginUpdate.componentKey) return;
+                if (!this.validPluginTask(response.data) || response.data.status !== 'queued') throw new Error(t('wp_plugin_update.task_invalid'));
+                this.pluginUpdate.task = response.data;
+                this.pluginUpdate.preview = null;
+                showToast(t('wp_plugin_update.submitted'), 'success');
+                this.startPluginPolling();
+            } catch (error) {
+                if (generation !== this.requestGeneration || siteID !== this.siteID || componentKey !== this.pluginUpdate.componentKey) return;
+                const recovered = await this.loadLatestPluginTask(componentKey, expected);
+                if (recovered) {
+                    this.pluginUpdate.preview = null;
+                    this.pluginUpdate.error = '';
+                    showToast(t('wp_plugin_update.submission_recovered'), 'success');
+                } else {
+                    this.pluginUpdate.error = error.message || t('wp_plugin_update.submit_failed');
+                }
+            } finally {
+                if (generation === this.requestGeneration && siteID === this.siteID && componentKey === this.pluginUpdate.componentKey) this.pluginUpdate.submitting = false;
+            }
+        },
+        async loadLatestPluginTask(componentKey, expected = null) {
+            if (!this.siteID || !componentKey || componentKey !== this.pluginUpdate.componentKey) return false;
+            try {
+                const response = await api('/websites/' + this.siteID + '/wp-plugin-update/tasks/latest?component_key=' + encodeURIComponent(componentKey), { suppressToast: true });
+                const task = response.data;
+                if (!this.validPluginTask(task)) return false;
+                if (expected) {
+                    const requestedAt = Date.parse(task.requested_at);
+                    if (task.task_id === expected.previousTaskID ||
+                        task.current_version !== expected.currentVersion ||
+                        task.target_version !== expected.targetVersion ||
+                        !Number.isFinite(requestedAt) || requestedAt < expected.since - 120000) return false;
+                } else if (!['preparing', 'queued', 'running'].includes(task.status)) {
+                    return false;
+                }
+                this.pluginUpdate.task = task;
+                this.pluginUpdate.preview = null;
+                if (this.pluginTaskActive()) this.startPluginPolling();
+                return true;
+            } catch (_) {
+                return false;
+            }
+        },
+        startPluginPolling() {
+            if (!this.pluginTaskActive()) return;
+            this.stopPluginPolling();
+            this.pluginUpdate.pollStartedAt = Date.now();
+            this.schedulePluginPoll(this.pollDelay(0));
+        },
+        schedulePluginPoll(delay) {
+            this.stopPluginPolling();
+            this.pluginPollTimer = setTimeout(() => {
+                this.pluginPollTimer = null;
+                this.pollPluginTask();
+            }, delay);
+        },
+        stopPluginPolling() {
+            if (this.pluginPollTimer !== null) clearTimeout(this.pluginPollTimer);
+            this.pluginPollTimer = null;
+        },
+        async pollPluginTask() {
+            const taskID = this.pluginUpdate.task?.task_id;
+            const componentKey = this.pluginUpdate.componentKey;
+            const generation = this.requestGeneration;
+            const siteID = this.siteID;
+            if (!siteID || !taskID || !componentKey) return;
+            try {
+                const response = await api('/websites/' + siteID + '/wp-plugin-update/tasks/' + encodeURIComponent(taskID), { suppressToast: true });
+                if (generation !== this.requestGeneration || siteID !== this.siteID || componentKey !== this.pluginUpdate.componentKey) return;
+                if (!this.validPluginTask(response.data) || response.data.task_id !== taskID) throw new Error(t('wp_plugin_update.task_invalid'));
+                this.pluginUpdate.task = response.data;
+                this.pluginUpdate.error = '';
+                if (this.pluginTaskActive()) {
+                    this.schedulePluginPoll(this.pollDelay(Date.now() - this.pluginUpdate.pollStartedAt));
+                    return;
+                }
+                this.stopPluginPolling();
+                if (response.data.status === 'success') this.invalidatePages();
+            } catch (error) {
+                if (generation !== this.requestGeneration || siteID !== this.siteID || componentKey !== this.pluginUpdate.componentKey) return;
+                if (error?.status === 404) {
+                    this.stopPluginPolling();
+                    this.pluginUpdate.task = null;
+                    this.pluginUpdate.error = t('wp_plugin_update.not_found');
+                    return;
+                }
+                this.pluginUpdate.error = t('wp_plugin_update.task_read_failed');
+                this.schedulePluginPoll(5000);
+            }
+        },
+        pluginTaskStatusText() {
+            const status = this.pluginUpdate.task?.status;
+            if (status === 'preparing') return t('wp_plugin_update.status_preparing');
+            if (status === 'queued') return t('wp_plugin_update.status_queued');
+            if (status === 'running') return t('wp_plugin_update.status_running');
+            if (status === 'success') return t('wp_plugin_update.status_success');
+            if (status === 'failed') return t('wp_plugin_update.status_failed');
+            if (status === 'interrupted_unknown') return t('wp_plugin_update.status_interrupted_unknown');
+            return t('wp_plugin_update.status_unknown');
+        },
+        pluginTaskStageText() {
+            const stage = this.pluginUpdate.task?.stage || 'unknown';
+            if (stage === 'queued') return t('wp_plugin_update.stage_queued');
+            if (stage === 'claimed') return t('wp_plugin_update.stage_claimed');
+            if (stage === 'backups_ready') return t('wp_plugin_update.stage_backups_ready');
+            if (stage === 'unlocking') return t('wp_plugin_update.stage_unlocking');
+            if (stage === 'updating_component') return t('wp_plugin_update.stage_updating_component');
+            if (stage === 'reactivating') return t('wp_plugin_update.stage_reactivating');
+            if (stage === 'health_check') return t('wp_plugin_update.stage_health_check');
+            if (stage === 'rollback') return t('wp_plugin_update.stage_rollback');
+            if (stage === 'restoring_file_lock') return t('wp_plugin_update.stage_restoring_file_lock');
+            if (stage === 'complete') return t('wp_plugin_update.stage_complete');
+            return t('wp_plugin_update.stage_unknown');
+        },
+        pluginTaskNoticeClass() {
+            const status = this.pluginUpdate.task?.status;
+            if (status === 'success') return 'border-green-800 bg-green-950/30 text-green-200';
+            if (status === 'failed' || status === 'interrupted_unknown') return 'border-red-800 bg-red-950/30 text-red-200';
+            return 'border-blue-800 bg-blue-950/30 text-blue-200';
         },
         typeLabel(type) {
             if (type === 'core') return t('wp_inventory.type_core');
