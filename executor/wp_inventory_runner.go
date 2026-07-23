@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"os/exec"
 	"os/user"
@@ -38,6 +39,13 @@ const (
 	wpInventoryRunuserPath            = "/usr/sbin/runuser"
 	wpInventoryLockWait               = 10 * time.Second
 	wpInventoryExecutionTimeout       = 5 * time.Second
+	// wpInventoryRunnerMemoryLimit bounds the read-only inventory scan's PHP
+	// process (WordPress bootstrap + plugin/theme introspection), not real
+	// site traffic. 64M turned out to be too tight for real-world sites with
+	// a normal plugin load (WooCommerce, page builders, SEO/cache plugins
+	// routinely need well over that just to bootstrap) — it's still a hard,
+	// enforced ceiling, just a more realistic one.
+	wpInventoryRunnerMemoryLimit = "256M"
 	wpInventoryStreamLimit      int64 = 64 * 1024
 	wpInventoryProtocolLimit    int64 = 1024 * 1024
 	wpInventorySourceLimit            = 256 * 1024
@@ -621,6 +629,39 @@ func hasAdjacentDuplicate(items []string) bool {
 	return false
 }
 
+// wpInventoryPolicyMismatch reports which reported diagnostic(s), if any,
+// don't match what the panel required of the PHP CLI invocation. It never
+// includes disable_functions' actual value (only whether it matched) since
+// that string can be long and isn't useful for remote diagnosis; every other
+// mismatched field is reported with both the expected and observed value so
+// a failure can be root-caused from the server log alone, without needing
+// to reproduce it interactively.
+func wpInventoryPolicyMismatch(d wpInventoryDiagnostics, expectedUID, expectedGID int, expectedOpenBaseDir string) string {
+	var mismatches []string
+	if d.SAPI != "cli" {
+		mismatches = append(mismatches, fmt.Sprintf("sapi=%q want=cli", d.SAPI))
+	}
+	if d.EffectiveUID != expectedUID {
+		mismatches = append(mismatches, fmt.Sprintf("effective_uid=%d want=%d", d.EffectiveUID, expectedUID))
+	}
+	if d.EffectiveGID != expectedGID {
+		mismatches = append(mismatches, fmt.Sprintf("effective_gid=%d want=%d", d.EffectiveGID, expectedGID))
+	}
+	if d.OpenBaseDir != expectedOpenBaseDir {
+		mismatches = append(mismatches, fmt.Sprintf("open_basedir=%q want=%q", d.OpenBaseDir, expectedOpenBaseDir))
+	}
+	if d.DisableFunctions != sitePHPDisabledFunctions() {
+		mismatches = append(mismatches, "disable_functions mismatch")
+	}
+	if d.AllowURLInclude != "0" {
+		mismatches = append(mismatches, fmt.Sprintf("allow_url_include=%q want=0", d.AllowURLInclude))
+	}
+	if d.MemoryLimit != wpInventoryRunnerMemoryLimit {
+		mismatches = append(mismatches, fmt.Sprintf("memory_limit=%q want=%q", d.MemoryLimit, wpInventoryRunnerMemoryLimit))
+	}
+	return strings.Join(mismatches, "; ")
+}
+
 func randomInventoryToken() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -639,7 +680,7 @@ func (r *WPInventoryRunner) execute(ctx context.Context, input wpInventoryValida
 	args := []string{"-u", input.user.Name, "--", input.phpPath,
 		"-d", "open_basedir=" + openBaseDir,
 		"-d", "disable_functions=" + sitePHPDisabledFunctions(),
-		"-d", "allow_url_include=0", "-d", "memory_limit=64M", runnerPath, input.siteRoot,
+		"-d", "allow_url_include=0", "-d", "memory_limit=" + wpInventoryRunnerMemoryLimit, runnerPath, input.siteRoot,
 	}
 	execCtx, cancel := context.WithTimeout(ctx, wpInventoryExecutionTimeout)
 	defer cancel()
@@ -692,8 +733,9 @@ func (r *WPInventoryRunner) execute(ctx context.Context, input wpInventoryValida
 	if parseErr != nil {
 		return result, runError(WPInventoryProtocolInvalid, WPInventoryStageProtocol, meta.ExitCode, false, parseErr)
 	}
-	if env.Diagnostics.SAPI != "cli" || env.Diagnostics.EffectiveUID != input.user.UID || env.Diagnostics.EffectiveGID != input.user.GID || env.Diagnostics.OpenBaseDir != openBaseDir || env.Diagnostics.DisableFunctions != sitePHPDisabledFunctions() || env.Diagnostics.AllowURLInclude != "0" || env.Diagnostics.MemoryLimit != "64M" {
-		return result, runError(WPInventoryRunnerPolicyMismatch, WPInventoryStageProtocol, meta.ExitCode, false, errors.New("runner diagnostics mismatch"))
+	if mismatch := wpInventoryPolicyMismatch(env.Diagnostics, input.user.UID, input.user.GID, openBaseDir); mismatch != "" {
+		log.Printf("WordPress 库存 Runner 策略校验失败 site=%s: %s", input.domain, mismatch)
+		return result, runError(WPInventoryRunnerPolicyMismatch, WPInventoryStageProtocol, meta.ExitCode, false, errors.New("runner diagnostics mismatch: "+mismatch))
 	}
 	if meta.StdoutExceeded {
 		return result, runError(WPInventoryStdoutLimitExceeded, WPInventoryStageExecute, meta.ExitCode, false, errors.New("stdout limit exceeded"))

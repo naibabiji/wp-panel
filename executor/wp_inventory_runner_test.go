@@ -41,6 +41,38 @@ func TestWPInventoryRunErrorDoesNotLeakCause(t *testing.T) {
 	}
 }
 
+func TestWPInventoryPolicyMismatchReportsEachField(t *testing.T) {
+	want := wpInventoryDiagnostics{
+		SAPI: "cli", EffectiveUID: 1001, EffectiveGID: 1002, OpenBaseDir: "/site:/runner",
+		DisableFunctions: sitePHPDisabledFunctions(), AllowURLInclude: "0", MemoryLimit: wpInventoryRunnerMemoryLimit,
+	}
+	if got := wpInventoryPolicyMismatch(want, 1001, 1002, "/site:/runner"); got != "" {
+		t.Fatalf("matching diagnostics reported a mismatch: %q", got)
+	}
+
+	cases := []struct {
+		name   string
+		mutate func(d wpInventoryDiagnostics) wpInventoryDiagnostics
+		want   string
+	}{
+		{"sapi", func(d wpInventoryDiagnostics) wpInventoryDiagnostics { d.SAPI = "fpm-fcgi"; return d }, "sapi="},
+		{"uid", func(d wpInventoryDiagnostics) wpInventoryDiagnostics { d.EffectiveUID = 0; return d }, "effective_uid="},
+		{"gid", func(d wpInventoryDiagnostics) wpInventoryDiagnostics { d.EffectiveGID = 0; return d }, "effective_gid="},
+		{"open_basedir", func(d wpInventoryDiagnostics) wpInventoryDiagnostics { d.OpenBaseDir = "/other"; return d }, "open_basedir="},
+		{"disable_functions", func(d wpInventoryDiagnostics) wpInventoryDiagnostics { d.DisableFunctions = "exec"; return d }, "disable_functions mismatch"},
+		{"allow_url_include", func(d wpInventoryDiagnostics) wpInventoryDiagnostics { d.AllowURLInclude = "1"; return d }, "allow_url_include="},
+		{"memory_limit", func(d wpInventoryDiagnostics) wpInventoryDiagnostics { d.MemoryLimit = "64M"; return d }, "memory_limit="},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := wpInventoryPolicyMismatch(tc.mutate(want), 1001, 1002, "/site:/runner")
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("mismatch=%q, want it to contain %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseWPInventoryProtocol(t *testing.T) {
 	token := "0123456789abcdef0123456789abcdef"
 	body := validInventoryEnvelopeJSON(t, token, 1001, 1002, "/site:/runner")
@@ -56,10 +88,10 @@ func TestParseWPInventoryProtocol(t *testing.T) {
 		"wrong token":     bytesReplace(body, token, strings.Repeat("a", 32), 1),
 		"missing end":     body[:len(body)-len("WP_PANEL_INVENTORY_END "+token+"\n")],
 		"outside data":    append([]byte("noise"), body...),
-		"trailing json":   protocolFrame(token, `{"protocol":"wp-panel-inventory","runner_version":"1","inventory_schema_version":1,"ok":false,"error":{"code":"fatal_error"},"diagnostics":{"sapi":"cli","effective_uid":1,"effective_gid":1,"open_basedir":"x","disable_functions":"x","allow_url_include":"0","memory_limit":"64M","bootstrap_output_bytes":0}} {}`),
-		"unknown field":   protocolFrame(token, `{"protocol":"wp-panel-inventory","runner_version":"1","inventory_schema_version":1,"ok":false,"error":{"code":"fatal_error","message":"leak"},"diagnostics":{"sapi":"cli","effective_uid":1,"effective_gid":1,"open_basedir":"x","disable_functions":"x","allow_url_include":"0","memory_limit":"64M","bootstrap_output_bytes":0}}`),
-		"bad versions":    protocolFrame(token, `{"protocol":"other","runner_version":"1","inventory_schema_version":1,"ok":false,"error":{"code":"fatal_error"},"diagnostics":{"sapi":"cli","effective_uid":1,"effective_gid":1,"open_basedir":"x","disable_functions":"x","allow_url_include":"0","memory_limit":"64M","bootstrap_output_bytes":0}}`),
-		"success no data": protocolFrame(token, `{"protocol":"wp-panel-inventory","runner_version":"1","inventory_schema_version":1,"ok":true,"diagnostics":{"sapi":"cli","effective_uid":1,"effective_gid":1,"open_basedir":"x","disable_functions":"x","allow_url_include":"0","memory_limit":"64M","bootstrap_output_bytes":0}}`),
+		"trailing json":   protocolFrame(token, `{"protocol":"wp-panel-inventory","runner_version":"1","inventory_schema_version":1,"ok":false,"error":{"code":"fatal_error"},"diagnostics":{"sapi":"cli","effective_uid":1,"effective_gid":1,"open_basedir":"x","disable_functions":"x","allow_url_include":"0","memory_limit":"256M","bootstrap_output_bytes":0}} {}`),
+		"unknown field":   protocolFrame(token, `{"protocol":"wp-panel-inventory","runner_version":"1","inventory_schema_version":1,"ok":false,"error":{"code":"fatal_error","message":"leak"},"diagnostics":{"sapi":"cli","effective_uid":1,"effective_gid":1,"open_basedir":"x","disable_functions":"x","allow_url_include":"0","memory_limit":"256M","bootstrap_output_bytes":0}}`),
+		"bad versions":    protocolFrame(token, `{"protocol":"other","runner_version":"1","inventory_schema_version":1,"ok":false,"error":{"code":"fatal_error"},"diagnostics":{"sapi":"cli","effective_uid":1,"effective_gid":1,"open_basedir":"x","disable_functions":"x","allow_url_include":"0","memory_limit":"256M","bootstrap_output_bytes":0}}`),
+		"success no data": protocolFrame(token, `{"protocol":"wp-panel-inventory","runner_version":"1","inventory_schema_version":1,"ok":true,"diagnostics":{"sapi":"cli","effective_uid":1,"effective_gid":1,"open_basedir":"x","disable_functions":"x","allow_url_include":"0","memory_limit":"256M","bootstrap_output_bytes":0}}`),
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -191,7 +223,7 @@ func TestWPInventoryCollectUsesFixedArgsAndMinimalEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(audit)
-	for _, want := range []string{"-u wp_test --", "-d open_basedir=" + openBase, "-d disable_functions=" + sitePHPDisabledFunctions(), "-d allow_url_include=0", "-d memory_limit=64M", "PARENT_SECRET=unset"} {
+	for _, want := range []string{"-u wp_test --", "-d open_basedir=" + openBase, "-d disable_functions=" + sitePHPDisabledFunctions(), "-d allow_url_include=0", "-d memory_limit=256M", "PARENT_SECRET=unset"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("audit missing %q:\n%s", want, text)
 		}
@@ -336,7 +368,7 @@ func writeConcurrentProtocolWrapper(t *testing.T, wrapperPath string, uid, gid i
 }
 
 func validSuccessEnvelopeBody(uid, gid int, openBase string) string {
-	return fmt.Sprintf(`{"protocol":"%s","runner_version":"%s","inventory_schema_version":%d,"ok":true,"data":{"wordpress":{"version":"7.0","locale":"en_US","multisite":false},"plugins":[],"themes":[],"current_theme":null,"updates":{"core":{"transient_present":false,"last_checked":0,"version_checked":"","items":[]},"plugins":{"transient_present":false,"last_checked":0,"items":[]},"themes":{"transient_present":false,"last_checked":0,"items":[]}}},"diagnostics":{"sapi":"cli","effective_uid":%d,"effective_gid":%d,"open_basedir":"%s","disable_functions":"%s","allow_url_include":"0","memory_limit":"64M","bootstrap_output_bytes":0}}`, wpInventoryProtocol, wpInventoryRunnerVersion, wpInventorySchemaVersion, uid, gid, openBase, sitePHPDisabledFunctions())
+	return fmt.Sprintf(`{"protocol":"%s","runner_version":"%s","inventory_schema_version":%d,"ok":true,"data":{"wordpress":{"version":"7.0","locale":"en_US","multisite":false},"plugins":[],"themes":[],"current_theme":null,"updates":{"core":{"transient_present":false,"last_checked":0,"version_checked":"","items":[]},"plugins":{"transient_present":false,"last_checked":0,"items":[]},"themes":{"transient_present":false,"last_checked":0,"items":[]}}},"diagnostics":{"sapi":"cli","effective_uid":%d,"effective_gid":%d,"open_basedir":"%s","disable_functions":"%s","allow_url_include":"0","memory_limit":"256M","bootstrap_output_bytes":0}}`, wpInventoryProtocol, wpInventoryRunnerVersion, wpInventorySchemaVersion, uid, gid, openBase, sitePHPDisabledFunctions())
 }
 
 func validInventoryEnvelopeJSON(t *testing.T, token string, uid, gid int, openBase string) []byte {
@@ -345,7 +377,7 @@ func validInventoryEnvelopeJSON(t *testing.T, token string, uid, gid int, openBa
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := fmt.Sprintf(`{"protocol":"%s","runner_version":"%s","inventory_schema_version":%d,"ok":true,"data":%s,"diagnostics":{"sapi":"cli","effective_uid":%d,"effective_gid":%d,"open_basedir":"%s","disable_functions":"%s","allow_url_include":"0","memory_limit":"64M","bootstrap_output_bytes":0}}`, wpInventoryProtocol, wpInventoryRunnerVersion, wpInventorySchemaVersion, inv, uid, gid, openBase, sitePHPDisabledFunctions())
+	body := fmt.Sprintf(`{"protocol":"%s","runner_version":"%s","inventory_schema_version":%d,"ok":true,"data":%s,"diagnostics":{"sapi":"cli","effective_uid":%d,"effective_gid":%d,"open_basedir":"%s","disable_functions":"%s","allow_url_include":"0","memory_limit":"256M","bootstrap_output_bytes":0}}`, wpInventoryProtocol, wpInventoryRunnerVersion, wpInventorySchemaVersion, inv, uid, gid, openBase, sitePHPDisabledFunctions())
 	return protocolFrame(token, body)
 }
 

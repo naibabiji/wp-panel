@@ -50,7 +50,7 @@ function wp_panel_inventory_emit(array $envelope): void
     $envelope['diagnostics'] = wp_panel_inventory_diagnostics();
     $encoded = json_encode($envelope, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     if (!is_string($encoded)) {
-        $encoded = '{"protocol":"wp-panel-inventory","runner_version":"1","inventory_schema_version":1,"ok":false,"error":{"code":"json_encode_failed"},"diagnostics":{"sapi":"cli","effective_uid":-1,"effective_gid":-1,"open_basedir":"","disable_functions":"","allow_url_include":"0","memory_limit":"64M","bootstrap_output_bytes":0}}';
+        $encoded = '{"protocol":"wp-panel-inventory","runner_version":"1","inventory_schema_version":1,"ok":false,"error":{"code":"json_encode_failed"},"diagnostics":{"sapi":"cli","effective_uid":-1,"effective_gid":-1,"open_basedir":"","disable_functions":"","allow_url_include":"0","memory_limit":"256M","bootstrap_output_bytes":0}}';
     }
     $token = (string) getenv('WP_PANEL_RUNNER_TOKEN');
     $frame = 'WP_PANEL_INVENTORY_BEGIN ' . $token . "\n" . $encoded . "\n" . 'WP_PANEL_INVENTORY_END ' . $token . "\n";
