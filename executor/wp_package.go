@@ -20,10 +20,12 @@ import (
 )
 
 const (
-	wordpressLatestURL  = "https://wordpress.org/latest.zip"
-	wpUploadMaxBytes    = int64(100 << 20)
-	wpDownloadMaxBytes  = int64(200 << 20)
-	wpValidationTimeout = 30 * time.Second
+	wordpressLatestURL           = "https://wordpress.org/latest.zip"
+	wpUploadMaxBytes             = int64(100 << 20)
+	wpDownloadMaxBytes           = int64(200 << 20)
+	wpValidationTimeout          = 30 * time.Second
+	wpMetadataHTTPTimeout        = 45 * time.Second
+	wpPackageDownloadHTTPTimeout = 30 * time.Minute
 )
 
 type WPPackageReport struct {
@@ -46,27 +48,35 @@ func NewWPPackageService(target string, client *http.Client) (*WPPackageService,
 		return nil, archiveError("package_publish_failed", nil)
 	}
 	if client == nil {
-		client = defaultWPPackageHTTPClient()
+		client = defaultWPPackageDownloadHTTPClient()
 	} else {
 		transport := client.Transport
 		if transport == nil {
 			transport = http.DefaultTransport
 		}
-		client = restrictedWPPackageHTTPClient(transport)
+		client = restrictedWPPackageHTTPClient(transport, wpPackageDownloadHTTPTimeout)
 	}
 	return &WPPackageService{target: filepath.Clean(target), client: client}, nil
 }
 
 func defaultWPPackageHTTPClient() *http.Client {
+	return defaultWPLimitedHTTPClient(wpMetadataHTTPTimeout)
+}
+
+func defaultWPPackageDownloadHTTPClient() *http.Client {
+	return defaultWPLimitedHTTPClient(wpPackageDownloadHTTPTimeout)
+}
+
+func defaultWPLimitedHTTPClient(timeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = (&netDialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	transport.TLSHandshakeTimeout = 10 * time.Second
 	transport.ResponseHeaderTimeout = 15 * time.Second
-	return restrictedWPPackageHTTPClient(transport)
+	return restrictedWPPackageHTTPClient(transport, timeout)
 }
 
-func restrictedWPPackageHTTPClient(transport http.RoundTripper) *http.Client {
-	client := &http.Client{Transport: transport, Timeout: 45 * time.Second}
+func restrictedWPPackageHTTPClient(transport http.RoundTripper, timeout time.Duration) *http.Client {
+	client := &http.Client{Transport: transport, Timeout: timeout}
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 || !allowedWordPressURL(req.URL) {
 			return errors.New("redirect rejected")

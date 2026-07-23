@@ -776,6 +776,7 @@ func TestWPInventoryPanelAPIContract(t *testing.T) {
 		[]byte(`target_version: preview.target_version`),
 		[]byte(`confirm: true`),
 		[]byte(`pluginUpdate.preview?.current_theme === true && !pluginUpdate.riskAccepted`),
+		[]byte(`timeout: 30 * 60 * 1000`),
 		[]byte(`setTimeout(() =>`),
 	} {
 		if !bytes.Contains(panel, required) {

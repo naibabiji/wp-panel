@@ -567,7 +567,7 @@ function wpInventoryPanel() {
                 const response = await api('/websites/' + siteID + '/' + this.componentUpdateAPI() + '/confirm', {
                     method: 'POST',
                     suppressToast: true,
-                    timeout: 120000,
+                    timeout: 30 * 60 * 1000,
                     body
                 });
                 if (generation !== this.requestGeneration || siteID !== this.siteID || componentKey !== this.pluginUpdate.componentKey) return;

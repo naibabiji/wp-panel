@@ -3,6 +3,7 @@ package executor
 import (
 	"archive/zip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -43,6 +44,63 @@ func TestWPCoreUpdatePHPSourceParses(t *testing.T) {
 	}
 	if output, err := exec.Command(php, "-l", source).CombinedOutput(); err != nil {
 		t.Fatalf("php -l: %v: %s", err, output)
+	}
+	if !strings.Contains(wpCoreUpdatePHPSource, "delete_site_transient('update_core')") {
+		t.Fatal("successful core update does not clear the stale core update transient")
+	}
+}
+
+func TestWPCoreUpdatePHPSourceKeepsInputsAcrossBootstrap(t *testing.T) {
+	php, err := exec.LookPath("php")
+	if err != nil {
+		t.Skip("php unavailable")
+	}
+	root := t.TempDir()
+	bootstrap := `<?php
+$action = 'clobbered';
+$root = __DIR__ . '/poison-root';
+$package = '/tmp/clobbered.zip';
+$target = '9.9.9';
+$expected = 'clobbered';
+$token = 'clobbered';
+$sent = true;
+$send = null;
+$wp_version = '7.0.1';
+`
+	if err := os.WriteFile(filepath.Join(root, "wp-load.php"), []byte(bootstrap), 0644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := os.CreateTemp(t.TempDir(), "result-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Close()
+	cmd := exec.Command(php, "-d", "display_errors=0", "-r", wpCoreUpdatePHPSource, "check", root, "", "7.0.1", "")
+	cmd.Env = append(os.Environ(), "WP_PANEL_RUNNER_TOKEN=0123456789abcdef0123456789abcdef")
+	cmd.ExtraFiles = []*os.File{result}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("check failed after bootstrap clobbering: %v output=%s", err, output)
+	}
+	if _, err := result.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	var envelope wpCoreRunnerEnvelope
+	if err := json.NewDecoder(result).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if !envelope.OK || envelope.Version != "7.0.1" || envelope.ErrorCode != "" {
+		t.Fatalf("envelope=%+v", envelope)
+	}
+}
+
+func TestWPCoreUpdatePHPSourceNamespacesBootstrapSensitiveInputs(t *testing.T) {
+	for _, name := range []string{"action", "root", "package", "target", "expected", "token", "sent", "send"} {
+		if strings.Contains(wpCoreUpdatePHPSource, "$"+name) {
+			t.Fatalf("bootstrap-sensitive input $%s is not namespaced", name)
+		}
+		if !strings.Contains(wpCoreUpdatePHPSource, "$wp_panel_"+name) {
+			t.Fatalf("namespaced input $wp_panel_%s is missing", name)
+		}
 	}
 }
 

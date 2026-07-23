@@ -148,7 +148,7 @@ function wpCoreUpdatePanel() {
             try {
                 const response = await api('/websites/' + siteID + '/wp-core-update/confirm', {
                     method: 'POST',
-                    timeout: 120000,
+                    timeout: 30 * 60 * 1000,
                     suppressToast: true,
                     body: { confirmation_token: preview.confirmation_token, target_version: preview.target_version, confirm: true },
                 });

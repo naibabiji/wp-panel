@@ -290,7 +290,7 @@ func defaultWPThemeOfferFetcher(client *http.Client) wpThemeOfferFetcher {
 
 func defaultWPThemePackageDownloader(client *http.Client, artifactRoot string) wpThemePackageDownloader {
 	if client == nil {
-		client = defaultWPPackageHTTPClient()
+		client = defaultWPPackageDownloadHTTPClient()
 	}
 	return func(ctx context.Context, rawURL, targetVersion string) (string, string, error) {
 		u, err := url.Parse(rawURL)

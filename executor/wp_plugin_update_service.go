@@ -327,7 +327,7 @@ func defaultWPPluginOfferFetcher(client *http.Client) wpPluginOfferFetcher {
 
 func defaultWPPluginPackageDownloader(client *http.Client, artifactRoot string) wpPluginPackageDownloader {
 	if client == nil {
-		client = defaultWPPackageHTTPClient()
+		client = defaultWPPackageDownloadHTTPClient()
 	}
 	return func(ctx context.Context, rawURL, targetVersion string) (string, string, error) {
 		u, err := url.Parse(rawURL)

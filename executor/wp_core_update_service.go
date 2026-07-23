@@ -206,7 +206,8 @@ func (s *WPCoreUpdateService) loadCandidate(ctx context.Context, siteID int) (wp
 	if rows.Err() != nil {
 		return c, rows.Err()
 	}
-	if count != 1 || c.targetVersion == "" || c.locale == "" || c.locale != stateLocale {
+	if count != 1 || c.targetVersion == "" || c.locale == "" || c.locale != stateLocale ||
+		compareWPVersions(c.targetVersion, c.currentVersion) <= 0 {
 		return c, ErrWPCoreUpdateConflict
 	}
 	if err := tx.Commit(); err != nil {

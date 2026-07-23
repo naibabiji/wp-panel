@@ -159,6 +159,18 @@ func TestWPPackageServiceDownloadUsesFixedOfficialURL(t *testing.T) {
 	}
 }
 
+func TestWordPressHTTPClientsUseSeparateMetadataAndPackageBudgets(t *testing.T) {
+	if got := defaultWPPackageHTTPClient().Timeout; got != wpMetadataHTTPTimeout {
+		t.Fatalf("metadata timeout = %s, want %s", got, wpMetadataHTTPTimeout)
+	}
+	if got := defaultWPPackageDownloadHTTPClient().Timeout; got != wpPackageDownloadHTTPTimeout {
+		t.Fatalf("package timeout = %s, want %s", got, wpPackageDownloadHTTPTimeout)
+	}
+	if wpPackageDownloadHTTPTimeout <= wpMetadataHTTPTimeout {
+		t.Fatalf("package timeout %s must exceed metadata timeout %s", wpPackageDownloadHTTPTimeout, wpMetadataHTTPTimeout)
+	}
+}
+
 func TestAllowedWordPressURL(t *testing.T) {
 	for raw, want := range map[string]bool{
 		"https://wordpress.org/latest.zip":                     true,
