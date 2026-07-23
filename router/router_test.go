@@ -589,6 +589,7 @@ func TestWPCoreUpdatePanelIsWiredAndUsesFixedAPIContract(t *testing.T) {
 		[]byte(`target_version: preview.target_version`),
 		[]byte(`confirm: true`),
 		[]byte(`confirmModal(`),
+		[]byte(`timeout: 30 * 60 * 1000`),
 	} {
 		source := panel
 		if bytes.HasPrefix(required, []byte(`{{template`)) {
