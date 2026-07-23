@@ -18,6 +18,48 @@ import (
 
 var wpFleetTestNow = time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 
+// TestWPFleetOverviewHandlesLegacyDatetimeTextFormats reproduces a real
+// production failure: websites.expires_at is written elsewhere in the
+// codebase as a bare date ("2006-01-02", handlers/website.go UpdateExpiry),
+// and ssl_expires_at is written by passing a raw time.Time to db.Exec
+// (executor/ssl.go), which the sqlite driver stores using Go's default
+// time.Time.String() format ("2006-01-02 15:04:05 +0000 UTC") rather than
+// the wp-inventory subsystem's own "2006-01-02 15:04:05" layout. The fleet
+// overview query used to CAST these columns to TEXT and hand-parse them
+// with a layout that matches neither format, failing the whole request for
+// every site on any server with pre-existing (non wp-inventory-managed)
+// website records.
+func TestWPFleetOverviewHandlesLegacyDatetimeTextFormats(t *testing.T) {
+	service, db := newWPFleetOverviewTest(t)
+	if _, err := db.Exec(`INSERT INTO websites
+		(id, name, domain, status, system_user, web_root, log_dir, db_name, db_user,
+		 php_pool_path, nginx_conf_path, site_type, ssl_enabled, ssl_expires_at, expires_at,
+		 monitoring_enabled, file_lock_enabled, fastcgi_cache_enabled, access_log_mode, created_at)
+		VALUES (1, 'legacy.example.com', 'legacy.example.com', 'active', 'wp_test', '/tmp/www', '/tmp/log',
+		 'db', 'user', '/tmp/php.conf', '/tmp/nginx.conf', 'wordpress', 1,
+		 '2026-08-24 10:43:42 +0000 UTC', '2027-05-05', 1, 1, 1, 'full', '2026-05-26 11:42:13')`); err != nil {
+		t.Fatalf("insert legacy-format site: %v", err)
+	}
+
+	overview, err := service.Overview(context.Background())
+	if err != nil {
+		t.Fatalf("Overview() with legacy datetime text formats: %v", err)
+	}
+	if len(overview.Sites) != 1 {
+		t.Fatalf("sites=%+v", overview.Sites)
+	}
+	site := overview.Sites[0]
+	if site.CreatedAt.Format("2006-01-02") != "2026-05-26" {
+		t.Fatalf("created_at=%v", site.CreatedAt)
+	}
+	if site.ExpiresAt == nil || site.ExpiresAt.Format("2006-01-02") != "2027-05-05" {
+		t.Fatalf("expires_at=%v", site.ExpiresAt)
+	}
+	if site.SSLExpiresAt == nil || site.SSLExpiresAt.Format("2006-01-02 15:04:05") != "2026-08-24 10:43:42" {
+		t.Fatalf("ssl_expires_at=%v", site.SSLExpiresAt)
+	}
+}
+
 func TestWPFleetOverviewEmptyAndMixedSites(t *testing.T) {
 	service, db := newWPFleetOverviewTest(t)
 	ctx := context.Background()

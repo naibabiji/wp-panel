@@ -16,8 +16,8 @@ const (
 
 const wpFleetOverviewSQL = `SELECT
 	w.id, w.name, w.domain, w.site_type, w.status,
-	CAST(w.created_at AS TEXT), COALESCE(CAST(w.expires_at AS TEXT), ''),
-	w.ssl_enabled, COALESCE(CAST(w.ssl_expires_at AS TEXT), ''),
+	w.created_at, w.expires_at,
+	w.ssl_enabled, w.ssl_expires_at,
 	CASE WHEN TRIM(COALESCE(w.ssl_last_error, '')) <> '' THEN 1 ELSE 0 END,
 	w.monitoring_enabled, COALESCE(bs.enabled, 0), w.file_lock_enabled,
 	w.fastcgi_cache_enabled, w.access_log_mode,
@@ -49,10 +49,10 @@ type wpFleetOverviewRow struct {
 	domain               string
 	siteType             string
 	status               string
-	createdAt            string
-	expiresAt            string
+	createdAt            time.Time
+	expiresAt            sql.NullTime
 	sslEnabled           bool
-	sslExpiresAt         string
+	sslExpiresAt         sql.NullTime
 	sslHasError          bool
 	monitoringEnabled    bool
 	backupEnabled        bool
@@ -144,6 +144,18 @@ func scanWPFleetOverviewRow(rows *sql.Rows) (wpFleetOverviewRow, error) {
 	return row, err
 }
 
+// nullTimeToPointer converts a scanned nullable DATETIME column into the
+// *time.Time shape the fleet overview models use, without any string
+// formatting/parsing round trip — the sqlite driver already handles the
+// underlying storage format for us.
+func nullTimeToPointer(v sql.NullTime) *time.Time {
+	if !v.Valid {
+		return nil
+	}
+	t := v.Time.UTC()
+	return &t
+}
+
 func wpFleetSiteModel(row wpFleetOverviewRow, generatedAt time.Time) (models.WPFleetSite, error) {
 	if row.id <= 0 || row.domain == "" {
 		return models.WPFleetSite{}, errors.New("invalid wordpress fleet site identity")
@@ -164,22 +176,17 @@ func wpFleetSiteModel(row wpFleetOverviewRow, generatedAt time.Time) (models.WPF
 	default:
 		return models.WPFleetSite{}, errors.New("invalid wordpress fleet access log mode")
 	}
-	createdAt, err := parseRequiredWPInventoryTime(row.createdAt)
-	if err != nil {
-		return models.WPFleetSite{}, err
+	if row.createdAt.IsZero() {
+		return models.WPFleetSite{}, errors.New("invalid wordpress fleet created_at")
 	}
-	expiresAt, err := parseOptionalWPInventoryTime(row.expiresAt)
-	if err != nil {
-		return models.WPFleetSite{}, err
-	}
-	sslExpiresAt, err := parseOptionalWPInventoryTime(row.sslExpiresAt)
-	if err != nil {
-		return models.WPFleetSite{}, err
-	}
+	createdAt := row.createdAt.UTC()
+	expiresAt := nullTimeToPointer(row.expiresAt)
+	sslExpiresAt := nullTimeToPointer(row.sslExpiresAt)
 	sslState := wpFleetSSLState(row.sslEnabled, row.sslHasError, sslExpiresAt, generatedAt)
 
 	var inventory *models.WPFleetInventory
 	if row.siteType == "wordpress" {
+		var err error
 		inventory, err = wpFleetInventoryModel(row, generatedAt)
 		if err != nil {
 			return models.WPFleetSite{}, err
