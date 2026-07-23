@@ -84,9 +84,10 @@
                         <button @click="selectTab('plugins')" :class="activeTab === 'plugins' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_inventory.tab_plugins"}}</button>
                         <button @click="selectTab('themes')" :class="activeTab === 'themes' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_inventory.tab_themes"}}</button>
                         <button @click="selectTab('updates')" :class="activeTab === 'updates' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_inventory.tab_updates"}}</button>
+                        <button @click="selectTab('backups')" :class="activeTab === 'backups' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_update_backup.tab"}}</button>
                     </div>
 
-                    <div class="mt-4 flex flex-col gap-2 sm:flex-row">
+                    <div x-show="activeTab !== 'backups'" class="mt-4 flex flex-col gap-2 sm:flex-row">
                         <input type="search" x-model="currentPage().search" @keydown.enter.prevent="applySearch()" :disabled="currentPage().loading" class="input-field min-w-0 flex-1" placeholder="{{t .Lang "wp_inventory.search_placeholder"}}">
                         <button @click="applySearch()" :disabled="currentPage().loading" class="btn-primary">{{t .Lang "wp_inventory.search"}}</button>
                         <button @click="clearSearch()" :disabled="currentPage().loading || (!currentPage().search && !currentPage().appliedSearch)" class="btn-secondary">{{t .Lang "wp_inventory.clear_search"}}</button>
@@ -95,7 +96,7 @@
                     <div x-show="currentPage().error" class="mt-3 rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200" x-text="currentPage().error"></div>
                     <div x-show="currentPage().loading" class="py-6 text-center text-sm text-gray-400">{{t .Lang "wp_inventory.loading"}}</div>
 
-                    <div x-show="activeTab !== 'updates' && !currentPage().loading" class="mt-4 overflow-x-auto">
+                    <div x-show="activeTab !== 'updates' && activeTab !== 'backups' && !currentPage().loading" class="mt-4 overflow-x-auto">
                         <table class="w-full text-sm">
                             <thead><tr><th class="table-header">{{t .Lang "wp_inventory.column_name"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_key"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_version"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_status"}}</th></tr></thead>
                             <tbody>
@@ -139,7 +140,32 @@
                         </table>
                     </div>
 
-                    <div x-show="!currentPage().loading && currentPage().total > currentPage().pageSize" class="mt-4 flex flex-col gap-3 text-sm text-gray-400 sm:flex-row sm:items-center sm:justify-between">
+                    <div x-show="activeTab === 'backups' && !currentPage().loading" class="mt-4">
+                        <p class="mb-3 text-sm text-gray-400">{{t .Lang "wp_update_backup.description"}}</p>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead><tr><th class="table-header">{{t .Lang "wp_update_backup.column_time"}}</th><th class="table-header">{{t .Lang "wp_update_backup.column_component"}}</th><th class="table-header">{{t .Lang "wp_update_backup.column_version"}}</th><th class="table-header">{{t .Lang "wp_update_backup.column_kind"}}</th><th class="table-header">{{t .Lang "wp_update_backup.column_size"}}</th><th class="table-header text-right">{{t .Lang "wp_update_backup.column_action"}}</th></tr></thead>
+                                <tbody>
+                                    <template x-for="backup in currentPage().items" :key="backup.backup_id">
+                                        <tr class="table-row">
+                                            <td class="table-cell whitespace-nowrap" x-text="fmtTime(backup.created_at)"></td>
+                                            <td class="table-cell"><span class="badge-info" x-text="typeLabel(backup.component_type)"></span><div class="mt-1 break-all font-mono text-xs text-gray-400" x-text="backup.component_key"></div></td>
+                                            <td class="table-cell whitespace-nowrap" x-text="backup.current_version + ' → ' + backup.target_version"></td>
+                                            <td class="table-cell" x-text="backupKindText(backup.kind)"></td>
+                                            <td class="table-cell whitespace-nowrap" x-text="formatBytes(backup.file_size)"></td>
+                                            <td class="table-cell text-right">
+                                                <button x-show="backup.restore_allowed" @click="restoreUpdateBackup(backup)" :disabled="currentPage().restoringID !== null" class="btn-danger text-xs" x-text="currentPage().restoringID === backup.backup_id ? t('wp_update_backup.restoring') : t('wp_update_backup.restore')"></button>
+                                                <span x-show="!backup.restore_allowed" class="text-gray-600">—</span>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                    <tr x-show="currentPage().items.length === 0"><td colspan="6" class="table-cell py-8 text-center text-gray-500">{{t .Lang "wp_update_backup.empty"}}</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div x-show="activeTab !== 'backups' && !currentPage().loading && currentPage().total > currentPage().pageSize" class="mt-4 flex flex-col gap-3 text-sm text-gray-400 sm:flex-row sm:items-center sm:justify-between">
                         <span x-text="t('wp_inventory.page_summary', { page: currentPage().page, total: currentPage().total })"></span>
                         <div class="flex gap-2">
                             <button @click="changePage(-1)" :disabled="currentPage().loading || currentPage().page <= 1" class="btn-secondary text-sm">{{t .Lang "wp_inventory.previous"}}</button>
@@ -207,8 +233,8 @@
 
 <script>
 function wpInventoryPanel() {
-    const newPage = () => ({ items: [], total: 0, page: 1, pageSize: 50, search: '', appliedSearch: '', loading: false, error: '', loaded: false });
-    const newPluginUpdate = () => ({ open: false, loading: false, submitting: false, componentType: '', componentKey: '', preview: null, task: null, error: '', riskAccepted: false, databaseBackupMode: 'fresh', preparationController: null, pollStartedAt: 0 });
+    const newPage = () => ({ items: [], total: 0, page: 1, pageSize: 50, search: '', appliedSearch: '', loading: false, error: '', loaded: false, restoringID: null });
+    const newPluginUpdate = () => ({ open: false, loading: false, submitting: false, componentType: '', componentKey: '', preview: null, task: null, error: '', riskAccepted: false, databaseBackupMode: 'fresh', preparationController: null, preparationCancelled: false, pollStartedAt: 0 });
     return {
         siteID: null,
         summary: null,
@@ -216,11 +242,12 @@ function wpInventoryPanel() {
         summaryError: '',
         refreshing: false,
         activeTab: 'plugins',
-        pages: { plugins: newPage(), themes: newPage(), updates: newPage() },
+        pages: { plugins: newPage(), themes: newPage(), updates: newPage(), backups: newPage() },
         pollTimer: null,
         pollStartedAt: 0,
         pluginUpdate: newPluginUpdate(),
         pluginPollTimer: null,
+        backupRestoreTimer: null,
         requestGeneration: 0,
         pagehideHandler: null,
         mount() {
@@ -232,6 +259,7 @@ function wpInventoryPanel() {
             if (this.pluginUpdate.preparationController) this.pluginUpdate.preparationController.abort();
             this.stopPolling();
             this.stopPluginPolling();
+            this.stopBackupRestorePolling();
             this.requestGeneration++;
             if (this.pagehideHandler) window.removeEventListener('pagehide', this.pagehideHandler);
             this.pagehideHandler = null;
@@ -242,6 +270,7 @@ function wpInventoryPanel() {
             if (this.pluginUpdate.preparationController) this.pluginUpdate.preparationController.abort();
             this.stopPolling();
             this.stopPluginPolling();
+            this.stopBackupRestorePolling();
             this.requestGeneration++;
             this.siteID = Number.isInteger(nextID) && nextID > 0 ? nextID : null;
             this.summary = null;
@@ -249,7 +278,7 @@ function wpInventoryPanel() {
             this.summaryError = '';
             this.refreshing = false;
             this.activeTab = 'plugins';
-            this.pages = { plugins: newPage(), themes: newPage(), updates: newPage() };
+            this.pages = { plugins: newPage(), themes: newPage(), updates: newPage(), backups: newPage() };
             this.pluginUpdate = newPluginUpdate();
             if (this.siteID) await this.loadSummary();
         },
@@ -393,7 +422,7 @@ function wpInventoryPanel() {
             return this.pages[this.activeTab];
         },
         selectTab(tab) {
-            if (!['plugins', 'themes', 'updates'].includes(tab) || tab === this.activeTab) return;
+            if (!['plugins', 'themes', 'updates', 'backups'].includes(tab) || tab === this.activeTab) return;
             this.activeTab = tab;
             if (!this.currentPage().loaded) this.loadPage(tab);
         },
@@ -411,6 +440,10 @@ function wpInventoryPanel() {
         async loadPage(tab, requestedPage, requestedSearch) {
             const state = this.pages[tab];
             if (!this.siteID || !state || state.loading || !this.summary?.has_successful_inventory) return;
+            if (tab === 'backups') {
+                await this.loadUpdateBackups();
+                return;
+            }
             const generation = this.requestGeneration;
             const siteID = this.siteID;
             const page = requestedPage || state.page;
@@ -462,6 +495,92 @@ function wpInventoryPanel() {
                 page.loaded = false;
                 page.error = '';
             });
+        },
+        async loadUpdateBackups() {
+            const state = this.pages.backups;
+            if (!this.siteID || state.loading) return;
+            const generation = this.requestGeneration;
+            const siteID = this.siteID;
+            state.loading = true;
+            state.error = '';
+            try {
+                const response = await api('/websites/' + siteID + '/wp-update-backups', { suppressToast: true });
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                if (!Array.isArray(response.data)) throw new Error(t('wp_update_backup.load_failed'));
+                state.items = response.data;
+                state.total = response.data.length;
+                state.loaded = true;
+            } catch (error) {
+                if (generation === this.requestGeneration && siteID === this.siteID) state.error = error.message || t('wp_update_backup.load_failed');
+            } finally {
+                if (generation === this.requestGeneration && siteID === this.siteID) state.loading = false;
+            }
+        },
+        backupKindText(kind) {
+            const keys = {
+                database: 'wp_update_backup.kind_database',
+                core_files: 'wp_update_backup.kind_core_files',
+                plugin_files: 'wp_update_backup.kind_plugin_files',
+                theme_files: 'wp_update_backup.kind_theme_files',
+            };
+            return t(keys[kind] || 'common.none');
+        },
+        async restoreUpdateBackup(backup) {
+            const state = this.pages.backups;
+            if (!this.siteID || state.restoringID !== null || !backup?.restore_allowed) return;
+            const accepted = await confirmModal(t('wp_update_backup.restore_confirm', { time: fmtTime(backup.created_at) }));
+            if (!accepted) return;
+            const generation = this.requestGeneration;
+            const siteID = this.siteID;
+            state.restoringID = backup.backup_id;
+            state.error = '';
+            try {
+                const response = await api('/websites/' + siteID + '/wp-update-backups/' + encodeURIComponent(backup.backup_id) + '/restore', {
+                    method: 'POST', suppressToast: true, body: { confirm: true }
+                });
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                const taskID = response.data?.task_id;
+                if (typeof taskID !== 'string' || taskID === '') throw new Error(t('wp_update_backup.restore_failed'));
+                showToast(t('wp_update_backup.restore_started'), 'success');
+                this.pollUpdateBackupRestore(taskID, generation, siteID);
+            } catch (error) {
+                if (generation === this.requestGeneration && siteID === this.siteID) {
+                    state.error = error.message || t('wp_update_backup.restore_failed');
+                    state.restoringID = null;
+                }
+            }
+        },
+        async pollUpdateBackupRestore(taskID, generation, siteID) {
+            if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+            try {
+                const response = await api('/websites/' + siteID + '/backups/restore-tasks/' + encodeURIComponent(taskID), { suppressToast: true });
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                const status = response.data?.status;
+                if (status === 'waiting' || status === 'running') {
+                    this.backupRestoreTimer = setTimeout(() => {
+                        this.backupRestoreTimer = null;
+                        this.pollUpdateBackupRestore(taskID, generation, siteID);
+                    }, 1500);
+                    return;
+                }
+                this.pages.backups.restoringID = null;
+                if (response.data?.success) {
+                    showToast(t('wp_update_backup.restore_success'), 'success');
+                } else {
+                    this.pages.backups.error = response.data?.message || t('wp_update_backup.restore_task_failed');
+                }
+            } catch (error) {
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                this.pages.backups.error = error.message || t('wp_update_backup.restore_status_failed');
+                this.backupRestoreTimer = setTimeout(() => {
+                    this.backupRestoreTimer = null;
+                    this.pollUpdateBackupRestore(taskID, generation, siteID);
+                }, 3000);
+            }
+        },
+        stopBackupRestorePolling() {
+            if (this.backupRestoreTimer !== null) clearTimeout(this.backupRestoreTimer);
+            this.backupRestoreTimer = null;
         },
         canUpdatePlugin(item) {
             return item?.type === 'plugin' &&
@@ -553,7 +672,9 @@ function wpInventoryPanel() {
             this.pluginUpdate = newPluginUpdate();
         },
         cancelPluginPreparation() {
-            if (this.pluginUpdate.preparationController) this.pluginUpdate.preparationController.abort();
+            if (!this.pluginUpdate.preparationController) return;
+            this.pluginUpdate.preparationCancelled = true;
+            this.pluginUpdate.preparationController.abort();
         },
         async confirmPluginUpdate() {
             const preview = this.pluginUpdate.preview;
@@ -596,6 +717,12 @@ function wpInventoryPanel() {
                 this.startPluginPolling();
             } catch (error) {
                 if (generation !== this.requestGeneration || siteID !== this.siteID || componentKey !== this.pluginUpdate.componentKey) return;
+                if (this.pluginUpdate.preparationCancelled) {
+                    this.stopPluginPolling();
+                    this.pluginUpdate = newPluginUpdate();
+                    showToast(t('common.request_cancelled'), 'warning');
+                    return;
+                }
                 const recovered = await this.loadLatestPluginTask(componentKey, expected);
                 if (recovered) {
                     this.pluginUpdate.preview = null;
@@ -668,7 +795,14 @@ function wpInventoryPanel() {
                     return;
                 }
                 this.stopPluginPolling();
-                if (response.data.status === 'success') this.invalidatePages();
+                if (response.data.status === 'success') {
+                    const updates = this.pages.updates;
+                    updates.items = updates.items.filter(item => !(item.type === this.pluginUpdate.componentType && item.key === componentKey));
+                    updates.total = Math.max(0, updates.total - 1);
+                    this.pages.plugins.loaded = false;
+                    this.pages.themes.loaded = false;
+                    this.pages.backups.loaded = false;
+                }
             } catch (error) {
                 if (generation !== this.requestGeneration || siteID !== this.siteID || componentKey !== this.pluginUpdate.componentKey) return;
                 if (error?.status === 404) {

@@ -124,6 +124,8 @@ func wpCoreUpdateError(c *gin.Context, err error) {
 		status, key = http.StatusNotFound, "wp_core_update.not_found"
 	case errors.Is(err, executor.ErrWPCoreUpdateConflict):
 		status, key = http.StatusConflict, "wp_core_update.conflict"
+	case errors.Is(err, executor.ErrWPCoreUpdateSiteBusy):
+		status, key = http.StatusConflict, "wp_core_update.site_busy_restore"
 	case errors.Is(err, executor.ErrWPCoreUpdateBusy):
 		status, key = http.StatusTooManyRequests, "wp_core_update.busy"
 	case errors.Is(err, executor.ErrWPCoreUpdateUnavailable):

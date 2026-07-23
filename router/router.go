@@ -847,6 +847,19 @@ var i18nKeys = []string{
 	"wp_theme_update.theme",
 	"wp_theme_update.title",
 	"wp_theme_update.tracking",
+	"wp_update_backup.kind_database",
+	"wp_update_backup.kind_core_files",
+	"wp_update_backup.kind_plugin_files",
+	"wp_update_backup.kind_theme_files",
+	"wp_update_backup.load_failed",
+	"wp_update_backup.restore",
+	"wp_update_backup.restore_failed",
+	"wp_update_backup.restoring",
+	"wp_update_backup.restore_confirm",
+	"wp_update_backup.restore_started",
+	"wp_update_backup.restore_success",
+	"wp_update_backup.restore_task_failed",
+	"wp_update_backup.restore_status_failed",
 }
 
 func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version string, configPath string) *gin.Engine {
@@ -980,6 +993,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	wpCoreUpdateHandler := newWPCoreUpdateHandler(db, cfg.Panel.BackupDir)
 	wpPluginUpdateHandler := newWPPluginUpdateHandler(db, cfg.Panel.BackupDir)
 	wpThemeUpdateHandler := newWPThemeUpdateHandler(db, cfg.Panel.BackupDir)
+	wpUpdateBackupHandler := &handlers.WPUpdateBackupHandler{BackupDir: cfg.Panel.BackupDir}
 	protected.GET("/api/websites", websiteHandler.List)
 	protected.GET("/api/wp-fleet/overview", wpFleetOverviewHandler.Overview)
 	protected.POST("/api/websites", websiteHandler.Create)
@@ -1002,6 +1016,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/websites/:id/wp-theme-update/confirm", wpThemeUpdateHandler.Confirm)
 	protected.GET("/api/websites/:id/wp-theme-update/tasks/latest", wpThemeUpdateHandler.LatestTask)
 	protected.GET("/api/websites/:id/wp-theme-update/tasks/:task_id", wpThemeUpdateHandler.Task)
+	protected.GET("/api/websites/:id/wp-update-backups", wpUpdateBackupHandler.List)
+	protected.POST("/api/websites/:id/wp-update-backups/:backup_id/restore", wpUpdateBackupHandler.Restore)
 	protected.DELETE("/api/websites/:id", websiteHandler.Delete)
 	protected.GET("/api/websites/:id/backup-usage", websiteHandler.BackupUsage)
 	protected.PATCH("/api/websites/:id/status", websiteHandler.ToggleStatus)

@@ -23,6 +23,7 @@ var (
 	ErrWPThemeUpdateConflict    = errors.New("theme update request conflict")
 	ErrWPThemeUpdateBusy        = errors.New("theme update service busy")
 	ErrWPThemeUpdateUnavailable = errors.New("theme update upstream unavailable")
+	ErrWPThemeUpdateSiteBusy    = errors.New("theme update blocked by active site restore")
 )
 
 type wpThemeOffer struct {
@@ -130,6 +131,9 @@ func (s *WPThemeUpdateService) Confirm(ctx context.Context, siteID int, username
 		candidate.targetVersion != record.targetVersion || candidate.template != record.template ||
 		candidate.currentTheme != record.currentTheme || wpConfigHasUserFileModsLock(candidate.webRoot) {
 		return models.WPThemeUpdateTask{}, ErrWPThemeUpdateConflict
+	}
+	if SiteOpLocked(siteID) {
+		return models.WPThemeUpdateTask{}, ErrWPThemeUpdateSiteBusy
 	}
 	task, err := s.store.createThemeManualPlan(ctx, WPUpdatePlan{
 		SiteID: siteID, ComponentKey: componentKey, CurrentVersion: record.currentVersion, TargetVersion: record.targetVersion,

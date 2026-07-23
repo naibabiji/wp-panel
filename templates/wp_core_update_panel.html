@@ -56,6 +56,7 @@ function wpCoreUpdatePanel() {
         error: '',
         databaseBackupMode: 'fresh',
         preparationController: null,
+        preparationCancelled: false,
         pollTimer: null,
         generation: 0,
         pagehideHandler: null,
@@ -80,6 +81,7 @@ function wpCoreUpdatePanel() {
             this.siteID = Number.isInteger(next) && next > 0 ? next : null;
             this.preview = null;
             this.databaseBackupMode = 'fresh';
+            this.preparationCancelled = false;
             this.task = null;
             this.error = '';
             if (this.siteID) this.loadLatestTask();
@@ -151,7 +153,9 @@ function wpCoreUpdatePanel() {
             if (!this.confirming) this.preview = null;
         },
         cancelPreparation() {
-            if (this.preparationController) this.preparationController.abort();
+            if (!this.preparationController) return;
+            this.preparationCancelled = true;
+            this.preparationController.abort();
         },
         async confirmUpdate() {
             if (!this.preview || this.confirming || !this.siteID) return;
@@ -163,6 +167,7 @@ function wpCoreUpdatePanel() {
             const submittedAt = Date.now();
             const previousTaskID = this.task?.task_id || '';
             this.confirming = true;
+            this.preparationCancelled = false;
             this.preparationController = new AbortController();
             this.error = '';
             try {
@@ -181,6 +186,13 @@ function wpCoreUpdatePanel() {
                 this.schedulePoll(2000);
             } catch (error) {
                 if (generation === this.generation && siteID === this.siteID) {
+                    if (this.preparationCancelled) {
+                        this.preview = null;
+                        this.task = null;
+                        this.error = '';
+                        showToast(t('common.request_cancelled'), 'warning');
+                        return;
+                    }
                     this.preview = null;
                     const recovered = await this.loadLatestTask({ preview, since: submittedAt, previousTaskID });
                     if (recovered) {

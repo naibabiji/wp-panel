@@ -128,6 +128,8 @@ func wpThemeUpdateError(c *gin.Context, err error) {
 		status, key = http.StatusNotFound, "wp_theme_update.not_found"
 	case errors.Is(err, executor.ErrWPThemeUpdateConflict):
 		status, key = http.StatusConflict, "wp_theme_update.conflict"
+	case errors.Is(err, executor.ErrWPThemeUpdateSiteBusy):
+		status, key = http.StatusConflict, "wp_theme_update.site_busy_restore"
 	case errors.Is(err, executor.ErrWPThemeUpdateBusy):
 		status, key = http.StatusTooManyRequests, "wp_theme_update.busy"
 	case errors.Is(err, executor.ErrWPThemeUpdateUnavailable):

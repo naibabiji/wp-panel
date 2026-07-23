@@ -784,6 +784,11 @@ func TestWPInventoryPanelAPIContract(t *testing.T) {
 		[]byte(`confirm: true`),
 		[]byte(`pluginUpdate.preview?.current_theme === true && !pluginUpdate.riskAccepted`),
 		[]byte(`timeout: 30 * 60 * 1000`),
+		[]byte(`@click="selectTab('backups')"`),
+		[]byte(`'/wp-update-backups'`),
+		[]byte(`'/wp-update-backups/' + encodeURIComponent(backup.backup_id) + '/restore'`),
+		[]byte(`t('wp_update_backup.restore_confirm'`),
+		[]byte(`updates.items = updates.items.filter`),
 		[]byte(`setTimeout(() =>`),
 	} {
 		if !bytes.Contains(panel, required) {

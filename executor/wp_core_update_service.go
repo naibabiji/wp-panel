@@ -25,6 +25,7 @@ var (
 	ErrWPCoreUpdateConflict    = errors.New("core update request conflict")
 	ErrWPCoreUpdateBusy        = errors.New("core update service busy")
 	ErrWPCoreUpdateUnavailable = errors.New("core update upstream unavailable")
+	ErrWPCoreUpdateSiteBusy    = errors.New("core update blocked by active site restore")
 )
 
 var wpStableCoreVersionPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){1,3}$`)
@@ -131,6 +132,9 @@ func (s *WPCoreUpdateService) Confirm(ctx context.Context, siteID int, username,
 	if err != nil || candidate.collectionID != record.collectionID || candidate.currentVersion != record.currentVersion ||
 		candidate.targetVersion != record.targetVersion || candidate.locale != record.locale || wpConfigHasUserFileModsLock(candidate.webRoot) {
 		return models.WPCoreUpdateTask{}, ErrWPCoreUpdateConflict
+	}
+	if SiteOpLocked(siteID) {
+		return models.WPCoreUpdateTask{}, ErrWPCoreUpdateSiteBusy
 	}
 	task, err := s.store.createCoreManualPlan(ctx, WPUpdatePlan{SiteID: siteID, CurrentVersion: record.currentVersion,
 		TargetVersion: record.targetVersion, PackageSource: "wordpress.org", DownloadURL: record.downloadURL,

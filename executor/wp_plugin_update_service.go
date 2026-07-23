@@ -24,6 +24,7 @@ var (
 	ErrWPPluginUpdateConflict    = errors.New("plugin update request conflict")
 	ErrWPPluginUpdateBusy        = errors.New("plugin update service busy")
 	ErrWPPluginUpdateUnavailable = errors.New("plugin update upstream unavailable")
+	ErrWPPluginUpdateSiteBusy    = errors.New("plugin update blocked by active site restore")
 )
 
 type wpPluginOffer struct {
@@ -130,6 +131,9 @@ func (s *WPPluginUpdateService) Confirm(ctx context.Context, siteID int, usernam
 	if err != nil || candidate.collectionID != record.collectionID || candidate.currentVersion != record.currentVersion ||
 		candidate.targetVersion != record.targetVersion || wpConfigHasUserFileModsLock(candidate.webRoot) {
 		return models.WPPluginUpdateTask{}, ErrWPPluginUpdateConflict
+	}
+	if SiteOpLocked(siteID) {
+		return models.WPPluginUpdateTask{}, ErrWPPluginUpdateSiteBusy
 	}
 	task, err := s.store.createPluginManualPlan(ctx, WPUpdatePlan{
 		SiteID: siteID, ComponentKey: componentKey, CurrentVersion: record.currentVersion, TargetVersion: record.targetVersion,

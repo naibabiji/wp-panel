@@ -75,13 +75,36 @@ func executeRestoreBackup(task *Task) TaskResult {
 	}
 
 	site := payload.Site
+	if payload.UpdateBackupPath != "" && site != nil {
+		defer ReleaseSiteOpLock(site.ID)
+	}
 	dbPass := readMariaDBPassword()
 	if dbPass == "" {
 		return TaskResult{Success: false, Message: "无法读取 MariaDB root 密码"}
 	}
 
 	var filePath string
-	if payload.FilePath != "" {
+	if payload.UpdateBackupPath != "" {
+		cfg := config.AppConfig
+		if cfg == nil || strings.TrimSpace(cfg.Panel.BackupDir) == "" ||
+			!wpUpdateSHA256Pattern.MatchString(payload.ExpectedSHA256) {
+			return TaskResult{Success: false, Message: "恢复失败: 更新备份参数不合法"}
+		}
+		artifactRoot := filepath.Join(filepath.Clean(cfg.Panel.BackupDir), "wp-updates")
+		cleanPath := filepath.Clean(payload.UpdateBackupPath)
+		if !filepath.IsAbs(cleanPath) || !pathWithin(artifactRoot, cleanPath, false) {
+			return TaskResult{Success: false, Message: "恢复失败: 更新备份路径不合法"}
+		}
+		info, err := os.Lstat(cleanPath)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return TaskResult{Success: false, Message: "恢复失败: 更新备份文件不可用"}
+		}
+		actual, _, err := hashRegularFile(cleanPath)
+		if err != nil || actual != payload.ExpectedSHA256 {
+			return TaskResult{Success: false, Message: "恢复失败: 更新备份校验失败"}
+		}
+		filePath = cleanPath
+	} else if payload.FilePath != "" {
 		cleanPath := filepath.Clean(payload.FilePath)
 		if !strings.HasPrefix(cleanPath, "/tmp/") {
 			return TaskResult{Success: false, Message: "恢复失败: 文件路径不合法"}

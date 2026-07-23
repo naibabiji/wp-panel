@@ -151,8 +151,10 @@ type CreateBackupPayload struct {
 }
 
 type RestoreBackupPayload struct {
-	Site            *models.Website `json:"-"`
-	Filename        string          `json:"filename"`
-	FilePath        string          `json:"file_path"`
-	RemoveFileAfter bool            `json:"remove_file_after"`
+	Site             *models.Website `json:"-"`
+	Filename         string          `json:"filename"`
+	FilePath         string          `json:"file_path"`
+	UpdateBackupPath string          `json:"-"`
+	ExpectedSHA256   string          `json:"-"`
+	RemoveFileAfter  bool            `json:"remove_file_after"`
 }

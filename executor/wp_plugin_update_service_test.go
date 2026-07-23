@@ -50,6 +50,48 @@ func TestWPPluginUpdateServicePreviewAndConfirmFixedCandidate(t *testing.T) {
 	}
 }
 
+func TestWPPluginUpdateServiceConfirmBlockedByActiveSiteRestore(t *testing.T) {
+	artifacts, store, siteID := newWPPluginUpdateServiceFixture(t)
+	now := time.Now().UTC()
+	if _, err := store.db.Exec(`UPDATE site_wp_inventory_state SET last_success_at=? WHERE site_id=?`, wpUpdateDBTime(now), siteID); err != nil {
+		t.Fatal(err)
+	}
+	source := writePluginPackageFixture(t, "sample", "sample.php", "1.1.0")
+	digest, _, err := hashRegularFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &WPPluginUpdateService{
+		db: store.db, store: store, artifacts: artifacts, confirmations: newWPPluginConfirmationStore(),
+		fetchOffer: func(context.Context, string) (wpPluginOffer, error) {
+			return wpPluginOffer{Slug: "sample", Version: "1.1.0", DownloadURL: "https://downloads.wordpress.org/plugin/sample.1.1.0.zip"}, nil
+		},
+		download: func(context.Context, string, string) (string, string, error) { return source, digest, nil },
+		now:      func() time.Time { return now },
+	}
+	preview, err := service.Preview(context.Background(), siteID, "admin", "sample/sample.php")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !TryAcquireSiteOpLock(siteID, "wp_update_restore") {
+		t.Fatal("test setup: expected to acquire site lock")
+	}
+	t.Cleanup(func() { ReleaseSiteOpLock(siteID) })
+	if _, err := service.Confirm(context.Background(), siteID, "admin", "sample/sample.php", preview.ConfirmationToken, "1.1.0", "fresh"); !errors.Is(err, ErrWPPluginUpdateSiteBusy) {
+		t.Fatalf("confirm while site locked for restore error=%v", err)
+	}
+
+	ReleaseSiteOpLock(siteID)
+	preview, err = service.Preview(context.Background(), siteID, "admin", "sample/sample.php")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Confirm(context.Background(), siteID, "admin", "sample/sample.php", preview.ConfirmationToken, "1.1.0", "fresh"); err != nil {
+		t.Fatalf("confirm after lock released should succeed: %v", err)
+	}
+}
+
 func TestWPPluginUpdateServiceTaskModelIsSiteScopedAndSecretFree(t *testing.T) {
 	artifacts, store, siteID := newWPPluginUpdateServiceFixture(t)
 	task, err := store.createPluginManualPlan(context.Background(), WPUpdatePlan{
