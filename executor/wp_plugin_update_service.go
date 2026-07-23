@@ -80,9 +80,13 @@ func (s *WPPluginUpdateService) Preview(ctx context.Context, siteID int, usernam
 	}
 	candidate, err := s.loadCandidate(ctx, siteID, componentKey)
 	if err != nil {
+		if errors.Is(err, ErrWPPluginUpdateConflict) {
+			log.Printf("插件更新预览冲突 site=%d domain=%s component=%s: 候选加载返回冲突（站点状态/库存过期/多站点/版本不一致）", siteID, candidate.domain, componentKey)
+		}
 		return models.WPPluginUpdatePreview{}, err
 	}
 	if wpConfigHasUserFileModsLock(candidate.webRoot) {
+		log.Printf("插件更新预览冲突 site=%d domain=%s component=%s: 检测到 wp-config 用户文件修改锁", siteID, candidate.domain, componentKey)
 		return models.WPPluginUpdatePreview{}, ErrWPPluginUpdateConflict
 	}
 	slug := componentSlug(componentKey)
@@ -99,6 +103,9 @@ func (s *WPPluginUpdateService) Preview(ctx context.Context, siteID int, usernam
 	}
 	if offer.Slug != slug || offer.Version != candidate.targetVersion ||
 		!validWPPluginDownloadURL(offer.DownloadURL, slug, candidate.targetVersion) {
+		log.Printf("插件更新预览冲突 site=%d domain=%s component=%s: offer(slug=%q version=%q url=%q) 与候选(target=%q slug=%q) 不匹配；downloadURLValid=%v",
+			siteID, candidate.domain, componentKey, offer.Slug, offer.Version, offer.DownloadURL, candidate.targetVersion, slug,
+			validWPPluginDownloadURL(offer.DownloadURL, slug, candidate.targetVersion))
 		return models.WPPluginUpdatePreview{}, ErrWPPluginUpdateConflict
 	}
 	now := s.now().UTC()
@@ -236,11 +243,14 @@ func (s *WPPluginUpdateService) loadCandidate(ctx context.Context, siteID int, c
 	}
 	parsedSuccess, err := parseRequiredWPInventoryTime(lastSuccess)
 	if err != nil {
+		log.Printf("插件更新候选冲突 site=%d domain=%s: 库存成功时间解析失败 last_success=%q: %v", siteID, c.domain, lastSuccess, err)
 		return c, ErrWPPluginUpdateConflict
 	}
 	c.lastSuccess = parsedSuccess
 	if siteStatus != "active" || siteType != "wordpress" || inventoryStatus != "complete" || multisite != 0 ||
 		c.collectionID == "" || blocked != 0 || !filepath.IsAbs(c.webRoot) || sTimeStale(c.lastSuccess, s.now().UTC()) {
+		log.Printf("插件更新候选冲突 site=%d domain=%s: 站点/库存状态不满足 siteStatus=%q siteType=%q inventoryStatus=%q multisite=%d blocked=%d stale=%v lastSuccess=%q",
+			siteID, c.domain, siteStatus, siteType, inventoryStatus, multisite, blocked, sTimeStale(c.lastSuccess, s.now().UTC()), lastSuccess)
 		return c, ErrWPPluginUpdateConflict
 	}
 	c.componentKey = componentKey
@@ -269,6 +279,8 @@ func (s *WPPluginUpdateService) loadCandidate(ctx context.Context, siteID int, c
 	}
 	if count != 1 || c.name == "" || !wpComponentVersionPattern.MatchString(c.currentVersion) ||
 		!wpComponentVersionPattern.MatchString(c.targetVersion) || c.currentVersion == c.targetVersion {
+		log.Printf("插件更新候选冲突 site=%d domain=%s component=%s: 组件行异常 count=%d name=%q current=%q target=%q",
+			siteID, c.domain, componentKey, count, c.name, c.currentVersion, c.targetVersion)
 		return c, ErrWPPluginUpdateConflict
 	}
 	if err := tx.Commit(); err != nil {

@@ -147,11 +147,12 @@ func (r *wpUpdateOfferRunner) run(ctx context.Context, siteID int, webRoot, comp
 	if filepath.Dir(runtimeDir) != filepath.Clean(wpOfferRuntimeRoot) || os.Mkdir(runtimeDir, 0710) != nil {
 		return wpUpdateOfferEnvelope{}, errWPOfferUnavailable
 	}
-	keep := false
+	// One-shot runner: the result is read into memory below, so the runtime
+	// directory (including the result file) must always be removed afterwards.
+	// There is no session/Close or reaper for this path, so keeping it on any
+	// branch would leak a directory per Preview request.
 	defer func() {
-		if !keep {
-			_ = os.RemoveAll(runtimeDir)
-		}
+		_ = os.RemoveAll(runtimeDir)
 	}()
 	if err := os.Chown(runtimeDir, r.ownerUID, gid); err != nil {
 		return wpUpdateOfferEnvelope{}, errWPOfferUnavailable
@@ -183,7 +184,6 @@ func (r *wpUpdateOfferRunner) run(ctx context.Context, siteID int, webRoot, comp
 	if readErr != nil {
 		return wpUpdateOfferEnvelope{}, errWPOfferUnavailable
 	}
-	keep = true
 	return env, nil
 }
 

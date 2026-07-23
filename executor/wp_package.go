@@ -353,11 +353,37 @@ func allowedWPUpdatePackageURL(u *url.URL) bool {
 	return allowedWordPressURL(u) || allowedWPUpdateExternalURL(u)
 }
 
+// wpPluginUpdateDialContext validates the destination IP at connection time,
+// preventing DNS rebinding attacks that could bypass the pre-flight host/URL
+// checks. A vendor-controlled download_url could resolve to a public IP during
+// the pre-flight check and to an internal address (e.g. the cloud metadata
+// endpoint 169.254.169.254) at dial time; checking here on every connection,
+// including each redirect, closes that TOCTOU window. This mirrors the
+// safeWebhookClient pattern in executor/webhook.go.
+func wpPluginUpdateDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return nil, err
+	}
+	for _, ip := range ips {
+		if isBlockedIP(ip) {
+			return nil, fmt.Errorf("wp update download: 目标 IP 被禁止: %s", ip.String())
+		}
+	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	return dialer.DialContext(ctx, network, addr)
+}
+
 // wpPluginUpdateDownloadClient is the HTTP client used to download plugin/theme
-// packages. Its redirect policy accepts WordPress.org and vendor external URLs.
+// packages. Its redirect policy accepts WordPress.org and vendor external URLs,
+// and every connection re-validates the resolved IP to block DNS rebinding.
 func wpPluginUpdateDownloadClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.DialContext = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	transport.DialContext = wpPluginUpdateDialContext
 	transport.TLSHandshakeTimeout = 10 * time.Second
 	transport.ResponseHeaderTimeout = 15 * time.Second
 	client := &http.Client{Transport: transport, Timeout: wpPackageDownloadHTTPTimeout}

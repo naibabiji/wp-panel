@@ -49,6 +49,29 @@ func TestValidateWordPressPackageRejectsExtraRoot(t *testing.T) {
 	}
 }
 
+func TestWPPluginUpdateDialContextRejectsBlockedIPs(t *testing.T) {
+	// DNS-rebinding fix: the destination IP must be validated at dial time, so
+	// blocked addresses are rejected here (before any connection) regardless of
+	// what the pre-flight URL check saw earlier.
+	blocked := []string{
+		"127.0.0.1:443",       // loopback
+		"[::1]:443",           // loopback IPv6
+		"10.0.0.5:443",        // private
+		"192.168.1.1:443",     // private
+		"169.254.169.254:443", // link-local / cloud metadata
+		"0.0.0.0:443",         // unspecified
+	}
+	for _, addr := range blocked {
+		conn, err := wpPluginUpdateDialContext(context.Background(), "tcp", addr)
+		if err == nil {
+			if conn != nil {
+				_ = conn.Close()
+			}
+			t.Fatalf("expected blocked address %s to be rejected at dial time", addr)
+		}
+	}
+}
+
 func TestParseWordPressVersionFile(t *testing.T) {
 	for _, test := range []struct {
 		name        string
