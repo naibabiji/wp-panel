@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"time"
 )
@@ -87,6 +88,13 @@ func (e *wpCoreUpdateExecutor) Execute(ctx context.Context, taskID, owner string
 	}
 	if err := e.store.markSuccess(ctx, taskID, owner, e.now().UTC()); err != nil {
 		return err
+	}
+	// Reflect the new version in cached inventory so the next "check core
+	// update" does not re-offer the version we just installed. This is
+	// best-effort: the update already succeeded, so a refresh failure must
+	// not turn a successful run into a failure.
+	if refreshErr := e.store.refreshCoreInventoryAfterUpdate(ctx, execution.Task.SiteID, execution.Task.TargetVersion, e.now().UTC()); refreshErr != nil {
+		log.Printf("核心更新成功后刷新库存失败 site=%d task=%s: %v", execution.Task.SiteID, taskID, refreshErr)
 	}
 	return nil
 }

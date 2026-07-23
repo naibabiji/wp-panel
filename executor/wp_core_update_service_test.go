@@ -59,7 +59,7 @@ func TestWPCoreUpdateServicePreviewReportsUpToDateWithoutError(t *testing.T) {
 	}
 }
 
-func TestWPCoreUpdateServiceRejectsNonNewerInventoryCandidate(t *testing.T) {
+func TestWPCoreUpdateServiceReportsUpToDateForNonNewerCandidate(t *testing.T) {
 	for _, target := range []string{"7.0.1", "6.9.9"} {
 		t.Run(target, func(t *testing.T) {
 			store, siteID := newWPUpdateStoreTest(t)
@@ -72,8 +72,12 @@ func TestWPCoreUpdateServiceRejectsNonNewerInventoryCandidate(t *testing.T) {
 				t.Fatal(err)
 			}
 			service := &WPCoreUpdateService{db: store.db, store: store, now: func() time.Time { return now }}
-			if _, err := service.loadCandidate(context.Background(), siteID); !errors.Is(err, ErrWPCoreUpdateConflict) {
-				t.Fatalf("non-newer candidate %s error=%v", target, err)
+			candidate, err := service.loadCandidate(context.Background(), siteID)
+			if !errors.Is(err, errWPCoreUpdateNoCandidate) {
+				t.Fatalf("non-newer candidate %s error=%v, want errWPCoreUpdateNoCandidate", target, err)
+			}
+			if candidate.currentVersion != "7.0.1" {
+				t.Fatalf("current version = %q, want 7.0.1", candidate.currentVersion)
 			}
 		})
 	}

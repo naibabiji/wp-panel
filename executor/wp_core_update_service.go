@@ -249,8 +249,14 @@ func (s *WPCoreUpdateService) loadCandidate(ctx context.Context, siteID int) (wp
 	if count == 0 {
 		return c, errWPCoreUpdateNoCandidate
 	}
-	if count != 1 || c.targetVersion == "" || c.locale == "" || c.locale != stateLocale ||
-		compareWPVersions(c.targetVersion, c.currentVersion) <= 0 {
+	// A target at or below the installed version is not an error: it means the
+	// cached candidate is already satisfied (e.g. the site was rescanned or
+	// updated out-of-band after the candidate was stored). Treat it as "no
+	// update available" rather than a scary conflict that forces a recheck.
+	if compareWPVersions(c.targetVersion, c.currentVersion) <= 0 {
+		return c, errWPCoreUpdateNoCandidate
+	}
+	if count != 1 || c.targetVersion == "" || c.locale == "" || c.locale != stateLocale {
 		return c, ErrWPCoreUpdateConflict
 	}
 	if err := tx.Commit(); err != nil {

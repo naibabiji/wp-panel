@@ -693,6 +693,31 @@ func (s *wpUpdateStore) markSuccess(ctx context.Context, id, owner string, now t
 	return s.finishOwned(ctx, id, owner, wpUpdateSuccess, "complete", "", false, now)
 }
 
+// refreshCoreInventoryAfterUpdate records the newly installed WordPress version
+// in the site inventory state and removes the just-applied core upgrade
+// candidate. Without this, a subsequent "check core update" (which reads the
+// stored inventory rather than the live site) would still offer the version
+// that was already installed, because the cached inventory scan can remain
+// stale for up to 12 hours after the update succeeds.
+func (s *wpUpdateStore) refreshCoreInventoryAfterUpdate(ctx context.Context, siteID int, newVersion string, now time.Time) error {
+	if siteID <= 0 || newVersion == "" {
+		return errors.New("invalid core inventory refresh")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stamp := wpUpdateDBTime(now)
+	if _, err := tx.ExecContext(ctx, `UPDATE site_wp_inventory_state SET wordpress_version=?, last_success_at=?, updated_at=? WHERE site_id=?`, newVersion, stamp, stamp, siteID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM site_wp_component_updates WHERE site_id=? AND component_type='core' AND component_key='wordpress' AND response='upgrade'`, siteID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *wpUpdateStore) markFailure(ctx context.Context, id, owner, failureStage string, attention bool, now time.Time) error {
 	if failureStage == "" {
 		return errors.New("failure stage is required")

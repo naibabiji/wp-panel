@@ -229,7 +229,7 @@ func (r *wpCorePHPRunner) execute(ctx context.Context, input wpCoreRunnerInput, 
 	}
 	token := hex.EncodeToString(tokenBytes)
 	openBase := strings.Join([]string{input.root, r.opts.runtimeRoot, "/tmp", "/usr/share/php"}, ":")
-	args := []string{"-u", input.user, "--", input.php, "-d", "open_basedir=" + openBase, "-d", "disable_functions=" + sitePHPDisabledFunctions(), "-d", "allow_url_include=0", "-d", "display_errors=0", "-d", "memory_limit=256M", "-r", wpCoreUpdatePHPSource, action, input.root, packagePath, target, expectedSHA}
+	args := []string{"-u", input.user, "--", input.php, "-d", "open_basedir=" + openBase, "-d", "disable_functions=" + sitePHPDisabledFunctions(), "-d", "allow_url_include=0", "-d", "display_errors=0", "-d", "memory_limit=512M", "-d", "max_execution_time=300", "-d", "max_input_time=300", "-r", wpCoreUpdatePHPSource, action, input.root, packagePath, target, expectedSHA}
 	execCtx, cancel := context.WithTimeout(ctx, 8*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(execCtx, input.runuser, args...)

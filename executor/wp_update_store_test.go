@@ -49,6 +49,46 @@ func TestWPUpdateStorePlanSealClaimAndSuccess(t *testing.T) {
 	}
 }
 
+func TestWPUpdateStoreRefreshCoreInventoryAfterUpdate(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	ctx := context.Background()
+	now := time.Date(2026, 7, 22, 16, 0, 0, 0, time.UTC)
+	// Seed a pending core upgrade candidate and a stale cached version.
+	stamp := wpUpdateDBTime(now)
+	if _, err := store.db.Exec(`INSERT INTO site_wp_component_updates
+		(site_id,component_type,component_key,target_version,response,locale,collection_id,collected_at)
+		VALUES (?, 'core', 'wordpress', '7.0.2', 'upgrade', 'en_US', 'collection-a', ?)`, siteID, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE site_wp_inventory_state SET wordpress_version='7.0.1', last_success_at=? WHERE site_id=?`, stamp, siteID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.refreshCoreInventoryAfterUpdate(ctx, siteID, "7.0.2", now); err != nil {
+		t.Fatal(err)
+	}
+	var version, lastSuccess string
+	if err := store.db.QueryRow(`SELECT wordpress_version, last_success_at FROM site_wp_inventory_state WHERE site_id=?`, siteID).Scan(&version, &lastSuccess); err != nil {
+		t.Fatal(err)
+	}
+	if version != "7.0.2" {
+		t.Fatalf("wordpress_version = %q, want 7.0.2", version)
+	}
+	parsed, err := parseRequiredWPInventoryTime(lastSuccess)
+	if err != nil {
+		t.Fatalf("parse last_success_at: %v", err)
+	}
+	if !parsed.Equal(now) {
+		t.Fatalf("last_success_at = %v, want %v", parsed, now)
+	}
+	var remaining int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM site_wp_component_updates WHERE site_id=? AND component_type='core' AND component_key='wordpress' AND response='upgrade'`, siteID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("remaining core candidates = %d, want 0", remaining)
+	}
+}
+
 func TestWPUpdateStoreCreatesPluginPlanFromCurrentInventoryCandidate(t *testing.T) {
 	store, siteID := newWPUpdateStoreTest(t)
 	seedPluginUpdateCandidate(t, store, siteID, "sample/sample.php", "1.0.0", "1.1.0", "collection-a")
