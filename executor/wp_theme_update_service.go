@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -79,6 +80,7 @@ func (s *WPThemeUpdateService) Preview(ctx context.Context, siteID int, username
 	}
 	offer, err := s.fetchOffer(ctx, componentKey)
 	if err != nil {
+		log.Printf("主题更新预览失败 site=%d domain=%s component=%s: 查询 WordPress.org 主题信息失败: %v", siteID, candidate.domain, componentKey, err)
 		return models.WPThemeUpdatePreview{}, ErrWPThemeUpdateUnavailable
 	}
 	if offer.Slug != componentKey || offer.Version != candidate.targetVersion ||
@@ -152,6 +154,7 @@ func (s *WPThemeUpdateService) Confirm(ctx context.Context, siteID int, username
 		_, _, err = s.artifacts.snapshotValidateAndSealThemePackage(ctx, task.ID, tempPath, digest, record.template)
 	}
 	if err != nil {
+		log.Printf("主题更新下载/封存失败 site=%d domain=%s component=%s task=%s: %v", siteID, record.domain, componentKey, task.ID, err)
 		if failErr := s.store.failPreparingPlan(context.Background(), task.ID, "package_prepare_failed", s.now().UTC()); failErr == nil {
 			_ = os.RemoveAll(filepath.Join(s.artifacts.root, task.ID))
 		}

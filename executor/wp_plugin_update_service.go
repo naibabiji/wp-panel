@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -80,6 +81,7 @@ func (s *WPPluginUpdateService) Preview(ctx context.Context, siteID int, usernam
 	slug := componentSlug(componentKey)
 	offer, err := s.fetchOffer(ctx, slug)
 	if err != nil {
+		log.Printf("插件更新预览失败 site=%d domain=%s component=%s: 查询 WordPress.org 插件信息失败: %v", siteID, candidate.domain, componentKey, err)
 		return models.WPPluginUpdatePreview{}, ErrWPPluginUpdateUnavailable
 	}
 	if offer.Slug != slug || offer.Version != candidate.targetVersion ||
@@ -152,6 +154,7 @@ func (s *WPPluginUpdateService) Confirm(ctx context.Context, siteID int, usernam
 		_, _, err = s.artifacts.snapshotValidateAndSealPluginPackage(ctx, task.ID, tempPath, digest)
 	}
 	if err != nil {
+		log.Printf("插件更新下载/封存失败 site=%d domain=%s component=%s task=%s: %v", siteID, record.domain, componentKey, task.ID, err)
 		if failErr := s.store.failPreparingPlan(context.Background(), task.ID, "package_prepare_failed", s.now().UTC()); failErr == nil {
 			_ = os.RemoveAll(filepath.Join(s.artifacts.root, task.ID))
 		} else if current, lookupErr := s.store.getTask(context.Background(), task.ID); lookupErr == nil &&

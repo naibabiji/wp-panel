@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -88,10 +89,12 @@ func (s *WPCoreUpdateService) Preview(ctx context.Context, siteID int, username 
 	}
 	phpVersion, mysqlVersion, err := s.versions(ctx)
 	if err != nil {
+		log.Printf("核心更新预览失败 site=%d: 读取本机 PHP/MySQL 版本失败: %v", siteID, err)
 		return models.WPCoreUpdatePreview{}, ErrWPCoreUpdateUnavailable
 	}
 	offer, err := s.fetchOffer(ctx, candidate.currentVersion, candidate.locale, phpVersion, mysqlVersion)
 	if err != nil {
+		log.Printf("核心更新预览失败 site=%d domain=%s: 查询 WordPress.org 版本信息失败: %v", siteID, candidate.domain, err)
 		return models.WPCoreUpdatePreview{}, ErrWPCoreUpdateUnavailable
 	}
 	if offer.Version != candidate.targetVersion || offer.Locale != candidate.locale || !wpStableCoreVersionPattern.MatchString(offer.Version) ||
@@ -159,6 +162,7 @@ func (s *WPCoreUpdateService) Confirm(ctx context.Context, siteID int, username,
 	}
 	sealed, err := s.downloadAndSeal(ctx, task, record)
 	if err != nil {
+		log.Printf("核心更新下载/封存失败 site=%d domain=%s task=%s: %v", siteID, record.domain, task.ID, err)
 		if failErr := s.store.failPreparingPlan(context.Background(), task.ID, "package_prepare_failed", s.now().UTC()); failErr == nil {
 			_ = os.RemoveAll(filepath.Join(s.artifacts.root, task.ID))
 		} else if current, lookupErr := s.store.getTask(context.Background(), task.ID); lookupErr == nil && current.Status == wpUpdateFailed && current.PlanSealedAt == "" {
