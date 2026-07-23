@@ -178,6 +178,32 @@ func (s *WPCoreUpdateService) Task(ctx context.Context, siteID int, taskID strin
 	return s.taskModel(ctx, task, true)
 }
 
+// DismissTask marks a finished core update task as acknowledged so
+// LatestTask stops surfacing it as a prominent success/failure banner on
+// future visits to the site's detail page.
+func (s *WPCoreUpdateService) DismissTask(ctx context.Context, siteID int, taskID string) error {
+	if s == nil || siteID <= 0 || !wpUpdateTaskIDPattern.MatchString(taskID) {
+		return ErrWPCoreUpdateInvalid
+	}
+	task, err := s.store.getTask(ctx, taskID)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && (task.SiteID != siteID || task.TaskKind != "update" || task.ComponentType != "core") {
+		return ErrWPCoreUpdateNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if task.Status != wpUpdateSuccess && task.Status != wpUpdateFailed && task.Status != wpUpdateInterrupted {
+		return ErrWPCoreUpdateConflict
+	}
+	if err := s.store.dismissCoreUpdateTaskBanner(ctx, taskID, siteID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrWPCoreUpdateConflict
+		}
+		return err
+	}
+	return nil
+}
+
 func (s *WPCoreUpdateService) LatestTask(ctx context.Context, siteID int) (models.WPCoreUpdateTask, error) {
 	if s == nil || siteID <= 0 {
 		return models.WPCoreUpdateTask{}, ErrWPCoreUpdateInvalid

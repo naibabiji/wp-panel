@@ -438,6 +438,31 @@ var upgrades = []Upgrade{
 		Description: "新增 WordPress 更新数据库备份复用策略",
 		Func:        ensureWPUpdateDatabaseBackupColumns,
 	},
+	{
+		Version:     "1.0.34",
+		Description: "新增更新任务横幅已读标记，避免历史任务反复弹出成功/失败提示",
+		Func:        ensureWPUpdateTaskBannerDismissedColumn,
+	},
+}
+
+func ensureWPUpdateTaskBannerDismissedColumn() error {
+	var tableExists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='wp_update_tasks'`).Scan(&tableExists); err != nil {
+		return err
+	}
+	if tableExists == 0 {
+		return nil
+	}
+	var exists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('wp_update_tasks') WHERE name='banner_dismissed'`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		if _, err := DB.Exec(`ALTER TABLE wp_update_tasks ADD COLUMN banner_dismissed INTEGER NOT NULL DEFAULT 0 CHECK (banner_dismissed IN (0,1))`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

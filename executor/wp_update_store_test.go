@@ -2,6 +2,8 @@ package executor
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -304,6 +306,49 @@ func createAndSealUpdateTask(t *testing.T, store *wpUpdateStore, siteID int, now
 		t.Fatal(err)
 	}
 	return task
+}
+
+func TestWPUpdateStoreLatestCoreTaskExcludesDismissed(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	task := createAndSealUpdateTask(t, store, siteID, now)
+	if _, err := store.db.Exec(`UPDATE wp_update_tasks SET status='success',stage='complete',finished_at=? WHERE id=?`,
+		wpUpdateDBTime(now), task.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	latest, err := store.latestCoreUpdateTask(ctx, siteID)
+	if err != nil || latest.ID != task.ID {
+		t.Fatalf("latest before dismiss=%+v err=%v", latest, err)
+	}
+
+	if err := store.dismissCoreUpdateTaskBanner(ctx, task.ID, siteID); err != nil {
+		t.Fatalf("dismiss: %v", err)
+	}
+
+	if _, err := store.latestCoreUpdateTask(ctx, siteID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected sql.ErrNoRows after dismiss, got %v", err)
+	}
+}
+
+func TestWPUpdateStoreDismissRejectsNonTerminalOrWrongSite(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	ctx := context.Background()
+	task := createAndSealUpdateTask(t, store, siteID, time.Now().UTC()) // status is 'queued' after sealPlan
+
+	if err := store.dismissCoreUpdateTaskBanner(ctx, task.ID, siteID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("dismissing a queued task should be rejected, got %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE wp_update_tasks SET status='success' WHERE id=?`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.dismissCoreUpdateTaskBanner(ctx, task.ID, siteID+999); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("dismissing from the wrong site should be rejected, got %v", err)
+	}
+	if err := store.dismissCoreUpdateTaskBanner(ctx, task.ID, siteID); err != nil {
+		t.Fatalf("dismissing a success task for the right site should succeed: %v", err)
+	}
 }
 
 func seedPluginUpdateCandidate(t *testing.T, store *wpUpdateStore, siteID int, key, current, target, collection string) {

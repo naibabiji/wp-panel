@@ -28,6 +28,9 @@ func (f *fakeWPCoreUpdateAPIService) Task(context.Context, int, string) (models.
 func (f *fakeWPCoreUpdateAPIService) LatestTask(context.Context, int) (models.WPCoreUpdateTask, error) {
 	return models.WPCoreUpdateTask{}, executor.ErrWPCoreUpdateNotFound
 }
+func (f *fakeWPCoreUpdateAPIService) DismissTask(context.Context, int, string) error {
+	return executor.ErrWPCoreUpdateNotFound
+}
 
 func TestWPCoreUpdateConfirmRequiresCSRFBeforeService(t *testing.T) {
 	gin.SetMode(gin.TestMode)

@@ -959,12 +959,35 @@ func (s *wpUpdateStore) latestCoreUpdateTask(ctx context.Context, siteID int) (W
 	var id string
 	err := s.db.QueryRowContext(ctx, `SELECT t.id FROM wp_update_tasks t
 		JOIN websites w ON w.id=t.site_id
-		WHERE t.site_id=? AND t.task_kind='update' AND t.component_type='core'
+		WHERE t.site_id=? AND t.task_kind='update' AND t.component_type='core' AND t.banner_dismissed=0
 		ORDER BY t.created_at DESC,t.rowid DESC LIMIT 1`, siteID).Scan(&id)
 	if err != nil {
 		return WPUpdateTask{}, err
 	}
 	return s.getTask(ctx, id)
+}
+
+// dismissCoreUpdateTaskBanner marks a finished core update task so
+// latestCoreUpdateTask stops surfacing it as the site's prominent
+// success/failure banner. Only terminal-status tasks can be dismissed.
+func (s *wpUpdateStore) dismissCoreUpdateTaskBanner(ctx context.Context, taskID string, siteID int) error {
+	if s == nil || s.db == nil || taskID == "" || siteID <= 0 {
+		return errors.New("invalid update task dismiss")
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE wp_update_tasks SET banner_dismissed=1
+		WHERE id=? AND site_id=? AND task_kind='update' AND component_type='core'
+		  AND status IN ('success','failed','interrupted_unknown')`, taskID, siteID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *wpUpdateStore) latestPluginUpdateTask(ctx context.Context, siteID int, componentKey string) (WPUpdateTask, error) {

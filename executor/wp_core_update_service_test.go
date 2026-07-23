@@ -79,6 +79,28 @@ func TestWPCoreUpdateServiceRejectsNonNewerInventoryCandidate(t *testing.T) {
 	}
 }
 
+func TestWPCoreUpdateServiceDismissTask(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	task := createAndSealUpdateTask(t, store, siteID, time.Now().UTC())
+	service := &WPCoreUpdateService{db: store.db, store: store}
+
+	if err := service.DismissTask(context.Background(), siteID, task.ID); !errors.Is(err, ErrWPCoreUpdateConflict) {
+		t.Fatalf("dismissing a queued (non-terminal) task should conflict, got %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE wp_update_tasks SET status='success' WHERE id=?`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.DismissTask(context.Background(), siteID+999, task.ID); !errors.Is(err, ErrWPCoreUpdateNotFound) {
+		t.Fatalf("dismissing from the wrong site should be not-found, got %v", err)
+	}
+	if err := service.DismissTask(context.Background(), siteID, task.ID); err != nil {
+		t.Fatalf("dismiss should succeed: %v", err)
+	}
+	if _, err := service.LatestTask(context.Background(), siteID); !errors.Is(err, ErrWPCoreUpdateNotFound) {
+		t.Fatalf("dismissed task should no longer be the latest task, got %v", err)
+	}
+}
+
 func TestWPCoreUpdateTaskModelDoesNotExposeSecrets(t *testing.T) {
 	store, siteID := newWPUpdateStoreTest(t)
 	task := createAndSealUpdateTask(t, store, siteID, time.Now().UTC())
