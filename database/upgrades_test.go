@@ -227,10 +227,10 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.34" {
+	if got := LatestVersion(); got != "1.0.33" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
-	for _, column := range []string{"database_backup_mode", "database_backup_source_id", "banner_dismissed"} {
+	for _, column := range []string{"database_backup_mode", "database_backup_source_id"} {
 		var exists int
 		if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('wp_update_tasks') WHERE name=?`, column).Scan(&exists); err != nil || exists != 1 {
 			t.Fatalf("column %s exists=%d err=%v", column, exists, err)

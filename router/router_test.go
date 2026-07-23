@@ -591,7 +591,6 @@ func TestWPCoreUpdatePanelIsWiredAndUsesFixedAPIContract(t *testing.T) {
 		[]byte(`api('/websites/' + siteID + '/wp-core-update/confirm'`),
 		[]byte(`api('/websites/' + siteID + '/wp-core-update/tasks/latest'`),
 		[]byte(`'/wp-core-update/tasks/' + encodeURIComponent(taskID)`),
-		[]byte(`'/wp-core-update/tasks/' + encodeURIComponent(task.task_id) + '/dismiss'`),
 		[]byte(`confirmation_token: preview.confirmation_token`),
 		[]byte(`target_version: preview.target_version`),
 		[]byte(`database_backup_mode: this.databaseBackupMode`),
@@ -660,16 +659,6 @@ global.window = {};
     assert(!panel.validUpToDate({ available: false, site_id: 8, current_version: '7.0.2' }), 'cross-site up-to-date response accepted');
     assert(!panel.validUpToDate({ available: true, site_id: 7, current_version: '7.0.2' }), 'available preview accepted as up-to-date');
     assert(!panel.validUpToDate({ available: false, site_id: 7, current_version: '' }), 'empty current_version accepted as up-to-date');
-
-    let dismissCalls = [];
-    global.api = async (path, opts) => { dismissCalls.push({ path, method: opts && opts.method }); return { data: {} }; };
-    panel.dismissTaskIfTerminal(7, { task_id: 'wpu_dismiss_test', status: 'success' });
-    assert(dismissCalls.length === 1 && dismissCalls[0].path === '/websites/7/wp-core-update/tasks/wpu_dismiss_test/dismiss' && dismissCalls[0].method === 'POST',
-        'terminal task should trigger exactly one dismiss call: ' + JSON.stringify(dismissCalls));
-    panel.dismissTaskIfTerminal(7, { task_id: 'wpu_dismiss_test', status: 'success' });
-    assert(dismissCalls.length === 1, 'dismissing the same task twice should not call the API again');
-    panel.dismissTaskIfTerminal(7, { task_id: 'wpu_other_task', status: 'queued' });
-    assert(dismissCalls.length === 1, 'an active task should never be dismissed');
 
     panel.siteID = 7;
     global.api = async () => ({ data: { available: false, site_id: 7, current_version: '7.0.2' } });

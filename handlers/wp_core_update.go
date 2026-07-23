@@ -22,7 +22,6 @@ type wpCoreUpdateService interface {
 	Confirm(context.Context, int, string, string, string, string) (models.WPCoreUpdateTask, error)
 	Task(context.Context, int, string) (models.WPCoreUpdateTask, error)
 	LatestTask(context.Context, int) (models.WPCoreUpdateTask, error)
-	DismissTask(context.Context, int, string) error
 }
 
 func (h *WPCoreUpdateHandler) Preview(c *gin.Context) {
@@ -103,22 +102,6 @@ func (h *WPCoreUpdateHandler) LatestTask(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(task))
-}
-
-func (h *WPCoreUpdateHandler) Dismiss(c *gin.Context) {
-	siteID, _, ok := wpCoreUpdateIdentity(c)
-	if !ok {
-		return
-	}
-	if h == nil || h.Service == nil {
-		wpCoreUpdateError(c, executor.ErrWPCoreUpdateUnavailable)
-		return
-	}
-	if err := h.Service.DismissTask(c.Request.Context(), siteID, c.Param("task_id")); err != nil {
-		wpCoreUpdateError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"dismissed": true}))
 }
 
 func wpCoreUpdateIdentity(c *gin.Context) (int, string, bool) {

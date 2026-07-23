@@ -61,7 +61,6 @@ function wpCoreUpdatePanel() {
         preparationController: null,
         preparationCancelled: false,
         pollTimer: null,
-        dismissedTaskID: null,
         generation: 0,
         pagehideHandler: null,
         mount() {
@@ -88,7 +87,6 @@ function wpCoreUpdatePanel() {
             this.databaseBackupMode = 'fresh';
             this.preparationCancelled = false;
             this.task = null;
-            this.dismissedTaskID = null;
             this.error = '';
             if (this.siteID) this.loadLatestTask();
         },
@@ -109,8 +107,6 @@ function wpCoreUpdatePanel() {
                 this.error = '';
                 if (this.isActive()) {
                     this.schedulePoll(3000);
-                } else {
-                    this.dismissTaskIfTerminal(siteID, task);
                 }
                 return true;
             } catch (error) {
@@ -228,12 +224,6 @@ function wpCoreUpdatePanel() {
         isActive() {
             return this.task && ['queued', 'running'].includes(this.task.status);
         },
-        dismissTaskIfTerminal(siteID, task) {
-            if (!task || !['success', 'failed', 'interrupted_unknown'].includes(task.status)) return;
-            if (this.dismissedTaskID === task.task_id) return;
-            this.dismissedTaskID = task.task_id;
-            api('/websites/' + siteID + '/wp-core-update/tasks/' + encodeURIComponent(task.task_id) + '/dismiss', { method: 'POST', suppressToast: true }).catch(() => {});
-        },
         schedulePoll(delay) {
             this.stopPolling();
             this.pollTimer = setTimeout(() => { this.pollTimer = null; this.pollTask(); }, delay);
@@ -256,7 +246,6 @@ function wpCoreUpdatePanel() {
                     this.schedulePoll(3000);
                 } else {
                     this.stopPolling();
-                    this.dismissTaskIfTerminal(siteID, this.task);
                 }
             } catch (error) {
                 if (generation !== this.generation || siteID !== this.siteID) return;

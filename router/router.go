@@ -1008,7 +1008,6 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/websites/:id/wp-core-update/confirm", wpCoreUpdateHandler.Confirm)
 	protected.GET("/api/websites/:id/wp-core-update/tasks/latest", wpCoreUpdateHandler.LatestTask)
 	protected.GET("/api/websites/:id/wp-core-update/tasks/:task_id", wpCoreUpdateHandler.Task)
-	protected.POST("/api/websites/:id/wp-core-update/tasks/:task_id/dismiss", wpCoreUpdateHandler.Dismiss)
 	protected.GET("/api/websites/:id/wp-plugin-update/preview", wpPluginUpdateHandler.Preview)
 	protected.POST("/api/websites/:id/wp-plugin-update/confirm", wpPluginUpdateHandler.Confirm)
 	protected.GET("/api/websites/:id/wp-plugin-update/tasks/latest", wpPluginUpdateHandler.LatestTask)
