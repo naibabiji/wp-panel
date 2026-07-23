@@ -101,7 +101,7 @@
 
                     <div x-show="activeTab === 'updates' && !currentPage().loading" class="mt-4 overflow-x-auto">
                         <table class="w-full text-sm">
-                            <thead><tr><th class="table-header">{{t .Lang "wp_inventory.column_type"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_key"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_version"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_target_version"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_locale"}}</th><th class="table-header text-right">{{t .Lang "wp_plugin_update.column_action"}}</th></tr></thead>
+                            <thead><tr><th class="table-header">{{t .Lang "wp_inventory.column_type"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_key"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_version"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_target_version"}}</th><th class="table-header text-right">{{t .Lang "wp_plugin_update.column_action"}}</th></tr></thead>
                             <tbody>
                                 <template x-for="item in currentPage().items" :key="item.type + ':' + item.key + ':' + item.target_version + ':' + item.locale">
                                     <tr class="table-row">
@@ -109,14 +109,13 @@
                                         <td class="table-cell break-all font-mono text-xs" x-text="item.key"></td>
                                         <td class="table-cell" x-text="item.current_version || t('common.none')"></td>
                                         <td class="table-cell text-white" x-text="item.target_version"></td>
-                                        <td class="table-cell" x-text="item.locale || t('common.none')"></td>
                                         <td class="table-cell text-right">
                                             <button x-show="canUpdateComponent(item)" @click="openPluginUpdate(item)" :disabled="pluginUpdate.loading || pluginUpdate.submitting || (pluginTaskActive() && pluginUpdate.componentKey !== item.key)" class="btn-primary text-sm" x-text="pluginUpdate.loading && pluginUpdate.componentKey === item.key ? componentUpdateText('wp_plugin_update.checking', 'wp_theme_update.checking') : (pluginTaskActive() && pluginUpdate.componentKey === item.key ? componentUpdateText('wp_plugin_update.tracking', 'wp_theme_update.tracking') : componentUpdateText('wp_plugin_update.action', 'wp_theme_update.action', item.type))"></button>
                                             <span x-show="item.type !== 'plugin' && item.type !== 'theme'" class="text-gray-600">—</span>
                                         </td>
                                     </tr>
                                 </template>
-                                <tr x-show="currentPage().items.length === 0"><td colspan="6" class="table-cell py-8 text-center text-gray-500">{{t .Lang "wp_inventory.no_updates"}}</td></tr>
+                                <tr x-show="currentPage().items.length === 0"><td colspan="5" class="table-cell py-8 text-center text-gray-500">{{t .Lang "wp_inventory.no_updates"}}</td></tr>
                             </tbody>
                         </table>
                     </div>

@@ -283,7 +283,6 @@
     "column_status": "EN_TODO: wp_inventory.column_status",
     "column_type": "EN_TODO: wp_inventory.column_type",
     "column_target_version": "EN_TODO: wp_inventory.column_target_version",
-    "column_locale": "EN_TODO: wp_inventory.column_locale",
     "active": "EN_TODO: wp_inventory.active",
     "inactive": "EN_TODO: wp_inventory.inactive",
     "network_active": "EN_TODO: wp_inventory.network_active",

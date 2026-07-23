@@ -283,7 +283,6 @@
     "column_status": "状态",
     "column_type": "类型",
     "column_target_version": "目标版本",
-    "column_locale": "语言",
     "active": "已启用",
     "inactive": "未启用",
     "network_active": "全网启用",

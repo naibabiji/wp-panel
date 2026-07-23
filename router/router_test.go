@@ -395,6 +395,12 @@ const data = (nextSites = sites, nextCounts = counts) => ({ generated_at: '2026-
     const panel = wpFleetOverview();
     panel.overview = panel.wordpressOnlyOverview(data());
 
+    assert(panel.tileTone(0, 'orange').box === 'border-gray-700 bg-gray-800/70', 'zero count should render neutral tile');
+    assert(panel.tileTone(0, 'orange').label === 'text-gray-400', 'zero count should render neutral label');
+    assert(panel.tileTone(1, 'orange').box === 'border-orange-900/70 bg-orange-950/20', 'nonzero orange count should render orange tile');
+    assert(panel.tileTone(2, 'red').value === 'text-red-200', 'nonzero red count should render red value');
+    assert(panel.tileTone(3, 'yellow').label === 'text-yellow-300', 'nonzero yellow count should render yellow label');
+
     assert(panel.filteredSites().map(item => item.id).join(',') === '1,2,3,5', 'PHP sites automatically excluded');
     assert(panel.overview.counts.total_sites === 4 && panel.overview.counts.healthy_sites === 1, 'WordPress-only counts');
     panel.healthFilter = 'warning';

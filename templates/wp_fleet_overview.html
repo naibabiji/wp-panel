@@ -25,17 +25,17 @@
                     <div class="text-xs text-gray-400">{{t .Lang "wp_fleet.total_sites"}}</div>
                     <div class="mt-1 text-2xl font-semibold text-white" x-text="overview.counts.total_sites"></div>
                 </div>
-                <div class="rounded-lg border border-red-900/70 bg-red-950/20 p-4">
-                    <div class="text-xs text-red-300">{{t .Lang "wp_fleet.needs_attention"}}</div>
-                    <div class="mt-1 text-2xl font-semibold text-red-200" x-text="overview.counts.critical_sites + overview.counts.warning_sites"></div>
+                <div class="rounded-lg border p-4" :class="tileTone(overview.counts.critical_sites + overview.counts.warning_sites, 'red').box">
+                    <div class="text-xs" :class="tileTone(overview.counts.critical_sites + overview.counts.warning_sites, 'red').label">{{t .Lang "wp_fleet.needs_attention"}}</div>
+                    <div class="mt-1 text-2xl font-semibold" :class="tileTone(overview.counts.critical_sites + overview.counts.warning_sites, 'red').value" x-text="overview.counts.critical_sites + overview.counts.warning_sites"></div>
                 </div>
-                <div class="rounded-lg border border-yellow-900/70 bg-yellow-950/20 p-4">
-                    <div class="text-xs text-yellow-300">{{t .Lang "wp_fleet.update_sites"}}</div>
-                    <div class="mt-1 text-2xl font-semibold text-yellow-200" x-text="overview.counts.update_sites"></div>
+                <div class="rounded-lg border p-4" :class="tileTone(overview.counts.update_sites, 'yellow').box">
+                    <div class="text-xs" :class="tileTone(overview.counts.update_sites, 'yellow').label">{{t .Lang "wp_fleet.update_sites"}}</div>
+                    <div class="mt-1 text-2xl font-semibold" :class="tileTone(overview.counts.update_sites, 'yellow').value" x-text="overview.counts.update_sites"></div>
                 </div>
-                <div class="rounded-lg border border-orange-900/70 bg-orange-950/20 p-4">
-                    <div class="text-xs text-orange-300">{{t .Lang "wp_fleet.inventory_failed_or_stale"}}</div>
-                    <div class="mt-1 text-2xl font-semibold text-orange-200" x-text="overview.counts.inventory_attention_sites"></div>
+                <div class="rounded-lg border p-4" :class="tileTone(overview.counts.inventory_attention_sites, 'orange').box">
+                    <div class="text-xs" :class="tileTone(overview.counts.inventory_attention_sites, 'orange').label">{{t .Lang "wp_fleet.inventory_failed_or_stale"}}</div>
+                    <div class="mt-1 text-2xl font-semibold" :class="tileTone(overview.counts.inventory_attention_sites, 'orange').value" x-text="overview.counts.inventory_attention_sites"></div>
                 </div>
                 <div class="rounded-lg border border-gray-600 bg-gray-800/70 p-4">
                     <div class="text-xs text-gray-400">{{t .Lang "wp_fleet.uncollected_sites"}}</div>
@@ -186,6 +186,15 @@ function wpFleetOverview() {
                     this.requestController = null;
                 }
             }
+        },
+        tileTone(count, color) {
+            if (!(count > 0)) return { box: 'border-gray-700 bg-gray-800/70', label: 'text-gray-400', value: 'text-gray-200' };
+            const tones = {
+                red: { box: 'border-red-900/70 bg-red-950/20', label: 'text-red-300', value: 'text-red-200' },
+                yellow: { box: 'border-yellow-900/70 bg-yellow-950/20', label: 'text-yellow-300', value: 'text-yellow-200' },
+                orange: { box: 'border-orange-900/70 bg-orange-950/20', label: 'text-orange-300', value: 'text-orange-200' },
+            };
+            return tones[color] || tones.red;
         },
         wordpressOnlyOverview(data) {
             const sites = data.sites.filter(site => site.site_type === 'wordpress');
