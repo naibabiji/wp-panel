@@ -17,7 +17,7 @@ type fakeWPThemeUpdateAPIService struct{ confirmCalls int }
 func (f *fakeWPThemeUpdateAPIService) Preview(context.Context, int, string, string) (models.WPThemeUpdatePreview, error) {
 	return models.WPThemeUpdatePreview{Available: true}, nil
 }
-func (f *fakeWPThemeUpdateAPIService) Confirm(context.Context, int, string, string, string, string, string) (models.WPThemeUpdateTask, error) {
+func (f *fakeWPThemeUpdateAPIService) Confirm(context.Context, int, string, string, string, string, string, string) (models.WPThemeUpdateTask, error) {
 	f.confirmCalls++
 	return models.WPThemeUpdateTask{ID: "wpu_0123456789abcdef0123456789abcdef", Status: "queued"}, nil
 }

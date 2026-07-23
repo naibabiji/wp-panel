@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -111,13 +112,20 @@ func (s *wpUpdateArtifactService) prepareCoreBackups(ctx context.Context, taskID
 	if !wpUpdateTaskIDPattern.MatchString(taskID) || owner == "" {
 		return errors.New("invalid core backup request")
 	}
-	var webRoot, dbName, status, kind, component, leaseOwner string
+	var webRoot, dbName, status, kind, component, leaseOwner, dbMode string
+	var siteID int
+	var dbSource sql.NullInt64
 	var backupReady int
-	err := s.store.db.QueryRowContext(ctx, `SELECT w.web_root,w.db_name,t.status,t.task_kind,t.component_type,t.lease_owner,t.backup_ready
+	err := s.store.db.QueryRowContext(ctx, `SELECT w.web_root,w.db_name,t.status,t.task_kind,t.component_type,t.lease_owner,t.backup_ready,
+		t.database_backup_mode,t.site_id,t.database_backup_source_id
 		FROM wp_update_tasks t JOIN websites w ON w.id=t.site_id WHERE t.id=?`, taskID).
-		Scan(&webRoot, &dbName, &status, &kind, &component, &leaseOwner, &backupReady)
+		Scan(&webRoot, &dbName, &status, &kind, &component, &leaseOwner, &backupReady, &dbMode, &siteID, &dbSource)
 	if err != nil || status != wpUpdateRunning || kind != "update" || component != "core" || leaseOwner != owner || backupReady != 0 || !filepath.IsAbs(webRoot) {
 		return errors.New("update task is not backup-ready")
+	}
+	if dbMode == "reuse" &&
+		(!dbSource.Valid || s.store.validateDatabaseBackupChoice(ctx, siteID, dbMode, dbSource.Int64, s.root, s.now().UTC()) != nil) {
+		return errors.New("reused database backup unavailable")
 	}
 	taskDir := filepath.Join(s.root, taskID)
 	if info, err := os.Lstat(taskDir); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
@@ -131,17 +139,9 @@ func (s *wpUpdateArtifactService) prepareCoreBackups(ctx context.Context, taskID
 			_ = os.Remove(name)
 		}
 	}()
-	if err := s.dumpDB(ctx, dbName, dbPath); err != nil {
-		_ = os.Remove(dbPath)
-		return fmt.Errorf("update database backup failed: %w", err)
-	}
-	created = append(created, dbPath)
-	if err := syncRegularFile(dbPath); err != nil {
-		return errors.New("invalid update database backup")
-	}
-	dbSHA, dbSize, err := hashRegularFile(dbPath)
-	if err != nil || dbSize == 0 {
-		return errors.New("invalid update database backup")
+	records, err := s.prepareDatabaseBackupRecord(ctx, dbMode, dbName, dbPath, &created)
+	if err != nil {
+		return err
 	}
 	if err := archiveWordPressCore(webRoot, corePath); err != nil {
 		_ = os.Remove(corePath)
@@ -152,7 +152,7 @@ func (s *wpUpdateArtifactService) prepareCoreBackups(ctx context.Context, taskID
 	if err != nil || coreSize == 0 {
 		return errors.New("invalid update core backup")
 	}
-	records := []wpUpdateBackupRecord{{"database", dbPath, dbSize, dbSHA}, {"core_files", corePath, coreSize, coreSHA}}
+	records = append(records, wpUpdateBackupRecord{"core_files", corePath, coreSize, coreSHA})
 	if err := s.store.markBackupsReady(ctx, taskID, owner, records, s.now().UTC()); err != nil {
 		committed, checkErr := s.backupsAreCommitted(ctx, taskID, records)
 		if checkErr != nil {
@@ -172,15 +172,41 @@ func (s *wpUpdateArtifactService) prepareCoreBackups(ctx context.Context, taskID
 }
 
 func (s *wpUpdateArtifactService) backupsAreCommitted(ctx context.Context, taskID string, records []wpUpdateBackupRecord) (bool, error) {
-	var ready, count int
-	err := s.store.db.QueryRowContext(ctx, `SELECT backup_ready,
-		(SELECT COUNT(*) FROM wp_update_task_backups b WHERE b.task_id=t.id AND b.protected=1 AND b.deleted_at IS NULL
-		 AND ((b.kind=? AND b.file_path=? AND b.file_size=? AND b.sha256=?) OR
-		      (b.kind=? AND b.file_path=? AND b.file_size=? AND b.sha256=?)))
-		FROM wp_update_tasks t WHERE t.id=?`,
-		records[0].Kind, records[0].FilePath, records[0].FileSize, records[0].SHA256,
-		records[1].Kind, records[1].FilePath, records[1].FileSize, records[1].SHA256, taskID).Scan(&ready, &count)
-	return err == nil && ready == 1 && count == 2, err
+	var ready int
+	if err := s.store.db.QueryRowContext(ctx, `SELECT backup_ready FROM wp_update_tasks WHERE id=?`, taskID).Scan(&ready); err != nil {
+		return false, err
+	}
+	for _, record := range records {
+		var count int
+		if err := s.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM wp_update_task_backups
+			WHERE task_id=? AND protected=1 AND deleted_at IS NULL AND kind=? AND file_path=? AND file_size=? AND sha256=?`,
+			taskID, record.Kind, record.FilePath, record.FileSize, record.SHA256).Scan(&count); err != nil || count != 1 {
+			return false, err
+		}
+	}
+	return ready == 1, nil
+}
+
+func (s *wpUpdateArtifactService) prepareDatabaseBackupRecord(ctx context.Context, mode, dbName, dbPath string, created *[]string) ([]wpUpdateBackupRecord, error) {
+	if mode == "reuse" {
+		return nil, nil
+	}
+	if mode != "fresh" {
+		return nil, errors.New("invalid database backup mode")
+	}
+	if err := s.dumpDB(ctx, dbName, dbPath); err != nil {
+		_ = os.Remove(dbPath)
+		return nil, fmt.Errorf("update database backup failed: %w", err)
+	}
+	*created = append(*created, dbPath)
+	if err := syncRegularFile(dbPath); err != nil {
+		return nil, errors.New("invalid update database backup")
+	}
+	dbSHA, dbSize, err := hashRegularFile(dbPath)
+	if err != nil || dbSize == 0 {
+		return nil, errors.New("invalid update database backup")
+	}
+	return []wpUpdateBackupRecord{{"database", dbPath, dbSize, dbSHA}}, nil
 }
 
 func (s *wpUpdateArtifactService) createTaskDir(taskID string) (string, error) {

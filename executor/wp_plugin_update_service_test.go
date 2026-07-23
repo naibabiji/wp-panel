@@ -37,14 +37,14 @@ func TestWPPluginUpdateServicePreviewAndConfirmFixedCandidate(t *testing.T) {
 	if err != nil || preview.ComponentKey != "sample/sample.php" || preview.TargetVersion != "1.1.0" || preview.ConfirmationToken == "" {
 		t.Fatalf("preview=%+v err=%v", preview, err)
 	}
-	if _, err := service.Confirm(context.Background(), siteID, "admin", "sample/sample.php", preview.ConfirmationToken, "1.2.0"); !errors.Is(err, ErrWPPluginUpdateConflict) {
+	if _, err := service.Confirm(context.Background(), siteID, "admin", "sample/sample.php", preview.ConfirmationToken, "1.2.0", "fresh"); !errors.Is(err, ErrWPPluginUpdateConflict) {
 		t.Fatalf("changed target error=%v", err)
 	}
 	preview, err = service.Preview(context.Background(), siteID, "admin", "sample/sample.php")
 	if err != nil {
 		t.Fatal(err)
 	}
-	model, err := service.Confirm(context.Background(), siteID, "admin", "sample/sample.php", preview.ConfirmationToken, "1.1.0")
+	model, err := service.Confirm(context.Background(), siteID, "admin", "sample/sample.php", preview.ConfirmationToken, "1.1.0", "fresh")
 	if err != nil || model.Status != wpUpdateQueued || model.ComponentKey != "sample/sample.php" || model.VerificationLevel != "structure_only" {
 		t.Fatalf("model=%+v err=%v", model, err)
 	}

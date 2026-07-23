@@ -205,9 +205,11 @@ func (e *wpPluginUpdateExecutor) rollback(ctx context.Context, execution wpPlugi
 	var rollbackErr error
 	steps := []func(context.Context) error{
 		func(stepCtx context.Context) error { return e.ops.SetMaintenance(stepCtx, execution, true) },
-		func(stepCtx context.Context) error { return e.ops.RestoreDatabase(stepCtx, execution) },
-		func(stepCtx context.Context) error { return e.ops.RestorePluginFiles(stepCtx, execution) },
 	}
+	if execution.Task.DatabaseBackupMode == "fresh" {
+		steps = append(steps, func(stepCtx context.Context) error { return e.ops.RestoreDatabase(stepCtx, execution) })
+	}
+	steps = append(steps, func(stepCtx context.Context) error { return e.ops.RestorePluginFiles(stepCtx, execution) })
 	for _, step := range steps {
 		if err := e.requireOwnership(ctx, execution.Task.ID, owner); err != nil {
 			return err
@@ -396,7 +398,7 @@ func (e *wpPluginUpdateExecutor) loadExecution(ctx context.Context, taskID, owne
 	if err := rows.Err(); err != nil {
 		return wpPluginUpdateExecution{}, err
 	}
-	if !seen["database"] || !seen["plugin_files"] {
+	if (task.DatabaseBackupMode == "fresh" && !seen["database"]) || !seen["plugin_files"] {
 		return wpPluginUpdateExecution{}, errors.New("plugin update backups are incomplete")
 	}
 	return execution, nil

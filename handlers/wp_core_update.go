@@ -19,7 +19,7 @@ type WPCoreUpdateHandler struct{ Service wpCoreUpdateService }
 
 type wpCoreUpdateService interface {
 	Preview(context.Context, int, string) (models.WPCoreUpdatePreview, error)
-	Confirm(context.Context, int, string, string, string) (models.WPCoreUpdateTask, error)
+	Confirm(context.Context, int, string, string, string, string) (models.WPCoreUpdateTask, error)
 	Task(context.Context, int, string) (models.WPCoreUpdateTask, error)
 	LatestTask(context.Context, int) (models.WPCoreUpdateTask, error)
 }
@@ -51,9 +51,10 @@ func (h *WPCoreUpdateHandler) Confirm(c *gin.Context) {
 		return
 	}
 	var req struct {
-		ConfirmationToken string `json:"confirmation_token"`
-		TargetVersion     string `json:"target_version"`
-		Confirm           bool   `json:"confirm"`
+		ConfirmationToken  string `json:"confirmation_token"`
+		TargetVersion      string `json:"target_version"`
+		Confirm            bool   `json:"confirm"`
+		DatabaseBackupMode string `json:"database_backup_mode"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 4096))
 	decoder.DisallowUnknownFields()
@@ -61,7 +62,7 @@ func (h *WPCoreUpdateHandler) Confirm(c *gin.Context) {
 		wpCoreUpdateError(c, executor.ErrWPCoreUpdateInvalid)
 		return
 	}
-	task, err := h.Service.Confirm(c.Request.Context(), siteID, username, req.ConfirmationToken, req.TargetVersion)
+	task, err := h.Service.Confirm(c.Request.Context(), siteID, username, req.ConfirmationToken, req.TargetVersion, req.DatabaseBackupMode)
 	if err != nil {
 		wpCoreUpdateError(c, err)
 		return

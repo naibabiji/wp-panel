@@ -433,6 +433,43 @@ var upgrades = []Upgrade{
 		Description: "新增持久化 WordPress 更新任务、事件与专用备份表",
 		SQL:         wpUpdateSchemaStatements,
 	},
+	{
+		Version:     "1.0.33",
+		Description: "新增 WordPress 更新数据库备份复用策略",
+		Func:        ensureWPUpdateDatabaseBackupColumns,
+	},
+}
+
+func ensureWPUpdateDatabaseBackupColumns() error {
+	var tableExists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='wp_update_tasks'`).Scan(&tableExists); err != nil {
+		return err
+	}
+	if tableExists == 0 {
+		return nil
+	}
+	for _, column := range []struct {
+		name string
+		sql  string
+	}{
+		{"database_backup_mode", `ALTER TABLE wp_update_tasks ADD COLUMN database_backup_mode TEXT NOT NULL DEFAULT 'fresh' CHECK (database_backup_mode IN ('fresh','reuse'))`},
+		{"database_backup_source_id", `ALTER TABLE wp_update_tasks ADD COLUMN database_backup_source_id INTEGER`},
+	} {
+		var exists int
+		if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('wp_update_tasks') WHERE name=?`, column.name).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			if _, err := DB.Exec(column.sql); err != nil {
+				return err
+			}
+		}
+	}
+	_, err := DB.Exec(`CREATE TRIGGER IF NOT EXISTS trg_wp_update_tasks_sealed_backup_mode_immutable
+		BEFORE UPDATE OF database_backup_mode ON wp_update_tasks
+		WHEN OLD.plan_sealed_at IS NOT NULL AND NEW.database_backup_mode != OLD.database_backup_mode
+		BEGIN SELECT RAISE(ABORT, 'sealed update backup mode is immutable'); END`)
+	return err
 }
 
 func ensureFileLockModeColumns() error {

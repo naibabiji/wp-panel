@@ -19,7 +19,7 @@ type WPThemeUpdateHandler struct{ Service wpThemeUpdateService }
 
 type wpThemeUpdateService interface {
 	Preview(context.Context, int, string, string) (models.WPThemeUpdatePreview, error)
-	Confirm(context.Context, int, string, string, string, string, string) (models.WPThemeUpdateTask, error)
+	Confirm(context.Context, int, string, string, string, string, string, string) (models.WPThemeUpdateTask, error)
 	Task(context.Context, int, string) (models.WPThemeUpdateTask, error)
 	LatestTask(context.Context, int, string) (models.WPThemeUpdateTask, error)
 }
@@ -51,11 +51,12 @@ func (h *WPThemeUpdateHandler) Confirm(c *gin.Context) {
 		return
 	}
 	var req struct {
-		ComponentKey      string `json:"component_key"`
-		ConfirmationToken string `json:"confirmation_token"`
-		RiskToken         string `json:"risk_token"`
-		TargetVersion     string `json:"target_version"`
-		Confirm           bool   `json:"confirm"`
+		ComponentKey       string `json:"component_key"`
+		ConfirmationToken  string `json:"confirmation_token"`
+		RiskToken          string `json:"risk_token"`
+		TargetVersion      string `json:"target_version"`
+		Confirm            bool   `json:"confirm"`
+		DatabaseBackupMode string `json:"database_backup_mode"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 4096))
 	decoder.DisallowUnknownFields()
@@ -65,7 +66,7 @@ func (h *WPThemeUpdateHandler) Confirm(c *gin.Context) {
 		wpThemeUpdateError(c, executor.ErrWPThemeUpdateInvalid)
 		return
 	}
-	task, err := h.Service.Confirm(c.Request.Context(), siteID, username, req.ComponentKey, req.ConfirmationToken, req.RiskToken, req.TargetVersion)
+	task, err := h.Service.Confirm(c.Request.Context(), siteID, username, req.ComponentKey, req.ConfirmationToken, req.RiskToken, req.TargetVersion, req.DatabaseBackupMode)
 	if err != nil {
 		wpThemeUpdateError(c, err)
 		return

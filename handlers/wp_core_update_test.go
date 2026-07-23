@@ -18,7 +18,7 @@ type fakeWPCoreUpdateAPIService struct{ confirmCalls int }
 func (f *fakeWPCoreUpdateAPIService) Preview(context.Context, int, string) (models.WPCoreUpdatePreview, error) {
 	return models.WPCoreUpdatePreview{Available: true}, nil
 }
-func (f *fakeWPCoreUpdateAPIService) Confirm(context.Context, int, string, string, string) (models.WPCoreUpdateTask, error) {
+func (f *fakeWPCoreUpdateAPIService) Confirm(context.Context, int, string, string, string, string) (models.WPCoreUpdateTask, error) {
 	f.confirmCalls++
 	return models.WPCoreUpdateTask{ID: "wpu_0123456789abcdef0123456789abcdef", Status: "queued"}, nil
 }

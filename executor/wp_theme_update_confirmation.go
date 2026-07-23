@@ -11,6 +11,7 @@ import (
 type wpThemeConfirmation struct {
 	token, riskToken, username, domain, collectionID, componentKey string
 	siteID                                                         int
+	recentBackupID                                                 int64
 	currentVersion, targetVersion, downloadURL, template           string
 	currentTheme                                                   bool
 	createdAt, expiresAt                                           time.Time

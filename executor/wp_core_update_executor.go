@@ -111,8 +111,10 @@ func (e *wpCoreUpdateExecutor) rollback(ctx context.Context, execution wpCoreUpd
 	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), wpUpdateLease)
 	defer cancel()
 	rollbackErr := e.ops.SetMaintenance(rollbackCtx, execution, true)
-	if err := e.ops.RestoreDatabase(rollbackCtx, execution); err != nil {
-		rollbackErr = errors.Join(rollbackErr, err)
+	if execution.Task.DatabaseBackupMode == "fresh" {
+		if err := e.ops.RestoreDatabase(rollbackCtx, execution); err != nil {
+			rollbackErr = errors.Join(rollbackErr, err)
+		}
 	}
 	if err := e.ops.RestoreCoreFiles(rollbackCtx, execution); err != nil {
 		rollbackErr = errors.Join(rollbackErr, err)
@@ -204,7 +206,7 @@ func (e *wpCoreUpdateExecutor) loadExecution(ctx context.Context, taskID, owner 
 	if err := rows.Err(); err != nil {
 		return wpCoreUpdateExecution{}, err
 	}
-	if !seen["database"] || !seen["core_files"] {
+	if (task.DatabaseBackupMode == "fresh" && !seen["database"]) || !seen["core_files"] {
 		return wpCoreUpdateExecution{}, errors.New("core update backups are incomplete")
 	}
 	return execution, nil

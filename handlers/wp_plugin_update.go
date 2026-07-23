@@ -19,7 +19,7 @@ type WPPluginUpdateHandler struct{ Service wpPluginUpdateService }
 
 type wpPluginUpdateService interface {
 	Preview(context.Context, int, string, string) (models.WPPluginUpdatePreview, error)
-	Confirm(context.Context, int, string, string, string, string) (models.WPPluginUpdateTask, error)
+	Confirm(context.Context, int, string, string, string, string, string) (models.WPPluginUpdateTask, error)
 	Task(context.Context, int, string) (models.WPPluginUpdateTask, error)
 	LatestTask(context.Context, int, string) (models.WPPluginUpdateTask, error)
 }
@@ -52,10 +52,11 @@ func (h *WPPluginUpdateHandler) Confirm(c *gin.Context) {
 		return
 	}
 	var req struct {
-		ComponentKey      string `json:"component_key"`
-		ConfirmationToken string `json:"confirmation_token"`
-		TargetVersion     string `json:"target_version"`
-		Confirm           bool   `json:"confirm"`
+		ComponentKey       string `json:"component_key"`
+		ConfirmationToken  string `json:"confirmation_token"`
+		TargetVersion      string `json:"target_version"`
+		Confirm            bool   `json:"confirm"`
+		DatabaseBackupMode string `json:"database_backup_mode"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 4096))
 	decoder.DisallowUnknownFields()
@@ -65,7 +66,7 @@ func (h *WPPluginUpdateHandler) Confirm(c *gin.Context) {
 		wpPluginUpdateError(c, executor.ErrWPPluginUpdateInvalid)
 		return
 	}
-	task, err := h.Service.Confirm(c.Request.Context(), siteID, username, req.ComponentKey, req.ConfirmationToken, req.TargetVersion)
+	task, err := h.Service.Confirm(c.Request.Context(), siteID, username, req.ComponentKey, req.ConfirmationToken, req.TargetVersion, req.DatabaseBackupMode)
 	if err != nil {
 		wpPluginUpdateError(c, err)
 		return

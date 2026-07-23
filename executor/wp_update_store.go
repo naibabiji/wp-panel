@@ -27,49 +27,65 @@ const (
 var wpUpdateSHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type WPUpdateTask struct {
-	ID                  string
-	SiteID              int
-	ComponentType       string
-	ComponentKey        string
-	TaskKind            string
-	ParentTaskID        string
-	TriggerType         string
-	Status              string
-	Stage               string
-	FailureStage        string
-	RollbackStatus      string
-	RequiresAttention   bool
-	ManualDisposition   string
-	CurrentVersion      string
-	TargetVersion       string
-	PackageSource       string
-	DownloadURL         string
-	DownloadedSHA256    string
-	VerificationLevel   string
-	PackageSnapshotPath string
-	BackupReady         bool
-	PlanSealedAt        string
-	LeaseOwner          string
-	LeaseExpiresAt      string
-	RequestedAt         string
-	StartedAt           string
-	FinishedAt          string
+	ID                     string
+	SiteID                 int
+	ComponentType          string
+	ComponentKey           string
+	TaskKind               string
+	ParentTaskID           string
+	TriggerType            string
+	Status                 string
+	Stage                  string
+	FailureStage           string
+	RollbackStatus         string
+	RequiresAttention      bool
+	ManualDisposition      string
+	CurrentVersion         string
+	TargetVersion          string
+	PackageSource          string
+	DownloadURL            string
+	DownloadedSHA256       string
+	VerificationLevel      string
+	PackageSnapshotPath    string
+	BackupReady            bool
+	DatabaseBackupMode     string
+	DatabaseBackupSourceID int64
+	PlanSealedAt           string
+	LeaseOwner             string
+	LeaseExpiresAt         string
+	RequestedAt            string
+	StartedAt              string
+	FinishedAt             string
 }
 
 type WPUpdatePlan struct {
-	SiteID         int
-	ComponentKey   string
-	CurrentVersion string
-	TargetVersion  string
-	PackageSource  string
-	DownloadURL    string
+	SiteID                 int
+	ComponentKey           string
+	CurrentVersion         string
+	TargetVersion          string
+	PackageSource          string
+	DownloadURL            string
+	DatabaseBackupMode     string
+	DatabaseBackupSourceID int64
+}
+
+func validWPUpdateBackupPlan(plan WPUpdatePlan) bool {
+	return plan.DatabaseBackupMode == "fresh" && plan.DatabaseBackupSourceID == 0 ||
+		plan.DatabaseBackupMode == "reuse" && plan.DatabaseBackupSourceID > 0
+}
+
+func normalizeWPUpdateBackupPlan(plan *WPUpdatePlan) {
+	if plan != nil && plan.DatabaseBackupMode == "" && plan.DatabaseBackupSourceID == 0 {
+		plan.DatabaseBackupMode = "fresh"
+	}
 }
 
 func (s *wpUpdateStore) createPluginManualPlan(ctx context.Context, plan WPUpdatePlan, now time.Time) (WPUpdateTask, error) {
+	normalizeWPUpdateBackupPlan(&plan)
 	if s == nil || s.db == nil || plan.SiteID <= 0 || !validWPPluginComponentKey(plan.ComponentKey) ||
 		!wpComponentVersionPattern.MatchString(plan.CurrentVersion) || !wpComponentVersionPattern.MatchString(plan.TargetVersion) ||
 		plan.CurrentVersion == plan.TargetVersion || plan.PackageSource != "wordpress.org" ||
-		!validWPPluginDownloadURL(plan.DownloadURL, strings.Split(plan.ComponentKey, "/")[0], plan.TargetVersion) {
+		!validWPPluginDownloadURL(plan.DownloadURL, strings.Split(plan.ComponentKey, "/")[0], plan.TargetVersion) || !validWPUpdateBackupPlan(plan) {
 		return WPUpdateTask{}, errors.New("invalid plugin update plan")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -117,9 +133,10 @@ func (s *wpUpdateStore) createPluginManualPlan(ctx context.Context, plan WPUpdat
 	stamp := wpUpdateDBTime(now)
 	_, err = tx.ExecContext(ctx, `INSERT INTO wp_update_tasks
 		(id,site_id,component_type,component_key,task_kind,trigger_type,status,stage,
-		 current_version,target_version,package_source,download_url,requested_at,created_at,updated_at)
-		VALUES (?,?,'plugin',?,'update','manual','preparing','plan',?,?,?,?,?,?,?)`,
-		id, plan.SiteID, plan.ComponentKey, plan.CurrentVersion, plan.TargetVersion, plan.PackageSource, plan.DownloadURL, stamp, stamp, stamp)
+		 current_version,target_version,package_source,download_url,database_backup_mode,database_backup_source_id,requested_at,created_at,updated_at)
+		VALUES (?,?,'plugin',?,'update','manual','preparing','plan',?,?,?,?,?,?,?,?,?)`,
+		id, plan.SiteID, plan.ComponentKey, plan.CurrentVersion, plan.TargetVersion, plan.PackageSource, plan.DownloadURL,
+		plan.DatabaseBackupMode, nullableBackupSource(plan.DatabaseBackupSourceID), stamp, stamp, stamp)
 	if err != nil {
 		return WPUpdateTask{}, err
 	}
@@ -133,10 +150,11 @@ func (s *wpUpdateStore) createPluginManualPlan(ctx context.Context, plan WPUpdat
 }
 
 func (s *wpUpdateStore) createThemeManualPlan(ctx context.Context, plan WPUpdatePlan, now time.Time) (WPUpdateTask, error) {
+	normalizeWPUpdateBackupPlan(&plan)
 	if s == nil || s.db == nil || plan.SiteID <= 0 || !validWPThemeComponentKey(plan.ComponentKey) ||
 		!wpComponentVersionPattern.MatchString(plan.CurrentVersion) || !wpComponentVersionPattern.MatchString(plan.TargetVersion) ||
 		plan.CurrentVersion == plan.TargetVersion || plan.PackageSource != "wordpress.org" ||
-		!validWPThemeDownloadURL(plan.DownloadURL, plan.ComponentKey, plan.TargetVersion) {
+		!validWPThemeDownloadURL(plan.DownloadURL, plan.ComponentKey, plan.TargetVersion) || !validWPUpdateBackupPlan(plan) {
 		return WPUpdateTask{}, errors.New("invalid theme update plan")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -184,9 +202,10 @@ func (s *wpUpdateStore) createThemeManualPlan(ctx context.Context, plan WPUpdate
 	stamp := wpUpdateDBTime(now)
 	_, err = tx.ExecContext(ctx, `INSERT INTO wp_update_tasks
 		(id,site_id,component_type,component_key,task_kind,trigger_type,status,stage,
-		 current_version,target_version,package_source,download_url,requested_at,created_at,updated_at)
-		VALUES (?,?,'theme',?,'update','manual','preparing','plan',?,?,?,?,?,?,?)`,
-		id, plan.SiteID, plan.ComponentKey, plan.CurrentVersion, plan.TargetVersion, plan.PackageSource, plan.DownloadURL, stamp, stamp, stamp)
+		 current_version,target_version,package_source,download_url,database_backup_mode,database_backup_source_id,requested_at,created_at,updated_at)
+		VALUES (?,?,'theme',?,'update','manual','preparing','plan',?,?,?,?,?,?,?,?,?)`,
+		id, plan.SiteID, plan.ComponentKey, plan.CurrentVersion, plan.TargetVersion, plan.PackageSource, plan.DownloadURL,
+		plan.DatabaseBackupMode, nullableBackupSource(plan.DatabaseBackupSourceID), stamp, stamp, stamp)
 	if err != nil {
 		return WPUpdateTask{}, err
 	}
@@ -204,9 +223,10 @@ type wpUpdateStore struct{ db *sql.DB }
 func newWPUpdateStore(db *sql.DB) *wpUpdateStore { return &wpUpdateStore{db: db} }
 
 func (s *wpUpdateStore) createCoreManualPlan(ctx context.Context, plan WPUpdatePlan, now time.Time) (WPUpdateTask, error) {
+	normalizeWPUpdateBackupPlan(&plan)
 	if s == nil || s.db == nil || plan.SiteID <= 0 || strings.TrimSpace(plan.CurrentVersion) == "" ||
 		strings.TrimSpace(plan.TargetVersion) == "" || plan.CurrentVersion == plan.TargetVersion ||
-		plan.PackageSource != "wordpress.org" || !validWPUpdateDownloadURL(plan.DownloadURL) {
+		plan.PackageSource != "wordpress.org" || !validWPUpdateDownloadURL(plan.DownloadURL) || !validWPUpdateBackupPlan(plan) {
 		return WPUpdateTask{}, errors.New("invalid update plan")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -242,9 +262,10 @@ func (s *wpUpdateStore) createCoreManualPlan(ctx context.Context, plan WPUpdateP
 	stamp := wpUpdateDBTime(now)
 	_, err = tx.ExecContext(ctx, `INSERT INTO wp_update_tasks
 		(id,site_id,component_type,component_key,task_kind,trigger_type,status,stage,
-		 current_version,target_version,package_source,download_url,requested_at,created_at,updated_at)
-		VALUES (?,?,'core','core','update','manual','preparing','plan',?,?,?,?,?,?,?)`,
-		id, plan.SiteID, plan.CurrentVersion, plan.TargetVersion, plan.PackageSource, plan.DownloadURL, stamp, stamp, stamp)
+		 current_version,target_version,package_source,download_url,database_backup_mode,database_backup_source_id,requested_at,created_at,updated_at)
+		VALUES (?,?,'core','core','update','manual','preparing','plan',?,?,?,?,?,?,?,?,?)`,
+		id, plan.SiteID, plan.CurrentVersion, plan.TargetVersion, plan.PackageSource, plan.DownloadURL,
+		plan.DatabaseBackupMode, nullableBackupSource(plan.DatabaseBackupSourceID), stamp, stamp, stamp)
 	if err != nil {
 		return WPUpdateTask{}, err
 	}
@@ -903,19 +924,32 @@ func (s *wpUpdateStore) hasEffectiveManualSuccess(ctx context.Context, siteID in
 func (s *wpUpdateStore) getTask(ctx context.Context, id string) (WPUpdateTask, error) {
 	var task WPUpdateTask
 	var attention, backupReady int
+	var backupSource sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `SELECT id,site_id,component_type,component_key,task_kind,COALESCE(parent_task_id,''),
 		trigger_type,status,stage,failure_stage,rollback_status,requires_attention,manual_disposition,current_version,target_version,
-		package_source,download_url,downloaded_sha256,verification_level,package_snapshot_path,backup_ready,COALESCE(plan_sealed_at,''),
+		package_source,download_url,downloaded_sha256,verification_level,package_snapshot_path,backup_ready,
+		database_backup_mode,database_backup_source_id,COALESCE(plan_sealed_at,''),
 		lease_owner,COALESCE(lease_expires_at,''),requested_at,COALESCE(started_at,''),COALESCE(finished_at,'')
 		FROM wp_update_tasks WHERE id=?`, id).Scan(&task.ID, &task.SiteID, &task.ComponentType, &task.ComponentKey,
 		&task.TaskKind, &task.ParentTaskID, &task.TriggerType, &task.Status, &task.Stage, &task.FailureStage,
 		&task.RollbackStatus, &attention, &task.ManualDisposition, &task.CurrentVersion, &task.TargetVersion,
 		&task.PackageSource, &task.DownloadURL, &task.DownloadedSHA256, &task.VerificationLevel,
-		&task.PackageSnapshotPath, &backupReady, &task.PlanSealedAt, &task.LeaseOwner, &task.LeaseExpiresAt,
+		&task.PackageSnapshotPath, &backupReady, &task.DatabaseBackupMode, &backupSource,
+		&task.PlanSealedAt, &task.LeaseOwner, &task.LeaseExpiresAt,
 		&task.RequestedAt, &task.StartedAt, &task.FinishedAt)
 	task.RequiresAttention = attention != 0
 	task.BackupReady = backupReady != 0
+	if backupSource.Valid {
+		task.DatabaseBackupSourceID = backupSource.Int64
+	}
 	return task, err
+}
+
+func nullableBackupSource(id int64) any {
+	if id <= 0 {
+		return nil
+	}
+	return id
 }
 
 func (s *wpUpdateStore) latestCoreUpdateTask(ctx context.Context, siteID int) (WPUpdateTask, error) {
@@ -986,7 +1020,7 @@ func (s *wpUpdateStore) markComponentBackupsReady(ctx context.Context, id, owner
 	validPair := (componentType == "core" && fileKind == "core_files") ||
 		(componentType == "plugin" && fileKind == "plugin_files") ||
 		(componentType == "theme" && fileKind == "theme_files")
-	if !validPair || len(records) != 2 || records[0].Kind != "database" || records[1].Kind != fileKind {
+	if !validPair {
 		return errors.New("invalid update backup records")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -994,19 +1028,40 @@ func (s *wpUpdateStore) markComponentBackupsReady(ctx context.Context, id, owner
 		return err
 	}
 	defer tx.Rollback()
+	var mode string
+	var source sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT database_backup_mode,database_backup_source_id
+		FROM wp_update_tasks WHERE id=? AND component_type=? AND status='running' AND lease_owner=?`,
+		id, componentType, owner).Scan(&mode, &source); err != nil {
+		return err
+	}
+	if mode == "fresh" && (len(records) != 2 || records[0].Kind != "database" || records[1].Kind != fileKind) ||
+		mode == "reuse" && (len(records) != 1 || records[0].Kind != fileKind || !source.Valid || source.Int64 <= 0) {
+		return errors.New("invalid update backup records")
+	}
 	stamp := wpUpdateDBTime(now)
+	var databaseBackupID int64
 	for _, record := range records {
 		if !filepath.IsAbs(record.FilePath) || record.FileSize <= 0 || !wpUpdateSHA256Pattern.MatchString(record.SHA256) {
 			return errors.New("invalid update backup record")
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO wp_update_task_backups
+		result, err := tx.ExecContext(ctx, `INSERT INTO wp_update_task_backups
 			(task_id,kind,file_path,file_size,sha256,protected,created_at) VALUES (?,?,?,?,?,1,?)`,
-			id, record.Kind, filepath.Clean(record.FilePath), record.FileSize, record.SHA256, stamp); err != nil {
+			id, record.Kind, filepath.Clean(record.FilePath), record.FileSize, record.SHA256, stamp)
+		if err != nil {
 			return err
 		}
+		if record.Kind == "database" {
+			databaseBackupID, _ = result.LastInsertId()
+		}
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET backup_ready=1,stage='backups_ready',updated_at=?
-		WHERE id=? AND task_kind='update' AND component_type=? AND status='running' AND lease_owner=? AND backup_ready=0`, stamp, id, componentType, owner)
+	if mode == "fresh" && databaseBackupID <= 0 {
+		return errors.New("database backup record unavailable")
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET backup_ready=1,stage='backups_ready',
+		database_backup_source_id=CASE WHEN database_backup_mode='fresh' THEN ? ELSE database_backup_source_id END,updated_at=?
+		WHERE id=? AND task_kind='update' AND component_type=? AND status='running' AND lease_owner=? AND backup_ready=0`,
+		databaseBackupID, stamp, id, componentType, owner)
 	if err != nil {
 		return err
 	}

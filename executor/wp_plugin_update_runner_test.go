@@ -289,6 +289,30 @@ func TestWPComponentUpdatePHPSourceNamespacesBootstrapSensitiveInputs(t *testing
 	}
 }
 
+func TestWPComponentUpdatePHPSourcePreservesUnrelatedCandidates(t *testing.T) {
+	for _, tc := range []struct {
+		name, source, transient, key string
+	}{
+		{"plugin", wpPluginUpdatePHPSource, "update_plugins", "$wp_panel_plugin"},
+		{"theme", wpThemeUpdatePHPSource, "update_themes", "$wp_panel_stylesheet"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, required := range []string{
+				"$original_updates",
+				"set_site_transient('" + tc.transient + "',$original_updates)",
+				"unset($original_updates->response[" + tc.key + "])",
+			} {
+				if !strings.Contains(tc.source, required) {
+					t.Fatalf("runner source does not preserve unrelated candidates: missing %q", required)
+				}
+			}
+			if strings.Contains(tc.source, "delete_site_transient('"+tc.transient+"')") {
+				t.Fatal("runner still deletes the shared update transient")
+			}
+		})
+	}
+}
+
 func TestRunWPPluginScopeCommandCapsOutput(t *testing.T) {
 	head, err := exec.LookPath("head")
 	if err != nil {

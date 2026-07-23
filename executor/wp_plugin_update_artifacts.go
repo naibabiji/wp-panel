@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -108,15 +109,21 @@ func (s *wpUpdateArtifactService) preparePluginBackups(ctx context.Context, task
 	if !wpUpdateTaskIDPattern.MatchString(taskID) || owner == "" {
 		return errors.New("invalid plugin backup request")
 	}
-	var webRoot, dbName, status, kind, component, componentKey, leaseOwner string
+	var webRoot, dbName, status, kind, component, componentKey, leaseOwner, dbMode string
+	var siteID int
+	var dbSource sql.NullInt64
 	var backupReady int
 	err := s.store.db.QueryRowContext(ctx, `SELECT w.web_root,w.db_name,t.status,t.task_kind,t.component_type,
-		t.component_key,t.lease_owner,t.backup_ready FROM wp_update_tasks t
+		t.component_key,t.lease_owner,t.backup_ready,t.database_backup_mode,t.site_id,t.database_backup_source_id FROM wp_update_tasks t
 		JOIN websites w ON w.id=t.site_id WHERE t.id=?`, taskID).
-		Scan(&webRoot, &dbName, &status, &kind, &component, &componentKey, &leaseOwner, &backupReady)
+		Scan(&webRoot, &dbName, &status, &kind, &component, &componentKey, &leaseOwner, &backupReady, &dbMode, &siteID, &dbSource)
 	if err != nil || status != wpUpdateRunning || kind != "update" || component != "plugin" ||
 		leaseOwner != owner || backupReady != 0 || !filepath.IsAbs(webRoot) || !validWPPluginComponentKey(componentKey) {
 		return errors.New("update task is not plugin-backup-ready")
+	}
+	if dbMode == "reuse" &&
+		(!dbSource.Valid || s.store.validateDatabaseBackupChoice(ctx, siteID, dbMode, dbSource.Int64, s.root, s.now().UTC()) != nil) {
+		return errors.New("reused database backup unavailable")
 	}
 	taskDir := filepath.Join(s.root, taskID)
 	if info, err := os.Lstat(taskDir); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
@@ -130,17 +137,9 @@ func (s *wpUpdateArtifactService) preparePluginBackups(ctx context.Context, task
 			_ = os.Remove(name)
 		}
 	}()
-	if err := s.dumpDB(ctx, dbName, dbPath); err != nil {
-		_ = os.Remove(dbPath)
-		return fmt.Errorf("update database backup failed: %w", err)
-	}
-	created = append(created, dbPath)
-	if err := syncRegularFile(dbPath); err != nil {
-		return errors.New("invalid update database backup")
-	}
-	dbSHA, dbSize, err := hashRegularFile(dbPath)
-	if err != nil || dbSize == 0 {
-		return errors.New("invalid update database backup")
+	records, err := s.prepareDatabaseBackupRecord(ctx, dbMode, dbName, dbPath, &created)
+	if err != nil {
+		return err
 	}
 	if err := archiveWordPressPlugin(webRoot, componentKey, pluginPath); err != nil {
 		_ = os.Remove(pluginPath)
@@ -151,7 +150,7 @@ func (s *wpUpdateArtifactService) preparePluginBackups(ctx context.Context, task
 	if err != nil || pluginSize == 0 {
 		return errors.New("invalid update plugin backup")
 	}
-	records := []wpUpdateBackupRecord{{"database", dbPath, dbSize, dbSHA}, {"plugin_files", pluginPath, pluginSize, pluginSHA}}
+	records = append(records, wpUpdateBackupRecord{"plugin_files", pluginPath, pluginSize, pluginSHA})
 	if err := s.store.markPluginBackupsReady(ctx, taskID, owner, records, s.now().UTC()); err != nil {
 		committed, checkErr := s.backupsAreCommitted(ctx, taskID, records)
 		if checkErr != nil {
@@ -172,15 +171,21 @@ func (s *wpUpdateArtifactService) prepareThemeBackups(ctx context.Context, taskI
 	if !wpUpdateTaskIDPattern.MatchString(taskID) || owner == "" {
 		return errors.New("invalid theme backup request")
 	}
-	var webRoot, dbName, status, kind, component, componentKey, leaseOwner string
+	var webRoot, dbName, status, kind, component, componentKey, leaseOwner, dbMode string
+	var siteID int
+	var dbSource sql.NullInt64
 	var backupReady int
 	err := s.store.db.QueryRowContext(ctx, `SELECT w.web_root,w.db_name,t.status,t.task_kind,t.component_type,
-		t.component_key,t.lease_owner,t.backup_ready FROM wp_update_tasks t
+		t.component_key,t.lease_owner,t.backup_ready,t.database_backup_mode,t.site_id,t.database_backup_source_id FROM wp_update_tasks t
 		JOIN websites w ON w.id=t.site_id WHERE t.id=?`, taskID).
-		Scan(&webRoot, &dbName, &status, &kind, &component, &componentKey, &leaseOwner, &backupReady)
+		Scan(&webRoot, &dbName, &status, &kind, &component, &componentKey, &leaseOwner, &backupReady, &dbMode, &siteID, &dbSource)
 	if err != nil || status != wpUpdateRunning || kind != "update" || component != "theme" ||
 		leaseOwner != owner || backupReady != 0 || !filepath.IsAbs(webRoot) || !validWPThemeComponentKey(componentKey) {
 		return errors.New("update task is not theme-backup-ready")
+	}
+	if dbMode == "reuse" &&
+		(!dbSource.Valid || s.store.validateDatabaseBackupChoice(ctx, siteID, dbMode, dbSource.Int64, s.root, s.now().UTC()) != nil) {
+		return errors.New("reused database backup unavailable")
 	}
 	taskDir := filepath.Join(s.root, taskID)
 	if info, err := os.Lstat(taskDir); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
@@ -194,17 +199,9 @@ func (s *wpUpdateArtifactService) prepareThemeBackups(ctx context.Context, taskI
 			_ = os.Remove(name)
 		}
 	}()
-	if err := s.dumpDB(ctx, dbName, dbPath); err != nil {
-		_ = os.Remove(dbPath)
-		return fmt.Errorf("update database backup failed: %w", err)
-	}
-	created = append(created, dbPath)
-	if err := syncRegularFile(dbPath); err != nil {
-		return errors.New("invalid update database backup")
-	}
-	dbSHA, dbSize, err := hashRegularFile(dbPath)
-	if err != nil || dbSize == 0 {
-		return errors.New("invalid update database backup")
+	records, err := s.prepareDatabaseBackupRecord(ctx, dbMode, dbName, dbPath, &created)
+	if err != nil {
+		return err
 	}
 	if err := archiveWordPressTheme(webRoot, componentKey, themePath); err != nil {
 		_ = os.Remove(themePath)
@@ -215,7 +212,7 @@ func (s *wpUpdateArtifactService) prepareThemeBackups(ctx context.Context, taskI
 	if err != nil || themeSize == 0 {
 		return errors.New("invalid update theme backup")
 	}
-	records := []wpUpdateBackupRecord{{"database", dbPath, dbSize, dbSHA}, {"theme_files", themePath, themeSize, themeSHA}}
+	records = append(records, wpUpdateBackupRecord{"theme_files", themePath, themeSize, themeSHA})
 	if err := s.store.markThemeBackupsReady(ctx, taskID, owner, records, s.now().UTC()); err != nil {
 		committed, checkErr := s.backupsAreCommitted(ctx, taskID, records)
 		if checkErr != nil {

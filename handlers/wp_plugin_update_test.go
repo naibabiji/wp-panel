@@ -18,7 +18,7 @@ type fakeWPPluginUpdateAPIService struct{ confirmCalls int }
 func (f *fakeWPPluginUpdateAPIService) Preview(context.Context, int, string, string) (models.WPPluginUpdatePreview, error) {
 	return models.WPPluginUpdatePreview{Available: true}, nil
 }
-func (f *fakeWPPluginUpdateAPIService) Confirm(context.Context, int, string, string, string, string) (models.WPPluginUpdateTask, error) {
+func (f *fakeWPPluginUpdateAPIService) Confirm(context.Context, int, string, string, string, string, string) (models.WPPluginUpdateTask, error) {
 	f.confirmCalls++
 	return models.WPPluginUpdateTask{ID: "wpu_0123456789abcdef0123456789abcdef", Status: "queued"}, nil
 }

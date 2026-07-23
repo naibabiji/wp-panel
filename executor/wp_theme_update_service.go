@@ -84,10 +84,16 @@ func (s *WPThemeUpdateService) Preview(ctx context.Context, siteID int, username
 		!validWPThemeDownloadURL(offer.DownloadURL, componentKey, candidate.targetVersion) {
 		return models.WPThemeUpdatePreview{}, ErrWPThemeUpdateConflict
 	}
+	now := s.now().UTC()
+	recent := recentBackupOrNil(s.store, ctx, siteID, now)
+	var recentID int64
+	if recent != nil {
+		recentID = recent.BackupID
+	}
 	record, err := s.confirmations.create(wpThemeConfirmation{
 		username: username, siteID: siteID, domain: candidate.domain, collectionID: candidate.collectionID,
 		componentKey: componentKey, currentVersion: candidate.currentVersion, targetVersion: candidate.targetVersion,
-		downloadURL: offer.DownloadURL, template: candidate.template, currentTheme: candidate.currentTheme,
+		downloadURL: offer.DownloadURL, template: candidate.template, currentTheme: candidate.currentTheme, recentBackupID: recentID,
 	})
 	if err != nil {
 		return models.WPThemeUpdatePreview{}, ErrWPThemeUpdateBusy
@@ -97,16 +103,26 @@ func (s *WPThemeUpdateService) Preview(ctx context.Context, siteID int, username
 		Available: true, SiteID: siteID, Domain: candidate.domain, ComponentKey: componentKey, Name: candidate.name,
 		CurrentVersion: candidate.currentVersion, TargetVersion: candidate.targetVersion, Template: candidate.template,
 		CurrentTheme: candidate.currentTheme, PackageSource: "wordpress.org", VerificationRequired: "structure_only",
-		DatabaseBackup: true, ThemeFilesBackup: true, ConfirmationToken: record.token, RiskToken: record.riskToken, ExpiresAt: &expires,
+		DatabaseBackup: true, RecentDatabaseBackup: recent, ThemeFilesBackup: true, ConfirmationToken: record.token, RiskToken: record.riskToken, ExpiresAt: &expires,
 	}, nil
 }
 
-func (s *WPThemeUpdateService) Confirm(ctx context.Context, siteID int, username, componentKey, token, riskToken, target string) (models.WPThemeUpdateTask, error) {
+func (s *WPThemeUpdateService) Confirm(ctx context.Context, siteID int, username, componentKey, token, riskToken, target, backupMode string) (models.WPThemeUpdateTask, error) {
 	if s == nil || siteID <= 0 || username == "" || !validWPThemeComponentKey(componentKey) || token == "" || target == "" {
 		return models.WPThemeUpdateTask{}, ErrWPThemeUpdateInvalid
 	}
 	record, err := s.confirmations.consume(token, riskToken, username, siteID, componentKey, target)
 	if err != nil {
+		return models.WPThemeUpdateTask{}, ErrWPThemeUpdateConflict
+	}
+	if backupMode == "" {
+		backupMode = "fresh"
+	}
+	var sourceID int64
+	if backupMode == "reuse" {
+		sourceID = record.recentBackupID
+	}
+	if err := s.store.validateDatabaseBackupChoice(ctx, siteID, backupMode, sourceID, s.artifacts.root, s.now().UTC()); err != nil {
 		return models.WPThemeUpdateTask{}, ErrWPThemeUpdateConflict
 	}
 	candidate, err := s.loadCandidate(ctx, siteID, componentKey)
@@ -118,6 +134,7 @@ func (s *WPThemeUpdateService) Confirm(ctx context.Context, siteID int, username
 	task, err := s.store.createThemeManualPlan(ctx, WPUpdatePlan{
 		SiteID: siteID, ComponentKey: componentKey, CurrentVersion: record.currentVersion, TargetVersion: record.targetVersion,
 		PackageSource: "wordpress.org", DownloadURL: record.downloadURL,
+		DatabaseBackupMode: backupMode, DatabaseBackupSourceID: sourceID,
 	}, s.now().UTC())
 	if err != nil {
 		return models.WPThemeUpdateTask{}, ErrWPThemeUpdateConflict

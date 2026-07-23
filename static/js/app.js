@@ -16,10 +16,20 @@ function api(path, options = {}) {
     const url = prefix + '/api' + path;
     const { silent = false, suppressToast = false, timeout = 0, ...fetchOptions } = options;
     let timeoutID = null;
+    let externalAbortHandler = null;
     let timedOut = false;
-    if (timeout > 0 && !fetchOptions.signal) {
+    if (timeout > 0) {
+        const externalSignal = fetchOptions.signal;
         const controller = new AbortController();
         fetchOptions.signal = controller.signal;
+        if (externalSignal) {
+            if (externalSignal.aborted) {
+                controller.abort();
+            } else {
+                externalAbortHandler = () => controller.abort();
+                externalSignal.addEventListener('abort', externalAbortHandler, { once: true });
+            }
+        }
         timeoutID = setTimeout(() => {
             timedOut = true;
             controller.abort();
@@ -88,6 +98,7 @@ function api(path, options = {}) {
         })
         .finally(() => {
             if (timeoutID) clearTimeout(timeoutID);
+            if (externalAbortHandler && options.signal) options.signal.removeEventListener('abort', externalAbortHandler);
         });
 }
 

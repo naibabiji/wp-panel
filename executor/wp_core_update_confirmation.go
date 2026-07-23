@@ -17,6 +17,7 @@ const (
 type wpCoreConfirmation struct {
 	token, username, domain, collectionID              string
 	siteID                                             int
+	recentBackupID                                     int64
 	currentVersion, targetVersion, locale, downloadURL string
 	createdAt, expiresAt                               time.Time
 }

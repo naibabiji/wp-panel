@@ -19,8 +19,14 @@
                 <div><div class="text-xs text-gray-500">{{t .Lang "wp_core_update.backup_scope"}}</div><div class="mt-1 text-gray-200">{{t .Lang "wp_core_update.backup_scope_value"}}</div></div>
             </div>
             <p class="mt-4 text-sm text-yellow-200">{{t .Lang "wp_core_update.confirm_warning"}}</p>
+            <div x-show="preview?.recent_database_backup" class="mt-4 space-y-2 rounded border border-yellow-800 bg-yellow-950/30 p-3 text-sm">
+                <div class="font-medium text-yellow-100" x-text="t('wp_core_update.recent_backup_found', { time: fmtTime(preview?.recent_database_backup?.created_at) })"></div>
+                <label class="flex items-start gap-2 text-gray-200"><input type="radio" value="fresh" x-model="databaseBackupMode" class="mt-1"><span>{{t .Lang "wp_core_update.backup_fresh"}}</span></label>
+                <label class="flex items-start gap-2 text-gray-200"><input type="radio" value="reuse" x-model="databaseBackupMode" class="mt-1"><span>{{t .Lang "wp_core_update.backup_reuse"}}</span></label>
+                <p x-show="databaseBackupMode === 'reuse'" class="text-red-200">{{t .Lang "wp_core_update.backup_reuse_warning"}}</p>
+            </div>
             <div class="mt-4 flex justify-end gap-2">
-                <button @click="discardPreview()" :disabled="confirming" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
+                <button @click="confirming ? cancelPreparation() : discardPreview()" class="btn-secondary" x-text="confirming ? t('wp_core_update.cancel_preparation') : t('common.cancel')"></button>
                 <button @click="confirmUpdate()" :disabled="confirming" class="btn-primary" x-text="confirming ? t('wp_core_update.submitting') : t('wp_core_update.start_update')"></button>
             </div>
         </div>
@@ -48,6 +54,8 @@ function wpCoreUpdatePanel() {
         loading: false,
         confirming: false,
         error: '',
+        databaseBackupMode: 'fresh',
+        preparationController: null,
         pollTimer: null,
         generation: 0,
         pagehideHandler: null,
@@ -57,6 +65,7 @@ function wpCoreUpdatePanel() {
             window.addEventListener('pagehide', this.pagehideHandler);
         },
         teardown() {
+            if (this.preparationController) this.preparationController.abort();
             this.stopPolling();
             this.generation++;
             if (this.pagehideHandler) window.removeEventListener('pagehide', this.pagehideHandler);
@@ -65,10 +74,12 @@ function wpCoreUpdatePanel() {
         setSite(site) {
             const next = site && site.site_type === 'wordpress' ? Number(site.id) : null;
             if (next === this.siteID) return;
+            if (this.preparationController) this.preparationController.abort();
             this.stopPolling();
             this.generation++;
             this.siteID = Number.isInteger(next) && next > 0 ? next : null;
             this.preview = null;
+            this.databaseBackupMode = 'fresh';
             this.task = null;
             this.error = '';
             if (this.siteID) this.loadLatestTask();
@@ -107,11 +118,15 @@ function wpCoreUpdatePanel() {
                 typeof value.target_version === 'string' && value.target_version !== '' &&
                 typeof value.confirmation_token === 'string' && value.confirmation_token !== '' &&
                 value.verification_required === 'official_verified' && value.database_backup === true &&
-                value.core_files_backup === true && value.uploads_included === false;
+                value.core_files_backup === true && value.uploads_included === false &&
+                (!value.recent_database_backup ||
+                    (Number.isInteger(value.recent_database_backup.backup_id) && value.recent_database_backup.backup_id > 0 &&
+                     typeof value.recent_database_backup.created_at === 'string'));
         },
         validTask(value) {
             return value && typeof value.task_id === 'string' && value.task_id !== '' && value.site_id === this.siteID &&
-                value.component_type === 'core' && value.task_kind === 'update' && typeof value.status === 'string';
+                value.component_type === 'core' && value.task_kind === 'update' && typeof value.status === 'string' &&
+                (!value.database_backup_mode || ['fresh', 'reuse'].includes(value.database_backup_mode));
         },
         async loadPreview() {
             if (!this.siteID || this.loading || this.confirming || this.isActive()) return;
@@ -125,6 +140,7 @@ function wpCoreUpdatePanel() {
                 if (generation !== this.generation || siteID !== this.siteID) return;
                 if (!this.validPreview(response.data)) throw new Error(t('wp_core_update.preview_invalid'));
                 this.preview = response.data;
+                this.databaseBackupMode = 'fresh';
             } catch (error) {
                 if (generation === this.generation && siteID === this.siteID) this.error = error.message || t('wp_core_update.preview_failed');
             } finally {
@@ -133,6 +149,9 @@ function wpCoreUpdatePanel() {
         },
         discardPreview() {
             if (!this.confirming) this.preview = null;
+        },
+        cancelPreparation() {
+            if (this.preparationController) this.preparationController.abort();
         },
         async confirmUpdate() {
             if (!this.preview || this.confirming || !this.siteID) return;
@@ -144,13 +163,15 @@ function wpCoreUpdatePanel() {
             const submittedAt = Date.now();
             const previousTaskID = this.task?.task_id || '';
             this.confirming = true;
+            this.preparationController = new AbortController();
             this.error = '';
             try {
                 const response = await api('/websites/' + siteID + '/wp-core-update/confirm', {
                     method: 'POST',
                     timeout: 30 * 60 * 1000,
+                    signal: this.preparationController.signal,
                     suppressToast: true,
-                    body: { confirmation_token: preview.confirmation_token, target_version: preview.target_version, confirm: true },
+                    body: { confirmation_token: preview.confirmation_token, target_version: preview.target_version, database_backup_mode: this.databaseBackupMode, confirm: true },
                 });
                 if (generation !== this.generation || siteID !== this.siteID) return;
                 if (!this.validTask(response.data) || response.data.status !== 'queued') throw new Error(t('wp_core_update.task_invalid'));
@@ -169,7 +190,10 @@ function wpCoreUpdatePanel() {
                     }
                 }
             } finally {
-                if (generation === this.generation && siteID === this.siteID) this.confirming = false;
+                if (generation === this.generation && siteID === this.siteID) {
+                    this.confirming = false;
+                    this.preparationController = null;
+                }
             }
         },
         isActive() {

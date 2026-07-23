@@ -23,6 +23,8 @@ var wpUpdateSchemaStatements = []string{
 		verification_level    TEXT NOT NULL DEFAULT '',
 		package_snapshot_path TEXT NOT NULL DEFAULT '',
 		backup_ready          INTEGER NOT NULL DEFAULT 0,
+		database_backup_mode  TEXT NOT NULL DEFAULT 'fresh',
+		database_backup_source_id INTEGER,
 		plan_sealed_at        DATETIME,
 		lease_owner           TEXT NOT NULL DEFAULT '',
 		lease_expires_at      DATETIME,
@@ -41,6 +43,7 @@ var wpUpdateSchemaStatements = []string{
 		CHECK (requires_attention IN (0,1)),
 		CHECK (manual_disposition IN ('','confirmed_target_version','manually_rolled_back','marked_failed_no_action','escalated')),
 		CHECK (verification_level IN ('','structure_only','official_verified')),
+		CHECK (database_backup_mode IN ('fresh','reuse')),
 		CHECK ((task_kind = 'update' AND parent_task_id IS NULL) OR (task_kind = 'rollback' AND parent_task_id IS NOT NULL))
 	)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS ux_wp_update_tasks_active_site
@@ -85,7 +88,7 @@ var wpUpdateSchemaStatements = []string{
 	`CREATE TRIGGER IF NOT EXISTS trg_wp_update_tasks_sealed_immutable
 		BEFORE UPDATE OF site_id, component_type, component_key, task_kind, parent_task_id,
 			current_version, target_version, package_source, download_url,
-			downloaded_sha256, verification_level, package_snapshot_path
+			downloaded_sha256, verification_level, package_snapshot_path, database_backup_mode
 		ON wp_update_tasks
 		WHEN OLD.plan_sealed_at IS NOT NULL AND (
 			NEW.site_id != OLD.site_id OR NEW.component_type != OLD.component_type OR
@@ -95,7 +98,12 @@ var wpUpdateSchemaStatements = []string{
 			NEW.package_source != OLD.package_source OR NEW.download_url != OLD.download_url OR
 			NEW.downloaded_sha256 != OLD.downloaded_sha256 OR
 			NEW.verification_level != OLD.verification_level OR
-			NEW.package_snapshot_path != OLD.package_snapshot_path
+			NEW.package_snapshot_path != OLD.package_snapshot_path OR
+			NEW.database_backup_mode != OLD.database_backup_mode
 		)
 		BEGIN SELECT RAISE(ABORT, 'sealed update plan is immutable'); END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_wp_update_tasks_sealed_backup_mode_immutable
+		BEFORE UPDATE OF database_backup_mode ON wp_update_tasks
+		WHEN OLD.plan_sealed_at IS NOT NULL AND NEW.database_backup_mode != OLD.database_backup_mode
+		BEGIN SELECT RAISE(ABORT, 'sealed update backup mode is immutable'); END`,
 }

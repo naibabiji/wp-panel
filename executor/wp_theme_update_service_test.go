@@ -52,14 +52,14 @@ func TestWPThemeUpdateServicePreviewAndConfirmCurrentTheme(t *testing.T) {
 	if err != nil || !preview.CurrentTheme || preview.RiskToken == "" || preview.Template != "" {
 		t.Fatalf("preview=%+v err=%v", preview, err)
 	}
-	if _, err := service.Confirm(context.Background(), siteID, "admin", "sample-theme", preview.ConfirmationToken, "", "1.1.0"); !errors.Is(err, ErrWPThemeUpdateConflict) {
+	if _, err := service.Confirm(context.Background(), siteID, "admin", "sample-theme", preview.ConfirmationToken, "", "1.1.0", "fresh"); !errors.Is(err, ErrWPThemeUpdateConflict) {
 		t.Fatalf("missing risk confirmation error=%v", err)
 	}
 	preview, err = service.Preview(context.Background(), siteID, "admin", "sample-theme")
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := service.Confirm(context.Background(), siteID, "admin", "sample-theme", preview.ConfirmationToken, preview.RiskToken, "1.1.0")
+	task, err := service.Confirm(context.Background(), siteID, "admin", "sample-theme", preview.ConfirmationToken, preview.RiskToken, "1.1.0", "fresh")
 	if err != nil || task.Status != wpUpdateQueued || task.ComponentType != "theme" || task.VerificationLevel != "structure_only" {
 		t.Fatalf("task=%+v err=%v", task, err)
 	}

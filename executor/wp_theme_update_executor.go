@@ -103,7 +103,7 @@ func (e *wpThemeUpdateExecutor) loadExecution(ctx context.Context, taskID, owner
 	if err := rows.Err(); err != nil {
 		return wpPluginUpdateExecution{}, err
 	}
-	if !seen["database"] || !seen["theme_files"] {
+	if (task.DatabaseBackupMode == "fresh" && !seen["database"]) || !seen["theme_files"] {
 		return wpPluginUpdateExecution{}, errors.New("theme update backups are incomplete")
 	}
 	return execution, nil

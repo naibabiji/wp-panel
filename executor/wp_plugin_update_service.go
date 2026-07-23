@@ -85,10 +85,16 @@ func (s *WPPluginUpdateService) Preview(ctx context.Context, siteID int, usernam
 		!validWPPluginDownloadURL(offer.DownloadURL, slug, candidate.targetVersion) {
 		return models.WPPluginUpdatePreview{}, ErrWPPluginUpdateConflict
 	}
+	now := s.now().UTC()
+	recent := recentBackupOrNil(s.store, ctx, siteID, now)
+	var recentID int64
+	if recent != nil {
+		recentID = recent.BackupID
+	}
 	record, err := s.confirmations.create(wpPluginConfirmation{
 		username: username, siteID: siteID, domain: candidate.domain, collectionID: candidate.collectionID,
 		componentKey: componentKey, currentVersion: candidate.currentVersion, targetVersion: candidate.targetVersion,
-		downloadURL: offer.DownloadURL,
+		downloadURL: offer.DownloadURL, recentBackupID: recentID,
 	})
 	if err != nil {
 		return models.WPPluginUpdatePreview{}, ErrWPPluginUpdateBusy
@@ -97,17 +103,27 @@ func (s *WPPluginUpdateService) Preview(ctx context.Context, siteID int, usernam
 	return models.WPPluginUpdatePreview{
 		Available: true, SiteID: siteID, Domain: candidate.domain, ComponentKey: componentKey, Name: candidate.name,
 		CurrentVersion: candidate.currentVersion, TargetVersion: candidate.targetVersion, PackageSource: "wordpress.org",
-		VerificationRequired: "structure_only", DatabaseBackup: true, PluginFilesBackup: true,
+		VerificationRequired: "structure_only", DatabaseBackup: true, RecentDatabaseBackup: recent, PluginFilesBackup: true,
 		ConfirmationToken: record.token, ExpiresAt: &expires,
 	}, nil
 }
 
-func (s *WPPluginUpdateService) Confirm(ctx context.Context, siteID int, username, componentKey, token, target string) (models.WPPluginUpdateTask, error) {
+func (s *WPPluginUpdateService) Confirm(ctx context.Context, siteID int, username, componentKey, token, target, backupMode string) (models.WPPluginUpdateTask, error) {
 	if s == nil || siteID <= 0 || username == "" || !validWPPluginComponentKey(componentKey) || token == "" || target == "" {
 		return models.WPPluginUpdateTask{}, ErrWPPluginUpdateInvalid
 	}
 	record, err := s.confirmations.consume(token, username, siteID, componentKey, target)
 	if err != nil {
+		return models.WPPluginUpdateTask{}, ErrWPPluginUpdateConflict
+	}
+	if backupMode == "" {
+		backupMode = "fresh"
+	}
+	var sourceID int64
+	if backupMode == "reuse" {
+		sourceID = record.recentBackupID
+	}
+	if err := s.store.validateDatabaseBackupChoice(ctx, siteID, backupMode, sourceID, s.artifacts.root, s.now().UTC()); err != nil {
 		return models.WPPluginUpdateTask{}, ErrWPPluginUpdateConflict
 	}
 	candidate, err := s.loadCandidate(ctx, siteID, componentKey)
@@ -118,6 +134,7 @@ func (s *WPPluginUpdateService) Confirm(ctx context.Context, siteID int, usernam
 	task, err := s.store.createPluginManualPlan(ctx, WPUpdatePlan{
 		SiteID: siteID, ComponentKey: componentKey, CurrentVersion: record.currentVersion, TargetVersion: record.targetVersion,
 		PackageSource: "wordpress.org", DownloadURL: record.downloadURL,
+		DatabaseBackupMode: backupMode, DatabaseBackupSourceID: sourceID,
 	}, s.now().UTC())
 	if err != nil {
 		return models.WPPluginUpdateTask{}, ErrWPPluginUpdateConflict
@@ -255,7 +272,8 @@ func (s *WPPluginUpdateService) taskModel(ctx context.Context, task WPUpdateTask
 		TaskKind: task.TaskKind, Status: task.Status, Stage: task.Stage, FailureStage: task.FailureStage,
 		RollbackStatus: task.RollbackStatus, RequiresAttention: task.RequiresAttention, ManualDisposition: task.ManualDisposition,
 		CurrentVersion: task.CurrentVersion, TargetVersion: task.TargetVersion, VerificationLevel: task.VerificationLevel,
-		RequestedAt: requested, StartedAt: started, FinishedAt: finished,
+		DatabaseBackupMode: task.DatabaseBackupMode,
+		RequestedAt:        requested, StartedAt: started, FinishedAt: finished,
 	}
 	if !includeEvents {
 		return model, nil

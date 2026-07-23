@@ -376,6 +376,11 @@ func (w *WPCoreUpdateWorker) sweep(ctx context.Context) {
 			_, _ = w.store.recoverCoreExpired(context.Background(), w.now().UTC())
 			_ = w.recoverPluginTasks(context.Background(), true, "lease_expired")
 			_ = w.recoverThemeTasks(context.Background(), true, "lease_expired")
+			if cleaner, ok := w.backups.(interface {
+				cleanupExpiredArtifacts(context.Context, time.Time) error
+			}); ok {
+				_ = cleaner.cleanupExpiredArtifacts(context.Background(), w.now().UTC())
+			}
 		}
 	}
 }

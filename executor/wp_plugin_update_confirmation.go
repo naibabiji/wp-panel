@@ -12,6 +12,7 @@ import (
 type wpPluginConfirmation struct {
 	token, username, domain, collectionID, componentKey string
 	siteID                                              int
+	recentBackupID                                      int64
 	currentVersion, targetVersion, downloadURL          string
 	createdAt, expiresAt                                time.Time
 }

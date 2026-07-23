@@ -89,26 +89,42 @@ func (s *WPCoreUpdateService) Preview(ctx context.Context, siteID int, username 
 		compareWPVersions(phpVersion, offer.PHPMin) < 0 || compareWPVersions(mysqlVersion, offer.MySQLMin) < 0 {
 		return models.WPCoreUpdatePreview{}, ErrWPCoreUpdateConflict
 	}
+	now := s.now().UTC()
+	recent := recentBackupOrNil(s.store, ctx, siteID, now)
+	var recentID int64
+	if recent != nil {
+		recentID = recent.BackupID
+	}
 	record, err := s.confirmations.create(wpCoreConfirmation{username: username, siteID: siteID, domain: candidate.domain,
 		collectionID: candidate.collectionID, currentVersion: candidate.currentVersion, targetVersion: candidate.targetVersion,
-		locale: candidate.locale, downloadURL: offer.DownloadURL})
+		locale: candidate.locale, downloadURL: offer.DownloadURL, recentBackupID: recentID})
 	if err != nil {
 		return models.WPCoreUpdatePreview{}, ErrWPCoreUpdateBusy
 	}
 	expires := record.expiresAt
 	return models.WPCoreUpdatePreview{Available: true, SiteID: siteID, Domain: candidate.domain,
 		CurrentVersion: candidate.currentVersion, TargetVersion: candidate.targetVersion, Locale: candidate.locale,
-		PackageSource: "wordpress.org", VerificationRequired: "official_verified", DatabaseBackup: true,
+		PackageSource: "wordpress.org", VerificationRequired: "official_verified", DatabaseBackup: true, RecentDatabaseBackup: recent,
 		CoreFilesBackup: true, UploadsIncluded: false, Compatibility: models.WPCoreUpdateCompatibility{PHP: "compatible", MySQL: "compatible"},
 		ConfirmationToken: record.token, ExpiresAt: &expires}, nil
 }
 
-func (s *WPCoreUpdateService) Confirm(ctx context.Context, siteID int, username, token, target string) (models.WPCoreUpdateTask, error) {
+func (s *WPCoreUpdateService) Confirm(ctx context.Context, siteID int, username, token, target, backupMode string) (models.WPCoreUpdateTask, error) {
 	if s == nil || siteID <= 0 || username == "" || token == "" || target == "" {
 		return models.WPCoreUpdateTask{}, ErrWPCoreUpdateInvalid
 	}
 	record, err := s.confirmations.consume(token, username, siteID, target)
 	if err != nil {
+		return models.WPCoreUpdateTask{}, ErrWPCoreUpdateConflict
+	}
+	if backupMode == "" {
+		backupMode = "fresh"
+	}
+	var sourceID int64
+	if backupMode == "reuse" {
+		sourceID = record.recentBackupID
+	}
+	if err := s.store.validateDatabaseBackupChoice(ctx, siteID, backupMode, sourceID, s.artifacts.root, s.now().UTC()); err != nil {
 		return models.WPCoreUpdateTask{}, ErrWPCoreUpdateConflict
 	}
 	candidate, err := s.loadCandidate(ctx, siteID)
@@ -117,7 +133,8 @@ func (s *WPCoreUpdateService) Confirm(ctx context.Context, siteID int, username,
 		return models.WPCoreUpdateTask{}, ErrWPCoreUpdateConflict
 	}
 	task, err := s.store.createCoreManualPlan(ctx, WPUpdatePlan{SiteID: siteID, CurrentVersion: record.currentVersion,
-		TargetVersion: record.targetVersion, PackageSource: "wordpress.org", DownloadURL: record.downloadURL}, s.now().UTC())
+		TargetVersion: record.targetVersion, PackageSource: "wordpress.org", DownloadURL: record.downloadURL,
+		DatabaseBackupMode: backupMode, DatabaseBackupSourceID: sourceID}, s.now().UTC())
 	if err != nil {
 		return models.WPCoreUpdateTask{}, ErrWPCoreUpdateConflict
 	}
@@ -264,7 +281,8 @@ func (s *WPCoreUpdateService) taskModel(ctx context.Context, task WPUpdateTask, 
 	model := models.WPCoreUpdateTask{ID: task.ID, SiteID: task.SiteID, ComponentType: task.ComponentType, TaskKind: task.TaskKind,
 		Status: task.Status, Stage: task.Stage, FailureStage: task.FailureStage, RollbackStatus: task.RollbackStatus,
 		RequiresAttention: task.RequiresAttention, ManualDisposition: task.ManualDisposition, CurrentVersion: task.CurrentVersion,
-		TargetVersion: task.TargetVersion, VerificationLevel: task.VerificationLevel, RequestedAt: requested, StartedAt: started, FinishedAt: finished}
+		TargetVersion: task.TargetVersion, VerificationLevel: task.VerificationLevel, DatabaseBackupMode: task.DatabaseBackupMode,
+		RequestedAt: requested, StartedAt: started, FinishedAt: finished}
 	if !includeEvents {
 		return model, nil
 	}
