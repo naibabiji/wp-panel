@@ -682,6 +682,25 @@ global.window = {};
     assert(panel.taskStatusText() === 'wp_core_update.status_interrupted_unknown', 'interrupted status mapping');
     assert(panel.stageText() === 'wp_core_update.stage_health_check', 'health-check stage mapping');
 
+    panel.task = null;
+    global.api = async () => ({ data: {
+        task_id: 'wpu_finished', site_id: 7, component_type: 'core', task_kind: 'update', status: 'failed', stage: 'rollback',
+        current_version: '7.0.1', target_version: '7.0.2', requested_at: new Date().toISOString()
+    } });
+    const bareLoadOfFinishedTask = await panel.loadLatestTask();
+    assert(bareLoadOfFinishedTask === false && panel.task === null,
+        'a bare page load must not resurrect a finished task as if it just happened');
+
+    global.api = async () => ({ data: {
+        task_id: 'wpu_running', site_id: 7, component_type: 'core', task_kind: 'update', status: 'running', stage: 'updating_core',
+        current_version: '7.0.1', target_version: '7.0.2', requested_at: new Date().toISOString()
+    } });
+    const bareLoadOfActiveTask = await panel.loadLatestTask();
+    assert(bareLoadOfActiveTask === true && panel.task && panel.task.task_id === 'wpu_running',
+        'a bare page load should still resume watching an in-progress task');
+    panel.stopPolling();
+    panel.task = null;
+
     panel.task = { task_id: 'stale', site_id: 7, component_type: 'core', task_kind: 'update', status: 'queued', stage: 'queued' };
     let scheduled = 0;
     panel.schedulePoll = () => { scheduled++; };

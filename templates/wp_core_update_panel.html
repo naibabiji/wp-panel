@@ -102,6 +102,11 @@ function wpCoreUpdatePanel() {
                     const requestedAt = Date.parse(task.requested_at || '');
                     if (task.task_id === expected.previousTaskID || task.current_version !== expected.preview.current_version || task.target_version !== expected.preview.target_version ||
                         !Number.isFinite(requestedAt) || requestedAt < expected.since - 60000) return false;
+                } else if (!['queued', 'running'].includes(task.status)) {
+                    // A bare page load (no expected submission to recover) should only
+                    // resume watching an in-progress update, not resurrect a finished
+                    // task from a previous visit as if it just happened.
+                    return false;
                 }
                 this.task = task;
                 this.error = '';
