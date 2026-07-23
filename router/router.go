@@ -698,7 +698,6 @@ var i18nKeys = []string{
 	"website.restore_task_failed",
 	"wp_inventory.active",
 	"wp_inventory.active_plugins",
-	"wp_inventory.clear_search",
 	"wp_inventory.core_update_available",
 	"wp_inventory.core_update_none",
 	"wp_inventory.current_theme_badge",

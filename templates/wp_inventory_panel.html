@@ -36,28 +36,28 @@
                     <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
                         <div class="text-xs font-medium text-gray-400">{{t .Lang "wp_inventory.group_site"}}</div>
                         <dl class="mt-2 space-y-1.5 text-sm">
-                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.site_url"}}</dt><dd class="truncate text-right"><a x-show="siteURL" :href="siteURL" target="_blank" rel="noopener" class="text-blue-400 hover:text-blue-300 hover:underline" x-text="siteURL"></a><span x-show="!siteURL" class="text-gray-200">{{t .Lang "common.none"}}</span></dd></div>
-                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.wordpress_version"}}</dt><dd class="text-gray-200" x-text="summary.wordpress.version || t('common.none')"></dd></div>
-                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.locale"}}</dt><dd class="text-gray-200" x-text="summary.wordpress.locale || t('common.none')"></dd></div>
-                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.multisite"}}</dt><dd class="text-gray-200" x-text="summary.wordpress.multisite ? t('wp_inventory.yes') : t('wp_inventory.no')"></dd></div>
-                            <div class="flex items-baseline justify-between gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.current_theme"}}</dt><dd class="truncate text-right text-gray-200" x-text="summary.wordpress.current_theme_key || t('common.none')"></dd></div>
+                            <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.site_url"}}</dt><dd class="min-w-0 truncate"><a x-show="siteURL" :href="siteURL" target="_blank" rel="noopener" class="text-blue-400 hover:text-blue-300 hover:underline" x-text="siteURL"></a><span x-show="!siteURL" class="text-gray-200">{{t .Lang "common.none"}}</span></dd></div>
+                            <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.wordpress_version"}}</dt><dd class="min-w-0 truncate text-gray-200" x-text="summary.wordpress.version || t('common.none')"></dd></div>
+                            <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.locale"}}</dt><dd class="min-w-0 truncate text-gray-200" x-text="summary.wordpress.locale || t('common.none')"></dd></div>
+                            <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.multisite"}}</dt><dd class="min-w-0 truncate text-gray-200" x-text="summary.wordpress.multisite ? t('wp_inventory.yes') : t('wp_inventory.no')"></dd></div>
+                            <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.current_theme"}}</dt><dd class="min-w-0 truncate text-gray-200" x-text="summary.wordpress.current_theme_key || t('common.none')"></dd></div>
                         </dl>
                     </div>
                     <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
                         <div class="text-xs font-medium text-gray-400">{{t .Lang "wp_inventory.group_updates"}}</div>
                         <dl class="mt-2 space-y-1.5 text-sm">
-                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.core_update"}}</dt><dd :class="summary.core_upgrade_available ? 'text-yellow-300' : 'text-green-300'" x-text="summary.core_upgrade_available ? t('wp_inventory.core_update_available') : t('wp_inventory.core_update_none')"></dd></div>
-                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.plugin_updates"}}</dt><dd class="text-gray-200" x-text="summary.counts.plugin_updates"></dd></div>
-                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.theme_updates"}}</dt><dd class="text-gray-200" x-text="summary.counts.theme_updates"></dd></div>
-                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.plugins"}}</dt><dd class="text-gray-200"><span x-text="summary.counts.plugins"></span> <span class="text-xs text-gray-400" x-text="t('wp_inventory.active_plugins', { count: summary.counts.active_plugins })"></span></dd></div>
-                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.themes"}}</dt><dd class="text-gray-200" x-text="summary.counts.themes"></dd></div>
+                            <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.core_update"}}</dt><dd class="min-w-0 truncate" :class="summary.core_upgrade_available ? 'text-yellow-300' : 'text-green-300'" x-text="summary.core_upgrade_available ? t('wp_inventory.core_update_available') : t('wp_inventory.core_update_none')"></dd></div>
+                            <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.plugin_updates"}}</dt><dd class="min-w-0 truncate text-gray-200" x-text="summary.counts.plugin_updates"></dd></div>
+                            <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.theme_updates"}}</dt><dd class="min-w-0 truncate text-gray-200" x-text="summary.counts.theme_updates"></dd></div>
+                            <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.plugins"}}</dt><dd class="min-w-0 truncate text-gray-200"><span x-text="summary.counts.plugins"></span> <span class="text-xs text-gray-400" x-text="t('wp_inventory.active_plugins', { count: summary.counts.active_plugins })"></span></dd></div>
+                            <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.themes"}}</dt><dd class="min-w-0 truncate text-gray-200" x-text="summary.counts.themes"></dd></div>
                         </dl>
                     </div>
                     <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
                         <div class="text-xs font-medium text-gray-400">{{t .Lang "wp_inventory.group_scan"}}</div>
                         <dl class="mt-2 space-y-1.5 text-sm">
-                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.last_attempt"}}</dt><dd class="text-gray-200" x-text="displayTime(summary.last_attempt_at)"></dd></div>
-                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.last_success"}}</dt><dd class="text-gray-200" x-text="displayTime(summary.last_success_at)"></dd></div>
+                            <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.last_attempt"}}</dt><dd class="min-w-0 truncate text-gray-200" x-text="displayTime(summary.last_attempt_at)"></dd></div>
+                            <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.last_success"}}</dt><dd class="min-w-0 truncate text-gray-200" x-text="displayTime(summary.last_success_at)"></dd></div>
                         </dl>
                     </div>
                 </div>
@@ -70,14 +70,8 @@
                     <div class="flex flex-wrap gap-2 border-b border-gray-700">
                         <button @click="selectTab('plugins')" :class="activeTab === 'plugins' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_inventory.tab_plugins"}}</button>
                         <button @click="selectTab('themes')" :class="activeTab === 'themes' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_inventory.tab_themes"}}</button>
-                        <button @click="selectTab('updates')" :class="activeTab === 'updates' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_inventory.tab_updates"}}</button>
+                        <button @click="selectTab('updates')" :class="activeTab === 'updates' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="inline-flex items-center gap-1.5 border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_inventory.tab_updates"}}<span x-show="hasAvailableUpdates()" class="h-1.5 w-1.5 rounded-full bg-red-500"></span></button>
                         <button @click="selectTab('backups')" :class="activeTab === 'backups' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_update_backup.tab"}}</button>
-                    </div>
-
-                    <div x-show="activeTab !== 'backups'" class="mt-4 flex flex-col gap-2 sm:flex-row">
-                        <input type="search" x-model="currentPage().search" @keydown.enter.prevent="applySearch()" :disabled="currentPage().loading" class="input-field min-w-0 flex-1" placeholder="{{t .Lang "wp_inventory.search_placeholder"}}">
-                        <button @click="applySearch()" :disabled="currentPage().loading" class="btn-primary">{{t .Lang "wp_inventory.search"}}</button>
-                        <button @click="clearSearch()" :disabled="currentPage().loading || (!currentPage().search && !currentPage().appliedSearch)" class="btn-secondary">{{t .Lang "wp_inventory.clear_search"}}</button>
                     </div>
 
                     <div x-show="currentPage().error" class="mt-3 rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200" x-text="currentPage().error"></div>
@@ -220,7 +214,7 @@
 
 <script>
 function wpInventoryPanel() {
-    const newPage = () => ({ items: [], total: 0, page: 1, pageSize: 50, search: '', appliedSearch: '', loading: false, error: '', loaded: false, restoringID: null });
+    const newPage = () => ({ items: [], total: 0, page: 1, pageSize: 50, loading: false, error: '', loaded: false, restoringID: null });
     const newPluginUpdate = () => ({ open: false, loading: false, submitting: false, componentType: '', componentKey: '', preview: null, task: null, error: '', riskAccepted: false, databaseBackupMode: 'fresh', preparationController: null, preparationCancelled: false, pollStartedAt: 0 });
     return {
         siteID: null,
@@ -274,6 +268,9 @@ function wpInventoryPanel() {
         },
         hasActiveTask() {
             return this.summary?.active_task?.status === 'queued' || this.summary?.active_task?.status === 'running';
+        },
+        hasAvailableUpdates() {
+            return ((this.summary?.counts?.plugin_updates || 0) + (this.summary?.counts?.theme_updates || 0)) > 0;
         },
         statusKey() {
             if (this.summary?.active_task?.status === 'running') return 'wp_inventory.status_running';
@@ -427,7 +424,7 @@ function wpInventoryPanel() {
         validPageData(value) {
             return value && Array.isArray(value.items) && Number.isInteger(value.total) && value.total >= 0 && Number.isInteger(value.page) && value.page > 0 && Number.isInteger(value.page_size) && value.page_size > 0 && value.page_size <= 100;
         },
-        async loadPage(tab, requestedPage, requestedSearch) {
+        async loadPage(tab, requestedPage) {
             const state = this.pages[tab];
             if (!this.siteID || !state || state.loading || !this.summary?.has_successful_inventory) return;
             if (tab === 'backups') {
@@ -437,13 +434,11 @@ function wpInventoryPanel() {
             const generation = this.requestGeneration;
             const siteID = this.siteID;
             const page = requestedPage || state.page;
-            const search = requestedSearch === undefined ? state.appliedSearch : requestedSearch;
             const params = new URLSearchParams();
             params.set('page', String(page));
             params.set('page_size', String(state.pageSize));
             const type = this.pageType(tab);
             if (type) params.set('type', type);
-            if (search) params.set('search', search);
             state.loading = true;
             state.error = '';
             try {
@@ -454,7 +449,6 @@ function wpInventoryPanel() {
                 state.total = response.data.total;
                 state.page = response.data.page;
                 state.pageSize = response.data.page_size;
-                state.appliedSearch = search;
                 state.loaded = true;
             } catch (error) {
                 if (generation === this.requestGeneration && siteID === this.siteID) state.error = error.message || t('wp_inventory.load_failed');
@@ -462,22 +456,11 @@ function wpInventoryPanel() {
                 if (generation === this.requestGeneration && siteID === this.siteID) state.loading = false;
             }
         },
-        applySearch() {
-            const state = this.currentPage();
-            if (state.loading) return;
-            this.loadPage(this.activeTab, 1, state.search.trim());
-        },
-        clearSearch() {
-            const state = this.currentPage();
-            if (state.loading) return;
-            state.search = '';
-            this.loadPage(this.activeTab, 1, '');
-        },
         changePage(direction) {
             const state = this.currentPage();
             const next = state.page + direction;
             if (state.loading || next < 1 || (direction > 0 && state.page * state.pageSize >= state.total)) return;
-            this.loadPage(this.activeTab, next, state.appliedSearch);
+            this.loadPage(this.activeTab, next);
         },
         invalidatePages() {
             Object.values(this.pages).forEach(page => {
