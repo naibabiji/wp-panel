@@ -6,7 +6,7 @@
             <h2 class="text-xl font-bold text-white">{{t .Lang "wp_inventory.title"}}</h2>
             <p x-show="site" class="mt-1 text-sm text-gray-400" x-text="site?.domain"></p>
         </div>
-        <a href="/{{.RandomSuffix}}/wordpress-overview" class="btn-secondary">{{t .Lang "nav.wordpress_overview"}}</a>
+        <a href="/{{.RandomSuffix}}/wordpress-overview" class="btn-secondary">{{t .Lang "wp_inventory.back_to_overview"}}</a>
     </div>
 
     <div x-show="loading" class="py-8 text-center text-sm text-gray-400">{{t .Lang "website.loading"}}</div>

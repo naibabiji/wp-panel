@@ -235,6 +235,7 @@
     "query_failed": "EN_TODO: wp_inventory.query_failed",
     "refresh_failed": "EN_TODO: wp_inventory.refresh_failed",
     "title": "EN_TODO: wp_inventory.title",
+    "back_to_overview": "EN_TODO: wp_inventory.back_to_overview",
     "description": "EN_TODO: wp_inventory.description",
     "refresh": "EN_TODO: wp_inventory.refresh",
     "refreshing": "EN_TODO: wp_inventory.refreshing",

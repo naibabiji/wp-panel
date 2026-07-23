@@ -235,6 +235,7 @@
     "query_failed": "读取 WordPress 组件信息失败",
     "refresh_failed": "提交 WordPress 组件扫描失败",
     "title": "WordPress 组件信息",
+    "back_to_overview": "返回WP 总览列表",
     "description": "查看已保存的 WordPress 版本、插件、主题和更新候选",
     "refresh": "重新扫描",
     "refreshing": "提交中...",
