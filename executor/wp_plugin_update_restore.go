@@ -19,7 +19,23 @@ const (
 )
 
 func defaultWPPluginFilesRestorer(ctx context.Context, execution wpPluginUpdateExecution) error {
-	if !wpUpdateTaskIDPattern.MatchString(execution.Task.ID) || !validWPPluginComponentKey(execution.Task.ComponentKey) {
+	// Preserve the original helper contract for isolated restore callers that
+	// predate component-typed update tasks. Production executions still arrive
+	// with the explicit plugin type and are checked below.
+	if execution.Task.ComponentType == "" {
+		execution.Task.ComponentType = "plugin"
+	}
+	return defaultWPComponentFilesRestorer(ctx, execution, "plugin")
+}
+
+func defaultWPThemeFilesRestorer(ctx context.Context, execution wpPluginUpdateExecution) error {
+	return defaultWPComponentFilesRestorer(ctx, execution, "theme")
+}
+
+func defaultWPComponentFilesRestorer(ctx context.Context, execution wpPluginUpdateExecution, componentType string) error {
+	validComponent := componentType == "plugin" && execution.Task.ComponentType == "plugin" && validWPPluginComponentKey(execution.Task.ComponentKey) ||
+		componentType == "theme" && execution.Task.ComponentType == "theme" && validWPThemeComponentKey(execution.Task.ComponentKey)
+	if !wpUpdateTaskIDPattern.MatchString(execution.Task.ID) || !validComponent {
 		return errors.New("invalid plugin restore request")
 	}
 	backupInfo, err := os.Lstat(execution.PluginBackup)
@@ -39,14 +55,19 @@ func defaultWPPluginFilesRestorer(ctx context.Context, execution wpPluginUpdateE
 	if uidErr != nil || gidErr != nil || uid <= 0 || gid <= 0 || u.Username != execution.SystemUser {
 		return errors.New("invalid plugin restore identity")
 	}
-	pluginsPath := filepath.Join(webRoot, "wp-content", "plugins")
-	root, err := os.OpenRoot(pluginsPath)
+	componentRoot, slug, identityFile := "plugins", "", ""
+	if componentType == "plugin" {
+		parts := strings.Split(execution.Task.ComponentKey, "/")
+		slug, identityFile = parts[0], parts[1]
+	} else {
+		componentRoot, slug, identityFile = "themes", execution.Task.ComponentKey, "style.css"
+	}
+	componentsPath := filepath.Join(webRoot, "wp-content", componentRoot)
+	root, err := os.OpenRoot(componentsPath)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
-	slug := strings.Split(execution.Task.ComponentKey, "/")[0]
-	mainFile := strings.Split(execution.Task.ComponentKey, "/")[1]
 	stageName := ".wp-panel-plugin-restore-stage-" + execution.Task.ID
 	oldName := ".wp-panel-plugin-restore-old-" + execution.Task.ID
 	if _, err := root.Lstat(stageName); !os.IsNotExist(err) {
@@ -75,7 +96,7 @@ func defaultWPPluginFilesRestorer(ctx context.Context, execution wpPluginUpdateE
 	if err := stage.Close(); err != nil {
 		return err
 	}
-	mainInfo, err := root.Lstat(filepath.Join(stageName, slug, mainFile))
+	mainInfo, err := root.Lstat(filepath.Join(stageName, slug, identityFile))
 	if err != nil || !mainInfo.Mode().IsRegular() || mainInfo.Mode()&os.ModeSymlink != 0 {
 		return errors.New("plugin restore backup is incomplete")
 	}
@@ -104,7 +125,7 @@ func defaultWPPluginFilesRestorer(ctx context.Context, execution wpPluginUpdateE
 		rollback()
 		return err
 	}
-	if err := syncDirectory(pluginsPath); err != nil {
+	if err := syncDirectory(componentsPath); err != nil {
 		rollback()
 		return err
 	}
@@ -118,7 +139,7 @@ func defaultWPPluginFilesRestorer(ctx context.Context, execution wpPluginUpdateE
 			return err
 		}
 	}
-	return syncDirectory(pluginsPath)
+	return syncDirectory(componentsPath)
 }
 
 func extractPluginBackupTar(ctx context.Context, backupPath string, root *os.Root, slug string, uid, gid int) error {

@@ -14,6 +14,20 @@ import (
 	"testing"
 )
 
+func TestWPThemeUpdatePHPSourceParses(t *testing.T) {
+	php, err := exec.LookPath("php")
+	if err != nil {
+		t.Skip("php is not available")
+	}
+	cmd := exec.Command(php, "-d", "display_errors=0", "-r", wpThemeUpdatePHPSource)
+	output, runErr := cmd.CombinedOutput()
+	if runErr == nil {
+		t.Fatal("theme runner unexpectedly accepted missing arguments")
+	} else if _, ok := runErr.(*exec.ExitError); !ok || strings.Contains(string(output), "Parse error") {
+		t.Fatalf("theme runner parse/validation exit=%v output=%s", runErr, output)
+	}
+}
+
 type fakeWPPluginScope struct {
 	run  func(context.Context, string, ...string) error
 	args [][]string

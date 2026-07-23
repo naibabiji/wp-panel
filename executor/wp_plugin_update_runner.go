@@ -33,6 +33,18 @@ if($action==='check'){$expect_active=($expected_sha==='active');$ok=$version===$
 if($action==='reactivate'){if($version!==$target||$active){$send(false,$version,$active,'reactivate_precheck_failed');exit(1);}if(!$checkpoint('reactivate_started')){$send(false,$version,$active,'journal_failed');exit(1);}$result=activate_plugin($plugin,'',false,true);$active=is_plugin_active($plugin);$data=is_file($main)?get_plugin_data($main,false,false):[];$version=is_array($data)&&isset($data['Version'])?(string)$data['Version']:'';if(is_wp_error($result)||$version!==$target||!$active||ob_get_length()>0){$send(false,$version,$active,'reactivate_failed');exit(1);}if(!$checkpoint('reactivate_completed')){$send(false,$version,$active,'journal_failed');exit(1);}$send(true,$version,$active,'');exit;}
 if($action!=='update'||$version!==$current||!is_file($package)||realpath($package)!==$package||!preg_match('/^[0-9a-f]{64}$/D',$expected_sha)||!hash_equals($expected_sha,hash_file('sha256',$package))){$send(false,$version,$active,'update_precheck_failed');exit(1);}if(!$checkpoint('before_upgrade')){$send(false,$version,$active,'journal_failed');exit(1);}require_once $root.'/wp-admin/includes/file.php';require_once $root.'/wp-admin/includes/update.php';require_once $root.'/wp-admin/includes/class-wp-upgrader.php';$slug=strstr($plugin,'/',true);$updates=get_site_transient('update_plugins');if(!is_object($updates))$updates=new stdClass();if(!isset($updates->response)||!is_array($updates->response))$updates->response=[];$updates->response[$plugin]=(object)['id'=>'w.org/plugins/'.$slug,'slug'=>$slug,'plugin'=>$plugin,'new_version'=>$target,'url'=>'','package'=>$package,'icons'=>[],'banners'=>[],'banners_rtl'=>[],'tested'=>'','requires_php'=>''];set_site_transient('update_plugins',$updates);register_shutdown_function(function(){delete_site_transient('update_plugins');});if(!$checkpoint('upgrader_entered')){$send(false,$version,$active,'journal_failed');exit(1);}$upgrader=new Plugin_Upgrader(new Automatic_Upgrader_Skin());$upgrade_result=$upgrader->upgrade($plugin,['clear_update_cache'=>false]);if(!$checkpoint('upgrader_returned')){$send(false,'',false,'journal_failed');exit(1);}$data=is_file($main)?get_plugin_data($main,false,false):[];$version=is_array($data)&&isset($data['Version'])?(string)$data['Version']:'';$active=is_plugin_active($plugin);$ok=!is_wp_error($upgrade_result)&&$upgrade_result!==false&&$version===$target&&!$active&&ob_get_length()===0;$send($ok,$version,$active,$ok?'':'plugin_upgrader_failed');exit($ok?0:1);`
 
+const wpThemeUpdatePHPSource = `
+$action=$argv[1]??'';$root=$argv[2]??'';$runtime=$argv[3]??'';$package=$argv[4]??'';$stylesheet=$argv[5]??'';$current=$argv[6]??'';$target=$argv[7]??'';$mode=$argv[8]??'';$journal=$argv[9]??'';$result_file=$argv[10]??'';$expected_template=$argv[11]??'';$token=getenv('WP_PANEL_RUNNER_TOKEN');$sent=false;
+$send=function($ok,$version='',$active=false,$code='')use(&$sent,$token,$result_file){if($sent)return;$sent=true;$body=json_encode(['token'=>$token,'ok'=>$ok,'version'=>$version,'active'=>(bool)$active,'error_code'=>$code],JSON_UNESCAPED_SLASHES);$f=@fopen($result_file,'c+b');if(!$f)return;@flock($f,LOCK_EX);@ftruncate($f,0);@fwrite($f,$body);@fflush($f);if(function_exists('fsync'))@fsync($f);@flock($f,LOCK_UN);@fclose($f);};
+$checkpoint=function($name)use($journal){$f=@fopen($journal,'ab');if(!$f)return false;if(!@flock($f,LOCK_EX)){@fclose($f);return false;}$ok=@fwrite($f,$name."\n")===strlen($name)+1&&@fflush($f);if($ok&&function_exists('fsync'))$ok=@fsync($f);@flock($f,LOCK_UN);@fclose($f);return(bool)$ok;};
+register_shutdown_function(function()use(&$sent,$send){if(!$sent){$send(false,'',false,error_get_last()?'fatal_error':'no_result');}});
+if(PHP_SAPI!=='cli'||!preg_match('/^[0-9a-f]{32}$/D',$token)||!preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/D',$stylesheet)||($expected_template!==''&&!preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/D',$expected_template))||!preg_match('/^[0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?$/D',$current)||!preg_match('/^[0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?$/D',$target)||!is_dir($root)||realpath($root)!==rtrim($root,'/')||!is_dir($runtime)||realpath($runtime)!==rtrim($runtime,'/')||realpath(dirname($journal))!==$runtime||realpath(dirname($result_file))!==$runtime){$send(false,'',false,'invalid_input');exit(2);}
+chdir($root);ob_start();if(!defined('WP_USE_THEMES'))define('WP_USE_THEMES',false);if(!defined('FS_METHOD'))define('FS_METHOD','direct');if(!defined('WP_HTTP_BLOCK_EXTERNAL'))define('WP_HTTP_BLOCK_EXTERNAL',true);require $root.'/wp-load.php';
+$theme=wp_get_theme($stylesheet);$version=$theme->exists()?(string)$theme->get('Version'):'';$template=$theme->exists()?(string)$theme->get('Template'):'';$active=get_stylesheet()===$stylesheet;if(ob_get_length()>0){$send(false,$version,$active,'bootstrap_output');exit(1);}
+if($action==='observe'){$ok=$version===$current&&$template===$expected_template;$send($ok,$version,$active,$ok?'':'identity_mismatch');exit($ok?0:1);}
+if($action==='check'){$expect_active=($mode==='active');$ok=$version===$target&&$active===$expect_active&&$template===$expected_template;$send($ok,$version,$active,$ok?'':'health_mismatch');exit($ok?0:1);}
+if($action!=='update'||$version!==$current||$template!==$expected_template||!is_file($package)||realpath($package)!==$package||!preg_match('/^[0-9a-f]{64}$/D',$mode)||!hash_equals($mode,hash_file('sha256',$package))){$send(false,$version,$active,'update_precheck_failed');exit(1);}if(!$checkpoint('before_upgrade')){$send(false,$version,$active,'journal_failed');exit(1);}require_once $root.'/wp-admin/includes/file.php';require_once $root.'/wp-admin/includes/update.php';require_once $root.'/wp-admin/includes/class-wp-upgrader.php';$updates=get_site_transient('update_themes');if(!is_object($updates))$updates=new stdClass();if(!isset($updates->response)||!is_array($updates->response))$updates->response=[];$updates->response[$stylesheet]=['theme'=>$stylesheet,'new_version'=>$target,'url'=>'','package'=>$package,'requires'=>'','requires_php'=>''];set_site_transient('update_themes',$updates);register_shutdown_function(function(){delete_site_transient('update_themes');});if(!$checkpoint('upgrader_entered')){$send(false,$version,$active,'journal_failed');exit(1);}$upgrader=new Theme_Upgrader(new Automatic_Upgrader_Skin());$upgrade_result=$upgrader->upgrade($stylesheet,['clear_update_cache'=>false]);if(!$checkpoint('upgrader_returned')){$send(false,'',false,'journal_failed');exit(1);}$theme=wp_get_theme($stylesheet);$version=$theme->exists()?(string)$theme->get('Version'):'';$template=$theme->exists()?(string)$theme->get('Template'):'';$active=get_stylesheet()===$stylesheet;$ok=!is_wp_error($upgrade_result)&&$upgrade_result!==false&&$version===$target&&$template===$expected_template&&ob_get_length()===0;$send($ok,$version,$active,$ok?'':'theme_upgrader_failed');exit($ok?0:1);`
+
 type wpPluginScopeRunner interface {
 	Run(context.Context, string, ...string) error
 }
@@ -40,6 +52,7 @@ type wpPluginScopeRunner interface {
 type wpPluginPHPRunnerOptions struct {
 	wwwRoot, runtimeRoot, phpPath, envPath, runuserPath string
 	phpDir, envDir, runuserDir                          string
+	componentType, phpSource                            string
 	requireRoot                                         bool
 	ownerUID, ownerGID                                  int
 	lookupUser                                          func(string) (*user.User, error)
@@ -55,6 +68,8 @@ type wpPluginRunnerSession struct {
 	root, user, home, php, env       string
 	runtimeDir, packagePath, journal string
 	result                           string
+	expectedTemplate                 string
+	observedActive                   bool
 	mu                               sync.Mutex
 	closed                           bool
 }
@@ -80,9 +95,32 @@ func newDefaultWPPluginPHPRunner(wwwRoot string) (*wpPluginPHPRunner, error) {
 	})
 }
 
+func newDefaultWPThemePHPRunner(wwwRoot string) (*wpPluginPHPRunner, error) {
+	scope, err := newDefaultWPPluginUpdateScope(wpInventoryRunuserPath)
+	if err != nil {
+		return nil, err
+	}
+	return newWPPluginPHPRunner(wpPluginPHPRunnerOptions{
+		wwwRoot: wwwRoot, runtimeRoot: wpPluginUpdateRuntimeRoot,
+		phpPath: wpInventoryPHPPath, envPath: "/usr/bin/env", runuserPath: wpInventoryRunuserPath,
+		phpDir: "/usr/bin", envDir: "/usr/bin", runuserDir: "/usr/sbin",
+		componentType: "theme", phpSource: wpThemeUpdatePHPSource,
+		requireRoot: true, ownerUID: 0, ownerGID: 0, lookupUser: user.Lookup, chown: os.Chown, scope: scope,
+	})
+}
+
 func newWPPluginPHPRunner(opts wpPluginPHPRunnerOptions) (*wpPluginPHPRunner, error) {
 	if !filepath.IsAbs(opts.wwwRoot) || !filepath.IsAbs(opts.runtimeRoot) || opts.lookupUser == nil || opts.chown == nil || opts.scope == nil || opts.phpPath == "" || opts.envPath == "" || opts.runuserPath == "" {
 		return nil, errors.New("invalid plugin PHP runner")
+	}
+	if opts.componentType == "" {
+		opts.componentType = "plugin"
+	}
+	if opts.phpSource == "" {
+		opts.phpSource = wpPluginUpdatePHPSource
+	}
+	if (opts.componentType != "plugin" && opts.componentType != "theme") || opts.phpSource == "" {
+		return nil, errors.New("invalid component PHP runner")
 	}
 	return &wpPluginPHPRunner{opts: opts}, nil
 }
@@ -91,11 +129,23 @@ func (r *wpPluginPHPRunner) Prepare(ctx context.Context, execution wpPluginUpdat
 	if r.opts.requireRoot && os.Geteuid() != 0 {
 		return nil, errors.New("plugin runner requires root")
 	}
-	if !wpUpdateTaskIDPattern.MatchString(execution.Task.ID) || execution.Task.ComponentType != "plugin" || execution.Task.VerificationLevel != "structure_only" || !validWPPluginComponentKey(execution.Task.ComponentKey) || !wpInventoryUserPattern.MatchString(execution.SystemUser) || !wpUpdateSHA256Pattern.MatchString(execution.Task.DownloadedSHA256) || !wpCoreVersionPattern.MatchString(execution.Task.CurrentVersion) || !wpCoreVersionPattern.MatchString(execution.Task.TargetVersion) {
+	validComponent := execution.Task.ComponentType == r.opts.componentType &&
+		(execution.Task.ComponentType == "plugin" && validWPPluginComponentKey(execution.Task.ComponentKey) ||
+			execution.Task.ComponentType == "theme" && validWPThemeComponentKey(execution.Task.ComponentKey))
+	if !wpUpdateTaskIDPattern.MatchString(execution.Task.ID) || !validComponent || execution.Task.VerificationLevel != "structure_only" || !wpInventoryUserPattern.MatchString(execution.SystemUser) || !wpUpdateSHA256Pattern.MatchString(execution.Task.DownloadedSHA256) || !wpCoreVersionPattern.MatchString(execution.Task.CurrentVersion) || !wpCoreVersionPattern.MatchString(execution.Task.TargetVersion) {
 		return nil, errors.New("invalid plugin runner execution")
 	}
-	slug := strings.Split(execution.Task.ComponentKey, "/")[0]
-	if _, err := ValidateWPComponentPackage(ctx, execution.PackagePath, WPComponentPackageExpectation{ComponentType: "plugin", ComponentKey: execution.Task.ComponentKey, OfficialSlug: slug, TargetVersion: execution.Task.TargetVersion}); err != nil {
+	slug, template := execution.Task.ComponentKey, ""
+	var err error
+	if execution.Task.ComponentType == "plugin" {
+		slug = strings.Split(execution.Task.ComponentKey, "/")[0]
+	} else {
+		_, template, err = readInstalledWPThemeIdentity(execution.WebRoot, execution.Task.ComponentKey)
+		if err != nil {
+			return nil, errors.New("theme runner identity unavailable")
+		}
+	}
+	if _, err := ValidateWPComponentPackage(ctx, execution.PackagePath, WPComponentPackageExpectation{ComponentType: execution.Task.ComponentType, ComponentKey: execution.Task.ComponentKey, OfficialSlug: slug, TargetVersion: execution.Task.TargetVersion, Template: template}); err != nil {
 		return nil, errors.New("plugin runner package validation failed")
 	}
 	root, err := validateInventorySitePath(r.opts.wwwRoot, execution.WebRoot)
@@ -167,7 +217,7 @@ func (r *wpPluginPHPRunner) Prepare(ctx context.Context, execution wpPluginUpdat
 		return nil, err
 	}
 	keep = true
-	return &wpPluginRunnerSession{runner: r, execution: execution, root: root, user: u.Username, home: u.HomeDir, php: php, env: env, runtimeDir: runtimeDir, packagePath: packagePath, journal: journal, result: result}, nil
+	return &wpPluginRunnerSession{runner: r, execution: execution, root: root, user: u.Username, home: u.HomeDir, php: php, env: env, runtimeDir: runtimeDir, packagePath: packagePath, journal: journal, result: result, expectedTemplate: template}, nil
 }
 
 func createWPPluginRunnerResult(name string, uid, gid int) error {
@@ -192,6 +242,9 @@ func createWPPluginRunnerResult(name string, uid, gid int) error {
 
 func (s *wpPluginRunnerSession) Observe(ctx context.Context) (bool, error) {
 	env, err := s.execute(ctx, "observe", "", s.execution.Task.TargetVersion)
+	if err == nil {
+		s.observedActive = env.Active
+	}
 	return env.Active, err
 }
 
@@ -199,7 +252,11 @@ func (s *wpPluginRunnerSession) Update(ctx context.Context) error {
 	if _, err := s.execute(ctx, "update", s.execution.Task.DownloadedSHA256, s.execution.Task.TargetVersion); err != nil {
 		return err
 	}
-	_, err := s.execute(ctx, "check", "inactive", s.execution.Task.TargetVersion)
+	expected := "inactive"
+	if s.execution.Task.ComponentType == "theme" && s.observedActive {
+		expected = "active"
+	}
+	_, err := s.execute(ctx, "check", expected, s.execution.Task.TargetVersion)
 	return err
 }
 
@@ -267,8 +324,11 @@ func (s *wpPluginRunnerSession) execute(ctx context.Context, action, mode, expec
 	}
 	openBase := strings.Join([]string{s.root, s.runtimeDir, "/tmp", "/usr/share/php"}, ":")
 	args := []string{"-u", s.user, "--", s.env, "-i", "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "HOME=" + s.home, "USER=" + s.user, "LOGNAME=" + s.user, "TMPDIR=/tmp", "WP_PANEL_RUNNER_TOKEN=" + token, s.php,
-		"-d", "open_basedir=" + openBase, "-d", "disable_functions=" + sitePHPDisabledFunctions(), "-d", "allow_url_include=0", "-d", "display_errors=0", "-d", "memory_limit=256M", "-r", wpPluginUpdatePHPSource,
+		"-d", "open_basedir=" + openBase, "-d", "disable_functions=" + sitePHPDisabledFunctions(), "-d", "allow_url_include=0", "-d", "display_errors=0", "-d", "memory_limit=256M", "-r", s.runner.opts.phpSource,
 		action, s.root, s.runtimeDir, s.packagePath, s.execution.Task.ComponentKey, s.execution.Task.CurrentVersion, expectedVersion, mode, s.journal, s.result}
+	if s.execution.Task.ComponentType == "theme" {
+		args = append(args, s.expectedTemplate)
+	}
 	runErr := s.runner.opts.scope.Run(ctx, s.execution.Task.ID, args...)
 	if errors.Is(runErr, errWPPluginScopeSupervisionUncertain) {
 		return wpPluginRunnerEnvelope{}, runErr

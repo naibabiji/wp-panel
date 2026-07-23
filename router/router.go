@@ -770,9 +770,14 @@ var i18nKeys = []string{
 	"wp_plugin_update.action",
 	"wp_plugin_update.checking",
 	"wp_plugin_update.confirm",
+	"wp_plugin_update.confirm_warning",
+	"wp_plugin_update.description",
 	"wp_plugin_update.not_found",
+	"wp_plugin_update.plugin",
 	"wp_plugin_update.preview_failed",
 	"wp_plugin_update.preview_invalid",
+	"wp_plugin_update.backup_scope_value",
+	"wp_plugin_update.rescan_after_success",
 	"wp_plugin_update.stage_backups_ready",
 	"wp_plugin_update.stage_claimed",
 	"wp_plugin_update.stage_complete",
@@ -799,6 +804,45 @@ var i18nKeys = []string{
 	"wp_plugin_update.task_invalid",
 	"wp_plugin_update.task_read_failed",
 	"wp_plugin_update.tracking",
+	"wp_plugin_update.title",
+	"wp_theme_update.action",
+	"wp_theme_update.backup_scope_value",
+	"wp_theme_update.checking",
+	"wp_theme_update.confirm",
+	"wp_theme_update.confirm_warning",
+	"wp_theme_update.current_theme_warning",
+	"wp_theme_update.description",
+	"wp_theme_update.not_found",
+	"wp_theme_update.preview_failed",
+	"wp_theme_update.preview_invalid",
+	"wp_theme_update.rescan_after_success",
+	"wp_theme_update.stage_backups_ready",
+	"wp_theme_update.stage_claimed",
+	"wp_theme_update.stage_complete",
+	"wp_theme_update.stage_health_check",
+	"wp_theme_update.stage_queued",
+	"wp_theme_update.stage_reactivating",
+	"wp_theme_update.stage_restoring_file_lock",
+	"wp_theme_update.stage_rollback",
+	"wp_theme_update.stage_unknown",
+	"wp_theme_update.stage_unlocking",
+	"wp_theme_update.stage_updating_component",
+	"wp_theme_update.status_failed",
+	"wp_theme_update.status_interrupted_unknown",
+	"wp_theme_update.status_preparing",
+	"wp_theme_update.status_queued",
+	"wp_theme_update.status_running",
+	"wp_theme_update.status_success",
+	"wp_theme_update.status_unknown",
+	"wp_theme_update.submit_failed",
+	"wp_theme_update.submitted",
+	"wp_theme_update.submission_recovered",
+	"wp_theme_update.submitting",
+	"wp_theme_update.task_invalid",
+	"wp_theme_update.task_read_failed",
+	"wp_theme_update.theme",
+	"wp_theme_update.title",
+	"wp_theme_update.tracking",
 }
 
 func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version string, configPath string) *gin.Engine {
@@ -931,6 +975,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	wpFleetOverviewHandler := &handlers.WPFleetOverviewHandler{DB: db}
 	wpCoreUpdateHandler := newWPCoreUpdateHandler(db, cfg.Panel.BackupDir)
 	wpPluginUpdateHandler := newWPPluginUpdateHandler(db, cfg.Panel.BackupDir)
+	wpThemeUpdateHandler := newWPThemeUpdateHandler(db, cfg.Panel.BackupDir)
 	protected.GET("/api/websites", websiteHandler.List)
 	protected.GET("/api/wp-fleet/overview", wpFleetOverviewHandler.Overview)
 	protected.POST("/api/websites", websiteHandler.Create)
@@ -949,6 +994,10 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/websites/:id/wp-plugin-update/confirm", wpPluginUpdateHandler.Confirm)
 	protected.GET("/api/websites/:id/wp-plugin-update/tasks/latest", wpPluginUpdateHandler.LatestTask)
 	protected.GET("/api/websites/:id/wp-plugin-update/tasks/:task_id", wpPluginUpdateHandler.Task)
+	protected.GET("/api/websites/:id/wp-theme-update/preview", wpThemeUpdateHandler.Preview)
+	protected.POST("/api/websites/:id/wp-theme-update/confirm", wpThemeUpdateHandler.Confirm)
+	protected.GET("/api/websites/:id/wp-theme-update/tasks/latest", wpThemeUpdateHandler.LatestTask)
+	protected.GET("/api/websites/:id/wp-theme-update/tasks/:task_id", wpThemeUpdateHandler.Task)
 	protected.DELETE("/api/websites/:id", websiteHandler.Delete)
 	protected.GET("/api/websites/:id/backup-usage", websiteHandler.BackupUsage)
 	protected.PATCH("/api/websites/:id/status", websiteHandler.ToggleStatus)
@@ -1194,6 +1243,17 @@ func newWPPluginUpdateHandler(db *sql.DB, backupDir string) *handlers.WPPluginUp
 	service, err := executor.NewWPPluginUpdateService(db, backupDir)
 	if err != nil {
 		log.Println("WordPress 插件更新 API 未启用")
+		return handler
+	}
+	handler.Service = service
+	return handler
+}
+
+func newWPThemeUpdateHandler(db *sql.DB, backupDir string) *handlers.WPThemeUpdateHandler {
+	handler := &handlers.WPThemeUpdateHandler{}
+	service, err := executor.NewWPThemeUpdateService(db, backupDir)
+	if err != nil {
+		log.Println("WordPress 主题更新 API 未启用")
 		return handler
 	}
 	handler.Service = service

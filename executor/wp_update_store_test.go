@@ -64,6 +64,21 @@ func TestWPUpdateStoreCreatesPluginPlanFromCurrentInventoryCandidate(t *testing.
 	}
 }
 
+func TestWPUpdateStoreCreatesThemePlanFromCurrentInventoryCandidate(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	seedThemeUpdateCandidate(t, store, siteID, "twentytwentyfive", "1.4", "1.5", "collection-theme")
+	task, err := store.createThemeManualPlan(context.Background(), WPUpdatePlan{
+		SiteID: siteID, ComponentKey: "twentytwentyfive", CurrentVersion: "1.4", TargetVersion: "1.5",
+		PackageSource: "wordpress.org", DownloadURL: "https://downloads.wordpress.org/theme/twentytwentyfive.1.5.zip",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.ComponentType != "theme" || task.ComponentKey != "twentytwentyfive" || task.Status != wpUpdatePreparing {
+		t.Fatalf("theme task=%+v", task)
+	}
+}
+
 func TestWPUpdateStoreRejectsStaleOrUnsafePluginPlan(t *testing.T) {
 	store, siteID := newWPUpdateStoreTest(t)
 	seedPluginUpdateCandidate(t, store, siteID, "sample/sample.php", "1.0.0", "1.1.0", "collection-a")
@@ -292,6 +307,14 @@ func createAndSealUpdateTask(t *testing.T, store *wpUpdateStore, siteID int, now
 }
 
 func seedPluginUpdateCandidate(t *testing.T, store *wpUpdateStore, siteID int, key, current, target, collection string) {
+	seedComponentUpdateCandidate(t, store, siteID, "plugin", key, current, target, collection)
+}
+
+func seedThemeUpdateCandidate(t *testing.T, store *wpUpdateStore, siteID int, key, current, target, collection string) {
+	seedComponentUpdateCandidate(t, store, siteID, "theme", key, current, target, collection)
+}
+
+func seedComponentUpdateCandidate(t *testing.T, store *wpUpdateStore, siteID int, componentType, key, current, target, collection string) {
 	t.Helper()
 	now := wpUpdateDBTime(time.Now().UTC())
 	if _, err := store.db.Exec(`UPDATE site_wp_inventory_state SET collection_id=? WHERE site_id=?`, collection, siteID); err != nil {
@@ -299,12 +322,12 @@ func seedPluginUpdateCandidate(t *testing.T, store *wpUpdateStore, siteID int, k
 	}
 	if _, err := store.db.Exec(`INSERT INTO site_wp_components
 		(site_id,component_type,component_key,name,version,collection_id,collected_at)
-		VALUES (?,'plugin',?,'Sample',?,?,?)`, siteID, key, current, collection, now); err != nil {
+		VALUES (?,?,?,'Sample',?,?,?)`, siteID, componentType, key, current, collection, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`INSERT INTO site_wp_component_updates
 		(site_id,component_type,component_key,target_version,response,locale,collection_id,collected_at)
-		VALUES (?,'plugin',?,?,'upgrade','',?,?)`, siteID, key, target, collection, now); err != nil {
+		VALUES (?,?,?,?,'upgrade','',?,?)`, siteID, componentType, key, target, collection, now); err != nil {
 		t.Fatal(err)
 	}
 }

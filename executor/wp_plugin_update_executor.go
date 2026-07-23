@@ -65,6 +65,11 @@ func (e *wpPluginUpdateExecutor) Execute(ctx context.Context, taskID, owner stri
 	if err != nil {
 		return err
 	}
+	return e.execute(ctx, execution, owner)
+}
+
+func (e *wpPluginUpdateExecutor) execute(ctx context.Context, execution wpPluginUpdateExecution, owner string) error {
+	taskID := execution.Task.ID
 	wasActive, err := e.ops.Prepare(ctx, execution)
 	if err != nil {
 		if handled, interruptErr := e.interruptForSupervision(ctx, taskID, owner, err); handled {
@@ -85,7 +90,11 @@ func (e *wpPluginUpdateExecutor) Execute(ctx context.Context, taskID, owner stri
 		return err
 	}
 	controlCtx, cancel := e.controlContext(ctx)
-	err = e.store.recordPluginPrepared(controlCtx, taskID, owner, wasActive, e.now().UTC())
+	if execution.Task.ComponentType == "theme" {
+		err = e.store.recordThemePrepared(controlCtx, taskID, owner, e.now().UTC())
+	} else {
+		err = e.store.recordPluginPrepared(controlCtx, taskID, owner, wasActive, e.now().UTC())
+	}
 	cancel()
 	if err != nil {
 		return err

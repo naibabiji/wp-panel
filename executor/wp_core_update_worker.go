@@ -49,6 +49,17 @@ type wpPluginUpdateSupervisor interface {
 	Inspect(context.Context, string) (wpPluginScopeState, error)
 }
 
+type wpThemeUpdateTaskService interface {
+	validateAndClaimThemeUpdate(context.Context, string, string, string, string) (WPUpdateTask, error)
+	prepareThemeBackups(context.Context, string, string) error
+}
+
+type wpThemeUpdateIdentity struct {
+	Version, Template string
+}
+
+type wpThemeUpdateObserver func(context.Context, WPUpdateTask) (wpThemeUpdateIdentity, error)
+
 type WPCoreUpdateWorker struct {
 	store             *wpUpdateStore
 	backups           wpCoreUpdateBackupPreparer
@@ -58,6 +69,10 @@ type WPCoreUpdateWorker struct {
 	pluginExecutor    wpCoreUpdateTaskExecutor
 	observePlugin     wpPluginUpdateVersionObserver
 	pluginSupervisor  wpPluginUpdateSupervisor
+	themeTasks        wpThemeUpdateTaskService
+	themeExecutor     wpCoreUpdateTaskExecutor
+	observeTheme      wpThemeUpdateObserver
+	themeSupervisor   wpPluginUpdateSupervisor
 	owner             string
 	pollInterval      time.Duration
 	heartbeatInterval time.Duration
@@ -79,6 +94,10 @@ type wpCoreUpdateWorkerOptions struct {
 	pluginExecutor    wpCoreUpdateTaskExecutor
 	observePlugin     wpPluginUpdateVersionObserver
 	pluginSupervisor  wpPluginUpdateSupervisor
+	themeTasks        wpThemeUpdateTaskService
+	themeExecutor     wpCoreUpdateTaskExecutor
+	observeTheme      wpThemeUpdateObserver
+	themeSupervisor   wpPluginUpdateSupervisor
 	owner             string
 	pollInterval      time.Duration
 	heartbeatInterval time.Duration
@@ -112,6 +131,14 @@ func NewWPCoreUpdateWorker(cfg *config.Config) (*WPCoreUpdateWorker, error) {
 	if err != nil {
 		return nil, errors.New("plugin update executor unavailable")
 	}
+	themeOps, err := newDefaultWPThemeSystemOperations(store, filepath.Clean(cfg.Paths.WWWRoot))
+	if err != nil {
+		return nil, errors.New("theme update operations unavailable")
+	}
+	themeExecutor, err := newWPThemeUpdateExecutor(store, root, themeOps)
+	if err != nil {
+		return nil, errors.New("theme update executor unavailable")
+	}
 	owner, err := newWPCoreUpdateWorkerOwner()
 	if err != nil {
 		return nil, errors.New("core update worker identity unavailable")
@@ -127,10 +154,36 @@ func NewWPCoreUpdateWorker(cfg *config.Config) (*WPCoreUpdateWorker, error) {
 		observePlugin: func(ctx context.Context, task WPUpdateTask) (string, error) {
 			return observeWPPluginUpdateVersion(ctx, store, task)
 		},
+		themeTasks:      backups,
+		themeExecutor:   themeExecutor,
+		themeSupervisor: themeOps.supervisor,
+		observeTheme: func(ctx context.Context, task WPUpdateTask) (wpThemeUpdateIdentity, error) {
+			return observeWPThemeUpdateIdentity(ctx, store, task)
+		},
 		owner: owner, pollInterval: wpCoreUpdateWorkerPollInterval,
 		heartbeatInterval: wpCoreUpdateWorkerHeartbeatInterval,
 		sweepInterval:     wpCoreUpdateWorkerSweepInterval, now: time.Now,
 	})
+}
+
+func observeWPThemeUpdateIdentity(ctx context.Context, store *wpUpdateStore, task WPUpdateTask) (wpThemeUpdateIdentity, error) {
+	if store == nil || store.db == nil || task.SiteID <= 0 || task.ComponentType != "theme" || !validWPThemeComponentKey(task.ComponentKey) {
+		return wpThemeUpdateIdentity{}, errors.New("invalid theme update identity observation")
+	}
+	var webRoot string
+	if err := store.db.QueryRowContext(ctx, `SELECT web_root FROM websites
+		WHERE id=? AND site_type='wordpress' AND status='active'`, task.SiteID).Scan(&webRoot); err != nil {
+		return wpThemeUpdateIdentity{}, errors.New("theme update site unavailable")
+	}
+	webRoot, err := safeSiteWebRoot(webRoot)
+	if err != nil {
+		return wpThemeUpdateIdentity{}, errors.New("theme update site unavailable")
+	}
+	version, template, err := readInstalledWPThemeIdentity(webRoot, task.ComponentKey)
+	if err != nil {
+		return wpThemeUpdateIdentity{}, err
+	}
+	return wpThemeUpdateIdentity{Version: version, Template: template}, nil
 }
 
 func validWPCoreUpdateRoot(backupDir string) bool {
@@ -213,6 +266,10 @@ func newWPCoreUpdateWorker(opts wpCoreUpdateWorkerOptions) (*WPCoreUpdateWorker,
 		store: opts.store, backups: opts.backups, executor: opts.executor, observeVersion: opts.observeVersion,
 		pluginTasks: opts.pluginTasks, pluginExecutor: opts.pluginExecutor, observePlugin: opts.observePlugin,
 		pluginSupervisor: opts.pluginSupervisor,
+		themeTasks:       opts.themeTasks,
+		themeExecutor:    opts.themeExecutor,
+		observeTheme:     opts.observeTheme,
+		themeSupervisor:  opts.themeSupervisor,
 		owner:            opts.owner, pollInterval: opts.pollInterval, heartbeatInterval: opts.heartbeatInterval,
 		sweepInterval: opts.sweepInterval, now: opts.now,
 	}, nil
@@ -241,6 +298,9 @@ func (w *WPCoreUpdateWorker) Start() error {
 		return err
 	}
 	if err := w.recoverPluginTasks(context.Background(), false, "worker_restarted"); err != nil {
+		return err
+	}
+	if err := w.recoverThemeTasks(context.Background(), false, "worker_restarted"); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -315,8 +375,38 @@ func (w *WPCoreUpdateWorker) sweep(ctx context.Context) {
 		case <-ticker.C:
 			_, _ = w.store.recoverCoreExpired(context.Background(), w.now().UTC())
 			_ = w.recoverPluginTasks(context.Background(), true, "lease_expired")
+			_ = w.recoverThemeTasks(context.Background(), true, "lease_expired")
 		}
 	}
+}
+
+func (w *WPCoreUpdateWorker) recoverThemeTasks(ctx context.Context, expiredOnly bool, code string) error {
+	if w.themeTasks == nil || w.themeSupervisor == nil {
+		return nil
+	}
+	now := w.now().UTC()
+	tasks, err := w.store.runningThemeTasks(ctx, now, expiredOnly)
+	if err != nil {
+		return err
+	}
+	for _, task := range tasks {
+		inspectCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), wpPluginUpdateControlTimeout)
+		state, inspectErr := w.themeSupervisor.Inspect(inspectCtx, task.ID)
+		cancel()
+		if inspectErr != nil {
+			continue
+		}
+		if state.ActiveState == "active" || state.ActiveState == "activating" || state.ActiveState == "reloading" {
+			continue
+		}
+		if state.LoadState != "not-found" && state.ActiveState != "inactive" && state.ActiveState != "failed" {
+			continue
+		}
+		if _, err := w.store.interruptOwned(ctx, task.ID, task.LeaseOwner, code, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (w *WPCoreUpdateWorker) recoverPluginTasks(ctx context.Context, expiredOnly bool, code string) error {
@@ -385,6 +475,18 @@ func (w *WPCoreUpdateWorker) processCandidate(ctx context.Context, task WPUpdate
 		if err != nil {
 			return false
 		}
+	case "theme":
+		if w.themeTasks == nil || w.observeTheme == nil || w.themeExecutor == nil || w.themeSupervisor == nil {
+			return false
+		}
+		observed, err := w.observeTheme(ctx, task)
+		if err != nil {
+			return false
+		}
+		claimed, err = w.themeTasks.validateAndClaimThemeUpdate(ctx, task.ID, w.owner, observed.Version, observed.Template)
+		if err != nil {
+			return false
+		}
 	default:
 		return false
 	}
@@ -408,6 +510,8 @@ func (w *WPCoreUpdateWorker) runOwned(parent context.Context, task WPUpdateTask)
 			err = w.backups.prepareCoreBackups(runCtx, task.ID, w.owner)
 		case "plugin":
 			err = w.pluginTasks.preparePluginBackups(runCtx, task.ID, w.owner)
+		case "theme":
+			err = w.themeTasks.prepareThemeBackups(runCtx, task.ID, w.owner)
 		default:
 			err = errors.New("unsupported update component")
 		}
@@ -420,6 +524,8 @@ func (w *WPCoreUpdateWorker) runOwned(parent context.Context, task WPUpdateTask)
 		}
 		if task.ComponentType == "plugin" {
 			done <- w.pluginExecutor.Execute(runCtx, task.ID, w.owner)
+		} else if task.ComponentType == "theme" {
+			done <- w.themeExecutor.Execute(runCtx, task.ID, w.owner)
 		} else {
 			done <- w.executor.Execute(runCtx, task.ID, w.owner)
 		}

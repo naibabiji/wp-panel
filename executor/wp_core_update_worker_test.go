@@ -214,6 +214,169 @@ func TestWPCoreUpdateWorkerClaimsBacksUpAndExecutesPlugin(t *testing.T) {
 	}
 }
 
+func TestWPCoreUpdateWorkerClaimsBacksUpAndExecutesTheme(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	seedThemeUpdateCandidate(t, store, siteID, "sample-theme", "1.0.0", "1.1.0", "collection-theme-worker")
+	webRoot := filepath.Join(t.TempDir(), "wordpress")
+	themeRoot := filepath.Join(webRoot, "wp-content", "themes", "sample-theme")
+	if err := os.MkdirAll(themeRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(themeRoot, "style.css"), []byte("/*\nTheme Name: Sample\nVersion: 1.0.0\n*/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE websites SET web_root=?,db_name='wordpress_db' WHERE id=?`, webRoot, siteID); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.createThemeManualPlan(context.Background(), WPUpdatePlan{
+		SiteID: siteID, ComponentKey: "sample-theme", CurrentVersion: "1.0.0", TargetVersion: "1.1.0",
+		PackageSource: "wordpress.org", DownloadURL: "https://downloads.wordpress.org/theme/sample-theme.1.1.0.zip",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := newWPUpdateArtifactService(store, filepath.Join(t.TempDir(), "artifacts"), fakeUpdateDump)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := writeThemePackageFixture(t, "sample-theme", "1.1.0", "")
+	digest, _, err := hashRegularFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _, err = service.snapshotValidateAndSealThemePackage(context.Background(), task.ID, source, digest, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	coreBackups := &fakeWPCoreWorkerBackups{store: store}
+	coreExecutor := &fakeWPCoreWorkerExecutor{store: store}
+	themeExecutor := &fakeWPCoreWorkerExecutor{store: store}
+	worker, err := newWPCoreUpdateWorker(wpCoreUpdateWorkerOptions{
+		store: store, backups: coreBackups, executor: coreExecutor,
+		observeVersion: func(context.Context, int) (string, error) { return "7.0.1", nil },
+		pluginTasks:    unusedWPPluginWorkerTasks{}, pluginExecutor: &fakeWPCoreWorkerExecutor{store: store},
+		observePlugin: func(context.Context, WPUpdateTask) (string, error) { return "1.0.0", nil },
+		pluginSupervisor: fakeWPPluginWorkerSupervisor{state: wpPluginScopeState{
+			LoadState: "not-found", ActiveState: "inactive", SubState: "dead",
+		}},
+		themeTasks: service, themeExecutor: themeExecutor,
+		themeSupervisor: fakeWPPluginWorkerSupervisor{state: wpPluginScopeState{
+			LoadState: "not-found", ActiveState: "inactive", SubState: "dead",
+		}},
+		observeTheme: func(ctx context.Context, task WPUpdateTask) (wpThemeUpdateIdentity, error) {
+			return observeWPThemeUpdateIdentity(ctx, store, task)
+		},
+		owner: "test-theme-worker", pollInterval: 5 * time.Millisecond,
+		heartbeatInterval: 20 * time.Millisecond, sweepInterval: 20 * time.Millisecond, now: time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitWPUpdateTaskStatus(t, store, task.ID, wpUpdateSuccess)
+	stopWPCoreUpdateWorker(t, worker)
+	if len(coreBackups.calls) != 0 || len(coreExecutor.calls) != 0 || len(themeExecutor.calls) != 1 {
+		t.Fatalf("core backup=%v core executor=%v theme executor=%v", coreBackups.calls, coreExecutor.calls, themeExecutor.calls)
+	}
+	var backups int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM wp_update_task_backups
+		WHERE task_id=? AND kind IN ('database','theme_files')`, task.ID).Scan(&backups); err != nil || backups != 2 {
+		t.Fatalf("backups=%d err=%v", backups, err)
+	}
+}
+
+func TestWPCoreUpdateWorkerThemeRecoveryUsesSupervisorState(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		scope      wpPluginScopeState
+		wantStatus string
+	}{
+		{
+			name: "active scope remains owned",
+			scope: wpPluginScopeState{
+				LoadState: "loaded", ActiveState: "active", SubState: "running", MainPID: 123,
+			},
+			wantStatus: wpUpdateRunning,
+		},
+		{
+			name: "stopped scope becomes interrupted",
+			scope: wpPluginScopeState{
+				LoadState: "not-found", ActiveState: "inactive", SubState: "dead",
+			},
+			wantStatus: wpUpdateInterrupted,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service, store, task := prepareRunningThemeWorkerTask(t)
+			worker, err := newWPCoreUpdateWorker(wpCoreUpdateWorkerOptions{
+				store: store, backups: &fakeWPCoreWorkerBackups{store: store}, executor: &fakeWPCoreWorkerExecutor{store: store},
+				observeVersion: func(context.Context, int) (string, error) { return "7.0.1", nil },
+				pluginTasks:    unusedWPPluginWorkerTasks{}, pluginExecutor: &fakeWPCoreWorkerExecutor{store: store},
+				observePlugin: func(context.Context, WPUpdateTask) (string, error) { return "1.0.0", nil },
+				pluginSupervisor: fakeWPPluginWorkerSupervisor{state: wpPluginScopeState{
+					LoadState: "not-found", ActiveState: "inactive", SubState: "dead",
+				}},
+				themeTasks: service, themeExecutor: &fakeWPCoreWorkerExecutor{store: store},
+				observeTheme: func(context.Context, WPUpdateTask) (wpThemeUpdateIdentity, error) {
+					return wpThemeUpdateIdentity{Version: "1.0.0"}, nil
+				},
+				themeSupervisor: fakeWPPluginWorkerSupervisor{state: tc.scope},
+				owner:           "test-theme-recovery", pollInterval: 5 * time.Millisecond,
+				heartbeatInterval: 20 * time.Millisecond, sweepInterval: 20 * time.Millisecond, now: time.Now,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := worker.Start(); err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantStatus == wpUpdateInterrupted {
+				waitWPUpdateTaskStatus(t, store, task.ID, wpUpdateInterrupted)
+			} else {
+				time.Sleep(40 * time.Millisecond)
+				current, err := store.getTask(context.Background(), task.ID)
+				if err != nil || current.Status != wpUpdateRunning || current.LeaseOwner != "worker-theme-recovery" {
+					t.Fatalf("active theme task was recovered: task=%+v err=%v", current, err)
+				}
+			}
+			stopWPCoreUpdateWorker(t, worker)
+		})
+	}
+}
+
+func prepareRunningThemeWorkerTask(t *testing.T) (*wpUpdateArtifactService, *wpUpdateStore, WPUpdateTask) {
+	t.Helper()
+	store, siteID := newWPUpdateStoreTest(t)
+	seedThemeUpdateCandidate(t, store, siteID, "sample-theme", "1.0.0", "1.1.0", "collection-theme-recovery")
+	task, err := store.createThemeManualPlan(context.Background(), WPUpdatePlan{
+		SiteID: siteID, ComponentKey: "sample-theme", CurrentVersion: "1.0.0", TargetVersion: "1.1.0",
+		PackageSource: "wordpress.org", DownloadURL: "https://downloads.wordpress.org/theme/sample-theme.1.1.0.zip",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := newWPUpdateArtifactService(store, filepath.Join(t.TempDir(), "artifacts"), fakeUpdateDump)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := writeThemePackageFixture(t, "sample-theme", "1.1.0", "")
+	digest, _, err := hashRegularFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _, err = service.snapshotValidateAndSealThemePackage(context.Background(), task.ID, source, digest, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err = service.validateAndClaimThemeUpdate(context.Background(), task.ID, "worker-theme-recovery", "1.0.0", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service, store, task
+}
+
 func TestWPCoreUpdateWorkerRestartDefersActivePluginScopeRecovery(t *testing.T) {
 	service, store, task, _ := prepareRunningPluginArtifactTask(t, fakeUpdateDump)
 	worker := newPluginRecoveryTestWorker(t, store, service, fakeWPPluginWorkerSupervisor{state: wpPluginScopeState{

@@ -33,16 +33,17 @@ type wpPluginLinter func(context.Context, wpPluginUpdateExecution) error
 type wpPluginSpaceChecker func(context.Context, wpPluginUpdateExecution, ZIPInspection) error
 
 type wpPluginSystemOperations struct {
-	store        *wpUpdateStore
-	prepare      wpPluginRunnerPreparer
-	restoreDB    wpCoreDatabaseRestorer
-	restoreFiles wpPluginFilesRestorer
-	probe        wpCoreHomeProber
-	lint         wpPluginLinter
-	space        wpPluginSpaceChecker
-	supervisor   wpPluginUpdateSupervisor
-	mu           sync.Mutex
-	sessions     map[string]*wpPluginPreparedSession
+	store         *wpUpdateStore
+	componentType string
+	prepare       wpPluginRunnerPreparer
+	restoreDB     wpCoreDatabaseRestorer
+	restoreFiles  wpPluginFilesRestorer
+	probe         wpCoreHomeProber
+	lint          wpPluginLinter
+	space         wpPluginSpaceChecker
+	supervisor    wpPluginUpdateSupervisor
+	mu            sync.Mutex
+	sessions      map[string]*wpPluginPreparedSession
 }
 
 type wpPluginPreparedSession struct {
@@ -54,7 +55,7 @@ func newWPPluginSystemOperations(store *wpUpdateStore, prepare wpPluginRunnerPre
 	if store == nil || store.db == nil || prepare == nil || restoreDB == nil || restoreFiles == nil || probe == nil || lint == nil || space == nil {
 		return nil, errors.New("invalid plugin update operations")
 	}
-	return &wpPluginSystemOperations{store: store, prepare: prepare, restoreDB: restoreDB, restoreFiles: restoreFiles, probe: probe, lint: lint, space: space, sessions: map[string]*wpPluginPreparedSession{}}, nil
+	return &wpPluginSystemOperations{store: store, componentType: "plugin", prepare: prepare, restoreDB: restoreDB, restoreFiles: restoreFiles, probe: probe, lint: lint, space: space, sessions: map[string]*wpPluginPreparedSession{}}, nil
 }
 
 func newDefaultWPPluginSystemOperations(store *wpUpdateStore, wwwRoot string) (*wpPluginSystemOperations, error) {
@@ -78,8 +79,43 @@ func newDefaultWPPluginSystemOperations(store *wpUpdateStore, wwwRoot string) (*
 	return operations, nil
 }
 
+func newDefaultWPThemeSystemOperations(store *wpUpdateStore, wwwRoot string) (*wpPluginSystemOperations, error) {
+	runner, err := newDefaultWPThemePHPRunner(wwwRoot)
+	if err != nil {
+		return nil, err
+	}
+	operations, err := newWPPluginSystemOperations(store,
+		func(ctx context.Context, execution wpPluginUpdateExecution) (wpPluginRunnerSessionAPI, error) {
+			return runner.Prepare(ctx, execution)
+		},
+		defaultWPCoreDatabaseRestorer, defaultWPThemeFilesRestorer, defaultWPCoreHomeProber(nil), defaultWPPluginLinter, defaultWPPluginSpaceChecker)
+	if err != nil {
+		return nil, err
+	}
+	operations.componentType = "theme"
+	supervisor, ok := runner.opts.scope.(*wpPluginUpdateScope)
+	if !ok {
+		return nil, errors.New("theme update supervisor unavailable")
+	}
+	operations.supervisor = supervisor
+	return operations, nil
+}
+
 func (o *wpPluginSystemOperations) Prepare(ctx context.Context, execution wpPluginUpdateExecution) (bool, error) {
-	report, err := ValidateWPComponentPackage(ctx, execution.PackagePath, WPComponentPackageExpectation{ComponentType: "plugin", ComponentKey: execution.Task.ComponentKey, OfficialSlug: strings.Split(execution.Task.ComponentKey, "/")[0], TargetVersion: execution.Task.TargetVersion})
+	if execution.Task.ComponentType != o.componentType {
+		return false, errors.New("component update operations mismatch")
+	}
+	slug, template := execution.Task.ComponentKey, ""
+	var err error
+	if o.componentType == "plugin" {
+		slug = strings.Split(execution.Task.ComponentKey, "/")[0]
+	} else {
+		_, template, err = readInstalledWPThemeIdentity(execution.WebRoot, execution.Task.ComponentKey)
+		if err != nil {
+			return false, errors.New("theme identity unavailable")
+		}
+	}
+	report, err := ValidateWPComponentPackage(ctx, execution.PackagePath, WPComponentPackageExpectation{ComponentType: o.componentType, ComponentKey: execution.Task.ComponentKey, OfficialSlug: slug, TargetVersion: execution.Task.TargetVersion, Template: template})
 	if err != nil {
 		return false, errors.New("plugin package identity mismatch")
 	}
@@ -109,6 +145,9 @@ func (o *wpPluginSystemOperations) Prepare(ctx context.Context, execution wpPlug
 		return false, err
 	}
 	o.setSession(execution.Task.ID, &wpPluginPreparedSession{runner: session, wasActive: wasActive})
+	if o.componentType == "theme" {
+		return false, nil
+	}
 	return wasActive, nil
 }
 
@@ -131,6 +170,9 @@ func (o *wpPluginSystemOperations) ApplyPluginUpdate(ctx context.Context, execut
 }
 
 func (o *wpPluginSystemOperations) ReactivatePlugin(ctx context.Context, execution wpPluginUpdateExecution) error {
+	if o.componentType != "plugin" {
+		return errors.New("theme reactivation is not allowed")
+	}
 	session, err := o.session(execution.Task.ID)
 	if err != nil || !session.wasActive {
 		return errors.New("plugin reactivation is not allowed")
@@ -140,13 +182,17 @@ func (o *wpPluginSystemOperations) ReactivatePlugin(ctx context.Context, executi
 
 func (o *wpPluginSystemOperations) CheckTargetHealth(ctx context.Context, execution wpPluginUpdateExecution, active bool) error {
 	session, err := o.session(execution.Task.ID)
-	if err != nil || session.wasActive != active {
+	if err != nil || o.componentType == "plugin" && session.wasActive != active {
 		return errors.New("plugin health plan mismatch")
 	}
-	if err := session.runner.Check(ctx, execution.Task.TargetVersion, active); err != nil {
+	expectedActive := active
+	if o.componentType == "theme" {
+		expectedActive = session.wasActive
+	}
+	if err := session.runner.Check(ctx, execution.Task.TargetVersion, expectedActive); err != nil {
 		return err
 	}
-	if !active {
+	if !expectedActive {
 		if err := o.lint(ctx, execution); err != nil {
 			return err
 		}
@@ -237,9 +283,21 @@ func pluginExecutionWebsite(execution wpPluginUpdateExecution) *models.Website {
 }
 
 func defaultWPPluginLinter(ctx context.Context, execution wpPluginUpdateExecution) error {
-	parts := strings.Split(execution.Task.ComponentKey, "/")
-	if len(parts) != 2 {
-		return errors.New("invalid plugin lint target")
+	componentDir, slug := "plugins", ""
+	switch execution.Task.ComponentType {
+	case "plugin":
+		parts := strings.Split(execution.Task.ComponentKey, "/")
+		if len(parts) != 2 {
+			return errors.New("invalid plugin lint target")
+		}
+		slug = parts[0]
+	case "theme":
+		if !validWPThemeComponentKey(execution.Task.ComponentKey) {
+			return errors.New("invalid theme lint target")
+		}
+		componentDir, slug = "themes", execution.Task.ComponentKey
+	default:
+		return errors.New("invalid component lint target")
 	}
 	u, err := user.Lookup(execution.SystemUser)
 	if err != nil {
@@ -258,7 +316,7 @@ func defaultWPPluginLinter(ctx context.Context, execution wpPluginUpdateExecutio
 	if err != nil {
 		return err
 	}
-	rootPath := filepath.Join(execution.WebRoot, "wp-content", "plugins", parts[0])
+	rootPath := filepath.Join(execution.WebRoot, "wp-content", componentDir, slug)
 	root, err := os.OpenRoot(rootPath)
 	if err != nil {
 		return err
@@ -338,7 +396,11 @@ func defaultWPPluginSpaceChecker(ctx context.Context, execution wpPluginUpdateEx
 	if err != nil {
 		return errors.New("plugin database size unavailable")
 	}
-	target, err := directoryRegularBytes(filepath.Join(execution.WebRoot, "wp-content", "plugins", strings.Split(execution.Task.ComponentKey, "/")[0]))
+	componentDir, slug := "plugins", strings.Split(execution.Task.ComponentKey, "/")[0]
+	if execution.Task.ComponentType == "theme" {
+		componentDir, slug = "themes", execution.Task.ComponentKey
+	}
+	target, err := directoryRegularBytes(filepath.Join(execution.WebRoot, "wp-content", componentDir, slug))
 	if err != nil {
 		return errors.New("plugin target size unavailable")
 	}

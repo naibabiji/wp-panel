@@ -129,8 +129,8 @@
                                         <td class="table-cell text-white" x-text="item.target_version"></td>
                                         <td class="table-cell" x-text="item.locale || t('common.none')"></td>
                                         <td class="table-cell text-right">
-                                            <button x-show="canUpdatePlugin(item)" @click="openPluginUpdate(item)" :disabled="pluginUpdate.loading || pluginUpdate.submitting || (pluginTaskActive() && pluginUpdate.componentKey !== item.key)" class="btn-primary text-sm" x-text="pluginUpdate.loading && pluginUpdate.componentKey === item.key ? t('wp_plugin_update.checking') : (pluginTaskActive() && pluginUpdate.componentKey === item.key ? t('wp_plugin_update.tracking') : t('wp_plugin_update.action'))"></button>
-                                            <span x-show="item.type !== 'plugin'" class="text-gray-600">—</span>
+                                            <button x-show="canUpdateComponent(item)" @click="openPluginUpdate(item)" :disabled="pluginUpdate.loading || pluginUpdate.submitting || (pluginTaskActive() && pluginUpdate.componentKey !== item.key)" class="btn-primary text-sm" x-text="pluginUpdate.loading && pluginUpdate.componentKey === item.key ? componentUpdateText('wp_plugin_update.checking', 'wp_theme_update.checking') : (pluginTaskActive() && pluginUpdate.componentKey === item.key ? componentUpdateText('wp_plugin_update.tracking', 'wp_theme_update.tracking') : componentUpdateText('wp_plugin_update.action', 'wp_theme_update.action', item.type))"></button>
+                                            <span x-show="item.type !== 'plugin' && item.type !== 'theme'" class="text-gray-600">—</span>
                                         </td>
                                     </tr>
                                 </template>
@@ -155,28 +155,32 @@
         <div class="w-full max-w-xl rounded-lg border border-gray-700 bg-gray-900 p-5 shadow-2xl" @click.outside="closePluginUpdate()">
             <div class="flex items-start justify-between gap-4">
                 <div>
-                    <h3 class="text-lg font-semibold text-white">{{t .Lang "wp_plugin_update.title"}}</h3>
-                    <p class="mt-1 text-sm text-gray-400">{{t .Lang "wp_plugin_update.description"}}</p>
+                    <h3 class="text-lg font-semibold text-white" x-text="componentUpdateText('wp_plugin_update.title', 'wp_theme_update.title')"></h3>
+                    <p class="mt-1 text-sm text-gray-400" x-text="componentUpdateText('wp_plugin_update.description', 'wp_theme_update.description')"></p>
                 </div>
                 <button @click="closePluginUpdate()" :disabled="pluginUpdate.submitting" class="text-xl text-gray-400 hover:text-white" aria-label="{{t .Lang "common.cancel"}}">×</button>
             </div>
 
             <div x-show="pluginUpdate.error" class="mt-4 rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200" x-text="pluginUpdate.error"></div>
-            <div x-show="pluginUpdate.loading" class="py-8 text-center text-sm text-gray-400">{{t .Lang "wp_plugin_update.checking"}}</div>
+            <div x-show="pluginUpdate.loading" class="py-8 text-center text-sm text-gray-400" x-text="componentUpdateText('wp_plugin_update.checking', 'wp_theme_update.checking')"></div>
 
             <div x-show="pluginUpdate.preview && !pluginUpdate.task && !pluginUpdate.loading" class="mt-5 space-y-4">
                 <div class="grid grid-cols-1 gap-3 rounded border border-gray-700 bg-gray-950/40 p-4 sm:grid-cols-2">
-                    <div><div class="text-xs text-gray-500">{{t .Lang "wp_plugin_update.plugin"}}</div><div class="mt-1 break-all text-sm text-white" x-text="pluginUpdate.preview?.name || pluginUpdate.componentKey"></div></div>
+                    <div><div class="text-xs text-gray-500" x-text="componentUpdateText('wp_plugin_update.plugin', 'wp_theme_update.theme')"></div><div class="mt-1 break-all text-sm text-white" x-text="pluginUpdate.preview?.name || pluginUpdate.componentKey"></div></div>
                     <div><div class="text-xs text-gray-500">{{t .Lang "wp_plugin_update.component_key"}}</div><div class="mt-1 break-all font-mono text-xs text-gray-300" x-text="pluginUpdate.componentKey"></div></div>
                     <div><div class="text-xs text-gray-500">{{t .Lang "wp_plugin_update.current_version"}}</div><div class="mt-1 text-white" x-text="pluginUpdate.preview?.current_version"></div></div>
                     <div><div class="text-xs text-gray-500">{{t .Lang "wp_plugin_update.target_version"}}</div><div class="mt-1 text-white" x-text="pluginUpdate.preview?.target_version"></div></div>
                     <div><div class="text-xs text-gray-500">{{t .Lang "wp_plugin_update.verification"}}</div><div class="mt-1 text-green-300">{{t .Lang "wp_plugin_update.structure_only"}}</div></div>
-                    <div><div class="text-xs text-gray-500">{{t .Lang "wp_plugin_update.backup_scope"}}</div><div class="mt-1 text-gray-200">{{t .Lang "wp_plugin_update.backup_scope_value"}}</div></div>
+                    <div><div class="text-xs text-gray-500">{{t .Lang "wp_plugin_update.backup_scope"}}</div><div class="mt-1 text-gray-200" x-text="componentUpdateText('wp_plugin_update.backup_scope_value', 'wp_theme_update.backup_scope_value')"></div></div>
                 </div>
-                <div class="rounded border border-yellow-800 bg-yellow-950/30 p-3 text-sm text-yellow-200">{{t .Lang "wp_plugin_update.confirm_warning"}}</div>
+                <div class="rounded border border-yellow-800 bg-yellow-950/30 p-3 text-sm text-yellow-200" x-text="pluginUpdate.preview?.current_theme ? t('wp_theme_update.current_theme_warning') : componentUpdateText('wp_plugin_update.confirm_warning', 'wp_theme_update.confirm_warning')"></div>
+                <label x-show="pluginUpdate.preview?.current_theme" class="flex items-start gap-3 rounded border border-red-800 bg-red-950/30 p-3 text-sm text-red-100">
+                    <input type="checkbox" x-model="pluginUpdate.riskAccepted" class="mt-1">
+                    <span>{{t .Lang "wp_theme_update.current_theme_confirm"}}</span>
+                </label>
                 <div class="flex justify-end gap-3">
                     <button @click="closePluginUpdate()" :disabled="pluginUpdate.submitting" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
-                    <button @click="confirmPluginUpdate()" :disabled="pluginUpdate.submitting" class="btn-primary" x-text="pluginUpdate.submitting ? t('wp_plugin_update.submitting') : t('wp_plugin_update.confirm')"></button>
+                    <button @click="confirmPluginUpdate()" :disabled="pluginUpdate.submitting || (pluginUpdate.preview?.current_theme && !pluginUpdate.riskAccepted)" class="btn-primary" x-text="pluginUpdate.submitting ? componentUpdateText('wp_plugin_update.submitting', 'wp_theme_update.submitting') : componentUpdateText('wp_plugin_update.confirm', 'wp_theme_update.confirm')"></button>
                 </div>
             </div>
 
@@ -186,7 +190,7 @@
                     <div class="mt-1 text-sm" x-text="t('wp_plugin_update.stage_value', { stage: pluginTaskStageText() })"></div>
                     <div x-show="pluginUpdate.task?.requires_attention" class="mt-3 text-sm font-medium">{{t .Lang "wp_plugin_update.requires_attention"}}</div>
                 </div>
-                <div x-show="pluginUpdate.task?.status === 'success'" class="rounded border border-blue-800 bg-blue-950/30 p-3 text-sm text-blue-200">{{t .Lang "wp_plugin_update.rescan_after_success"}}</div>
+                <div x-show="pluginUpdate.task?.status === 'success'" class="rounded border border-blue-800 bg-blue-950/30 p-3 text-sm text-blue-200" x-text="componentUpdateText('wp_plugin_update.rescan_after_success', 'wp_theme_update.rescan_after_success')"></div>
                 <div class="flex justify-end">
                     <button @click="closePluginUpdate()" class="btn-secondary">{{t .Lang "wp_plugin_update.close"}}</button>
                 </div>
@@ -198,7 +202,7 @@
 <script>
 function wpInventoryPanel() {
     const newPage = () => ({ items: [], total: 0, page: 1, pageSize: 50, search: '', appliedSearch: '', loading: false, error: '', loaded: false });
-    const newPluginUpdate = () => ({ open: false, loading: false, submitting: false, componentKey: '', preview: null, task: null, error: '', pollStartedAt: 0 });
+    const newPluginUpdate = () => ({ open: false, loading: false, submitting: false, componentType: '', componentKey: '', preview: null, task: null, error: '', riskAccepted: false, pollStartedAt: 0 });
     return {
         siteID: null,
         summary: null,
@@ -458,19 +462,39 @@ function wpInventoryPanel() {
                 typeof item.current_version === 'string' && item.current_version !== '' &&
                 typeof item.target_version === 'string' && item.target_version !== '';
         },
+        canUpdateComponent(item) {
+            if (this.canUpdatePlugin(item)) return true;
+            return item?.type === 'theme' && typeof item.key === 'string' &&
+                /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(item.key) &&
+                typeof item.current_version === 'string' && item.current_version !== '' &&
+                typeof item.target_version === 'string' && item.target_version !== '';
+        },
+        componentUpdateText(pluginKey, themeKey, componentType = '') {
+            return t((componentType || this.pluginUpdate.componentType) === 'theme' ? themeKey : pluginKey);
+        },
+        componentUpdateAPI() {
+            return this.pluginUpdate.componentType === 'theme' ? 'wp-theme-update' : 'wp-plugin-update';
+        },
         validPluginPreview(value) {
-            return value && value.available === true && value.site_id === this.siteID &&
+            const common = value && value.available === true && value.site_id === this.siteID &&
                 value.component_key === this.pluginUpdate.componentKey &&
                 typeof value.current_version === 'string' && value.current_version !== '' &&
                 typeof value.target_version === 'string' && value.target_version !== '' &&
                 typeof value.confirmation_token === 'string' && value.confirmation_token !== '' &&
                 value.package_source === 'wordpress.org' &&
                 value.verification_required === 'structure_only' &&
-                value.database_backup === true && value.plugin_files_backup === true;
+                value.database_backup === true;
+            if (!common) return false;
+            if (this.pluginUpdate.componentType === 'theme') {
+                return value.theme_files_backup === true && typeof value.current_theme === 'boolean' &&
+                    typeof value.template === 'string' &&
+                    (!value.current_theme || (typeof value.risk_token === 'string' && value.risk_token !== ''));
+            }
+            return value.plugin_files_backup === true;
         },
         validPluginTask(value) {
             return value && typeof value.task_id === 'string' && value.task_id !== '' &&
-                value.site_id === this.siteID && value.component_type === 'plugin' &&
+                value.site_id === this.siteID && value.component_type === this.pluginUpdate.componentType &&
                 value.component_key === this.pluginUpdate.componentKey && value.task_kind === 'update' &&
                 ['preparing', 'queued', 'running', 'success', 'failed', 'interrupted_unknown'].includes(value.status);
         },
@@ -478,7 +502,7 @@ function wpInventoryPanel() {
             return ['preparing', 'queued', 'running'].includes(this.pluginUpdate.task?.status);
         },
         async openPluginUpdate(item) {
-            if (!this.siteID || !this.canUpdatePlugin(item) || this.pluginUpdate.loading || this.pluginUpdate.submitting) return;
+            if (!this.siteID || !this.canUpdateComponent(item) || this.pluginUpdate.loading || this.pluginUpdate.submitting) return;
             if (this.pluginTaskActive()) {
                 if (this.pluginUpdate.componentKey === item.key) this.pluginUpdate.open = true;
                 return;
@@ -487,20 +511,21 @@ function wpInventoryPanel() {
             this.pluginUpdate = newPluginUpdate();
             this.pluginUpdate.open = true;
             this.pluginUpdate.loading = true;
+            this.pluginUpdate.componentType = item.type;
             this.pluginUpdate.componentKey = item.key;
             const generation = this.requestGeneration;
             const siteID = this.siteID;
             try {
-                const response = await api('/websites/' + siteID + '/wp-plugin-update/preview?component_key=' + encodeURIComponent(item.key), { suppressToast: true, timeout: 30000 });
+                const response = await api('/websites/' + siteID + '/' + this.componentUpdateAPI() + '/preview?component_key=' + encodeURIComponent(item.key), { suppressToast: true, timeout: 30000 });
                 if (generation !== this.requestGeneration || siteID !== this.siteID || item.key !== this.pluginUpdate.componentKey) return;
-                if (!this.validPluginPreview(response.data)) throw new Error(t('wp_plugin_update.preview_invalid'));
+                if (!this.validPluginPreview(response.data)) throw new Error(this.componentUpdateText('wp_plugin_update.preview_invalid', 'wp_theme_update.preview_invalid'));
                 this.pluginUpdate.preview = response.data;
             } catch (error) {
                 if (generation !== this.requestGeneration || siteID !== this.siteID || item.key !== this.pluginUpdate.componentKey) return;
                 if (error?.status === 409 && await this.loadLatestPluginTask(item.key)) {
                     this.pluginUpdate.error = '';
                 } else {
-                    this.pluginUpdate.error = error.message || t('wp_plugin_update.preview_failed');
+                    this.pluginUpdate.error = error.message || this.componentUpdateText('wp_plugin_update.preview_failed', 'wp_theme_update.preview_failed');
                 }
             } finally {
                 if (generation === this.requestGeneration && siteID === this.siteID && item.key === this.pluginUpdate.componentKey) this.pluginUpdate.loading = false;
@@ -517,7 +542,8 @@ function wpInventoryPanel() {
         },
         async confirmPluginUpdate() {
             const preview = this.pluginUpdate.preview;
-            if (!this.siteID || !this.validPluginPreview(preview) || this.pluginUpdate.submitting) return;
+            if (!this.siteID || !this.validPluginPreview(preview) || this.pluginUpdate.submitting ||
+                (preview.current_theme && !this.pluginUpdate.riskAccepted)) return;
             const generation = this.requestGeneration;
             const siteID = this.siteID;
             const componentKey = this.pluginUpdate.componentKey;
@@ -531,22 +557,24 @@ function wpInventoryPanel() {
             this.pluginUpdate.submitting = true;
             this.pluginUpdate.error = '';
             try {
-                const response = await api('/websites/' + siteID + '/wp-plugin-update/confirm', {
+                const body = {
+                    component_key: componentKey,
+                    confirmation_token: preview.confirmation_token,
+                    target_version: preview.target_version,
+                    confirm: true
+                };
+                if (this.pluginUpdate.componentType === 'theme') body.risk_token = preview.risk_token || '';
+                const response = await api('/websites/' + siteID + '/' + this.componentUpdateAPI() + '/confirm', {
                     method: 'POST',
                     suppressToast: true,
                     timeout: 120000,
-                    body: {
-                        component_key: componentKey,
-                        confirmation_token: preview.confirmation_token,
-                        target_version: preview.target_version,
-                        confirm: true
-                    }
+                    body
                 });
                 if (generation !== this.requestGeneration || siteID !== this.siteID || componentKey !== this.pluginUpdate.componentKey) return;
-                if (!this.validPluginTask(response.data) || response.data.status !== 'queued') throw new Error(t('wp_plugin_update.task_invalid'));
+                if (!this.validPluginTask(response.data) || response.data.status !== 'queued') throw new Error(this.componentUpdateText('wp_plugin_update.task_invalid', 'wp_theme_update.task_invalid'));
                 this.pluginUpdate.task = response.data;
                 this.pluginUpdate.preview = null;
-                showToast(t('wp_plugin_update.submitted'), 'success');
+                showToast(this.componentUpdateText('wp_plugin_update.submitted', 'wp_theme_update.submitted'), 'success');
                 this.startPluginPolling();
             } catch (error) {
                 if (generation !== this.requestGeneration || siteID !== this.siteID || componentKey !== this.pluginUpdate.componentKey) return;
@@ -554,9 +582,9 @@ function wpInventoryPanel() {
                 if (recovered) {
                     this.pluginUpdate.preview = null;
                     this.pluginUpdate.error = '';
-                    showToast(t('wp_plugin_update.submission_recovered'), 'success');
+                    showToast(this.componentUpdateText('wp_plugin_update.submission_recovered', 'wp_theme_update.submission_recovered'), 'success');
                 } else {
-                    this.pluginUpdate.error = error.message || t('wp_plugin_update.submit_failed');
+                    this.pluginUpdate.error = error.message || this.componentUpdateText('wp_plugin_update.submit_failed', 'wp_theme_update.submit_failed');
                 }
             } finally {
                 if (generation === this.requestGeneration && siteID === this.siteID && componentKey === this.pluginUpdate.componentKey) this.pluginUpdate.submitting = false;
@@ -565,7 +593,7 @@ function wpInventoryPanel() {
         async loadLatestPluginTask(componentKey, expected = null) {
             if (!this.siteID || !componentKey || componentKey !== this.pluginUpdate.componentKey) return false;
             try {
-                const response = await api('/websites/' + this.siteID + '/wp-plugin-update/tasks/latest?component_key=' + encodeURIComponent(componentKey), { suppressToast: true });
+                const response = await api('/websites/' + this.siteID + '/' + this.componentUpdateAPI() + '/tasks/latest?component_key=' + encodeURIComponent(componentKey), { suppressToast: true });
                 const task = response.data;
                 if (!this.validPluginTask(task)) return false;
                 if (expected) {
@@ -609,9 +637,9 @@ function wpInventoryPanel() {
             const siteID = this.siteID;
             if (!siteID || !taskID || !componentKey) return;
             try {
-                const response = await api('/websites/' + siteID + '/wp-plugin-update/tasks/' + encodeURIComponent(taskID), { suppressToast: true });
+                const response = await api('/websites/' + siteID + '/' + this.componentUpdateAPI() + '/tasks/' + encodeURIComponent(taskID), { suppressToast: true });
                 if (generation !== this.requestGeneration || siteID !== this.siteID || componentKey !== this.pluginUpdate.componentKey) return;
-                if (!this.validPluginTask(response.data) || response.data.task_id !== taskID) throw new Error(t('wp_plugin_update.task_invalid'));
+                if (!this.validPluginTask(response.data) || response.data.task_id !== taskID) throw new Error(this.componentUpdateText('wp_plugin_update.task_invalid', 'wp_theme_update.task_invalid'));
                 this.pluginUpdate.task = response.data;
                 this.pluginUpdate.error = '';
                 if (this.pluginTaskActive()) {
@@ -625,36 +653,36 @@ function wpInventoryPanel() {
                 if (error?.status === 404) {
                     this.stopPluginPolling();
                     this.pluginUpdate.task = null;
-                    this.pluginUpdate.error = t('wp_plugin_update.not_found');
+                    this.pluginUpdate.error = this.componentUpdateText('wp_plugin_update.not_found', 'wp_theme_update.not_found');
                     return;
                 }
-                this.pluginUpdate.error = t('wp_plugin_update.task_read_failed');
+                this.pluginUpdate.error = this.componentUpdateText('wp_plugin_update.task_read_failed', 'wp_theme_update.task_read_failed');
                 this.schedulePluginPoll(5000);
             }
         },
         pluginTaskStatusText() {
             const status = this.pluginUpdate.task?.status;
-            if (status === 'preparing') return t('wp_plugin_update.status_preparing');
-            if (status === 'queued') return t('wp_plugin_update.status_queued');
-            if (status === 'running') return t('wp_plugin_update.status_running');
-            if (status === 'success') return t('wp_plugin_update.status_success');
-            if (status === 'failed') return t('wp_plugin_update.status_failed');
-            if (status === 'interrupted_unknown') return t('wp_plugin_update.status_interrupted_unknown');
-            return t('wp_plugin_update.status_unknown');
+            if (status === 'preparing') return this.componentUpdateText('wp_plugin_update.status_preparing', 'wp_theme_update.status_preparing');
+            if (status === 'queued') return this.componentUpdateText('wp_plugin_update.status_queued', 'wp_theme_update.status_queued');
+            if (status === 'running') return this.componentUpdateText('wp_plugin_update.status_running', 'wp_theme_update.status_running');
+            if (status === 'success') return this.componentUpdateText('wp_plugin_update.status_success', 'wp_theme_update.status_success');
+            if (status === 'failed') return this.componentUpdateText('wp_plugin_update.status_failed', 'wp_theme_update.status_failed');
+            if (status === 'interrupted_unknown') return this.componentUpdateText('wp_plugin_update.status_interrupted_unknown', 'wp_theme_update.status_interrupted_unknown');
+            return this.componentUpdateText('wp_plugin_update.status_unknown', 'wp_theme_update.status_unknown');
         },
         pluginTaskStageText() {
             const stage = this.pluginUpdate.task?.stage || 'unknown';
-            if (stage === 'queued') return t('wp_plugin_update.stage_queued');
-            if (stage === 'claimed') return t('wp_plugin_update.stage_claimed');
-            if (stage === 'backups_ready') return t('wp_plugin_update.stage_backups_ready');
-            if (stage === 'unlocking') return t('wp_plugin_update.stage_unlocking');
-            if (stage === 'updating_component') return t('wp_plugin_update.stage_updating_component');
-            if (stage === 'reactivating') return t('wp_plugin_update.stage_reactivating');
-            if (stage === 'health_check') return t('wp_plugin_update.stage_health_check');
-            if (stage === 'rollback') return t('wp_plugin_update.stage_rollback');
-            if (stage === 'restoring_file_lock') return t('wp_plugin_update.stage_restoring_file_lock');
-            if (stage === 'complete') return t('wp_plugin_update.stage_complete');
-            return t('wp_plugin_update.stage_unknown');
+            if (stage === 'queued') return this.componentUpdateText('wp_plugin_update.stage_queued', 'wp_theme_update.stage_queued');
+            if (stage === 'claimed') return this.componentUpdateText('wp_plugin_update.stage_claimed', 'wp_theme_update.stage_claimed');
+            if (stage === 'backups_ready') return this.componentUpdateText('wp_plugin_update.stage_backups_ready', 'wp_theme_update.stage_backups_ready');
+            if (stage === 'unlocking') return this.componentUpdateText('wp_plugin_update.stage_unlocking', 'wp_theme_update.stage_unlocking');
+            if (stage === 'updating_component') return this.componentUpdateText('wp_plugin_update.stage_updating_component', 'wp_theme_update.stage_updating_component');
+            if (stage === 'reactivating') return this.componentUpdateText('wp_plugin_update.stage_reactivating', 'wp_theme_update.stage_reactivating');
+            if (stage === 'health_check') return this.componentUpdateText('wp_plugin_update.stage_health_check', 'wp_theme_update.stage_health_check');
+            if (stage === 'rollback') return this.componentUpdateText('wp_plugin_update.stage_rollback', 'wp_theme_update.stage_rollback');
+            if (stage === 'restoring_file_lock') return this.componentUpdateText('wp_plugin_update.stage_restoring_file_lock', 'wp_theme_update.stage_restoring_file_lock');
+            if (stage === 'complete') return this.componentUpdateText('wp_plugin_update.stage_complete', 'wp_theme_update.stage_complete');
+            return this.componentUpdateText('wp_plugin_update.stage_unknown', 'wp_theme_update.stage_unknown');
         },
         pluginTaskNoticeClass() {
             const status = this.pluginUpdate.task?.status;

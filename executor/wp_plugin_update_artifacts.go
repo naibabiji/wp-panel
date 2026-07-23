@@ -35,6 +35,28 @@ func (s *wpUpdateArtifactService) snapshotValidateAndSealPluginPackage(ctx conte
 	return sealed, report, nil
 }
 
+func (s *wpUpdateArtifactService) snapshotValidateAndSealThemePackage(ctx context.Context, taskID, sourcePath, expectedSHA, expectedTemplate string) (WPUpdateTask, WPComponentPackageReport, error) {
+	task, err := s.store.getTask(ctx, taskID)
+	if err != nil || task.Status != wpUpdatePreparing || task.TaskKind != "update" || task.ComponentType != "theme" ||
+		!validWPThemeComponentKey(task.ComponentKey) || !wpComponentVersionPattern.MatchString(task.TargetVersion) ||
+		(expectedTemplate != "" && !validWPThemeComponentKey(expectedTemplate)) {
+		return WPUpdateTask{}, WPComponentPackageReport{}, errors.New("theme update plan is not snapshot-ready")
+	}
+	var report WPComponentPackageReport
+	sealed, err := s.snapshotAndSealPackageChecked(ctx, taskID, sourcePath, expectedSHA, "structure_only", func(snapshot string) error {
+		var validateErr error
+		report, validateErr = ValidateWPComponentPackage(ctx, snapshot, WPComponentPackageExpectation{
+			ComponentType: "theme", ComponentKey: task.ComponentKey, OfficialSlug: task.ComponentKey,
+			TargetVersion: task.TargetVersion, Template: expectedTemplate,
+		})
+		return validateErr
+	})
+	if err != nil {
+		return WPUpdateTask{}, WPComponentPackageReport{}, err
+	}
+	return sealed, report, nil
+}
+
 func (s *wpUpdateArtifactService) validateAndClaimPluginUpdate(ctx context.Context, taskID, owner, observedVersion string) (WPUpdateTask, error) {
 	task, err := s.store.getTask(ctx, taskID)
 	if err != nil || task.Status != wpUpdateQueued || task.ComponentType != "plugin" || task.TaskKind != "update" ||
@@ -56,6 +78,30 @@ func (s *wpUpdateArtifactService) validateAndClaimPluginUpdate(ctx context.Conte
 		return s.store.failPluginClaim(ctx, taskID, "package_digest_mismatch", s.now().UTC())
 	}
 	return s.store.claimPluginUpdate(ctx, taskID, owner, observedVersion, validatedSHA, s.now().UTC())
+}
+
+func (s *wpUpdateArtifactService) validateAndClaimThemeUpdate(ctx context.Context, taskID, owner, observedVersion, observedTemplate string) (WPUpdateTask, error) {
+	task, err := s.store.getTask(ctx, taskID)
+	if err != nil || task.Status != wpUpdateQueued || task.ComponentType != "theme" || task.TaskKind != "update" ||
+		!validWPThemeComponentKey(task.ComponentKey) || !filepath.IsAbs(task.PackageSnapshotPath) ||
+		(observedTemplate != "" && !validWPThemeComponentKey(observedTemplate)) {
+		return WPUpdateTask{}, errors.New("theme update task is not claimable")
+	}
+	sha, _, err := hashRegularFile(task.PackageSnapshotPath)
+	if err != nil || sha != task.DownloadedSHA256 {
+		return s.store.failThemeClaim(ctx, taskID, "package_digest_mismatch", s.now().UTC())
+	}
+	if _, err := ValidateWPComponentPackage(ctx, task.PackageSnapshotPath, WPComponentPackageExpectation{
+		ComponentType: "theme", ComponentKey: task.ComponentKey, OfficialSlug: task.ComponentKey,
+		TargetVersion: task.TargetVersion, Template: observedTemplate,
+	}); err != nil {
+		return s.store.failThemeClaim(ctx, taskID, "package_validation_failed", s.now().UTC())
+	}
+	validatedSHA, _, err := hashRegularFile(task.PackageSnapshotPath)
+	if err != nil || validatedSHA != sha {
+		return s.store.failThemeClaim(ctx, taskID, "package_digest_mismatch", s.now().UTC())
+	}
+	return s.store.claimThemeUpdate(ctx, taskID, owner, observedVersion, validatedSHA, s.now().UTC())
 }
 
 func (s *wpUpdateArtifactService) preparePluginBackups(ctx context.Context, taskID, owner string) error {
@@ -122,30 +168,105 @@ func (s *wpUpdateArtifactService) preparePluginBackups(ctx context.Context, task
 	return nil
 }
 
+func (s *wpUpdateArtifactService) prepareThemeBackups(ctx context.Context, taskID, owner string) error {
+	if !wpUpdateTaskIDPattern.MatchString(taskID) || owner == "" {
+		return errors.New("invalid theme backup request")
+	}
+	var webRoot, dbName, status, kind, component, componentKey, leaseOwner string
+	var backupReady int
+	err := s.store.db.QueryRowContext(ctx, `SELECT w.web_root,w.db_name,t.status,t.task_kind,t.component_type,
+		t.component_key,t.lease_owner,t.backup_ready FROM wp_update_tasks t
+		JOIN websites w ON w.id=t.site_id WHERE t.id=?`, taskID).
+		Scan(&webRoot, &dbName, &status, &kind, &component, &componentKey, &leaseOwner, &backupReady)
+	if err != nil || status != wpUpdateRunning || kind != "update" || component != "theme" ||
+		leaseOwner != owner || backupReady != 0 || !filepath.IsAbs(webRoot) || !validWPThemeComponentKey(componentKey) {
+		return errors.New("update task is not theme-backup-ready")
+	}
+	taskDir := filepath.Join(s.root, taskID)
+	if info, err := os.Lstat(taskDir); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("invalid update task directory")
+	}
+	dbPath := filepath.Join(taskDir, "database.sql.gz")
+	themePath := filepath.Join(taskDir, "theme-files.tar.gz")
+	created := []string{}
+	defer func() {
+		for _, name := range created {
+			_ = os.Remove(name)
+		}
+	}()
+	if err := s.dumpDB(ctx, dbName, dbPath); err != nil {
+		_ = os.Remove(dbPath)
+		return fmt.Errorf("update database backup failed: %w", err)
+	}
+	created = append(created, dbPath)
+	if err := syncRegularFile(dbPath); err != nil {
+		return errors.New("invalid update database backup")
+	}
+	dbSHA, dbSize, err := hashRegularFile(dbPath)
+	if err != nil || dbSize == 0 {
+		return errors.New("invalid update database backup")
+	}
+	if err := archiveWordPressTheme(webRoot, componentKey, themePath); err != nil {
+		_ = os.Remove(themePath)
+		return fmt.Errorf("update theme backup failed: %w", err)
+	}
+	created = append(created, themePath)
+	themeSHA, themeSize, err := hashRegularFile(themePath)
+	if err != nil || themeSize == 0 {
+		return errors.New("invalid update theme backup")
+	}
+	records := []wpUpdateBackupRecord{{"database", dbPath, dbSize, dbSHA}, {"theme_files", themePath, themeSize, themeSHA}}
+	if err := s.store.markThemeBackupsReady(ctx, taskID, owner, records, s.now().UTC()); err != nil {
+		committed, checkErr := s.backupsAreCommitted(ctx, taskID, records)
+		if checkErr != nil {
+			created = nil
+			return err
+		}
+		if committed {
+			created = nil
+			return nil
+		}
+		return err
+	}
+	created = nil
+	return nil
+}
+
 func archiveWordPressPlugin(webRoot, componentKey, target string) error {
 	if !validWPPluginComponentKey(componentKey) {
 		return errors.New("invalid plugin component key")
 	}
 	parts := strings.Split(componentKey, "/")
+	return archiveWordPressComponentDirectory(webRoot, "wp-content/plugins", parts[0], componentKey, target)
+}
+
+func archiveWordPressTheme(webRoot, componentKey, target string) error {
+	if !validWPThemeComponentKey(componentKey) {
+		return errors.New("invalid theme component key")
+	}
+	return archiveWordPressComponentDirectory(webRoot, "wp-content/themes", componentKey, path.Join(componentKey, "style.css"), target)
+}
+
+func archiveWordPressComponentDirectory(webRoot, contentRoot, componentDir, identityFile, target string) error {
 	web, err := os.OpenRoot(webRoot)
 	if err != nil {
 		return err
 	}
 	defer web.Close()
-	root, err := web.OpenRoot("wp-content/plugins")
+	root, err := web.OpenRoot(contentRoot)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
-	mainInfo, err := root.Lstat(componentKey)
+	mainInfo, err := root.Lstat(identityFile)
 	if err != nil || !mainInfo.Mode().IsRegular() || mainInfo.Mode()&os.ModeSymlink != 0 {
-		return errors.New("invalid plugin main file")
+		return errors.New("invalid component identity file")
 	}
-	pluginInfo, err := root.Lstat(parts[0])
-	if err != nil || !pluginInfo.IsDir() || pluginInfo.Mode()&os.ModeSymlink != 0 {
-		return errors.New("invalid plugin directory")
+	componentInfo, err := root.Lstat(componentDir)
+	if err != nil || !componentInfo.IsDir() || componentInfo.Mode()&os.ModeSymlink != 0 {
+		return errors.New("invalid component directory")
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(target), ".plugin-*.tmp")
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".component-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -162,7 +283,7 @@ func archiveWordPressPlugin(webRoot, componentKey, target string) error {
 	}
 	gz := gzip.NewWriter(tmp)
 	tw := tar.NewWriter(gz)
-	err = fs.WalkDir(root.FS(), parts[0], func(rel string, entry fs.DirEntry, walkErr error) error {
+	err = fs.WalkDir(root.FS(), componentDir, func(rel string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -171,7 +292,7 @@ func archiveWordPressPlugin(webRoot, componentKey, target string) error {
 			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 || (!info.IsDir() && !info.Mode().IsRegular()) {
-			return errors.New("unsupported plugin backup entry")
+			return errors.New("unsupported component backup entry")
 		}
 		header, err := tar.FileInfoHeader(info, "")
 		if err != nil {
@@ -198,7 +319,7 @@ func archiveWordPressPlugin(webRoot, componentKey, target string) error {
 		openedInfo, err := f.Stat()
 		if err != nil || !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
 			_ = f.Close()
-			return errors.New("plugin backup entry changed during archive")
+			return errors.New("component backup entry changed during archive")
 		}
 		_, copyErr := io.Copy(tw, f)
 		closeErr := f.Close()

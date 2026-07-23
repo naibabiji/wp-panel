@@ -98,6 +98,62 @@ func TestWPPluginUpdateExecutorInactiveNeverReactivates(t *testing.T) {
 	}
 }
 
+func TestWPThemeUpdateExecutorNeverRunsPluginReactivation(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	seedThemeUpdateCandidate(t, store, siteID, "sample-theme", "1.0.0", "1.1.0", "collection-theme-executor")
+	webRoot := filepath.Join(t.TempDir(), "wordpress")
+	themeRoot := filepath.Join(webRoot, "wp-content", "themes", "sample-theme")
+	if err := os.MkdirAll(themeRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(themeRoot, "style.css"), []byte("/*\nTheme Name: Sample\nVersion: 1.0.0\n*/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE websites SET web_root=?,db_name='wordpress_db' WHERE id=?`, webRoot, siteID); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.createThemeManualPlan(context.Background(), WPUpdatePlan{
+		SiteID: siteID, ComponentKey: "sample-theme", CurrentVersion: "1.0.0", TargetVersion: "1.1.0",
+		PackageSource: "wordpress.org", DownloadURL: "https://downloads.wordpress.org/theme/sample-theme.1.1.0.zip",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := newWPUpdateArtifactService(store, filepath.Join(t.TempDir(), "artifacts"), fakeUpdateDump)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := writeThemePackageFixture(t, "sample-theme", "1.1.0", "")
+	digest, _, _ := hashRegularFile(source)
+	task, _, err = service.snapshotValidateAndSealThemePackage(context.Background(), task.ID, source, digest, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err = service.validateAndClaimThemeUpdate(context.Background(), task.ID, "worker-theme", "1.0.0", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.prepareThemeBackups(context.Background(), task.ID, "worker-theme"); err != nil {
+		t.Fatal(err)
+	}
+	ops := &fakeWPPluginUpdateOperations{active: false, fail: map[string]error{}, hook: map[string]func(){}}
+	executor, err := newWPThemeUpdateExecutor(store, service.root, ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.Execute(context.Background(), task.ID, "worker-theme"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"prepare", "unlock", "update", "target_health", "restore_lock"}
+	if !reflect.DeepEqual(ops.calls, want) {
+		t.Fatalf("calls=%v want=%v", ops.calls, want)
+	}
+	finished, err := store.getTask(context.Background(), task.ID)
+	if err != nil || finished.Status != wpUpdateSuccess || finished.ComponentType != "theme" {
+		t.Fatalf("finished=%+v err=%v", finished, err)
+	}
+}
+
 func TestWPPluginUpdateExecutorUpdateFailureRollsBack(t *testing.T) {
 	executor, store, task, ops := preparePluginExecutorTask(t, true)
 	ops.fail["update"] = errors.New("injected update failure")

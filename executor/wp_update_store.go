@@ -132,6 +132,73 @@ func (s *wpUpdateStore) createPluginManualPlan(ctx context.Context, plan WPUpdat
 	return s.getTask(ctx, id)
 }
 
+func (s *wpUpdateStore) createThemeManualPlan(ctx context.Context, plan WPUpdatePlan, now time.Time) (WPUpdateTask, error) {
+	if s == nil || s.db == nil || plan.SiteID <= 0 || !validWPThemeComponentKey(plan.ComponentKey) ||
+		!wpComponentVersionPattern.MatchString(plan.CurrentVersion) || !wpComponentVersionPattern.MatchString(plan.TargetVersion) ||
+		plan.CurrentVersion == plan.TargetVersion || plan.PackageSource != "wordpress.org" ||
+		!validWPThemeDownloadURL(plan.DownloadURL, plan.ComponentKey, plan.TargetVersion) {
+		return WPUpdateTask{}, errors.New("invalid theme update plan")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	defer tx.Rollback()
+	var siteType, siteStatus, inventoryStatus, collectionID, componentVersion string
+	var multisite int
+	err = tx.QueryRowContext(ctx, `SELECT w.site_type,w.status,COALESCE(i.status,''),COALESCE(i.collection_id,''),
+		COALESCE(i.is_multisite,0),COALESCE(c.version,'') FROM websites w
+		LEFT JOIN site_wp_inventory_state i ON i.site_id=w.id
+		LEFT JOIN site_wp_components c ON c.site_id=w.id AND c.component_type='theme'
+			AND c.component_key=? AND c.collection_id=i.collection_id WHERE w.id=?`, plan.ComponentKey, plan.SiteID).
+		Scan(&siteType, &siteStatus, &inventoryStatus, &collectionID, &multisite, &componentVersion)
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	if siteType != "wordpress" || siteStatus != "active" || inventoryStatus != "complete" ||
+		multisite != 0 || collectionID == "" || componentVersion != plan.CurrentVersion {
+		return WPUpdateTask{}, errors.New("site is not eligible for theme update")
+	}
+	var candidate int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_wp_component_updates
+		WHERE site_id=? AND component_type='theme' AND component_key=? AND target_version=? AND collection_id=?`,
+		plan.SiteID, plan.ComponentKey, plan.TargetVersion, collectionID).Scan(&candidate); err != nil {
+		return WPUpdateTask{}, err
+	}
+	if candidate == 0 {
+		return WPUpdateTask{}, errors.New("theme update candidate is not current")
+	}
+	var blocked int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM wp_update_tasks WHERE site_id=? AND (
+		status IN ('preparing','queued','running') OR
+		(status='interrupted_unknown' AND manual_disposition=''))`, plan.SiteID).Scan(&blocked); err != nil {
+		return WPUpdateTask{}, err
+	}
+	if blocked != 0 {
+		return WPUpdateTask{}, errors.New("site has blocking update task")
+	}
+	id, err := newWPUpdateTaskID()
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	stamp := wpUpdateDBTime(now)
+	_, err = tx.ExecContext(ctx, `INSERT INTO wp_update_tasks
+		(id,site_id,component_type,component_key,task_kind,trigger_type,status,stage,
+		 current_version,target_version,package_source,download_url,requested_at,created_at,updated_at)
+		VALUES (?,?,'theme',?,'update','manual','preparing','plan',?,?,?,?,?,?,?)`,
+		id, plan.SiteID, plan.ComponentKey, plan.CurrentVersion, plan.TargetVersion, plan.PackageSource, plan.DownloadURL, stamp, stamp, stamp)
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, "plan", "info", "", stamp); err != nil {
+		return WPUpdateTask{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return WPUpdateTask{}, err
+	}
+	return s.getTask(ctx, id)
+}
+
 type wpUpdateStore struct{ db *sql.DB }
 
 func newWPUpdateStore(db *sql.DB) *wpUpdateStore { return &wpUpdateStore{db: db} }
@@ -295,8 +362,17 @@ func (s *wpUpdateStore) claimCoreUpdate(ctx context.Context, id, owner, observed
 }
 
 func (s *wpUpdateStore) claimPluginUpdate(ctx context.Context, id, owner, observedVersion, observedSHA string, now time.Time) (WPUpdateTask, error) {
-	if owner == "" || observedVersion == "" || !wpUpdateSHA256Pattern.MatchString(observedSHA) {
-		return WPUpdateTask{}, errors.New("invalid plugin claim")
+	return s.claimComponentUpdate(ctx, id, owner, observedVersion, observedSHA, "plugin", validWPPluginComponentKey, now)
+}
+
+func (s *wpUpdateStore) claimThemeUpdate(ctx context.Context, id, owner, observedVersion, observedSHA string, now time.Time) (WPUpdateTask, error) {
+	return s.claimComponentUpdate(ctx, id, owner, observedVersion, observedSHA, "theme", validWPThemeComponentKey, now)
+}
+
+func (s *wpUpdateStore) claimComponentUpdate(ctx context.Context, id, owner, observedVersion, observedSHA, componentType string, validKey func(string) bool, now time.Time) (WPUpdateTask, error) {
+	if owner == "" || observedVersion == "" || !wpUpdateSHA256Pattern.MatchString(observedSHA) ||
+		(componentType != "plugin" && componentType != "theme") || validKey == nil {
+		return WPUpdateTask{}, errors.New("invalid component claim")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -306,26 +382,26 @@ func (s *wpUpdateStore) claimPluginUpdate(ctx context.Context, id, owner, observ
 	var status, currentVersion, sha, verification, snapshot, siteType, siteStatus, componentKey string
 	err = tx.QueryRowContext(ctx, `SELECT t.status,t.current_version,t.downloaded_sha256,t.verification_level,
 		t.package_snapshot_path,w.site_type,w.status,t.component_key FROM wp_update_tasks t
-		JOIN websites w ON w.id=t.site_id WHERE t.id=? AND t.task_kind='update' AND t.component_type='plugin'`, id).
+		JOIN websites w ON w.id=t.site_id WHERE t.id=? AND t.task_kind='update' AND t.component_type=?`, id, componentType).
 		Scan(&status, &currentVersion, &sha, &verification, &snapshot, &siteType, &siteStatus, &componentKey)
 	if err != nil {
 		return WPUpdateTask{}, err
 	}
 	if status != wpUpdateQueued || siteType != "wordpress" || siteStatus != "active" ||
 		currentVersion != observedVersion || sha != observedSHA || verification != "structure_only" ||
-		!filepath.IsAbs(snapshot) || !validWPPluginComponentKey(componentKey) {
-		return s.failPluginClaimTx(ctx, tx, id, status, "precheck_failed", now)
+		!filepath.IsAbs(snapshot) || validKey == nil || !validKey(componentKey) {
+		return s.failComponentClaimTx(ctx, tx, id, status, componentType, "precheck_failed", now)
 	}
 	stamp := wpUpdateDBTime(now)
 	leaseUntil := wpUpdateDBTime(now.Add(wpUpdateLease))
 	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET status='running',stage='claimed',lease_owner=?,
-		lease_expires_at=?,started_at=?,updated_at=? WHERE id=? AND status='queued' AND component_type='plugin'`,
-		owner, leaseUntil, stamp, stamp, id)
+		lease_expires_at=?,started_at=?,updated_at=? WHERE id=? AND status='queued' AND component_type=?`,
+		owner, leaseUntil, stamp, stamp, id, componentType)
 	if err != nil {
 		return WPUpdateTask{}, err
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
-		return WPUpdateTask{}, errors.New("plugin update task was not claimed")
+		return WPUpdateTask{}, errors.New("component update task was not claimed")
 	}
 	if err := insertWPUpdateEvent(ctx, tx, id, "claimed", "success", "", stamp); err != nil {
 		return WPUpdateTask{}, err
@@ -337,26 +413,41 @@ func (s *wpUpdateStore) claimPluginUpdate(ctx context.Context, id, owner, observ
 }
 
 func (s *wpUpdateStore) failPluginClaim(ctx context.Context, id, code string, now time.Time) (WPUpdateTask, error) {
+	return s.failComponentClaim(ctx, id, "plugin", code, now)
+}
+
+func (s *wpUpdateStore) failThemeClaim(ctx context.Context, id, code string, now time.Time) (WPUpdateTask, error) {
+	return s.failComponentClaim(ctx, id, "theme", code, now)
+}
+
+func (s *wpUpdateStore) failComponentClaim(ctx context.Context, id, componentType, code string, now time.Time) (WPUpdateTask, error) {
+	if componentType != "plugin" && componentType != "theme" {
+		return WPUpdateTask{}, errors.New("invalid component claim failure")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return WPUpdateTask{}, err
 	}
 	defer tx.Rollback()
-	return s.failPluginClaimTx(ctx, tx, id, wpUpdateQueued, code, now)
+	return s.failComponentClaimTx(ctx, tx, id, wpUpdateQueued, componentType, code, now)
 }
 
 func (s *wpUpdateStore) failPluginClaimTx(ctx context.Context, tx *sql.Tx, id, status, code string, now time.Time) (WPUpdateTask, error) {
-	if status != wpUpdateQueued || code == "" {
-		return WPUpdateTask{}, errors.New("plugin update claim precheck failed")
+	return s.failComponentClaimTx(ctx, tx, id, status, "plugin", code, now)
+}
+
+func (s *wpUpdateStore) failComponentClaimTx(ctx context.Context, tx *sql.Tx, id, status, componentType, code string, now time.Time) (WPUpdateTask, error) {
+	if status != wpUpdateQueued || code == "" || (componentType != "plugin" && componentType != "theme") {
+		return WPUpdateTask{}, errors.New("component update claim precheck failed")
 	}
 	stamp := wpUpdateDBTime(now)
 	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET status='failed',stage='precheck',failure_stage='precheck',
-		finished_at=?,updated_at=? WHERE id=? AND status='queued' AND component_type='plugin'`, stamp, stamp, id)
+		finished_at=?,updated_at=? WHERE id=? AND status='queued' AND component_type=?`, stamp, stamp, id, componentType)
 	if err != nil {
 		return WPUpdateTask{}, err
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
-		return WPUpdateTask{}, errors.New("plugin update claim precheck failed")
+		return WPUpdateTask{}, errors.New("component update claim precheck failed")
 	}
 	if err := insertWPUpdateEvent(ctx, tx, id, "precheck", "failed", code, stamp); err != nil {
 		return WPUpdateTask{}, err
@@ -364,7 +455,7 @@ func (s *wpUpdateStore) failPluginClaimTx(ctx context.Context, tx *sql.Tx, id, s
 	if err := tx.Commit(); err != nil {
 		return WPUpdateTask{}, err
 	}
-	return WPUpdateTask{}, errors.New("plugin update claim precheck failed")
+	return WPUpdateTask{}, errors.New("component update claim precheck failed")
 }
 
 func (s *wpUpdateStore) heartbeat(ctx context.Context, id, owner string, now time.Time) (bool, error) {
@@ -393,7 +484,7 @@ func (s *wpUpdateStore) nextQueuedUpdateCandidates(ctx context.Context) ([]WPUpd
 		SELECT id,requested_at,component_type,
 			ROW_NUMBER() OVER (PARTITION BY component_type ORDER BY requested_at,id) AS candidate_rank
 		FROM wp_update_tasks
-		WHERE status='queued' AND task_kind='update' AND component_type IN ('core','plugin')
+		WHERE status='queued' AND task_kind='update' AND component_type IN ('core','plugin','theme')
 	)
 	SELECT id FROM ranked WHERE candidate_rank=1 ORDER BY requested_at,id`)
 	if err != nil {
@@ -532,8 +623,19 @@ func (s *wpUpdateStore) recoverRunningComponent(ctx context.Context, code string
 }
 
 func (s *wpUpdateStore) runningPluginTasks(ctx context.Context, now time.Time, expiredOnly bool) ([]WPUpdateTask, error) {
-	query := `SELECT id FROM wp_update_tasks WHERE status='running' AND component_type='plugin'`
-	args := []any{}
+	return s.runningComponentTasks(ctx, "plugin", now, expiredOnly)
+}
+
+func (s *wpUpdateStore) runningThemeTasks(ctx context.Context, now time.Time, expiredOnly bool) ([]WPUpdateTask, error) {
+	return s.runningComponentTasks(ctx, "theme", now, expiredOnly)
+}
+
+func (s *wpUpdateStore) runningComponentTasks(ctx context.Context, componentType string, now time.Time, expiredOnly bool) ([]WPUpdateTask, error) {
+	if componentType != "plugin" && componentType != "theme" {
+		return nil, errors.New("invalid running component lookup")
+	}
+	query := `SELECT id FROM wp_update_tasks WHERE status='running' AND component_type=?`
+	args := []any{componentType}
 	if expiredOnly {
 		query += ` AND lease_expires_at<=?`
 		args = append(args, wpUpdateDBTime(now))
@@ -602,6 +704,21 @@ func (s *wpUpdateStore) advanceOwnedStage(ctx context.Context, id, owner, expect
 }
 
 func (s *wpUpdateStore) recordPluginPrepared(ctx context.Context, id, owner string, wasActive bool, now time.Time) error {
+	code := "plugin_observed_inactive"
+	if wasActive {
+		code = "plugin_observed_active"
+	}
+	return s.recordComponentPrepared(ctx, id, owner, "plugin", code, now)
+}
+
+func (s *wpUpdateStore) recordThemePrepared(ctx context.Context, id, owner string, now time.Time) error {
+	return s.recordComponentPrepared(ctx, id, owner, "theme", "theme_state_observed", now)
+}
+
+func (s *wpUpdateStore) recordComponentPrepared(ctx context.Context, id, owner, componentType, code string, now time.Time) error {
+	if (componentType != "plugin" && componentType != "theme") || code == "" {
+		return errors.New("invalid component preparation event")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -609,16 +726,12 @@ func (s *wpUpdateStore) recordPluginPrepared(ctx context.Context, id, owner stri
 	defer tx.Rollback()
 	stamp := wpUpdateDBTime(now)
 	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET stage='unlocking',updated_at=?
-		WHERE id=? AND component_type='plugin' AND lease_owner=? AND status='running' AND stage='backups_ready'`, stamp, id, owner)
+		WHERE id=? AND component_type=? AND lease_owner=? AND status='running' AND stage='backups_ready'`, stamp, id, componentType, owner)
 	if err != nil {
 		return err
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
 		return errors.New("update task ownership lost")
-	}
-	code := "plugin_observed_inactive"
-	if wasActive {
-		code = "plugin_observed_active"
 	}
 	if err := insertWPUpdateEvent(ctx, tx, id, "prepare", "info", code, stamp); err != nil {
 		return err
@@ -835,6 +948,21 @@ func (s *wpUpdateStore) latestPluginUpdateTask(ctx context.Context, siteID int, 
 	return s.getTask(ctx, id)
 }
 
+func (s *wpUpdateStore) latestThemeUpdateTask(ctx context.Context, siteID int, componentKey string) (WPUpdateTask, error) {
+	if s == nil || s.db == nil || siteID <= 0 || !validWPThemeComponentKey(componentKey) {
+		return WPUpdateTask{}, errors.New("invalid theme update task lookup")
+	}
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT t.id FROM wp_update_tasks t
+		JOIN websites w ON w.id=t.site_id
+		WHERE t.site_id=? AND t.task_kind='update' AND t.component_type='theme' AND t.component_key=?
+		ORDER BY t.created_at DESC,t.rowid DESC LIMIT 1`, siteID, componentKey).Scan(&id)
+	if err != nil {
+		return WPUpdateTask{}, err
+	}
+	return s.getTask(ctx, id)
+}
+
 type wpUpdateBackupRecord struct {
 	Kind     string
 	FilePath string
@@ -850,8 +978,14 @@ func (s *wpUpdateStore) markPluginBackupsReady(ctx context.Context, id, owner st
 	return s.markComponentBackupsReady(ctx, id, owner, "plugin", "plugin_files", records, now)
 }
 
+func (s *wpUpdateStore) markThemeBackupsReady(ctx context.Context, id, owner string, records []wpUpdateBackupRecord, now time.Time) error {
+	return s.markComponentBackupsReady(ctx, id, owner, "theme", "theme_files", records, now)
+}
+
 func (s *wpUpdateStore) markComponentBackupsReady(ctx context.Context, id, owner, componentType, fileKind string, records []wpUpdateBackupRecord, now time.Time) error {
-	validPair := (componentType == "core" && fileKind == "core_files") || (componentType == "plugin" && fileKind == "plugin_files")
+	validPair := (componentType == "core" && fileKind == "core_files") ||
+		(componentType == "plugin" && fileKind == "plugin_files") ||
+		(componentType == "theme" && fileKind == "theme_files")
 	if !validPair || len(records) != 2 || records[0].Kind != "database" || records[1].Kind != fileKind {
 		return errors.New("invalid update backup records")
 	}
@@ -926,4 +1060,15 @@ func validWPPluginDownloadURL(raw, slug, targetVersion string) bool {
 	return err == nil && u.Scheme == "https" && u.Hostname() == "downloads.wordpress.org" &&
 		(u.Port() == "" || u.Port() == "443") && u.User == nil && u.RawQuery == "" && u.Fragment == "" &&
 		u.EscapedPath() == "/plugin/"+slug+"."+targetVersion+".zip"
+}
+
+func validWPThemeComponentKey(key string) bool {
+	return wpComponentSlugPattern.MatchString(key)
+}
+
+func validWPThemeDownloadURL(raw, slug, targetVersion string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Hostname() == "downloads.wordpress.org" &&
+		(u.Port() == "" || u.Port() == "443") && u.User == nil && u.RawQuery == "" && u.Fragment == "" &&
+		u.EscapedPath() == "/theme/"+slug+"."+targetVersion+".zip"
 }

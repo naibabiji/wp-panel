@@ -555,6 +555,86 @@ func preparePluginSnapshotPlan(t *testing.T) (*wpUpdateArtifactService, *wpUpdat
 	return service, store, task
 }
 
+func TestWPUpdateArtifactServiceValidatesAndClaimsThemePackage(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	seedThemeUpdateCandidate(t, store, siteID, "sample-theme", "1.0.0", "1.1.0", "collection-theme")
+	task, err := store.createThemeManualPlan(context.Background(), WPUpdatePlan{
+		SiteID: siteID, ComponentKey: "sample-theme", CurrentVersion: "1.0.0", TargetVersion: "1.1.0",
+		PackageSource: "wordpress.org", DownloadURL: "https://downloads.wordpress.org/theme/sample-theme.1.1.0.zip",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := newWPUpdateArtifactService(store, filepath.Join(t.TempDir(), "artifacts"), fakeUpdateDump)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := writeThemePackageFixture(t, "sample-theme", "1.1.0", "")
+	digest, _, err := hashRegularFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, report, err := service.snapshotValidateAndSealThemePackage(context.Background(), task.ID, source, digest, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sealed.Status != wpUpdateQueued || report.Root != "sample-theme" || report.Version != "1.1.0" {
+		t.Fatalf("sealed=%+v report=%+v", sealed, report)
+	}
+	claimed, err := service.validateAndClaimThemeUpdate(context.Background(), task.ID, "worker-theme", "1.0.0", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.Status != wpUpdateRunning || claimed.ComponentType != "theme" || claimed.LeaseOwner != "worker-theme" {
+		t.Fatalf("claimed=%+v", claimed)
+	}
+}
+
+func TestWPUpdateArtifactServicePreparesThemeDatabaseAndDirectoryBackups(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	seedThemeUpdateCandidate(t, store, siteID, "sample-theme", "1.0.0", "1.1.0", "collection-theme-backup")
+	webRoot := filepath.Join(t.TempDir(), "wordpress")
+	themeRoot := filepath.Join(webRoot, "wp-content", "themes", "sample-theme")
+	if err := os.MkdirAll(themeRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(themeRoot, "style.css"), []byte("/*\nTheme Name: Sample\nVersion: 1.0.0\n*/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE websites SET web_root=?,db_name='wordpress_db' WHERE id=?`, webRoot, siteID); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.createThemeManualPlan(context.Background(), WPUpdatePlan{
+		SiteID: siteID, ComponentKey: "sample-theme", CurrentVersion: "1.0.0", TargetVersion: "1.1.0",
+		PackageSource: "wordpress.org", DownloadURL: "https://downloads.wordpress.org/theme/sample-theme.1.1.0.zip",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := newWPUpdateArtifactService(store, filepath.Join(t.TempDir(), "artifacts"), fakeUpdateDump)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := writeThemePackageFixture(t, "sample-theme", "1.1.0", "")
+	digest, _, _ := hashRegularFile(source)
+	task, _, err = service.snapshotValidateAndSealThemePackage(context.Background(), task.ID, source, digest, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err = service.validateAndClaimThemeUpdate(context.Background(), task.ID, "worker-theme", "1.0.0", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.prepareThemeBackups(context.Background(), task.ID, "worker-theme"); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM wp_update_task_backups
+		WHERE task_id=? AND kind IN ('database','theme_files') AND protected=1`, task.ID).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("backup count=%d err=%v", count, err)
+	}
+}
+
 func writePluginPackageFixture(t *testing.T, slug, mainFile, version string) string {
 	t.Helper()
 	name := filepath.Join(t.TempDir(), "plugin.zip")
@@ -568,6 +648,30 @@ func writePluginPackageFixture(t *testing.T, slug, mainFile, version string) str
 		t.Fatal(err)
 	}
 	if _, err := fmt.Fprintf(w, "<?php\n/*\nPlugin Name: Sample\nVersion: %s\n*/\n", version); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return name
+}
+
+func writeThemePackageFixture(t *testing.T, slug, version, template string) string {
+	t.Helper()
+	name := filepath.Join(t.TempDir(), "theme.zip")
+	f, err := os.Create(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	w, err := zw.Create(slug + "/style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(w, "/*\nTheme Name: Sample\nVersion: %s\nTemplate: %s\n*/\n", version, template); err != nil {
 		t.Fatal(err)
 	}
 	if err := zw.Close(); err != nil {

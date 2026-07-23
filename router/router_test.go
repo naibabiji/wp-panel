@@ -188,6 +188,30 @@ func TestWPPluginUpdateHandlerKeepsNilInterfaceWhenConstructionFails(t *testing.
 	}
 }
 
+func TestWPThemeUpdateRoutesRegisteredOnProtectedGroup(t *testing.T) {
+	source, err := os.ReadFile("router.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []string{
+		`protected.GET("/api/websites/:id/wp-theme-update/preview", wpThemeUpdateHandler.Preview)`,
+		`protected.POST("/api/websites/:id/wp-theme-update/confirm", wpThemeUpdateHandler.Confirm)`,
+		`protected.GET("/api/websites/:id/wp-theme-update/tasks/latest", wpThemeUpdateHandler.LatestTask)`,
+		`protected.GET("/api/websites/:id/wp-theme-update/tasks/:task_id", wpThemeUpdateHandler.Task)`,
+	} {
+		if !bytes.Contains(source, []byte(route)) {
+			t.Fatalf("missing protected route %s", route)
+		}
+	}
+}
+
+func TestWPThemeUpdateHandlerKeepsNilInterfaceWhenConstructionFails(t *testing.T) {
+	handler := newWPThemeUpdateHandler(nil, "")
+	if handler == nil || handler.Service != nil {
+		t.Fatalf("failed construction left a typed nil service: %#v", handler)
+	}
+}
+
 func TestWPFleetOverviewRouteRegistered(t *testing.T) {
 	source, err := os.ReadFile("router.go")
 	if err != nil {
@@ -744,10 +768,10 @@ func TestWPInventoryPanelAPIContract(t *testing.T) {
 		[]byte(`!item.network_active && !item.active && !item.current_theme`),
 		[]byte(`if (tab === 'plugins') return 'plugin'`),
 		[]byte(`if (tab === 'themes') return 'theme'`),
-		[]byte(`'/wp-plugin-update/preview?component_key=' + encodeURIComponent(item.key)`),
-		[]byte(`api('/websites/' + siteID + '/wp-plugin-update/confirm'`),
-		[]byte(`'/wp-plugin-update/tasks/latest?component_key=' + encodeURIComponent(componentKey)`),
-		[]byte(`'/wp-plugin-update/tasks/' + encodeURIComponent(taskID)`),
+		[]byte(`this.componentUpdateAPI() + '/preview?component_key=' + encodeURIComponent(item.key)`),
+		[]byte(`this.componentUpdateAPI() + '/confirm'`),
+		[]byte(`this.componentUpdateAPI() + '/tasks/latest?component_key=' + encodeURIComponent(componentKey)`),
+		[]byte(`this.componentUpdateAPI() + '/tasks/' + encodeURIComponent(taskID)`),
 		[]byte(`confirmation_token: preview.confirmation_token`),
 		[]byte(`target_version: preview.target_version`),
 		[]byte(`confirm: true`),
@@ -846,6 +870,7 @@ global.clearTimeout = id => { global.clearedTimer = id; };
     assert(!panel.canUpdatePlugin({ ...candidate, key: 'hello.php' }), 'unsupported single-file plugin accepted');
 
     panel.pluginUpdate.componentKey = candidate.key;
+    panel.pluginUpdate.componentType = 'plugin';
     assert(panel.validPluginPreview({
         available: true, site_id: 2, component_key: candidate.key, current_version: '1.6', target_version: '1.7',
         confirmation_token: 'opaque', package_source: 'wordpress.org', verification_required: 'structure_only',
@@ -856,6 +881,29 @@ global.clearTimeout = id => { global.clearedTimer = id; };
         confirmation_token: 'opaque', package_source: 'wordpress.org', verification_required: 'structure_only',
         database_backup: true, plugin_files_backup: true
     }), 'cross-site plugin preview accepted');
+    const themeCandidate = { type: 'theme', key: 'twentytwentyfive', current_version: '1.4', target_version: '1.5' };
+    assert(panel.canUpdateComponent(themeCandidate), 'official theme candidate rejected');
+    panel.pluginUpdate.componentType = 'theme';
+    panel.pluginUpdate.componentKey = themeCandidate.key;
+    assert(panel.validPluginPreview({
+        available: true, site_id: 2, component_key: themeCandidate.key, current_version: '1.4', target_version: '1.5',
+        confirmation_token: 'opaque-theme', risk_token: 'risk', package_source: 'wordpress.org',
+        verification_required: 'structure_only', database_backup: true, theme_files_backup: true,
+        current_theme: true, template: ''
+    }), 'valid current-theme preview rejected');
+    panel.pluginUpdate.preview = {
+        available: true, site_id: 2, component_key: themeCandidate.key, current_version: '1.4', target_version: '1.5',
+        confirmation_token: 'opaque-theme', risk_token: 'risk', package_source: 'wordpress.org',
+        verification_required: 'structure_only', database_backup: true, theme_files_backup: true,
+        current_theme: true, template: ''
+    };
+    let themeConfirmCalls = 0;
+    global.api = async () => { themeConfirmCalls++; throw new Error('confirm should be gated'); };
+    await panel.confirmPluginUpdate();
+    assert(themeConfirmCalls === 0, 'current theme update was submitted without explicit risk confirmation');
+    panel.pluginUpdate.preview = null;
+    panel.pluginUpdate.componentType = 'plugin';
+    panel.pluginUpdate.componentKey = candidate.key;
 
     panel.pluginUpdate.task = {
         task_id: 'plugin-stale', site_id: 2, component_type: 'plugin', component_key: candidate.key,
