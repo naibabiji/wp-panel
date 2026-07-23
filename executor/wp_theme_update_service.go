@@ -211,7 +211,7 @@ func (s *WPThemeUpdateService) loadCandidate(ctx context.Context, siteID int, co
 			ON u.site_id=c.site_id AND u.collection_id=c.collection_id AND u.component_type=c.component_type
 			AND u.component_key=c.component_key
 		WHERE c.site_id=? AND c.collection_id=? AND c.component_type='theme' AND c.component_key=?
-			AND u.response='upgrade'`, siteID, c.collectionID, componentKey)
+		`, siteID, c.collectionID, componentKey)
 	if err != nil {
 		return c, err
 	}

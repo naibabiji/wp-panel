@@ -327,7 +327,7 @@ func seedComponentUpdateCandidate(t *testing.T, store *wpUpdateStore, siteID int
 	}
 	if _, err := store.db.Exec(`INSERT INTO site_wp_component_updates
 		(site_id,component_type,component_key,target_version,response,locale,collection_id,collected_at)
-		VALUES (?,?,?,?,'upgrade','',?,?)`, siteID, componentType, key, target, collection, now); err != nil {
+		VALUES (?,?,?,?,'','',?,?)`, siteID, componentType, key, target, collection, now); err != nil {
 		t.Fatal(err)
 	}
 }
