@@ -3,16 +3,30 @@ package models
 import "time"
 
 type WPInventorySummary struct {
-	SiteID                 int                    `json:"site_id"`
-	CollectionStatus       string                 `json:"collection_status"`
-	HasSuccessfulInventory bool                   `json:"has_successful_inventory"`
-	WordPress              WPInventoryWordPress   `json:"wordpress"`
-	Counts                 WPInventoryCounts      `json:"counts"`
-	CoreUpgradeAvailable   bool                   `json:"core_upgrade_available"`
-	LastAttemptAt          *time.Time             `json:"last_attempt_at"`
-	LastSuccessAt          *time.Time             `json:"last_success_at"`
-	LastError              *WPInventoryStateError `json:"last_error"`
-	ActiveTask             *WPInventoryTask       `json:"active_task"`
+	SiteID                 int                     `json:"site_id"`
+	CollectionStatus       string                  `json:"collection_status"`
+	HasSuccessfulInventory bool                    `json:"has_successful_inventory"`
+	WordPress              WPInventoryWordPress    `json:"wordpress"`
+	Counts                 WPInventoryCounts       `json:"counts"`
+	CoreUpgradeAvailable   bool                    `json:"core_upgrade_available"`
+	UpdateChecks           WPInventoryUpdateChecks `json:"update_checks"`
+	LastAttemptAt          *time.Time              `json:"last_attempt_at"`
+	LastSuccessAt          *time.Time              `json:"last_success_at"`
+	LastError              *WPInventoryStateError  `json:"last_error"`
+	ActiveTask             *WPInventoryTask        `json:"active_task"`
+}
+
+// WPInventoryUpdateChecks reports whether WordPress's own update-check cache
+// (the "transient") was actually present for each component group during
+// the last successful scan. When a group has zero available updates AND its
+// transient was never populated, that means the update check itself never
+// ran or was blocked (e.g. an "disable updates" plugin, or the site cannot
+// reach WordPress.org) — the frontend uses this to say "unable to confirm"
+// instead of incorrectly implying "already up to date".
+type WPInventoryUpdateChecks struct {
+	Core    bool `json:"core"`
+	Plugins bool `json:"plugins"`
+	Themes  bool `json:"themes"`
 }
 
 type WPInventoryWordPress struct {

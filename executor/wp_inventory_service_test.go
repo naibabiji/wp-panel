@@ -11,6 +11,46 @@ import (
 	"github.com/naibabiji/wp-panel/models"
 )
 
+func TestWPInventoryServiceSummaryExposesUpdateChecks(t *testing.T) {
+	store, siteID := newWPInventoryStoreTest(t)
+	service := newTestWPInventoryService(t, store)
+	ctx := context.Background()
+	now := time.Date(2026, 7, 21, 9, 30, 0, 0, time.FixedZone("CST", 8*60*60))
+
+	jobID, identity := enqueueAndClaimInventory(t, store, siteID, "worker-update-checks", now)
+	result := sampleWPInventoryResult()
+	if err := store.persistSuccess(ctx, jobID, "worker-update-checks", identity, result, now.Add(time.Second)); err != nil {
+		t.Fatalf("persistSuccess(): %v", err)
+	}
+	summary, err := service.Summary(ctx, siteID)
+	if err != nil {
+		t.Fatalf("Summary(): %v", err)
+	}
+	if summary.UpdateChecks != (models.WPInventoryUpdateChecks{Core: true, Plugins: true, Themes: true}) {
+		t.Fatalf("update_checks with populated transients = %+v", summary.UpdateChecks)
+	}
+
+	blockedAt := now.Add(time.Minute)
+	blockedJob, blockedIdentity := enqueueAndClaimInventory(t, store, siteID, "worker-update-checks-blocked", blockedAt)
+	blocked := sampleWPInventoryResult()
+	blocked.Inventory.Updates.Core.TransientPresent = false
+	blocked.Inventory.Updates.Core.Items = nil
+	blocked.Inventory.Updates.Plugins.TransientPresent = false
+	blocked.Inventory.Updates.Plugins.Items = nil
+	blocked.Inventory.Updates.Themes.TransientPresent = false
+	blocked.Inventory.Updates.Themes.Items = nil
+	if err := store.persistSuccess(ctx, blockedJob, "worker-update-checks-blocked", blockedIdentity, blocked, blockedAt.Add(time.Second)); err != nil {
+		t.Fatalf("persist blocked success: %v", err)
+	}
+	blockedSummary, err := service.Summary(ctx, siteID)
+	if err != nil {
+		t.Fatalf("Summary(blocked): %v", err)
+	}
+	if blockedSummary.UpdateChecks != (models.WPInventoryUpdateChecks{}) {
+		t.Fatalf("update_checks with blocked transients = %+v", blockedSummary.UpdateChecks)
+	}
+}
+
 func TestWPInventoryServiceUnknownSummaryIsReadOnly(t *testing.T) {
 	store, siteID := newWPInventoryStoreTest(t)
 	service := newTestWPInventoryService(t, store)

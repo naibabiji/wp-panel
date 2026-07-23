@@ -201,7 +201,10 @@ func wpInventorySummaryModel(snapshot wpInventorySummarySnapshot) (models.WPInve
 			PluginUpdates: state.PluginUpdateCount, ThemeUpdates: state.ThemeUpdateCount,
 		},
 		CoreUpgradeAvailable: snapshot.CoreUpgradeAvailable,
-		LastAttemptAt:        lastAttempt, LastSuccessAt: lastSuccess, LastError: lastError, ActiveTask: activeTask,
+		UpdateChecks: models.WPInventoryUpdateChecks{
+			Core: state.CoreTransient, Plugins: state.PluginTransient, Themes: state.ThemeTransient,
+		},
+		LastAttemptAt: lastAttempt, LastSuccessAt: lastSuccess, LastError: lastError, ActiveTask: activeTask,
 	}, nil
 }
 

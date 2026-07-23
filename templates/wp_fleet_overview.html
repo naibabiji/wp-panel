@@ -10,6 +10,17 @@
         </button>
     </div>
 
+    <details class="rounded border border-gray-700 bg-gray-900/40 p-3 text-sm">
+        <summary class="cursor-pointer list-none font-medium text-gray-200">ℹ️ {{t .Lang "wp_inventory.how_it_works_title"}}</summary>
+        <ul class="mt-3 list-disc space-y-2 pl-5 text-gray-400">
+            <li>{{t .Lang "wp_inventory.how_it_works_readonly"}}</li>
+            <li>{{t .Lang "wp_inventory.how_it_works_check"}}</li>
+            <li>{{t .Lang "wp_inventory.how_it_works_serial"}}</li>
+            <li>{{t .Lang "wp_inventory.how_it_works_limits"}}</li>
+            <li>{{t .Lang "wp_inventory.how_it_works_schedule"}}</li>
+        </ul>
+    </details>
+
     <div x-show="loadError && staleOverview" class="rounded border border-yellow-700 bg-yellow-950/30 p-3 text-sm text-yellow-200">
         <span x-text="t('wp_fleet.showing_stale_overview')"></span>
     </div>

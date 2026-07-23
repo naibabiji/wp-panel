@@ -12,6 +12,17 @@
             <button @click="refreshInventory()" :disabled="refreshing || summaryLoading || !summary || hasActiveTask()" class="btn-primary whitespace-nowrap" x-text="refreshing ? t('wp_inventory.refreshing') : t('wp_inventory.refresh')"></button>
         </div>
 
+        <details class="mt-4 rounded border border-gray-700 bg-gray-900/40 p-3 text-sm">
+            <summary class="cursor-pointer list-none font-medium text-gray-200">ℹ️ {{t .Lang "wp_inventory.how_it_works_title"}}</summary>
+            <ul class="mt-3 list-disc space-y-2 pl-5 text-gray-400">
+                <li>{{t .Lang "wp_inventory.how_it_works_readonly"}}</li>
+                <li>{{t .Lang "wp_inventory.how_it_works_check"}}</li>
+                <li>{{t .Lang "wp_inventory.how_it_works_serial"}}</li>
+                <li>{{t .Lang "wp_inventory.how_it_works_limits"}}</li>
+                <li>{{t .Lang "wp_inventory.how_it_works_schedule"}}</li>
+            </ul>
+        </details>
+
         <div x-show="summaryError" class="mt-4 flex flex-col gap-3 rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200 sm:flex-row sm:items-center sm:justify-between">
             <span x-text="summaryError"></span>
             <button @click="loadSummary()" :disabled="summaryLoading" class="text-left text-red-100 underline hover:text-white sm:text-right">{{t .Lang "wp_inventory.retry"}}</button>
@@ -26,10 +37,16 @@
                 <div x-show="statusKey() !== 'wp_inventory.status_complete'" class="mt-4 rounded border p-3 text-sm" :class="statusNoticeClass()">
                     <div class="font-medium" x-text="t(statusKey())"></div>
                     <p x-show="summary.collection_status === 'failed' && summary.has_successful_inventory" class="mt-1" x-text="t('wp_inventory.stale_notice', { time: displayTime(summary.last_success_at) })"></p>
-                    <p x-show="summary.last_error" class="mt-1">
-                        <span x-text="errorMessage(summary.last_error)"></span>
-                        <code x-show="summary.last_error?.code" class="ml-2 text-xs opacity-70" x-text="summary.last_error?.code"></code>
-                    </p>
+                    <template x-if="summary.last_error">
+                        <div class="mt-1">
+                            <p x-text="errorMessage(summary.last_error)"></p>
+                            <p class="mt-1 text-xs opacity-80" x-text="t(retryHintKey(summary.last_error))"></p>
+                            <details class="mt-2">
+                                <summary class="cursor-pointer list-none text-xs underline opacity-70">{{t .Lang "wp_inventory.tech_details"}}</summary>
+                                <p class="mt-1 text-xs opacity-70" x-text="t('wp_inventory.error_code', { code: summary.last_error?.code })"></p>
+                            </details>
+                        </div>
+                    </template>
                 </div>
 
                 <div x-show="summary.has_successful_inventory" class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -46,6 +63,8 @@
                     <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
                         <div class="text-xs font-medium text-gray-400">{{t .Lang "wp_inventory.group_updates"}}</div>
                         <dl class="mt-2 space-y-1.5 text-sm">
+                            <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.updates_overall"}}</dt><dd class="min-w-0 truncate" :class="updatesOverallClass()" x-text="t(updatesOverallKey())"></dd></div>
+                            <p x-show="updatesOverallState() === 'unknown'" class="text-xs text-gray-500" x-text="t('wp_inventory.status_unknown_updates')"></p>
                             <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.core_update"}}</dt><dd class="min-w-0 truncate" :class="summary.core_upgrade_available ? 'text-yellow-300' : 'text-green-300'" x-text="summary.core_upgrade_available ? t('wp_inventory.core_update_available') : t('wp_inventory.core_update_none')"></dd></div>
                             <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.plugin_updates"}}</dt><dd class="min-w-0 truncate text-gray-200" x-text="summary.counts.plugin_updates"></dd></div>
                             <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.theme_updates"}}</dt><dd class="min-w-0 truncate text-gray-200" x-text="summary.counts.theme_updates"></dd></div>
@@ -59,6 +78,7 @@
                             <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.last_attempt"}}</dt><dd class="min-w-0 truncate text-gray-200" x-text="displayTime(summary.last_attempt_at)"></dd></div>
                             <div class="flex items-baseline gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.last_success"}}</dt><dd class="min-w-0 truncate text-gray-200" x-text="displayTime(summary.last_success_at)"></dd></div>
                         </dl>
+                        <p class="mt-2 text-xs text-gray-500">{{t .Lang "wp_inventory.next_scan"}}</p>
                     </div>
                 </div>
 
@@ -271,6 +291,25 @@ function wpInventoryPanel() {
         hasAvailableUpdates() {
             return ((this.summary?.counts?.plugin_updates || 0) + (this.summary?.counts?.theme_updates || 0)) > 0;
         },
+        updatesOverallState() {
+            if (!this.summary) return 'unknown';
+            if (this.summary.core_upgrade_available || this.hasAvailableUpdates()) return 'available';
+            const checks = this.summary.update_checks;
+            if (checks && !checks.core && !checks.plugins && !checks.themes) return 'unknown';
+            return 'up_to_date';
+        },
+        updatesOverallKey() {
+            const state = this.updatesOverallState();
+            if (state === 'available') return 'wp_inventory.status_updates_available';
+            if (state === 'up_to_date') return 'wp_inventory.status_up_to_date';
+            return 'wp_inventory.status_unknown_updates_label';
+        },
+        updatesOverallClass() {
+            const state = this.updatesOverallState();
+            if (state === 'available') return 'text-yellow-300';
+            if (state === 'up_to_date') return 'text-green-300';
+            return 'text-gray-400';
+        },
         statusKey() {
             if (this.summary?.active_task?.status === 'running') return 'wp_inventory.status_running';
             if (this.summary?.active_task?.status === 'queued') return 'wp_inventory.status_queued';
@@ -297,16 +336,35 @@ function wpInventoryPanel() {
         },
         errorKey(error) {
             const code = error?.code || '';
-            if (['runner_timeout', 'runner_canceled'].includes(code)) return 'wp_inventory.error_timeout';
-            if (['wordpress_bootstrap_failed', 'wordpress_terminated'].includes(code)) return 'wp_inventory.error_wordpress';
-            if (['unsupported_platform', 'invalid_site', 'invalid_site_path', 'site_user_unavailable', 'insufficient_privileges', 'php_cli_unavailable', 'runuser_unavailable', 'runner_prepare_failed', 'runner_integrity_failed', 'runner_lock_failed', 'runner_start_failed', 'runner_policy_mismatch'].includes(code)) return 'wp_inventory.error_policy';
-            if (['stdout_limit_exceeded', 'stderr_limit_exceeded', 'protocol_limit_exceeded', 'memory_limit_exhausted', 'inventory_limit_exceeded'].includes(code)) return 'wp_inventory.error_capacity';
+            const direct = {
+                memory_limit_exhausted: 'wp_inventory.error_memory_limit',
+                runner_policy_mismatch: 'wp_inventory.error_policy_mismatch',
+                runner_timeout: 'wp_inventory.error_timeout',
+                runner_canceled: 'wp_inventory.error_timeout',
+                wordpress_bootstrap_failed: 'wp_inventory.error_bootstrap',
+                wordpress_terminated: 'wp_inventory.error_terminated',
+                inventory_limit_exceeded: 'wp_inventory.error_inventory_limit',
+                stdout_limit_exceeded: 'wp_inventory.error_output_limit',
+                stderr_limit_exceeded: 'wp_inventory.error_output_limit',
+                protocol_limit_exceeded: 'wp_inventory.error_output_limit',
+                protocol_invalid: 'wp_inventory.error_protocol',
+                runner_internal_error: 'wp_inventory.error_protocol',
+                json_encode_failed: 'wp_inventory.error_protocol',
+                runner_start_failed: 'wp_inventory.error_start_failed',
+            };
+            if (direct[code]) return direct[code];
+            if (['unsupported_platform', 'invalid_site', 'invalid_site_path', 'site_user_unavailable', 'insufficient_privileges', 'php_cli_unavailable', 'runuser_unavailable', 'runner_prepare_failed', 'runner_integrity_failed', 'runner_lock_failed'].includes(code)) return 'wp_inventory.error_policy';
             if (code === 'site_changed_during_collection') return 'wp_inventory.error_site_changed';
             if (code === 'inventory_worker_repeated_crash') return 'wp_inventory.error_worker';
-            return 'wp_inventory.error_generic';
+            return 'wp_inventory.error_unknown';
         },
         errorMessage(error) {
             return t(this.errorKey(error));
+        },
+        retryUselessCodes: ['memory_limit_exhausted', 'runner_policy_mismatch', 'inventory_limit_exceeded', 'stdout_limit_exceeded', 'stderr_limit_exceeded', 'protocol_limit_exceeded', 'wordpress_bootstrap_failed', 'runner_start_failed', 'unsupported_platform', 'invalid_site', 'invalid_site_path', 'site_user_unavailable', 'insufficient_privileges', 'php_cli_unavailable', 'runuser_unavailable', 'runner_prepare_failed', 'runner_integrity_failed', 'runner_lock_failed'],
+        retryHintKey(error) {
+            const code = error?.code || '';
+            return this.retryUselessCodes.includes(code) ? 'wp_inventory.retry_useless' : 'wp_inventory.retry_hint';
         },
         displayTime(value) {
             return value ? fmtTime(value) : t('wp_inventory.never');
