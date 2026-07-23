@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 	"time"
@@ -196,6 +197,7 @@ func (e *wpPluginUpdateExecutor) failBeforePluginWrite(ctx context.Context, exec
 }
 
 func (e *wpPluginUpdateExecutor) rollback(ctx context.Context, execution wpPluginUpdateExecution, owner, failureStage string) error {
+	log.Printf("插件更新触发自动回滚 site=%s 组件=%s task=%s 失败阶段=%s", execution.Domain, execution.Task.ComponentKey, execution.Task.ID, failureStage)
 	controlCtx, cancel := e.controlContext(ctx)
 	err := e.store.beginAutomaticRollback(controlCtx, execution.Task.ID, owner, failureStage, e.now().UTC())
 	cancel()

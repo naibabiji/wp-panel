@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -335,6 +336,8 @@ func (s *wpPluginRunnerSession) execute(ctx context.Context, action, mode, expec
 	}
 	env, resultErr := readWPPluginRunnerResult(s.result, token)
 	if runErr != nil || resultErr != nil || !env.OK || env.ErrorCode != "" || env.Version != expectedVersion && action != "observe" {
+		log.Printf("插件更新 PHP runner 失败 site=%s 组件=%s 动作=%s: runErr=%v resultErr=%v ok=%v errorCode=%q version=%q expected=%q",
+			s.execution.Domain, s.execution.Task.ComponentKey, action, runErr, resultErr, env.OK, env.ErrorCode, env.Version, expectedVersion)
 		return wpPluginRunnerEnvelope{}, errors.New("plugin PHP runner failed")
 	}
 	return env, nil
