@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 type fakeWPPluginUpdateOperations struct {
@@ -110,6 +111,45 @@ func TestWPPluginUpdateExecutorUpdateFailureRollsBack(t *testing.T) {
 	finished, err := store.getTask(context.Background(), task.ID)
 	if err != nil || finished.Status != wpUpdateFailed || finished.RollbackStatus != "success" || finished.RequiresAttention {
 		t.Fatalf("finished=%+v err=%v", finished, err)
+	}
+}
+
+func TestWPPluginUpdateExecutorSupervisionUncertainStopsWithoutRollback(t *testing.T) {
+	executor, store, task, ops := preparePluginExecutorTask(t, true)
+	ops.fail["update"] = errWPPluginScopeSupervisionUncertain
+	if err := executor.Execute(context.Background(), task.ID, "worker-plugin"); !errors.Is(err, errWPPluginScopeSupervisionUncertain) {
+		t.Fatalf("execute error=%v", err)
+	}
+	if want := []string{"prepare", "unlock", "update"}; !reflect.DeepEqual(ops.calls, want) {
+		t.Fatalf("calls=%v want=%v", ops.calls, want)
+	}
+	current, err := store.getTask(context.Background(), task.ID)
+	if err != nil || current.Status != wpUpdateInterrupted || !current.RequiresAttention || current.LeaseOwner != "" || current.RollbackStatus != "not_required" {
+		t.Fatalf("current=%+v err=%v", current, err)
+	}
+	var evidence int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM wp_update_task_events
+		WHERE task_id=? AND error_code='runner_supervision_uncertain'`, task.ID).Scan(&evidence); err != nil || evidence != 1 {
+		t.Fatalf("evidence=%d err=%v", evidence, err)
+	}
+}
+
+func TestWPUpdateStoreRejectsForgedAndDeduplicatesPluginJournal(t *testing.T) {
+	_, store, task, _ := preparePluginExecutorTask(t, true)
+	bad := wpPluginUpdateJournalReport{Checkpoints: []string{"upgrader_returned"}}
+	if err := store.recordPluginRunnerJournal(context.Background(), task.ID, "worker-plugin", bad, time.Now()); err == nil {
+		t.Fatal("forged checkpoint order was accepted")
+	}
+	report := wpPluginUpdateJournalReport{Checkpoints: []string{"before_upgrade", "upgrader_entered"}, Truncated: true}
+	for i := 0; i < 2; i++ {
+		if err := store.recordPluginRunnerJournal(context.Background(), task.ID, "worker-plugin", report, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM wp_update_task_events
+		WHERE task_id=? AND stage='runner_journal'`, task.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("count=%d err=%v", count, err)
 	}
 }
 

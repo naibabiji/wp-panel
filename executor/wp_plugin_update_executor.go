@@ -42,6 +42,10 @@ type wpPluginUpdateOperations interface {
 	RestoreFileLock(context.Context, wpPluginUpdateExecution) error
 }
 
+type wpPluginUpdateFinalizer interface {
+	Finalize(context.Context, wpPluginUpdateExecution, bool) error
+}
+
 type wpPluginUpdateExecutor struct {
 	store *wpUpdateStore
 	root  string
@@ -63,6 +67,12 @@ func (e *wpPluginUpdateExecutor) Execute(ctx context.Context, taskID, owner stri
 	}
 	wasActive, err := e.ops.Prepare(ctx, execution)
 	if err != nil {
+		if handled, interruptErr := e.interruptForSupervision(ctx, taskID, owner, err); handled {
+			if interruptErr != nil {
+				return interruptErr
+			}
+			return err
+		}
 		if finishErr := e.markFailure(ctx, taskID, owner, "precheck", false); finishErr != nil {
 			return finishErr
 		}
@@ -87,6 +97,12 @@ func (e *wpPluginUpdateExecutor) Execute(ctx context.Context, taskID, owner stri
 		return err
 	}
 	if err := e.runWriteSubstage(ctx, func(stageCtx context.Context) error { return e.ops.ApplyPluginUpdate(stageCtx, execution) }); err != nil {
+		if handled, interruptErr := e.interruptForSupervision(ctx, taskID, owner, err); handled {
+			if interruptErr != nil {
+				return interruptErr
+			}
+			return err
+		}
 		return e.rollback(ctx, execution, owner, "plugin_update")
 	}
 	if wasActive {
@@ -94,6 +110,12 @@ func (e *wpPluginUpdateExecutor) Execute(ctx context.Context, taskID, owner stri
 			return err
 		}
 		if err := e.runWriteSubstage(ctx, func(stageCtx context.Context) error { return e.ops.ReactivatePlugin(stageCtx, execution) }); err != nil {
+			if handled, interruptErr := e.interruptForSupervision(ctx, taskID, owner, err); handled {
+				if interruptErr != nil {
+					return interruptErr
+				}
+				return err
+			}
 			return e.rollback(ctx, execution, owner, "reactivation")
 		}
 		if err := e.stage(ctx, taskID, owner, "reactivating", "health_check"); err != nil {
@@ -103,6 +125,12 @@ func (e *wpPluginUpdateExecutor) Execute(ctx context.Context, taskID, owner stri
 		return err
 	}
 	if err := e.runProbe(ctx, func(probeCtx context.Context) error { return e.ops.CheckTargetHealth(probeCtx, execution, wasActive) }); err != nil {
+		if handled, interruptErr := e.interruptForSupervision(ctx, taskID, owner, err); handled {
+			if interruptErr != nil {
+				return interruptErr
+			}
+			return err
+		}
 		return e.rollback(ctx, execution, owner, "health_check")
 	}
 	if err := e.stage(ctx, taskID, owner, "health_check", "restoring_file_lock"); err != nil {
@@ -110,6 +138,9 @@ func (e *wpPluginUpdateExecutor) Execute(ctx context.Context, taskID, owner stri
 	}
 	if err := e.runWriteSubstage(ctx, func(stageCtx context.Context) error { return e.ops.RestoreFileLock(stageCtx, execution) }); err != nil {
 		return e.rollback(ctx, execution, owner, "file_lock_restore")
+	}
+	if err := e.finalize(ctx, execution, false); err != nil {
+		return err
 	}
 	controlCtx, cancel = e.controlContext(ctx)
 	err = e.store.markSuccess(controlCtx, taskID, owner, e.now().UTC())
@@ -142,11 +173,15 @@ func (e *wpPluginUpdateExecutor) failBeforePluginWrite(ctx context.Context, exec
 		return errors.New("update task ownership lost")
 	}
 	restoreErr := e.runWriteSubstage(ctx, func(stageCtx context.Context) error { return e.ops.RestoreFileLock(stageCtx, execution) })
+	finalizeErr := e.finalize(ctx, execution, restoreErr != nil)
 	if err := e.markFailure(ctx, execution.Task.ID, owner, failureStage, restoreErr != nil); err != nil {
 		return err
 	}
 	if restoreErr != nil {
 		return errors.New("plugin update pre-write failure and file lock restoration failed")
+	}
+	if finalizeErr != nil {
+		return finalizeErr
 	}
 	return fmt.Errorf("plugin update failed at %s before plugin write", failureStage)
 }
@@ -183,6 +218,12 @@ func (e *wpPluginUpdateExecutor) rollback(ctx context.Context, execution wpPlugi
 				return err
 			}
 			if err := e.runProbe(ctx, func(probeCtx context.Context) error { return e.ops.CheckRollbackHealth(probeCtx, execution) }); err != nil {
+				if handled, interruptErr := e.interruptForSupervision(ctx, execution.Task.ID, owner, err); handled {
+					if interruptErr != nil {
+						return interruptErr
+					}
+					return err
+				}
 				rollbackErr = err
 			}
 		}
@@ -194,6 +235,10 @@ func (e *wpPluginUpdateExecutor) rollback(ctx context.Context, execution wpPlugi
 		rollbackErr = errors.Join(rollbackErr, err)
 	}
 	succeeded := rollbackErr == nil
+	if err := e.finalize(ctx, execution, !succeeded); err != nil {
+		rollbackErr = errors.Join(rollbackErr, err)
+		succeeded = false
+	}
 	controlCtx, cancel = e.controlContext(ctx)
 	err = e.store.finishAutomaticRollback(controlCtx, execution.Task.ID, owner, succeeded, e.now().UTC())
 	cancel()
@@ -204,6 +249,32 @@ func (e *wpPluginUpdateExecutor) rollback(ctx context.Context, execution wpPlugi
 		return errors.New("plugin update failed and automatic rollback failed")
 	}
 	return fmt.Errorf("plugin update failed at %s and was rolled back", failureStage)
+}
+
+func (e *wpPluginUpdateExecutor) interruptForSupervision(ctx context.Context, taskID, owner string, cause error) (bool, error) {
+	if !errors.Is(cause, errWPPluginScopeSupervisionUncertain) {
+		return false, nil
+	}
+	controlCtx, cancel := e.controlContext(ctx)
+	defer cancel()
+	changed, err := e.store.interruptOwned(controlCtx, taskID, owner, "runner_supervision_uncertain", e.now().UTC())
+	if err != nil {
+		return true, err
+	}
+	if !changed {
+		return true, errors.New("update task ownership lost")
+	}
+	return true, nil
+}
+
+func (e *wpPluginUpdateExecutor) finalize(ctx context.Context, execution wpPluginUpdateExecution, preserve bool) error {
+	finalizer, ok := e.ops.(wpPluginUpdateFinalizer)
+	if !ok {
+		return nil
+	}
+	controlCtx, cancel := e.controlContext(ctx)
+	defer cancel()
+	return finalizer.Finalize(controlCtx, execution, preserve)
 }
 
 func (e *wpPluginUpdateExecutor) requireOwnership(ctx context.Context, taskID, owner string) error {

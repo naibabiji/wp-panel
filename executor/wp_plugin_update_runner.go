@@ -191,29 +191,32 @@ func createWPPluginRunnerResult(name string, uid, gid int) error {
 }
 
 func (s *wpPluginRunnerSession) Observe(ctx context.Context) (bool, error) {
-	env, err := s.execute(ctx, "observe", "")
+	env, err := s.execute(ctx, "observe", "", s.execution.Task.TargetVersion)
 	return env.Active, err
 }
 
 func (s *wpPluginRunnerSession) Update(ctx context.Context) error {
-	if _, err := s.execute(ctx, "update", s.execution.Task.DownloadedSHA256); err != nil {
+	if _, err := s.execute(ctx, "update", s.execution.Task.DownloadedSHA256, s.execution.Task.TargetVersion); err != nil {
 		return err
 	}
-	_, err := s.execute(ctx, "check", "inactive")
+	_, err := s.execute(ctx, "check", "inactive", s.execution.Task.TargetVersion)
 	return err
 }
 
 func (s *wpPluginRunnerSession) Reactivate(ctx context.Context) error {
-	_, err := s.execute(ctx, "reactivate", "")
+	_, err := s.execute(ctx, "reactivate", "", s.execution.Task.TargetVersion)
 	return err
 }
 
-func (s *wpPluginRunnerSession) Check(ctx context.Context, active bool) error {
+func (s *wpPluginRunnerSession) Check(ctx context.Context, version string, active bool) error {
+	if !wpCoreVersionPattern.MatchString(version) {
+		return errors.New("invalid plugin check version")
+	}
 	expected := "inactive"
 	if active {
 		expected = "active"
 	}
-	_, err := s.execute(ctx, "check", expected)
+	_, err := s.execute(ctx, "check", expected, version)
 	return err
 }
 
@@ -245,7 +248,7 @@ func (s *wpPluginRunnerSession) Close() error {
 	return nil
 }
 
-func (s *wpPluginRunnerSession) execute(ctx context.Context, action, mode string) (wpPluginRunnerEnvelope, error) {
+func (s *wpPluginRunnerSession) execute(ctx context.Context, action, mode, expectedVersion string) (wpPluginRunnerEnvelope, error) {
 	if s == nil || s.runner == nil {
 		return wpPluginRunnerEnvelope{}, errors.New("invalid plugin runner session")
 	}
@@ -265,13 +268,13 @@ func (s *wpPluginRunnerSession) execute(ctx context.Context, action, mode string
 	openBase := strings.Join([]string{s.root, s.runtimeDir, "/tmp", "/usr/share/php"}, ":")
 	args := []string{"-u", s.user, "--", s.env, "-i", "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "HOME=" + s.home, "USER=" + s.user, "LOGNAME=" + s.user, "TMPDIR=/tmp", "WP_PANEL_RUNNER_TOKEN=" + token, s.php,
 		"-d", "open_basedir=" + openBase, "-d", "disable_functions=" + sitePHPDisabledFunctions(), "-d", "allow_url_include=0", "-d", "display_errors=0", "-d", "memory_limit=256M", "-r", wpPluginUpdatePHPSource,
-		action, s.root, s.runtimeDir, s.packagePath, s.execution.Task.ComponentKey, s.execution.Task.CurrentVersion, s.execution.Task.TargetVersion, mode, s.journal, s.result}
+		action, s.root, s.runtimeDir, s.packagePath, s.execution.Task.ComponentKey, s.execution.Task.CurrentVersion, expectedVersion, mode, s.journal, s.result}
 	runErr := s.runner.opts.scope.Run(ctx, s.execution.Task.ID, args...)
 	if errors.Is(runErr, errWPPluginScopeSupervisionUncertain) {
 		return wpPluginRunnerEnvelope{}, runErr
 	}
 	env, resultErr := readWPPluginRunnerResult(s.result, token)
-	if runErr != nil || resultErr != nil || !env.OK || env.ErrorCode != "" || env.Version != s.execution.Task.TargetVersion && action != "observe" {
+	if runErr != nil || resultErr != nil || !env.OK || env.ErrorCode != "" || env.Version != expectedVersion && action != "observe" {
 		return wpPluginRunnerEnvelope{}, errors.New("plugin PHP runner failed")
 	}
 	return env, nil

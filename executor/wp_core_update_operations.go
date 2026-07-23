@@ -140,7 +140,11 @@ func (o *wpCoreSystemOperations) CheckTargetHealth(ctx context.Context, executio
 }
 
 func (o *wpCoreSystemOperations) SetMaintenance(_ context.Context, execution wpCoreUpdateExecution, enabled bool) error {
-	root, err := os.OpenRoot(execution.WebRoot)
+	return setWPUpdateMaintenance(execution.WebRoot, enabled)
+}
+
+func setWPUpdateMaintenance(webRoot string, enabled bool) error {
+	root, err := os.OpenRoot(webRoot)
 	if err != nil {
 		return err
 	}

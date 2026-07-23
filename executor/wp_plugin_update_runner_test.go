@@ -46,7 +46,7 @@ func TestWPPluginPHPRunnerSessionProtocol(t *testing.T) {
 	if err := session.Reactivate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Check(context.Background(), true); err != nil {
+	if err := session.Check(context.Background(), execution.Task.TargetVersion, true); err != nil {
 		t.Fatal(err)
 	}
 	report, err := session.Journal()

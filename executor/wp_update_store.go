@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -529,6 +530,46 @@ func (s *wpUpdateStore) recordPluginPrepared(ctx context.Context, id, owner stri
 		return err
 	}
 	if err := insertWPUpdateEvent(ctx, tx, id, "unlocking", "info", "", stamp); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *wpUpdateStore) recordPluginRunnerJournal(ctx context.Context, id, owner string, report wpPluginUpdateJournalReport, now time.Time) error {
+	if len(report.Checkpoints) > len(wpPluginJournalCheckpoints) {
+		return errors.New("invalid plugin runner journal report")
+	}
+	for i, checkpoint := range report.Checkpoints {
+		if checkpoint != wpPluginJournalCheckpoints[i] {
+			return errors.New("invalid plugin runner journal report")
+		}
+	}
+	last := "none"
+	if len(report.Checkpoints) != 0 {
+		last = report.Checkpoints[len(report.Checkpoints)-1]
+	}
+	code := fmt.Sprintf("runner_journal_%d_%s_complete", len(report.Checkpoints), last)
+	if report.Truncated {
+		code = fmt.Sprintf("runner_journal_%d_%s_truncated", len(report.Checkpoints), last)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var owned int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM wp_update_tasks WHERE id=? AND lease_owner=? AND status='running')`, id, owner).Scan(&owned); err != nil || owned != 1 {
+		return errors.New("update task ownership lost")
+	}
+	var recorded int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM wp_update_task_events
+		WHERE task_id=? AND stage='runner_journal' AND result='info' AND error_code=?)`, id, code).Scan(&recorded); err != nil {
+		return err
+	}
+	if recorded == 1 {
+		return tx.Commit()
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, "runner_journal", "info", code, wpUpdateDBTime(now)); err != nil {
 		return err
 	}
 	return tx.Commit()
