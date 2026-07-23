@@ -164,6 +164,131 @@ func TestWPPluginUpdatePHPSourceParses(t *testing.T) {
 	}
 }
 
+func TestWPComponentUpdatePHPSourceKeepsActionAcrossBootstrap(t *testing.T) {
+	php, err := exec.LookPath("php")
+	if err != nil {
+		t.Skip("php is unavailable")
+	}
+	for _, tc := range []struct {
+		name, source, bootstrap, component, template string
+	}{
+		{
+			name: "plugin", source: wpPluginUpdatePHPSource, component: "sample/sample.php",
+			bootstrap: `<?php
+$action = 'clobbered-by-wordpress';
+$current = '9.9.9';
+$target = '9.9.10';
+$plugin = 'clobbered/clobbered.php';
+$package = '/tmp/clobbered.zip';
+$expected_sha = 'clobbered';
+$root = __DIR__ . '/poison-root';
+define('WP_PLUGIN_DIR', __DIR__ . '/wp-content/plugins');
+function get_plugin_data($file, $markup = true, $translate = true) { return ['Version' => '1.0.0']; }
+function is_plugin_active($plugin) { return true; }
+`,
+		},
+		{
+			name: "theme", source: wpThemeUpdatePHPSource, component: "sample-theme",
+			bootstrap: `<?php
+$action = 'clobbered-by-wordpress';
+$current = '9.9.9';
+$target = '9.9.10';
+$stylesheet = 'clobbered-theme';
+$package = '/tmp/clobbered.zip';
+$mode = 'clobbered';
+$expected_template = 'clobbered-parent';
+$root = __DIR__ . '/poison-root';
+class WPPanelProbeTheme {
+	public function exists() { return true; }
+	public function get($field) { return $field === 'Version' ? '1.0.0' : ''; }
+}
+function wp_get_theme($stylesheet) { return new WPPanelProbeTheme(); }
+function get_stylesheet() { return 'another-theme'; }
+`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			runtime := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "wp-load.php"), []byte(tc.bootstrap), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if tc.name == "plugin" {
+				pluginDir := filepath.Join(root, "wp-content", "plugins", "sample")
+				if err := os.MkdirAll(pluginDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(pluginDir, "sample.php"), []byte("<?php\n/* Plugin Name: Sample */\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				includeDir := filepath.Join(root, "wp-admin", "includes")
+				if err := os.MkdirAll(includeDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(includeDir, "plugin.php"), []byte("<?php\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				poisonIncludeDir := filepath.Join(root, "poison-root", "wp-admin", "includes")
+				if err := os.MkdirAll(poisonIncludeDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(poisonIncludeDir, "plugin.php"), []byte("<?php echo 'poisoned';\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			journal := filepath.Join(runtime, "journal")
+			result := filepath.Join(runtime, "result.json")
+			for _, name := range []string{journal, result} {
+				if err := os.WriteFile(name, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			args := []string{"-d", "display_errors=0", "-r", tc.source, "observe", root, runtime, filepath.Join(runtime, "package.zip"), tc.component, "1.0.0", "2.0.0", "", journal, result}
+			if tc.name == "theme" {
+				args = append(args, tc.template)
+			}
+			cmd := exec.Command(php, args...)
+			cmd.Env = append(os.Environ(), "WP_PANEL_RUNNER_TOKEN=0123456789abcdef0123456789abcdef")
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("observe failed after bootstrap clobbered $action: %v output=%s", err, output)
+			}
+			raw, err := os.ReadFile(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var envelope wpPluginRunnerEnvelope
+			if err := json.Unmarshal(raw, &envelope); err != nil {
+				t.Fatalf("invalid envelope %q: %v", raw, err)
+			}
+			if !envelope.OK || envelope.Version != "1.0.0" || envelope.ErrorCode != "" {
+				t.Fatalf("envelope=%+v", envelope)
+			}
+		})
+	}
+}
+
+func TestWPComponentUpdatePHPSourceNamespacesBootstrapSensitiveInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		source    string
+		forbidden []string
+	}{
+		{"plugin", wpPluginUpdatePHPSource, []string{"action", "root", "current", "target", "plugin", "package", "expected_sha"}},
+		{"theme", wpThemeUpdatePHPSource, []string{"action", "root", "current", "target", "stylesheet", "package", "mode", "expected_template"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, name := range tc.forbidden {
+				if strings.Contains(tc.source, "$"+name) {
+					t.Fatalf("bootstrap-sensitive input $%s is not namespaced", name)
+				}
+				if !strings.Contains(tc.source, "$wp_panel_"+name) {
+					t.Fatalf("namespaced input $wp_panel_%s is missing", name)
+				}
+			}
+		})
+	}
+}
+
 func TestRunWPPluginScopeCommandCapsOutput(t *testing.T) {
 	head, err := exec.LookPath("head")
 	if err != nil {
