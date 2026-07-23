@@ -27,7 +27,7 @@ func TestWPPluginUpdateServicePreviewAndConfirmFixedCandidate(t *testing.T) {
 	}
 	service := &WPPluginUpdateService{
 		db: store.db, store: store, artifacts: artifacts, confirmations: newWPPluginConfirmationStore(),
-		fetchOffer: func(context.Context, string) (wpPluginOffer, error) {
+		fetchOffer: func(context.Context, int, string, string) (wpPluginOffer, error) {
 			return wpPluginOffer{Slug: "sample", Version: "1.1.0", DownloadURL: "https://downloads.wordpress.org/plugin/sample.1.1.0.zip"}, nil
 		},
 		download: func(context.Context, string, string) (string, string, error) { return source, digest, nil },
@@ -64,7 +64,7 @@ func TestWPPluginUpdateServiceConfirmReleasesSiteLockBeforeDownload(t *testing.T
 	lockedDuringDownload := true
 	service := &WPPluginUpdateService{
 		db: store.db, store: store, artifacts: artifacts, confirmations: newWPPluginConfirmationStore(),
-		fetchOffer: func(context.Context, string) (wpPluginOffer, error) {
+		fetchOffer: func(context.Context, int, string, string) (wpPluginOffer, error) {
 			return wpPluginOffer{Slug: "sample", Version: "1.1.0", DownloadURL: "https://downloads.wordpress.org/plugin/sample.1.1.0.zip"}, nil
 		},
 		download: func(context.Context, string, string) (string, string, error) {
@@ -100,8 +100,8 @@ func TestWPPluginUpdateServicePreviewReportsPluginNotInRepository(t *testing.T) 
 	}
 	service := &WPPluginUpdateService{
 		db: store.db, store: store, artifacts: artifacts, confirmations: newWPPluginConfirmationStore(),
-		fetchOffer: func(context.Context, string) (wpPluginOffer, error) {
-			return wpPluginOffer{}, errWPPluginOfferNotFound
+		fetchOffer: func(context.Context, int, string, string) (wpPluginOffer, error) {
+			return wpPluginOffer{}, errWPOfferNotFound
 		},
 		now: func() time.Time { return now },
 	}
@@ -123,7 +123,7 @@ func TestWPPluginUpdateServiceConfirmBlockedByActiveSiteRestore(t *testing.T) {
 	}
 	service := &WPPluginUpdateService{
 		db: store.db, store: store, artifacts: artifacts, confirmations: newWPPluginConfirmationStore(),
-		fetchOffer: func(context.Context, string) (wpPluginOffer, error) {
+		fetchOffer: func(context.Context, int, string, string) (wpPluginOffer, error) {
 			return wpPluginOffer{Slug: "sample", Version: "1.1.0", DownloadURL: "https://downloads.wordpress.org/plugin/sample.1.1.0.zip"}, nil
 		},
 		download: func(context.Context, string, string) (string, string, error) { return source, digest, nil },
@@ -206,7 +206,7 @@ func TestWPPluginUpdateServiceRejectsAmbiguousCandidate(t *testing.T) {
 	}
 	service := &WPPluginUpdateService{
 		db: store.db, store: store, artifacts: artifacts, confirmations: newWPPluginConfirmationStore(),
-		fetchOffer: func(context.Context, string) (wpPluginOffer, error) {
+		fetchOffer: func(context.Context, int, string, string) (wpPluginOffer, error) {
 			return wpPluginOffer{Slug: "sample", Version: "1.1.0", DownloadURL: "https://downloads.wordpress.org/plugin/sample.1.1.0.zip"}, nil
 		},
 		now: func() time.Time { return now },

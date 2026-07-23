@@ -1,0 +1,46 @@
+$token=$argv[1]??'';$site_root=$argv[2]??'';$component_type=$argv[3]??'';$component_key=$argv[4]??'';$current=$argv[5]??'';$target=$argv[6]??'';$result_file=$argv[7]??'';
+$sent=false;
+$send=function($ok,$version='',$download_url='',$code='')use(&$sent,$token,$result_file){
+  if($sent)return;$sent=true;
+  $body=json_encode(['token'=>$token,'ok'=>$ok,'version'=>$version,'download_url'=>$download_url,'error_code'=>$code],JSON_UNESCAPED_SLASHES);
+  $f=@fopen($result_file,'c+b');if(!$f)return;
+  @flock($f,LOCK_EX);@ftruncate($f,0);@fwrite($f,$body);@fflush($f);
+  if(function_exists('fsync'))@fsync($f);@flock($f,LOCK_UN);@fclose($f);
+};
+register_shutdown_function(function()use(&$sent,$send){if(!$sent)$send(false,'','','fatal_error');});
+if(PHP_SAPI!=='cli'||!preg_match('/^[0-9a-f]{32}$/D',$token)
+  ||($component_type!=='plugin'&&$component_type!=='theme')
+  ||($component_type==='plugin'&&!preg_match('#^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*\.php$#D',$component_key))
+  ||($component_type==='theme'&&!preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/D',$component_key))
+  ||!preg_match('/^[0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?$/D',$current)
+  ||!preg_match('/^[0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?$/D',$target)
+  ||!is_dir($site_root)||realpath($site_root)!==rtrim($site_root,'/')
+  ||!is_file($result_file)||realpath($result_file)!==$result_file){
+  $send(false,'','','invalid_input');exit(2);
+}
+chdir($site_root);ob_start();
+if(!defined('WP_USE_THEMES'))define('WP_USE_THEMES',false);
+require $site_root.'/wp-load.php';
+require_once $site_root.'/wp-admin/includes/update.php';
+require_once $site_root.'/wp-admin/includes/plugin.php';
+if(ob_get_length()>0){$send(false,'','','bootstrap_output');exit(1);}
+$slug=$component_type==='plugin'?strstr($component_key,'/',true):$component_key;
+$offer=null;
+if($component_type==='plugin'){
+  wp_update_plugins();
+  $updates=get_site_transient('update_plugins');
+  if(is_object($updates)&&isset($updates->response)&&is_array($updates->response)&&isset($updates->response[$component_key])){
+    $offer=$updates->response[$component_key];
+  }
+}else{
+  wp_update_themes();
+  $updates=get_site_transient('update_themes');
+  if(is_object($updates)&&isset($updates->response)&&is_array($updates->response)&&isset($updates->response[$component_key])){
+    $offer=$updates->response[$component_key];
+  }
+}
+if($offer===null){$send(false,'','','not_in_repository');exit;}
+$new_version=is_object($offer)?($offer->new_version??''):(is_array($offer)?($offer['new_version']??''):'');
+$package=is_object($offer)?($offer->package??''):(is_array($offer)?($offer['package']??''):'');
+if($package===''||$new_version===''){$send(false,'','','license_invalid');exit;}
+$send(true,$new_version,$package,'');exit;

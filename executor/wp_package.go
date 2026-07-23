@@ -313,6 +313,63 @@ func allowedWordPressURL(u *url.URL) bool {
 	return host == "wordpress.org" || host == "downloads.wordpress.org"
 }
 
+// allowedWPUpdateExternalURL permits package downloads from a plugin/theme
+// vendor's own host (e.g. a commercial plugin whose update is served by the
+// vendor, not WordPress.org). It requires HTTPS, a .zip path, and that the
+// resolved IP is not a loopback/private/link-local address. This is the
+// SSRF containment for site-sourced update offers.
+func allowedWPUpdateExternalURL(u *url.URL) bool {
+	if u == nil || u.Scheme != "https" || (u.Port() != "" && u.Port() != "443") || u.User != nil || u.Fragment != "" {
+		return false
+	}
+	if !strings.HasSuffix(u.EscapedPath(), ".zip") {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	// WordPress.org hosts are validated by the strict WordPress.org path, never
+	// treated as an external vendor, so they cannot bypass slug/version checks.
+	if host == "wordpress.org" || host == "downloads.wordpress.org" || strings.HasSuffix(host, ".wordpress.org") {
+		return false
+	}
+	if net.ParseIP(host) != nil {
+		return false
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return false
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+			return false
+		}
+	}
+	return true
+}
+
+// allowedWPUpdatePackageURL accepts WordPress.org package URLs and vendor
+// external URLs. It is used for the plugin/theme package download redirect
+// policy so commercial-plugin packages served from vendor CDNs can be fetched.
+func allowedWPUpdatePackageURL(u *url.URL) bool {
+	return allowedWordPressURL(u) || allowedWPUpdateExternalURL(u)
+}
+
+// wpPluginUpdateDownloadClient is the HTTP client used to download plugin/theme
+// packages. Its redirect policy accepts WordPress.org and vendor external URLs.
+func wpPluginUpdateDownloadClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	transport.TLSHandshakeTimeout = 10 * time.Second
+	transport.ResponseHeaderTimeout = 15 * time.Second
+	client := &http.Client{Transport: transport, Timeout: wpPackageDownloadHTTPTimeout}
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 || !allowedWPUpdatePackageURL(req.URL) {
+			return errors.New("redirect rejected")
+		}
+		return nil
+	}
+	return client
+}
+
 func fileSHA256(filename string) (string, int64, error) {
 	f, err := os.Open(filename)
 	if err != nil {

@@ -1,10 +1,8 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -26,15 +24,14 @@ var (
 	ErrWPThemeUpdateUnavailable     = errors.New("theme update upstream unavailable")
 	ErrWPThemeUpdateSiteBusy        = errors.New("theme update blocked by active site restore")
 	ErrWPThemeUpdateNotInRepository = errors.New("theme not available in the official WordPress.org repository")
-
-	errWPThemeOfferNotFound = errors.New("theme offer not found")
+	ErrWPThemeUpdateLicenseInvalid  = errors.New("theme update license invalid or not activated")
 )
 
 type wpThemeOffer struct {
 	Slug, Version, DownloadURL string
 }
 
-type wpThemeOfferFetcher func(context.Context, string) (wpThemeOffer, error)
+type wpThemeOfferFetcher func(ctx context.Context, siteID int, webRoot, componentKey string) (wpThemeOffer, error)
 type wpThemePackageDownloader func(context.Context, string, string) (string, string, error)
 
 type WPThemeUpdateService struct {
@@ -64,9 +61,16 @@ func NewWPThemeUpdateService(db *sql.DB, backupDir string) (*WPThemeUpdateServic
 	if err != nil {
 		return nil, ErrWPThemeUpdateUnavailable
 	}
+	offerRunner, err := newWPUpdateOfferRunner(db)
+	if err != nil {
+		return nil, ErrWPThemeUpdateUnavailable
+	}
 	return &WPThemeUpdateService{
 		db: db, store: store, artifacts: artifacts, confirmations: newWPThemeConfirmationStore(),
-		fetchOffer: defaultWPThemeOfferFetcher(nil), download: defaultWPThemePackageDownloader(nil, artifacts.root), now: time.Now,
+		fetchOffer: func(ctx context.Context, siteID int, webRoot, componentKey string) (wpThemeOffer, error) {
+			return offerRunner.FetchThemeOffer(ctx, siteID, webRoot, componentKey)
+		},
+		download: defaultWPThemePackageDownloader(nil, artifacts.root), now: time.Now,
 	}, nil
 }
 
@@ -81,11 +85,14 @@ func (s *WPThemeUpdateService) Preview(ctx context.Context, siteID int, username
 	if wpConfigHasUserFileModsLock(candidate.webRoot) {
 		return models.WPThemeUpdatePreview{}, ErrWPThemeUpdateConflict
 	}
-	offer, err := s.fetchOffer(ctx, componentKey)
+	offer, err := s.fetchOffer(ctx, siteID, candidate.webRoot, componentKey)
 	if err != nil {
-		log.Printf("主题更新预览失败 site=%d domain=%s component=%s: 查询 WordPress.org 主题信息失败: %v", siteID, candidate.domain, componentKey, err)
-		if errors.Is(err, errWPThemeOfferNotFound) {
+		log.Printf("主题更新预览失败 site=%d domain=%s component=%s: 查询站点 WordPress 更新信息失败: %v", siteID, candidate.domain, componentKey, err)
+		if errors.Is(err, errWPOfferNotFound) {
 			return models.WPThemeUpdatePreview{}, ErrWPThemeUpdateNotInRepository
+		}
+		if errors.Is(err, errWPOfferLicenseInvalid) {
+			return models.WPThemeUpdatePreview{}, ErrWPThemeUpdateLicenseInvalid
 		}
 		return models.WPThemeUpdatePreview{}, ErrWPThemeUpdateUnavailable
 	}
@@ -278,70 +285,30 @@ func (s *WPThemeUpdateService) loadCandidate(ctx context.Context, siteID int, co
 	return c, nil
 }
 
-func defaultWPThemeOfferFetcher(client *http.Client) wpThemeOfferFetcher {
-	if client == nil {
-		client = defaultWPPackageHTTPClient()
-	}
-	return func(ctx context.Context, slug string) (wpThemeOffer, error) {
-		if !validWPThemeComponentKey(slug) {
-			return wpThemeOffer{}, errors.New("invalid theme slug")
-		}
-		u, _ := url.Parse("https://api.wordpress.org/themes/info/1.2/")
-		q := u.Query()
-		q.Set("action", "theme_information")
-		q.Set("request[slug]", slug)
-		u.RawQuery = q.Encode()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-		if err != nil {
-			return wpThemeOffer{}, err
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return wpThemeOffer{}, err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode == http.StatusNotFound && resp.Request != nil && resp.Request.URL.Scheme == "https" &&
-			resp.Request.URL.Hostname() == "api.wordpress.org" {
-			return wpThemeOffer{}, errWPThemeOfferNotFound
-		}
-		if resp.StatusCode != http.StatusOK || resp.Request == nil || resp.Request.URL.Scheme != "https" ||
-			resp.Request.URL.Hostname() != "api.wordpress.org" {
-			return wpThemeOffer{}, errors.New("theme offer unavailable")
-		}
-		var body struct {
-			Slug         string `json:"slug"`
-			Version      string `json:"version"`
-			DownloadLink string `json:"download_link"`
-		}
-		raw, err := io.ReadAll(io.LimitReader(resp.Body, (2<<20)+1))
-		if err != nil || len(raw) > 2<<20 {
-			return wpThemeOffer{}, errors.New("theme offer invalid")
-		}
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		if err := decoder.Decode(&body); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
-			return wpThemeOffer{}, errors.New("theme offer invalid")
-		}
-		return wpThemeOffer{Slug: body.Slug, Version: body.Version, DownloadURL: body.DownloadLink}, nil
-	}
-}
-
 func defaultWPThemePackageDownloader(client *http.Client, artifactRoot string) wpThemePackageDownloader {
 	if client == nil {
-		client = defaultWPPackageDownloadHTTPClient()
+		client = wpPluginUpdateDownloadClient()
 	}
 	return func(ctx context.Context, rawURL, targetVersion string) (string, string, error) {
 		u, err := url.Parse(rawURL)
 		if err != nil || u == nil {
 			return "", "", errors.New("invalid theme package download")
 		}
-		suffix := "." + targetVersion + ".zip"
-		base := path.Base(u.Path)
-		if len(base) <= len(suffix) {
+		if !wpComponentVersionPattern.MatchString(targetVersion) {
 			return "", "", errors.New("invalid theme package download")
 		}
-		slug := base[:len(base)-len(suffix)]
-		if !wpComponentVersionPattern.MatchString(targetVersion) ||
-			!validWPThemeDownloadURL(rawURL, slug, targetVersion) {
+		var slug string
+		if u.Hostname() == "downloads.wordpress.org" {
+			suffix := "." + targetVersion + ".zip"
+			base := path.Base(u.Path)
+			if len(base) <= len(suffix) {
+				return "", "", errors.New("invalid theme package download")
+			}
+			slug = base[:len(base)-len(suffix)]
+			if !validWPThemeDownloadURL(rawURL, slug, targetVersion) {
+				return "", "", errors.New("invalid theme package download")
+			}
+		} else if !validWPThemeDownloadURL(rawURL, "", targetVersion) {
 			return "", "", errors.New("invalid theme package download")
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)

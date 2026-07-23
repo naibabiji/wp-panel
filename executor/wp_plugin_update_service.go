@@ -1,10 +1,8 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -27,15 +25,14 @@ var (
 	ErrWPPluginUpdateUnavailable     = errors.New("plugin update upstream unavailable")
 	ErrWPPluginUpdateSiteBusy        = errors.New("plugin update blocked by active site restore")
 	ErrWPPluginUpdateNotInRepository = errors.New("plugin not available in the official WordPress.org repository")
-
-	errWPPluginOfferNotFound = errors.New("plugin offer not found")
+	ErrWPPluginUpdateLicenseInvalid  = errors.New("plugin update license invalid or not activated")
 )
 
 type wpPluginOffer struct {
 	Slug, Version, DownloadURL string
 }
 
-type wpPluginOfferFetcher func(context.Context, string) (wpPluginOffer, error)
+type wpPluginOfferFetcher func(ctx context.Context, siteID int, webRoot, componentKey string) (wpPluginOffer, error)
 type wpPluginPackageDownloader func(context.Context, string, string) (string, string, error)
 
 type WPPluginUpdateService struct {
@@ -64,9 +61,16 @@ func NewWPPluginUpdateService(db *sql.DB, backupDir string) (*WPPluginUpdateServ
 	if err != nil {
 		return nil, ErrWPPluginUpdateUnavailable
 	}
+	offerRunner, err := newWPUpdateOfferRunner(db)
+	if err != nil {
+		return nil, ErrWPPluginUpdateUnavailable
+	}
 	return &WPPluginUpdateService{
 		db: db, store: store, artifacts: artifacts, confirmations: newWPPluginConfirmationStore(),
-		fetchOffer: defaultWPPluginOfferFetcher(nil), download: defaultWPPluginPackageDownloader(nil, artifacts.root), now: time.Now,
+		fetchOffer: func(ctx context.Context, siteID int, webRoot, componentKey string) (wpPluginOffer, error) {
+			return offerRunner.FetchPluginOffer(ctx, siteID, webRoot, componentKey)
+		},
+		download: defaultWPPluginPackageDownloader(nil, artifacts.root), now: time.Now,
 	}, nil
 }
 
@@ -82,11 +86,14 @@ func (s *WPPluginUpdateService) Preview(ctx context.Context, siteID int, usernam
 		return models.WPPluginUpdatePreview{}, ErrWPPluginUpdateConflict
 	}
 	slug := componentSlug(componentKey)
-	offer, err := s.fetchOffer(ctx, slug)
+	offer, err := s.fetchOffer(ctx, siteID, candidate.webRoot, componentKey)
 	if err != nil {
-		log.Printf("插件更新预览失败 site=%d domain=%s component=%s: 查询 WordPress.org 插件信息失败: %v", siteID, candidate.domain, componentKey, err)
-		if errors.Is(err, errWPPluginOfferNotFound) {
+		log.Printf("插件更新预览失败 site=%d domain=%s component=%s: 查询站点 WordPress 更新信息失败: %v", siteID, candidate.domain, componentKey, err)
+		if errors.Is(err, errWPOfferNotFound) {
 			return models.WPPluginUpdatePreview{}, ErrWPPluginUpdateNotInRepository
+		}
+		if errors.Is(err, errWPOfferLicenseInvalid) {
+			return models.WPPluginUpdatePreview{}, ErrWPPluginUpdateLicenseInvalid
 		}
 		return models.WPPluginUpdatePreview{}, ErrWPPluginUpdateUnavailable
 	}
@@ -316,67 +323,27 @@ func (s *WPPluginUpdateService) taskModel(ctx context.Context, task WPUpdateTask
 	return model, rows.Err()
 }
 
-func defaultWPPluginOfferFetcher(client *http.Client) wpPluginOfferFetcher {
-	if client == nil {
-		client = defaultWPPackageHTTPClient()
-	}
-	return func(ctx context.Context, slug string) (wpPluginOffer, error) {
-		if !wpComponentSlugPattern.MatchString(slug) {
-			return wpPluginOffer{}, errors.New("invalid plugin slug")
-		}
-		u, _ := url.Parse("https://api.wordpress.org/plugins/info/1.2/")
-		q := u.Query()
-		q.Set("action", "plugin_information")
-		q.Set("request[slug]", slug)
-		u.RawQuery = q.Encode()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-		if err != nil {
-			return wpPluginOffer{}, err
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return wpPluginOffer{}, err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode == http.StatusNotFound && resp.Request != nil && resp.Request.URL.Scheme == "https" &&
-			resp.Request.URL.Hostname() == "api.wordpress.org" {
-			return wpPluginOffer{}, errWPPluginOfferNotFound
-		}
-		if resp.StatusCode != http.StatusOK || resp.Request == nil || resp.Request.URL.Scheme != "https" ||
-			resp.Request.URL.Hostname() != "api.wordpress.org" {
-			return wpPluginOffer{}, errors.New("plugin offer unavailable")
-		}
-		var body struct {
-			Slug         string `json:"slug"`
-			Version      string `json:"version"`
-			DownloadLink string `json:"download_link"`
-		}
-		raw, err := io.ReadAll(io.LimitReader(resp.Body, (2<<20)+1))
-		if err != nil || len(raw) > 2<<20 {
-			return wpPluginOffer{}, errors.New("plugin offer invalid")
-		}
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		if err := decoder.Decode(&body); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
-			return wpPluginOffer{}, errors.New("plugin offer invalid")
-		}
-		return wpPluginOffer{Slug: body.Slug, Version: body.Version, DownloadURL: body.DownloadLink}, nil
-	}
-}
-
 func defaultWPPluginPackageDownloader(client *http.Client, artifactRoot string) wpPluginPackageDownloader {
 	if client == nil {
-		client = defaultWPPackageDownloadHTTPClient()
+		client = wpPluginUpdateDownloadClient()
 	}
 	return func(ctx context.Context, rawURL, targetVersion string) (string, string, error) {
 		u, err := url.Parse(rawURL)
 		if err != nil || u == nil {
 			return "", "", errors.New("invalid plugin package download")
 		}
-		suffix := "." + targetVersion + ".zip"
-		base := path.Base(u.Path)
-		slug := strings.TrimSuffix(base, suffix)
-		if !wpComponentVersionPattern.MatchString(targetVersion) || base == slug ||
-			!validWPPluginDownloadURL(rawURL, slug, targetVersion) {
+		if !wpComponentVersionPattern.MatchString(targetVersion) {
+			return "", "", errors.New("invalid plugin package download")
+		}
+		var slug string
+		if u.Hostname() == "downloads.wordpress.org" {
+			suffix := "." + targetVersion + ".zip"
+			base := path.Base(u.Path)
+			slug = strings.TrimSuffix(base, suffix)
+			if base == slug || !validWPPluginDownloadURL(rawURL, slug, targetVersion) {
+				return "", "", errors.New("invalid plugin package download")
+			}
+		} else if !validWPPluginDownloadURL(rawURL, "", targetVersion) {
 			return "", "", errors.New("invalid plugin package download")
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)

@@ -33,8 +33,8 @@ func TestWPThemeUpdateServicePreviewReportsThemeNotInRepository(t *testing.T) {
 	}
 	service := &WPThemeUpdateService{
 		db: store.db, store: store, artifacts: artifacts, confirmations: newWPThemeConfirmationStore(),
-		fetchOffer: func(context.Context, string) (wpThemeOffer, error) {
-			return wpThemeOffer{}, errWPThemeOfferNotFound
+		fetchOffer: func(context.Context, int, string, string) (wpThemeOffer, error) {
+			return wpThemeOffer{}, errWPOfferNotFound
 		},
 		now: func() time.Time { return now },
 	}
@@ -76,7 +76,7 @@ func TestWPThemeUpdateServicePreviewAndConfirmCurrentTheme(t *testing.T) {
 	}
 	service := &WPThemeUpdateService{
 		db: store.db, store: store, artifacts: artifacts, confirmations: newWPThemeConfirmationStore(),
-		fetchOffer: func(context.Context, string) (wpThemeOffer, error) {
+		fetchOffer: func(context.Context, int, string, string) (wpThemeOffer, error) {
 			return wpThemeOffer{Slug: "sample-theme", Version: "1.1.0", DownloadURL: "https://downloads.wordpress.org/theme/sample-theme.1.1.0.zip"}, nil
 		},
 		download: func(context.Context, string, string) (string, string, error) { return source, digest, nil },

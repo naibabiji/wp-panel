@@ -1112,9 +1112,15 @@ func validWPPluginComponentKey(key string) bool {
 
 func validWPPluginDownloadURL(raw, slug, targetVersion string) bool {
 	u, err := url.Parse(raw)
-	return err == nil && u.Scheme == "https" && u.Hostname() == "downloads.wordpress.org" &&
+	if err != nil {
+		return false
+	}
+	if u.Scheme == "https" && u.Hostname() == "downloads.wordpress.org" &&
 		(u.Port() == "" || u.Port() == "443") && u.User == nil && u.RawQuery == "" && u.Fragment == "" &&
-		u.EscapedPath() == "/plugin/"+slug+"."+targetVersion+".zip"
+		u.EscapedPath() == "/plugin/"+slug+"."+targetVersion+".zip" {
+		return true
+	}
+	return allowedWPUpdateExternalURL(u)
 }
 
 func validWPThemeComponentKey(key string) bool {
@@ -1123,7 +1129,13 @@ func validWPThemeComponentKey(key string) bool {
 
 func validWPThemeDownloadURL(raw, slug, targetVersion string) bool {
 	u, err := url.Parse(raw)
-	return err == nil && u.Scheme == "https" && u.Hostname() == "downloads.wordpress.org" &&
+	if err != nil {
+		return false
+	}
+	if u.Scheme == "https" && u.Hostname() == "downloads.wordpress.org" &&
 		(u.Port() == "" || u.Port() == "443") && u.User == nil && u.RawQuery == "" && u.Fragment == "" &&
-		u.EscapedPath() == "/theme/"+slug+"."+targetVersion+".zip"
+		u.EscapedPath() == "/theme/"+slug+"."+targetVersion+".zip" {
+		return true
+	}
+	return allowedWPUpdateExternalURL(u)
 }
