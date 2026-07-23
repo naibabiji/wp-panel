@@ -23,7 +23,7 @@
 
         <template x-if="summary">
             <div>
-                <div class="mt-4 rounded border p-3 text-sm" :class="statusNoticeClass()">
+                <div x-show="statusKey() !== 'wp_inventory.status_complete'" class="mt-4 rounded border p-3 text-sm" :class="statusNoticeClass()">
                     <div class="font-medium" x-text="t(statusKey())"></div>
                     <p x-show="summary.collection_status === 'failed' && summary.has_successful_inventory" class="mt-1" x-text="t('wp_inventory.stale_notice', { time: displayTime(summary.last_success_at) })"></p>
                     <p x-show="summary.last_error" class="mt-1">
@@ -32,46 +32,33 @@
                     </p>
                 </div>
 
-                <div x-show="summary.has_successful_inventory" class="mt-5 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+                <div x-show="summary.has_successful_inventory" class="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
                     <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
-                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.wordpress_version"}}</div>
-                        <div class="mt-1 text-base font-medium text-white" x-text="summary.wordpress.version || t('common.none')"></div>
+                        <div class="text-xs font-medium text-gray-400">{{t .Lang "wp_inventory.group_site"}}</div>
+                        <dl class="mt-2 space-y-1.5 text-sm">
+                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.site_url"}}</dt><dd class="truncate text-right"><a x-show="siteURL" :href="siteURL" target="_blank" rel="noopener" class="text-blue-400 hover:text-blue-300 hover:underline" x-text="siteURL"></a><span x-show="!siteURL" class="text-gray-200">{{t .Lang "common.none"}}</span></dd></div>
+                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.wordpress_version"}}</dt><dd class="text-gray-200" x-text="summary.wordpress.version || t('common.none')"></dd></div>
+                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.locale"}}</dt><dd class="text-gray-200" x-text="summary.wordpress.locale || t('common.none')"></dd></div>
+                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.multisite"}}</dt><dd class="text-gray-200" x-text="summary.wordpress.multisite ? t('wp_inventory.yes') : t('wp_inventory.no')"></dd></div>
+                            <div class="flex items-baseline justify-between gap-2"><dt class="shrink-0 text-gray-500">{{t .Lang "wp_inventory.current_theme"}}</dt><dd class="truncate text-right text-gray-200" x-text="summary.wordpress.current_theme_key || t('common.none')"></dd></div>
+                        </dl>
                     </div>
                     <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
-                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.locale"}}</div>
-                        <div class="mt-1 text-base font-medium text-white" x-text="summary.wordpress.locale || t('common.none')"></div>
+                        <div class="text-xs font-medium text-gray-400">{{t .Lang "wp_inventory.group_updates"}}</div>
+                        <dl class="mt-2 space-y-1.5 text-sm">
+                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.core_update"}}</dt><dd :class="summary.core_upgrade_available ? 'text-yellow-300' : 'text-green-300'" x-text="summary.core_upgrade_available ? t('wp_inventory.core_update_available') : t('wp_inventory.core_update_none')"></dd></div>
+                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.plugin_updates"}}</dt><dd class="text-gray-200" x-text="summary.counts.plugin_updates"></dd></div>
+                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.theme_updates"}}</dt><dd class="text-gray-200" x-text="summary.counts.theme_updates"></dd></div>
+                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.plugins"}}</dt><dd class="text-gray-200"><span x-text="summary.counts.plugins"></span> <span class="text-xs text-gray-400" x-text="t('wp_inventory.active_plugins', { count: summary.counts.active_plugins })"></span></dd></div>
+                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.themes"}}</dt><dd class="text-gray-200" x-text="summary.counts.themes"></dd></div>
+                        </dl>
                     </div>
                     <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
-                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.multisite"}}</div>
-                        <div class="mt-1 text-base font-medium text-white" x-text="summary.wordpress.multisite ? t('wp_inventory.yes') : t('wp_inventory.no')"></div>
-                    </div>
-                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
-                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.current_theme"}}</div>
-                        <div class="mt-1 break-all text-base font-medium text-white" x-text="summary.wordpress.current_theme_key || t('common.none')"></div>
-                    </div>
-                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
-                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.core_update"}}</div>
-                        <div class="mt-1 text-base font-medium" :class="summary.core_upgrade_available ? 'text-yellow-300' : 'text-green-300'" x-text="summary.core_upgrade_available ? t('wp_inventory.core_update_available') : t('wp_inventory.core_update_none')"></div>
-                    </div>
-                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
-                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.plugins"}}</div>
-                        <div class="mt-1 text-base font-medium text-white"><span x-text="summary.counts.plugins"></span> <span class="text-xs text-gray-400" x-text="t('wp_inventory.active_plugins', { count: summary.counts.active_plugins })"></span></div>
-                    </div>
-                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
-                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.themes"}}</div>
-                        <div class="mt-1 text-base font-medium text-white" x-text="summary.counts.themes"></div>
-                    </div>
-                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
-                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.plugin_updates"}}</div>
-                        <div class="mt-1 text-base font-medium text-white" x-text="summary.counts.plugin_updates"></div>
-                    </div>
-                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
-                        <div class="text-xs text-gray-500">{{t .Lang "wp_inventory.theme_updates"}}</div>
-                        <div class="mt-1 text-base font-medium text-white" x-text="summary.counts.theme_updates"></div>
-                    </div>
-                    <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3 text-sm">
-                        <div><span class="text-gray-500">{{t .Lang "wp_inventory.last_attempt"}}：</span><span class="text-gray-200" x-text="displayTime(summary.last_attempt_at)"></span></div>
-                        <div class="mt-2"><span class="text-gray-500">{{t .Lang "wp_inventory.last_success"}}：</span><span class="text-gray-200" x-text="displayTime(summary.last_success_at)"></span></div>
+                        <div class="text-xs font-medium text-gray-400">{{t .Lang "wp_inventory.group_scan"}}</div>
+                        <dl class="mt-2 space-y-1.5 text-sm">
+                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.last_attempt"}}</dt><dd class="text-gray-200" x-text="displayTime(summary.last_attempt_at)"></dd></div>
+                            <div class="flex items-baseline justify-between gap-2"><dt class="text-gray-500">{{t .Lang "wp_inventory.last_success"}}</dt><dd class="text-gray-200" x-text="displayTime(summary.last_success_at)"></dd></div>
+                        </dl>
                     </div>
                 </div>
 
@@ -237,6 +224,7 @@ function wpInventoryPanel() {
     const newPluginUpdate = () => ({ open: false, loading: false, submitting: false, componentType: '', componentKey: '', preview: null, task: null, error: '', riskAccepted: false, databaseBackupMode: 'fresh', preparationController: null, preparationCancelled: false, pollStartedAt: 0 });
     return {
         siteID: null,
+        siteURL: '',
         summary: null,
         summaryLoading: false,
         summaryError: '',
@@ -273,6 +261,8 @@ function wpInventoryPanel() {
             this.stopBackupRestorePolling();
             this.requestGeneration++;
             this.siteID = Number.isInteger(nextID) && nextID > 0 ? nextID : null;
+            this.siteURL = this.siteID && typeof site.domain === 'string' && site.domain !== ''
+                ? (site.ssl_enabled ? 'https://' : 'http://') + site.domain : '';
             this.summary = null;
             this.summaryLoading = false;
             this.summaryError = '';
