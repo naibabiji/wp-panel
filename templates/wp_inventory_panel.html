@@ -180,7 +180,7 @@
                 </label>
                 <div class="flex justify-end gap-3">
                     <button @click="closePluginUpdate()" :disabled="pluginUpdate.submitting" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
-                    <button @click="confirmPluginUpdate()" :disabled="pluginUpdate.submitting || (pluginUpdate.preview?.current_theme && !pluginUpdate.riskAccepted)" class="btn-primary" x-text="pluginUpdate.submitting ? componentUpdateText('wp_plugin_update.submitting', 'wp_theme_update.submitting') : componentUpdateText('wp_plugin_update.confirm', 'wp_theme_update.confirm')"></button>
+                    <button @click="confirmPluginUpdate()" :disabled="pluginUpdate.submitting || (pluginUpdate.preview?.current_theme === true && !pluginUpdate.riskAccepted)" class="btn-primary" x-text="pluginUpdate.submitting ? componentUpdateText('wp_plugin_update.submitting', 'wp_theme_update.submitting') : componentUpdateText('wp_plugin_update.confirm', 'wp_theme_update.confirm')"></button>
                 </div>
             </div>
 
