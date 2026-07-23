@@ -70,6 +70,7 @@
     "submitted": "EN_TODO: wp_core_update.submitted",
     "submission_recovered": "EN_TODO: wp_core_update.submission_recovered",
     "task_read_failed": "EN_TODO: wp_core_update.task_read_failed",
+    "up_to_date": "EN_TODO: wp_core_update.up_to_date",
     "stage_value": "EN_TODO: wp_core_update.stage_value",
     "stage_queued": "EN_TODO: wp_core_update.stage_queued",
     "stage_claimed": "EN_TODO: wp_core_update.stage_claimed",

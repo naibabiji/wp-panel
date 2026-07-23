@@ -70,6 +70,7 @@
     "submitted": "核心更新任务已提交",
     "submission_recovered": "提交响应未能确认，但已找到刚创建的更新任务并恢复跟踪",
     "task_read_failed": "暂时无法读取更新任务，系统将继续重试",
+    "up_to_date": "当前 WordPress 核心版本 {{current}} 已是最新版本，无需更新",
     "stage_value": "当前阶段：{{stage}}",
     "stage_queued": "等待执行",
     "stage_claimed": "执行前核对",

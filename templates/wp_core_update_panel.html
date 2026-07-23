@@ -11,6 +11,8 @@
 
         <div x-show="error" class="mt-4 rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200" x-text="error"></div>
 
+        <div x-show="upToDate" class="mt-4 rounded border border-green-800 bg-green-950/20 p-3 text-sm text-green-200" x-text="t('wp_core_update.up_to_date', { current: upToDate?.current_version })"></div>
+
         <div x-show="preview" class="mt-4 rounded-lg border border-blue-800 bg-blue-950/20 p-4">
             <div class="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
                 <div><div class="text-xs text-gray-500">{{t .Lang "wp_core_update.current_version"}}</div><div class="mt-1 font-medium text-white" x-text="preview?.current_version"></div></div>
@@ -50,6 +52,7 @@ function wpCoreUpdatePanel() {
     return {
         siteID: null,
         preview: null,
+        upToDate: null,
         task: null,
         loading: false,
         confirming: false,
@@ -80,6 +83,7 @@ function wpCoreUpdatePanel() {
             this.generation++;
             this.siteID = Number.isInteger(next) && next > 0 ? next : null;
             this.preview = null;
+            this.upToDate = null;
             this.databaseBackupMode = 'fresh';
             this.preparationCancelled = false;
             this.task = null;
@@ -125,6 +129,10 @@ function wpCoreUpdatePanel() {
                     (Number.isInteger(value.recent_database_backup.backup_id) && value.recent_database_backup.backup_id > 0 &&
                      typeof value.recent_database_backup.created_at === 'string'));
         },
+        validUpToDate(value) {
+            return value && value.available === false && value.site_id === this.siteID &&
+                typeof value.current_version === 'string' && value.current_version !== '';
+        },
         validTask(value) {
             return value && typeof value.task_id === 'string' && value.task_id !== '' && value.site_id === this.siteID &&
                 value.component_type === 'core' && value.task_kind === 'update' && typeof value.status === 'string' &&
@@ -136,10 +144,15 @@ function wpCoreUpdatePanel() {
             const siteID = this.siteID;
             this.loading = true;
             this.preview = null;
+            this.upToDate = null;
             this.error = '';
             try {
                 const response = await api('/websites/' + siteID + '/wp-core-update/preview', { suppressToast: true, timeout: 30000 });
                 if (generation !== this.generation || siteID !== this.siteID) return;
+                if (this.validUpToDate(response.data)) {
+                    this.upToDate = { current_version: response.data.current_version };
+                    return;
+                }
                 if (!this.validPreview(response.data)) throw new Error(t('wp_core_update.preview_invalid'));
                 this.preview = response.data;
                 this.databaseBackupMode = 'fresh';

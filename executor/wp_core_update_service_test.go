@@ -35,6 +35,30 @@ func TestWPCoreUpdateServicePreviewFixesServerCandidate(t *testing.T) {
 	}
 }
 
+func TestWPCoreUpdateServicePreviewReportsUpToDateWithoutError(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	if _, err := store.db.Exec(`UPDATE site_wp_inventory_state SET wordpress_locale='en_US',collection_id='collection-a',last_success_at=? WHERE site_id=?`, wpUpdateDBTime(now), siteID); err != nil {
+		t.Fatal(err)
+	}
+	// No row in site_wp_component_updates for core: the scanner found no
+	// newer WordPress release, which is the normal steady state.
+	service := &WPCoreUpdateService{db: store.db, store: store, now: func() time.Time { return now }}
+	preview, err := service.Preview(context.Background(), siteID, "admin")
+	if err != nil {
+		t.Fatalf("expected a clean up-to-date response, got err=%v", err)
+	}
+	if preview.Available {
+		t.Fatalf("expected available=false, got %+v", preview)
+	}
+	if preview.SiteID != siteID || preview.CurrentVersion != "7.0.1" {
+		t.Fatalf("expected site/version echoed back, got %+v", preview)
+	}
+	if preview.ConfirmationToken != "" || preview.TargetVersion != "" {
+		t.Fatalf("up-to-date response should not carry a confirmation token or target version: %+v", preview)
+	}
+}
+
 func TestWPCoreUpdateServiceRejectsNonNewerInventoryCandidate(t *testing.T) {
 	for _, target := range []string{"7.0.1", "6.9.9"} {
 		t.Run(target, func(t *testing.T) {

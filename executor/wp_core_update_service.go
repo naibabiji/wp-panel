@@ -26,6 +26,12 @@ var (
 	ErrWPCoreUpdateBusy        = errors.New("core update service busy")
 	ErrWPCoreUpdateUnavailable = errors.New("core update upstream unavailable")
 	ErrWPCoreUpdateSiteBusy    = errors.New("core update blocked by active site restore")
+
+	// errWPCoreUpdateNoCandidate is an internal signal (not an API error): the
+	// site's inventory state is healthy but WordPress.org reports no newer
+	// core version. Preview() converts it into an Available:false response
+	// instead of surfacing it as a conflict.
+	errWPCoreUpdateNoCandidate = errors.New("no core update candidate")
 )
 
 var wpStableCoreVersionPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){1,3}$`)
@@ -71,6 +77,9 @@ func (s *WPCoreUpdateService) Preview(ctx context.Context, siteID int, username 
 		return models.WPCoreUpdatePreview{}, ErrWPCoreUpdateInvalid
 	}
 	candidate, err := s.loadCandidate(ctx, siteID)
+	if errors.Is(err, errWPCoreUpdateNoCandidate) {
+		return models.WPCoreUpdatePreview{Available: false, SiteID: siteID, Domain: candidate.domain, CurrentVersion: candidate.currentVersion}, nil
+	}
 	if err != nil {
 		return models.WPCoreUpdatePreview{}, err
 	}
@@ -226,6 +235,9 @@ func (s *WPCoreUpdateService) loadCandidate(ctx context.Context, siteID int) (wp
 	}
 	if rows.Err() != nil {
 		return c, rows.Err()
+	}
+	if count == 0 {
+		return c, errWPCoreUpdateNoCandidate
 	}
 	if count != 1 || c.targetVersion == "" || c.locale == "" || c.locale != stateLocale ||
 		compareWPVersions(c.targetVersion, c.currentVersion) <= 0 {

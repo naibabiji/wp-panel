@@ -769,6 +769,7 @@ var i18nKeys = []string{
 	"wp_core_update.submitting",
 	"wp_core_update.task_invalid",
 	"wp_core_update.task_read_failed",
+	"wp_core_update.up_to_date",
 	"wp_plugin_update.action",
 	"wp_plugin_update.checking",
 	"wp_plugin_update.confirm",

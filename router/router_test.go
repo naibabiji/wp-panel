@@ -649,6 +649,27 @@ global.window = {};
         database_backup: true, core_files_backup: true, uploads_included: false
     }), 'valid preview rejected');
     assert(!panel.validPreview({ available: true, site_id: 8 }), 'cross-site preview accepted');
+    assert(panel.validUpToDate({ available: false, site_id: 7, current_version: '7.0.2' }), 'valid up-to-date response rejected');
+    assert(!panel.validUpToDate({ available: false, site_id: 8, current_version: '7.0.2' }), 'cross-site up-to-date response accepted');
+    assert(!panel.validUpToDate({ available: true, site_id: 7, current_version: '7.0.2' }), 'available preview accepted as up-to-date');
+    assert(!panel.validUpToDate({ available: false, site_id: 7, current_version: '' }), 'empty current_version accepted as up-to-date');
+
+    panel.siteID = 7;
+    global.api = async () => ({ data: { available: false, site_id: 7, current_version: '7.0.2' } });
+    await panel.loadPreview();
+    assert(panel.upToDate && panel.upToDate.current_version === '7.0.2', 'up-to-date response was not recorded');
+    assert(panel.preview === null, 'up-to-date response should not populate preview');
+    assert(panel.error === '', 'up-to-date response should not surface as an error');
+
+    global.api = async () => ({ data: {
+        available: true, site_id: 7, current_version: '7.0.1', target_version: '7.0.2',
+        confirmation_token: 'opaque', verification_required: 'official_verified',
+        database_backup: true, core_files_backup: true, uploads_included: false
+    } });
+    await panel.loadPreview();
+    assert(panel.upToDate === null, 'up-to-date state was not cleared once an update became available');
+    assert(panel.preview && panel.preview.target_version === '7.0.2', 'available preview was not recorded');
+
     assert(panel.validTask({ task_id: 'wpu_test', site_id: 7, component_type: 'core', task_kind: 'update', status: 'queued' }), 'valid task rejected');
     assert(!panel.validTask({ task_id: 'wpu_test', site_id: 8, component_type: 'core', task_kind: 'update', status: 'queued' }), 'cross-site task accepted');
     panel.task = { status: 'interrupted_unknown', stage: 'health_check' };
