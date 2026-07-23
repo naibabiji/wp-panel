@@ -14,6 +14,15 @@ const (
 	wpFleetSSLExpiringWithin   = 14 * 24 * time.Hour
 )
 
+// The plugin_updates/theme_updates/core_upgrade_available subqueries recompute
+// update availability from the live candidate rows instead of trusting
+// site_wp_inventory_state's cached counters. The site's own WordPress
+// update-check transient can lag the live installed version by hours, leaving
+// stale site_wp_component_updates rows whose target version equals what is
+// already installed; excluding target_version = installed version keeps those
+// out of the fleet overview. This stays a single query (see
+// TestWPFleetOverviewUsesSingleQuery) so the endpoint's cost stays O(sites)
+// regardless of fleet size.
 const wpFleetOverviewSQL = `SELECT
 	w.id, w.name, w.domain, w.site_type, w.status,
 	w.created_at, w.expires_at,
@@ -23,14 +32,28 @@ const wpFleetOverviewSQL = `SELECT
 	w.fastcgi_cache_enabled, w.access_log_mode,
 	CASE WHEN s.site_id IS NULL THEN 0 ELSE 1 END,
 	COALESCE(s.status, 'unknown'), COALESCE(s.wordpress_version, ''),
-	COALESCE(s.plugin_update_count, 0), COALESCE(s.theme_update_count, 0),
 	COALESCE(s.collection_id, ''), COALESCE(CAST(s.last_attempt_at AS TEXT), ''),
 	COALESCE(CAST(s.last_success_at AS TEXT), ''), COALESCE(s.last_error_code, ''),
 	COALESCE(s.last_error_stage, ''), COALESCE(j.status, ''),
+	CASE WHEN s.collection_id <> '' THEN (
+		SELECT COUNT(*) FROM site_wp_component_updates u
+		LEFT JOIN site_wp_components c ON c.site_id = u.site_id AND c.collection_id = u.collection_id
+			AND c.component_type = u.component_type AND c.component_key = u.component_key
+		WHERE u.site_id = w.id AND u.collection_id = s.collection_id AND u.component_type = 'plugin'
+			AND (c.version IS NULL OR c.version <> u.target_version)
+	) ELSE 0 END,
+	CASE WHEN s.collection_id <> '' THEN (
+		SELECT COUNT(*) FROM site_wp_component_updates u
+		LEFT JOIN site_wp_components c ON c.site_id = u.site_id AND c.collection_id = u.collection_id
+			AND c.component_type = u.component_type AND c.component_key = u.component_key
+		WHERE u.site_id = w.id AND u.collection_id = s.collection_id AND u.component_type = 'theme'
+			AND (c.version IS NULL OR c.version <> u.target_version)
+	) ELSE 0 END,
 	CASE WHEN s.collection_id <> '' AND EXISTS (
 		SELECT 1 FROM site_wp_component_updates u
 		WHERE u.site_id = w.id AND u.collection_id = s.collection_id
 		AND u.component_type = 'core' AND u.response = 'upgrade'
+		AND u.target_version <> COALESCE(s.wordpress_version, '')
 	) THEN 1 ELSE 0 END
 	FROM websites w
 	LEFT JOIN backup_settings bs ON bs.site_id = w.id
@@ -129,9 +152,9 @@ func scanWPFleetOverviewRow(rows *sql.Rows) (wpFleetOverviewRow, error) {
 		&row.createdAt, &row.expiresAt, &sslEnabled, &row.sslExpiresAt, &sslHasError,
 		&monitoringEnabled, &backupEnabled, &fileLockEnabled, &fastCGICacheEnabled,
 		&row.accessLogMode, &hasInventoryState, &row.inventoryStatus, &row.wordpressVersion,
-		&row.pluginUpdates, &row.themeUpdates, &row.collectionID, &row.lastAttemptAt,
+		&row.collectionID, &row.lastAttemptAt,
 		&row.lastSuccessAt, &row.lastErrorCode, &row.lastErrorStage, &row.activeJobStatus,
-		&coreUpgradeAvailable,
+		&row.pluginUpdates, &row.themeUpdates, &coreUpgradeAvailable,
 	)
 	row.sslEnabled = sslEnabled == 1
 	row.sslHasError = sslHasError == 1

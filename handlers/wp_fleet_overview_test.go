@@ -35,6 +35,17 @@ func TestWPFleetOverviewHandlerReturnsSafePayload(t *testing.T) {
 		VALUES (1, 'core', 'wordpress', '7.1', 'upgrade', 'zh_CN', 'fleet-handler', ?)`, at); err != nil {
 		t.Fatalf("insert core update: %v", err)
 	}
+	if _, err := db.Exec(`INSERT INTO site_wp_component_updates
+		(site_id, component_type, component_key, target_version, response, locale, collection_id, collected_at)
+		VALUES (1, 'plugin', 'fleet-plugin/fleet-plugin.php', '2.0', '', '', 'fleet-handler', ?)`, at); err != nil {
+		t.Fatalf("insert plugin update: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO site_wp_component_updates
+		(site_id, component_type, component_key, target_version, response, locale, collection_id, collected_at)
+		VALUES (1, 'theme', 'fleet-theme-a', '2.0', '', '', 'fleet-handler', ?),
+		       (1, 'theme', 'fleet-theme-b', '2.0', '', '', 'fleet-handler', ?)`, at, at); err != nil {
+		t.Fatalf("insert theme updates: %v", err)
+	}
 
 	rec := performWPFleetOverviewRequest(newWPFleetOverviewTestRouter(db))
 	if rec.Code != http.StatusOK {

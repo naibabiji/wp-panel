@@ -76,7 +76,7 @@ func TestWPFleetOverviewEmptyAndMixedSites(t *testing.T) {
 		ID: 1, Domain: "updates.example.com", SiteType: "wordpress", Status: "active",
 		SSLEnabled: true, SSLExpiresAt: wpFleetTestNow.Add(30 * 24 * time.Hour), BackupEnabled: true,
 	})
-	insertWPFleetState(t, db, 1, "complete", "collection-current", "7.0", 2, 1,
+	insertWPFleetState(t, db, 1, "complete", "collection-current", "7.0", 0, 0,
 		wpFleetTestNow.Add(-time.Hour), wpFleetTestNow.Add(-time.Hour), "", "")
 	insertWPFleetCoreUpdate(t, db, 1, "collection-old", "upgrade")
 	insertWPFleetCoreUpdate(t, db, 1, "collection-current", "latest")
@@ -85,6 +85,12 @@ func TestWPFleetOverviewEmptyAndMixedSites(t *testing.T) {
 	insertWPFleetCoreUpdate(t, db, 1, "collection-current", "")
 	insertWPFleetCoreUpdate(t, db, 1, "collection-current", "future-value")
 	insertWPFleetCoreUpdate(t, db, 1, "collection-current", "upgrade")
+	insertWPFleetComponentUpdate(t, db, 1, "collection-current", "plugin", "demo-a/demo-a.php", "2.0")
+	insertWPFleetComponentUpdate(t, db, 1, "collection-current", "plugin", "demo-b/demo-b.php", "3.0")
+	insertWPFleetComponentUpdate(t, db, 1, "collection-current", "theme", "demo-theme", "1.5")
+	// Already-satisfied candidate (stale WordPress update-check transient):
+	// target equals the installed version, so it must not be counted.
+	insertWPFleetSatisfiedComponentUpdate(t, db, 1, "collection-current", "plugin", "demo-c/demo-c.php", "1.0")
 
 	insertWPFleetSite(t, db, wpFleetTestSite{
 		ID: 2, Domain: "php.example.com", SiteType: "php", Status: "paused",
@@ -501,6 +507,35 @@ func insertWPFleetCoreUpdate(t *testing.T, db *sql.DB, siteID int, collection, r
 	}
 }
 
+// insertWPFleetComponentUpdate seeds a plugin/theme update candidate row
+// without a matching site_wp_components row, so it is counted as available
+// (the fleet overview fails open when it cannot determine the installed
+// version of a component).
+func insertWPFleetComponentUpdate(t *testing.T, db *sql.DB, siteID int, collection, componentType, key, targetVersion string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO site_wp_component_updates
+		(site_id, component_type, component_key, target_version, response, locale, collection_id, collected_at)
+		VALUES (?, ?, ?, ?, '', '', ?, ?)`, siteID, componentType, key, targetVersion, collection,
+		wpInventoryDBTime(wpFleetTestNow)); err != nil {
+		t.Fatalf("insert component update: %v", err)
+	}
+}
+
+// insertWPFleetSatisfiedComponentUpdate seeds a plugin/theme update candidate
+// row whose target version already matches the installed version recorded in
+// site_wp_components — the stale-transient scenario the fleet overview must
+// exclude from its counts.
+func insertWPFleetSatisfiedComponentUpdate(t *testing.T, db *sql.DB, siteID int, collection, componentType, key, version string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO site_wp_components
+		(site_id, component_type, component_key, name, version, is_active, is_network_active, is_current_theme, collection_id, collected_at)
+		VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?, ?)`, siteID, componentType, key, key, version, collection,
+		wpInventoryDBTime(wpFleetTestNow)); err != nil {
+		t.Fatalf("insert satisfied component: %v", err)
+	}
+	insertWPFleetComponentUpdate(t, db, siteID, collection, componentType, key, version)
+}
+
 func insertWPFleetActiveJob(t *testing.T, db *sql.DB, siteID int, status string) {
 	t.Helper()
 	id := fmt.Sprintf("%032x", siteID)
@@ -558,6 +593,14 @@ func replaceWPFleetSnapshot(db *sql.DB, version string, pluginUpdates int, core 
 		if _, err := tx.Exec(`INSERT INTO site_wp_component_updates
 			(site_id, component_type, component_key, target_version, response, locale, collection_id, collected_at)
 			VALUES (1, 'core', 'wordpress', '7.1', 'upgrade', 'zh_CN', ?, ?)`, collection, at); err != nil {
+			return err
+		}
+	}
+	for i := 0; i < pluginUpdates; i++ {
+		key := fmt.Sprintf("plugin-%d/plugin-%d.php", i, i)
+		if _, err := tx.Exec(`INSERT INTO site_wp_component_updates
+			(site_id, component_type, component_key, target_version, response, locale, collection_id, collected_at)
+			VALUES (1, 'plugin', ?, '2.0', '', '', ?, ?)`, key, collection, at); err != nil {
 			return err
 		}
 	}

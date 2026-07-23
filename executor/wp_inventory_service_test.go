@@ -11,6 +11,66 @@ import (
 	"github.com/naibabiji/wp-panel/models"
 )
 
+// TestWPInventoryServiceHidesAlreadySatisfiedUpdateCandidates covers the
+// production bug where a site's own WordPress update-check transient
+// (update_core/update_plugins/update_themes) lags the live installed version
+// by hours, leaving stale site_wp_component_updates rows whose target version
+// equals what is already installed. Both Summary() (fleet/site badges) and
+// Updates() (the update list) must exclude those stale candidates instead of
+// reporting "update available" for something that is already up to date.
+func TestWPInventoryServiceHidesAlreadySatisfiedUpdateCandidates(t *testing.T) {
+	store, siteID := newWPInventoryStoreTest(t)
+	service := newTestWPInventoryService(t, store)
+	ctx := context.Background()
+	now := time.Date(2026, 7, 24, 2, 0, 0, 0, time.UTC)
+
+	result := sampleWPInventoryResult()
+	// Core: installed 7.0, but the transient still (stale) offers 7.0.
+	result.Inventory.Updates.Core.Items = []WPInventoryCoreUpdate{
+		{Version: "7.0", Response: "upgrade", Locale: "zh_CN"},
+	}
+	// Plugins: alpha is a real update (1.0 -> 1.1, kept from the sample);
+	// beta's own transient still (stale) offers its already-installed 2.0.
+	result.Inventory.Updates.Plugins.Items = append(result.Inventory.Updates.Plugins.Items,
+		WPInventoryComponentUpdate{ID: "beta/beta.php", Version: "2.0"})
+	// Themes: theme-one's transient still (stale) offers its already-installed 1.0.
+	result.Inventory.Updates.Themes.Items = []WPInventoryComponentUpdate{
+		{ID: "theme-one", Version: "1.0"},
+	}
+
+	jobID, identity := enqueueAndClaimInventory(t, store, siteID, "worker-stale-candidates", now)
+	if err := store.persistSuccess(ctx, jobID, "worker-stale-candidates", identity, result, now.Add(time.Second)); err != nil {
+		t.Fatalf("persistSuccess(): %v", err)
+	}
+
+	summary, err := service.Summary(ctx, siteID)
+	if err != nil {
+		t.Fatalf("Summary(): %v", err)
+	}
+	if summary.CoreUpgradeAvailable {
+		t.Fatalf("core upgrade available = true, want false (target == installed 7.0)")
+	}
+	if summary.Counts.PluginUpdates != 1 {
+		t.Fatalf("plugin update count = %d, want 1 (only alpha 1.0->1.1)", summary.Counts.PluginUpdates)
+	}
+	if summary.Counts.ThemeUpdates != 0 {
+		t.Fatalf("theme update count = %d, want 0 (theme-one already at 1.0)", summary.Counts.ThemeUpdates)
+	}
+
+	updates, err := service.Updates(ctx, siteID, WPInventoryListOptions{Page: 1, PageSize: 100})
+	if err != nil {
+		t.Fatalf("Updates(): %v", err)
+	}
+	items := wpInventoryUpdateItems(t, updates)
+	if updates.Total != 1 || len(items) != 1 {
+		t.Fatalf("updates = %+v, want exactly the alpha plugin update", updates)
+	}
+	if items[0].Type != "plugin" || items[0].Key != "alpha/alpha.php" ||
+		items[0].CurrentVersion != "1.0" || items[0].TargetVersion != "1.1" {
+		t.Fatalf("surviving update item = %+v", items[0])
+	}
+}
+
 func TestWPInventoryServiceSummaryExposesUpdateChecks(t *testing.T) {
 	store, siteID := newWPInventoryStoreTest(t)
 	service := newTestWPInventoryService(t, store)

@@ -615,21 +615,80 @@ func (s *wpInventoryStore) getSummarySnapshot(ctx context.Context, siteID int) (
 	if err != nil {
 		return wpInventorySummarySnapshot{}, err
 	}
-	coreUpgradeAvailable := false
-	if state.CollectionID != "" {
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM site_wp_component_updates
-			WHERE site_id = ? AND collection_id = ? AND component_type = 'core' AND response = 'upgrade'
-		)`, siteID, state.CollectionID).Scan(&coreUpgradeAvailable); err != nil {
-			return wpInventorySummarySnapshot{}, err
-		}
+	coreUpgradeAvailable, pluginCount, themeCount, err := wpInventoryLiveUpdateCounts(ctx, tx, siteID, state.CollectionID, state.WordPressVersion)
+	if err != nil {
+		return wpInventorySummarySnapshot{}, err
 	}
+	state.PluginUpdateCount = pluginCount
+	state.ThemeUpdateCount = themeCount
 	if err := tx.Commit(); err != nil {
 		return wpInventorySummarySnapshot{}, err
 	}
 	return wpInventorySummarySnapshot{
 		Identity: identity, State: state, ActiveJob: activeJob, CoreUpgradeAvailable: coreUpgradeAvailable,
 	}, nil
+}
+
+// wpInventoryRowQueryer is satisfied by both *sql.DB and *sql.Tx, letting
+// wpInventoryLiveUpdateCounts run inside an existing transaction.
+type wpInventoryRowQueryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// wpInventoryLiveUpdateCounts re-evaluates stored update candidates against the
+// live installed version recorded in the same inventory snapshot, instead of
+// trusting the raw candidate rows (or the counts cached at scan time in
+// site_wp_inventory_state). The site's own WordPress update-check transient
+// (update_core/update_plugins/update_themes) can lag the live installed
+// version by hours after an update completes out-of-band (see
+// refreshCoreInventoryAfterUpdate), leaving stale site_wp_component_updates
+// rows whose target version is not actually newer than what is installed.
+// Reporting those as "update available" misleads the site summary panel (this
+// function's only caller) and the update list (getUpdatePage, which applies
+// the same rule inline); the fleet overview applies the identical rule as
+// scalar subqueries directly in wpFleetOverviewSQL to keep that endpoint a
+// single query (see TestWPFleetOverviewUsesSingleQuery) rather than issuing a
+// follow-up query per site. When the installed version of a component can't
+// be determined, the candidate is kept (fail open) rather than silently
+// hidden.
+func wpInventoryLiveUpdateCounts(ctx context.Context, q wpInventoryRowQueryer, siteID int, collectionID, coreVersion string) (coreAvailable bool, pluginCount, themeCount int, err error) {
+	if collectionID == "" {
+		return false, 0, 0, nil
+	}
+	rows, err := q.QueryContext(ctx, `SELECT u.component_type,
+		CASE WHEN u.component_type = 'core' THEN ? ELSE COALESCE(c.version, '') END,
+		u.target_version
+		FROM site_wp_component_updates u
+		LEFT JOIN site_wp_components c ON c.site_id = u.site_id AND c.collection_id = u.collection_id
+			AND c.component_type = u.component_type AND c.component_key = u.component_key
+		WHERE u.site_id = ? AND u.collection_id = ?
+			AND (u.component_type <> 'core' OR u.response = 'upgrade')`,
+		coreVersion, siteID, collectionID)
+	if err != nil {
+		return false, 0, 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var componentType, current, target string
+		if err := rows.Scan(&componentType, &current, &target); err != nil {
+			return false, 0, 0, err
+		}
+		if current != "" && compareWPVersions(target, current) <= 0 {
+			continue
+		}
+		switch componentType {
+		case "core":
+			coreAvailable = true
+		case "plugin":
+			pluginCount++
+		case "theme":
+			themeCount++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, 0, 0, err
+	}
+	return coreAvailable, pluginCount, themeCount, nil
 }
 
 func (s *wpInventoryStore) getComponents(ctx context.Context, siteID int) ([]wpInventoryStoredComponent, error) {
@@ -747,11 +806,7 @@ func (s *wpInventoryStore) getUpdatePage(ctx context.Context, siteID int, compon
 
 	pattern := wpInventoryLikePattern(search)
 	args := []any{siteID, state.CollectionID, componentType, componentType, search, pattern, pattern}
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_wp_component_updates u WHERE `+wpInventoryUpdatePageWhereSQL, args...).Scan(&snapshot.Total); err != nil {
-		return snapshot, err
-	}
 	queryArgs := append([]any{state.WordPressVersion}, args...)
-	queryArgs = append(queryArgs, limit, offset)
 	rows, err := tx.QueryContext(ctx, `SELECT u.component_type, u.component_key,
 		CASE WHEN u.component_type = 'core' THEN ? ELSE COALESCE(c.version, '') END,
 		u.target_version, u.locale, u.collected_at
@@ -759,17 +814,18 @@ func (s *wpInventoryStore) getUpdatePage(ctx context.Context, siteID int, compon
 		LEFT JOIN site_wp_components c ON c.site_id = u.site_id AND c.collection_id = u.collection_id
 			AND c.component_type = u.component_type AND c.component_key = u.component_key
 		WHERE `+wpInventoryUpdatePageWhereSQL+`
-		ORDER BY u.component_type, u.component_key, u.target_version, u.locale, u.response LIMIT ? OFFSET ?`, queryArgs...)
+		ORDER BY u.component_type, u.component_key, u.target_version, u.locale, u.response`, queryArgs...)
 	if err != nil {
 		return snapshot, err
 	}
+	all := make([]wpInventoryStoredUpdate, 0)
 	for rows.Next() {
 		var item wpInventoryStoredUpdate
 		if err := rows.Scan(&item.Type, &item.Key, &item.CurrentVersion, &item.Version, &item.Locale, &item.CollectedAt); err != nil {
 			_ = rows.Close()
 			return snapshot, err
 		}
-		snapshot.Items = append(snapshot.Items, item)
+		all = append(all, item)
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -778,6 +834,31 @@ func (s *wpInventoryStore) getUpdatePage(ctx context.Context, siteID int, compon
 	if err := rows.Close(); err != nil {
 		return snapshot, err
 	}
+	// Hide candidates that are already satisfied (target version not newer than
+	// the installed version). The site's own WordPress update-check transient
+	// can lag the live version by hours, leaving stale rows behind; surfacing
+	// them here would contradict the "no update available" result the
+	// single-candidate check/preview flows already report for the same data.
+	// When the installed version can't be determined, keep the candidate
+	// (fail open) rather than silently hiding it.
+	visible := make([]wpInventoryStoredUpdate, 0, len(all))
+	for _, item := range all {
+		if item.CurrentVersion == "" || compareWPVersions(item.Version, item.CurrentVersion) > 0 {
+			visible = append(visible, item)
+		}
+	}
+	snapshot.Total = len(visible)
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > len(visible) {
+		offset = len(visible)
+	}
+	end := offset + limit
+	if limit <= 0 || end > len(visible) {
+		end = len(visible)
+	}
+	snapshot.Items = visible[offset:end]
 	if err := tx.Commit(); err != nil {
 		return snapshot, err
 	}
