@@ -50,6 +50,48 @@ func TestWPPluginUpdateServicePreviewAndConfirmFixedCandidate(t *testing.T) {
 	}
 }
 
+func TestWPPluginUpdateServiceConfirmReleasesSiteLockBeforeDownload(t *testing.T) {
+	artifacts, store, siteID := newWPPluginUpdateServiceFixture(t)
+	now := time.Now().UTC()
+	if _, err := store.db.Exec(`UPDATE site_wp_inventory_state SET last_success_at=? WHERE site_id=?`, wpUpdateDBTime(now), siteID); err != nil {
+		t.Fatal(err)
+	}
+	source := writePluginPackageFixture(t, "sample", "sample.php", "1.1.0")
+	digest, _, err := hashRegularFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockedDuringDownload := true
+	service := &WPPluginUpdateService{
+		db: store.db, store: store, artifacts: artifacts, confirmations: newWPPluginConfirmationStore(),
+		fetchOffer: func(context.Context, string) (wpPluginOffer, error) {
+			return wpPluginOffer{Slug: "sample", Version: "1.1.0", DownloadURL: "https://downloads.wordpress.org/plugin/sample.1.1.0.zip"}, nil
+		},
+		download: func(context.Context, string, string) (string, string, error) {
+			// The site lock only needs to protect the instant it takes to write the
+			// task row; a slow download (this callback) must run after it's released,
+			// otherwise a concurrent restore request would be blocked for no reason
+			// for as long as the download takes.
+			lockedDuringDownload = SiteOpLocked(siteID)
+			return source, digest, nil
+		},
+		now: func() time.Time { return now },
+	}
+	preview, err := service.Preview(context.Background(), siteID, "admin", "sample/sample.php")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Confirm(context.Background(), siteID, "admin", "sample/sample.php", preview.ConfirmationToken, "1.1.0", "fresh"); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if lockedDuringDownload {
+		t.Fatal("site lock was still held while download() ran; it must be released right after the task row is created")
+	}
+	if SiteOpLocked(siteID) {
+		t.Fatal("site lock should not still be held after Confirm() returns")
+	}
+}
+
 func TestWPPluginUpdateServiceConfirmBlockedByActiveSiteRestore(t *testing.T) {
 	artifacts, store, siteID := newWPPluginUpdateServiceFixture(t)
 	now := time.Now().UTC()

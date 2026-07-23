@@ -104,13 +104,35 @@ func (h *WPUpdateBackupHandler) Restore(c *gin.Context) {
 	}
 	root := filepath.Join(filepath.Clean(h.BackupDir), "wp-updates")
 	cleanPath := filepath.Clean(path)
-	if !filepath.IsAbs(cleanPath) || !backupPathWithin(root, cleanPath) ||
-		!validUpdateBackupSHA(expectedSHA) || !regularUpdateBackup(cleanPath, expectedSHA) {
+	if !filepath.IsAbs(cleanPath) || !backupPathWithin(root, cleanPath) || !validUpdateBackupSHA(expectedSHA) {
 		wpUpdateBackupError(c, http.StatusConflict, "wp_update_backup.file_unavailable")
 		return
 	}
+	// Acquire the site lock before the (potentially slow, multi-GB) file hash below
+	// rather than after: an update's Confirm() only holds this same lock for the
+	// instant it takes to write its task row, so leaving an expensive step between
+	// our own active-task check and lock acquisition would reopen a window for a
+	// fresh update to be confirmed in between. Re-checking "active" once we hold
+	// the lock makes the whole check-then-act sequence atomic against a concurrent
+	// Confirm(), which also cannot proceed while this lock is held.
 	if !executor.TryAcquireSiteOpLock(siteID, "wp_update_restore") {
 		wpUpdateBackupError(c, http.StatusConflict, "wp_update_backup.update_active")
+		return
+	}
+	if err := database.GetDB().QueryRowContext(c.Request.Context(), `SELECT COUNT(*) FROM wp_update_tasks
+		WHERE site_id=? AND status IN ('preparing','queued','running')`, siteID).Scan(&active); err != nil {
+		executor.ReleaseSiteOpLock(siteID)
+		wpUpdateBackupError(c, http.StatusInternalServerError, "wp_update_backup.restore_failed")
+		return
+	}
+	if active != 0 {
+		executor.ReleaseSiteOpLock(siteID)
+		wpUpdateBackupError(c, http.StatusConflict, "wp_update_backup.update_active")
+		return
+	}
+	if !regularUpdateBackup(cleanPath, expectedSHA) {
+		executor.ReleaseSiteOpLock(siteID)
+		wpUpdateBackupError(c, http.StatusConflict, "wp_update_backup.file_unavailable")
 		return
 	}
 	task := executor.GlobalQueue.Enqueue(executor.TaskRestoreBackup, &executor.RestoreBackupPayload{

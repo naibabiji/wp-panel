@@ -132,7 +132,7 @@ func (s *WPPluginUpdateService) Confirm(ctx context.Context, siteID int, usernam
 		candidate.targetVersion != record.targetVersion || wpConfigHasUserFileModsLock(candidate.webRoot) {
 		return models.WPPluginUpdateTask{}, ErrWPPluginUpdateConflict
 	}
-	if SiteOpLocked(siteID) {
+	if !TryAcquireSiteOpLock(siteID, "wp_plugin_update") {
 		return models.WPPluginUpdateTask{}, ErrWPPluginUpdateSiteBusy
 	}
 	task, err := s.store.createPluginManualPlan(ctx, WPUpdatePlan{
@@ -140,6 +140,9 @@ func (s *WPPluginUpdateService) Confirm(ctx context.Context, siteID int, usernam
 		PackageSource: "wordpress.org", DownloadURL: record.downloadURL,
 		DatabaseBackupMode: backupMode, DatabaseBackupSourceID: sourceID,
 	}, s.now().UTC())
+	// See wp_core_update_service.go Confirm() for why the lock is released
+	// immediately after this write instead of held through the download/seal.
+	ReleaseSiteOpLock(siteID)
 	if err != nil {
 		return models.WPPluginUpdateTask{}, ErrWPPluginUpdateConflict
 	}

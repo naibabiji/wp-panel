@@ -142,12 +142,18 @@ func (s *WPCoreUpdateService) Confirm(ctx context.Context, siteID int, username,
 		candidate.targetVersion != record.targetVersion || candidate.locale != record.locale || wpConfigHasUserFileModsLock(candidate.webRoot) {
 		return models.WPCoreUpdateTask{}, ErrWPCoreUpdateConflict
 	}
-	if SiteOpLocked(siteID) {
+	if !TryAcquireSiteOpLock(siteID, "wp_core_update") {
 		return models.WPCoreUpdateTask{}, ErrWPCoreUpdateSiteBusy
 	}
 	task, err := s.store.createCoreManualPlan(ctx, WPUpdatePlan{SiteID: siteID, CurrentVersion: record.currentVersion,
 		TargetVersion: record.targetVersion, PackageSource: "wordpress.org", DownloadURL: record.downloadURL,
 		DatabaseBackupMode: backupMode, DatabaseBackupSourceID: sourceID}, s.now().UTC())
+	// The task row itself (status='preparing', already inside the active set that
+	// wp_update_backup.go's restore path checks) is now the durable "this site is
+	// busy" signal, so the lock only needs to be held long enough to make that
+	// write atomic with the check above — not for the rest of this (possibly slow)
+	// download/seal work.
+	ReleaseSiteOpLock(siteID)
 	if err != nil {
 		return models.WPCoreUpdateTask{}, ErrWPCoreUpdateConflict
 	}

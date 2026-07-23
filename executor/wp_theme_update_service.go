@@ -132,7 +132,7 @@ func (s *WPThemeUpdateService) Confirm(ctx context.Context, siteID int, username
 		candidate.currentTheme != record.currentTheme || wpConfigHasUserFileModsLock(candidate.webRoot) {
 		return models.WPThemeUpdateTask{}, ErrWPThemeUpdateConflict
 	}
-	if SiteOpLocked(siteID) {
+	if !TryAcquireSiteOpLock(siteID, "wp_theme_update") {
 		return models.WPThemeUpdateTask{}, ErrWPThemeUpdateSiteBusy
 	}
 	task, err := s.store.createThemeManualPlan(ctx, WPUpdatePlan{
@@ -140,6 +140,9 @@ func (s *WPThemeUpdateService) Confirm(ctx context.Context, siteID int, username
 		PackageSource: "wordpress.org", DownloadURL: record.downloadURL,
 		DatabaseBackupMode: backupMode, DatabaseBackupSourceID: sourceID,
 	}, s.now().UTC())
+	// See wp_core_update_service.go Confirm() for why the lock is released
+	// immediately after this write instead of held through the download/seal.
+	ReleaseSiteOpLock(siteID)
 	if err != nil {
 		return models.WPThemeUpdateTask{}, ErrWPThemeUpdateConflict
 	}
