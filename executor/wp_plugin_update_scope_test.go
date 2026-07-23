@@ -103,6 +103,61 @@ func TestWPPluginUpdateScopeInspectsUnitState(t *testing.T) {
 	}
 }
 
+func TestWPPluginUpdateScopeWaitsForCollectedUnitBeforeReuse(t *testing.T) {
+	runs, inspections := 0, 0
+	run := func(_ context.Context, command string, _ ...string) ([]byte, error) {
+		if strings.HasSuffix(command, "systemd-run") {
+			runs++
+			return nil, nil
+		}
+		inspections++
+		if inspections == 1 {
+			return []byte("LoadState=loaded\nActiveState=inactive\nSubState=dead\nResult=success\nMainPID=0\n"), nil
+		}
+		return []byte("LoadState=not-found\nActiveState=inactive\nSubState=dead\nResult=success\nMainPID=0\n"), nil
+	}
+	scope, _ := newWPPluginUpdateScope("/usr/bin/systemd-run", "/usr/bin/systemctl", "/usr/sbin/runuser", run)
+	taskID := "wpu_0123456789abcdef0123456789abcdef"
+	if err := scope.Run(context.Background(), taskID, "first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := scope.Run(context.Background(), taskID, "second"); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 2 || inspections != 2 {
+		t.Fatalf("runs=%d inspections=%d", runs, inspections)
+	}
+}
+
+func TestWPPluginUpdateScopeWaitsForCollectedUnitAfterNonzeroExit(t *testing.T) {
+	runs, inspections := 0, 0
+	run := func(_ context.Context, command string, _ ...string) ([]byte, error) {
+		if strings.HasSuffix(command, "systemd-run") {
+			runs++
+			if runs == 1 {
+				return nil, errors.New("runner exited nonzero")
+			}
+			return nil, nil
+		}
+		inspections++
+		if inspections == 1 {
+			return []byte("LoadState=loaded\nActiveState=failed\nSubState=failed\nResult=exit-code\nMainPID=0\n"), nil
+		}
+		return []byte("LoadState=not-found\nActiveState=inactive\nSubState=dead\nResult=success\nMainPID=0\n"), nil
+	}
+	scope, _ := newWPPluginUpdateScope("/usr/bin/systemd-run", "/usr/bin/systemctl", "/usr/sbin/runuser", run)
+	taskID := "wpu_0123456789abcdef0123456789abcdef"
+	if err := scope.Run(context.Background(), taskID, "first"); err == nil || errors.Is(err, errWPPluginScopeSupervisionUncertain) {
+		t.Fatalf("first error=%v", err)
+	}
+	if err := scope.Run(context.Background(), taskID, "second"); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 2 || inspections != 2 {
+		t.Fatalf("runs=%d inspections=%d", runs, inspections)
+	}
+}
+
 func TestWPPluginUpdateJournalAcceptsOnlyFixedCompleteCheckpoints(t *testing.T) {
 	taskDir := t.TempDir()
 	name, err := createWPPluginUpdateJournal(taskDir, os.Getuid(), os.Getgid())

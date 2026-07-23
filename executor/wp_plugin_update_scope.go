@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -15,6 +16,7 @@ const (
 	wpPluginScopeRuntime = 9 * time.Minute
 	wpPluginScopeStop    = 10 * time.Second
 	wpPluginScopePoll    = 250 * time.Millisecond
+	wpPluginScopeOutput  = 64 << 10
 )
 
 var errWPPluginScopeSupervisionUncertain = errors.New("plugin update scope supervision uncertain")
@@ -34,25 +36,53 @@ type wpPluginUpdateScope struct {
 	systemctl  string
 	runnerPath string
 	run        wpPluginScopeCommand
+	mu         sync.Mutex
+	completed  map[string]bool
 }
 
 func newWPPluginUpdateScope(systemdRun, systemctl, runnerPath string, run wpPluginScopeCommand) (*wpPluginUpdateScope, error) {
 	if !filepath.IsAbs(systemdRun) || !filepath.IsAbs(systemctl) || !filepath.IsAbs(runnerPath) || run == nil {
 		return nil, errors.New("invalid plugin update scope")
 	}
-	return &wpPluginUpdateScope{systemdRun: systemdRun, systemctl: systemctl, runnerPath: runnerPath, run: run}, nil
+	return &wpPluginUpdateScope{systemdRun: systemdRun, systemctl: systemctl, runnerPath: runnerPath, run: run, completed: map[string]bool{}}, nil
 }
 
 func newDefaultWPPluginUpdateScope(runnerPath string) (*wpPluginUpdateScope, error) {
-	return newWPPluginUpdateScope("/usr/bin/systemd-run", "/usr/bin/systemctl", runnerPath, func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, name, args...).CombinedOutput()
-	})
+	return newWPPluginUpdateScope("/usr/bin/systemd-run", "/usr/bin/systemctl", runnerPath, runWPPluginScopeCommand)
+}
+
+func runWPPluginScopeCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	stdout := newCountingSink(wpPluginScopeOutput, true)
+	stderr := newCountingSink(wpPluginScopeOutput, false)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	err := cmd.Run()
+	_, stdoutExceeded, raw := stdout.snapshot()
+	_, stderrExceeded, _ := stderr.snapshot()
+	if stdoutExceeded || stderrExceeded {
+		return nil, errors.New("plugin update scope output exceeded")
+	}
+	return raw, err
 }
 
 func (s *wpPluginUpdateScope) Run(ctx context.Context, taskID string, runnerArgs ...string) error {
 	unit, err := wpPluginUpdateUnitName(taskID)
 	if err != nil || len(runnerArgs) == 0 {
 		return errors.New("invalid plugin update scope request")
+	}
+	s.mu.Lock()
+	previousCompleted := s.completed[taskID]
+	s.mu.Unlock()
+	if previousCompleted {
+		waitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), wpPluginUpdateControlTimeout)
+		err := s.waitCollected(waitCtx, taskID)
+		cancel()
+		if err != nil {
+			return err
+		}
+		s.mu.Lock()
+		delete(s.completed, taskID)
+		s.mu.Unlock()
 	}
 	args := []string{
 		"--quiet", "--wait", "--collect", "--unit=" + unit,
@@ -72,9 +102,38 @@ func (s *wpPluginUpdateScope) Run(ctx context.Context, taskID string, runnerArgs
 		if waitErr := s.waitInactive(waitCtx, taskID); waitErr != nil {
 			return errWPPluginScopeSupervisionUncertain
 		}
+		s.markCompleted(taskID)
 		return errors.New("plugin update scope failed")
 	}
+	s.markCompleted(taskID)
 	return nil
+}
+
+func (s *wpPluginUpdateScope) markCompleted(taskID string) {
+	s.mu.Lock()
+	s.completed[taskID] = true
+	s.mu.Unlock()
+}
+
+func (s *wpPluginUpdateScope) waitCollected(ctx context.Context, taskID string) error {
+	ticker := time.NewTicker(wpPluginScopePoll)
+	defer ticker.Stop()
+	for {
+		state, err := s.Inspect(ctx, taskID)
+		if err == nil {
+			if state.LoadState == "not-found" {
+				return nil
+			}
+			if state.ActiveState == "active" || state.ActiveState == "activating" || state.ActiveState == "reloading" {
+				return errWPPluginScopeSupervisionUncertain
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return errors.New("plugin update scope was not collected")
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *wpPluginUpdateScope) waitInactive(ctx context.Context, taskID string) error {
