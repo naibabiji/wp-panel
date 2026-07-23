@@ -194,6 +194,32 @@ func TestWordPressHTTPClientsUseSeparateMetadataAndPackageBudgets(t *testing.T) 
 	}
 }
 
+func TestAllowedWPUpdateExternalURL(t *testing.T) {
+	for raw, want := range map[string]bool{
+		// Commercial download endpoints (no .zip suffix) must be permitted.
+		// Elementor Pro serves packages from such URLs and the archive is
+		// validated later as a zip, so the path shape is not constrained here.
+		"https://example.com/v2/package_download/abc/package_download": true,
+		"https://example.com/elementor-pro-4.2.0.zip":                 true,
+		// WordPress.org must never be treated as an external vendor.
+		"https://downloads.wordpress.org/plugin/foo.1.0.0.zip": false,
+		"https://wordpress.org/x":                                     false,
+		// Plain HTTP, fragments, and literal/private IPs are rejected.
+		"http://example.com/x":       false,
+		"https://example.com/x#f":    false,
+		"https://10.0.0.1/x":        false,
+		"https://169.254.169.254/x": false,
+	} {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := allowedWPUpdateExternalURL(u); got != want {
+			t.Errorf("allowedWPUpdateExternalURL(%q) = %v, want %v", raw, got, want)
+		}
+	}
+}
+
 func TestAllowedWordPressURL(t *testing.T) {
 	for raw, want := range map[string]bool{
 		"https://wordpress.org/latest.zip":                     true,

@@ -315,14 +315,16 @@ func allowedWordPressURL(u *url.URL) bool {
 
 // allowedWPUpdateExternalURL permits package downloads from a plugin/theme
 // vendor's own host (e.g. a commercial plugin whose update is served by the
-// vendor, not WordPress.org). It requires HTTPS, a .zip path, and that the
-// resolved IP is not a loopback/private/link-local address. This is the
-// SSRF containment for site-sourced update offers.
+// vendor, not WordPress.org). It requires HTTPS and that the resolved IP is
+// not a loopback/private/link-local/unspecified address. Unlike WordPress.org
+// packages, vendor download URLs are often API endpoints (e.g. Elementor Pro's
+// https://plugin-downloads.elementor.com/v2/package_download/<token>/package_download)
+// whose path does not end in .zip; the actual archive is validated later by
+// snapshotValidateAndSealPluginPackage, so a .zip path suffix is not required
+// here. SSRF containment rests on the dial-time IP check in
+// wpPluginUpdateDialContext plus that content validation, not on the URL shape.
 func allowedWPUpdateExternalURL(u *url.URL) bool {
 	if u == nil || u.Scheme != "https" || (u.Port() != "" && u.Port() != "443") || u.User != nil || u.Fragment != "" {
-		return false
-	}
-	if !strings.HasSuffix(u.EscapedPath(), ".zip") {
 		return false
 	}
 	host := strings.ToLower(u.Hostname())
