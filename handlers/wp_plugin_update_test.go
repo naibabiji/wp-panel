@@ -58,6 +58,28 @@ func TestWPPluginUpdateUnavailableServiceReturns503(t *testing.T) {
 	}
 }
 
+type fakeWPPluginUpdateNotInRepositoryService struct{ fakeWPPluginUpdateAPIService }
+
+func (f *fakeWPPluginUpdateNotInRepositoryService) Preview(context.Context, int, string, string) (models.WPPluginUpdatePreview, error) {
+	return models.WPPluginUpdatePreview{}, executor.ErrWPPluginUpdateNotInRepository
+}
+
+func TestWPPluginUpdateNotInRepositoryReturns409WithSpecificMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set("session_username", "admin"); c.Next() })
+	r.GET("/api/websites/:id/wp-plugin-update/preview", (&WPPluginUpdateHandler{Service: &fakeWPPluginUpdateNotInRepositoryService{}}).Preview)
+	req := httptest.NewRequest(http.MethodGet, "/api/websites/1/wp-plugin-update/preview?component_key=sample%2Fsample.php", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status=%d want=%d body=%s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "WordPress.org") {
+		t.Fatalf("body should explain the plugin is not in the official repository: %s", rec.Body.String())
+	}
+}
+
 func TestWPPluginUpdateConfirmRejectsUnknownJSONAndAcceptsExactBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service := &fakeWPPluginUpdateAPIService{}

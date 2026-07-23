@@ -132,6 +132,8 @@ func wpPluginUpdateError(c *gin.Context, err error) {
 		status, key = http.StatusConflict, "wp_plugin_update.site_busy_restore"
 	case errors.Is(err, executor.ErrWPPluginUpdateBusy):
 		status, key = http.StatusTooManyRequests, "wp_plugin_update.busy"
+	case errors.Is(err, executor.ErrWPPluginUpdateNotInRepository):
+		status, key = http.StatusConflict, "wp_plugin_update.not_in_repository"
 	case errors.Is(err, executor.ErrWPPluginUpdateUnavailable):
 		status, key = http.StatusServiceUnavailable, "wp_plugin_update.unavailable"
 	}

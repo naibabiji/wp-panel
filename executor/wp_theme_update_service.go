@@ -19,12 +19,15 @@ import (
 )
 
 var (
-	ErrWPThemeUpdateInvalid     = errors.New("invalid theme update request")
-	ErrWPThemeUpdateNotFound    = errors.New("theme update resource not found")
-	ErrWPThemeUpdateConflict    = errors.New("theme update request conflict")
-	ErrWPThemeUpdateBusy        = errors.New("theme update service busy")
-	ErrWPThemeUpdateUnavailable = errors.New("theme update upstream unavailable")
-	ErrWPThemeUpdateSiteBusy    = errors.New("theme update blocked by active site restore")
+	ErrWPThemeUpdateInvalid         = errors.New("invalid theme update request")
+	ErrWPThemeUpdateNotFound        = errors.New("theme update resource not found")
+	ErrWPThemeUpdateConflict        = errors.New("theme update request conflict")
+	ErrWPThemeUpdateBusy            = errors.New("theme update service busy")
+	ErrWPThemeUpdateUnavailable     = errors.New("theme update upstream unavailable")
+	ErrWPThemeUpdateSiteBusy        = errors.New("theme update blocked by active site restore")
+	ErrWPThemeUpdateNotInRepository = errors.New("theme not available in the official WordPress.org repository")
+
+	errWPThemeOfferNotFound = errors.New("theme offer not found")
 )
 
 type wpThemeOffer struct {
@@ -81,6 +84,9 @@ func (s *WPThemeUpdateService) Preview(ctx context.Context, siteID int, username
 	offer, err := s.fetchOffer(ctx, componentKey)
 	if err != nil {
 		log.Printf("主题更新预览失败 site=%d domain=%s component=%s: 查询 WordPress.org 主题信息失败: %v", siteID, candidate.domain, componentKey, err)
+		if errors.Is(err, errWPThemeOfferNotFound) {
+			return models.WPThemeUpdatePreview{}, ErrWPThemeUpdateNotInRepository
+		}
 		return models.WPThemeUpdatePreview{}, ErrWPThemeUpdateUnavailable
 	}
 	if offer.Slug != componentKey || offer.Version != candidate.targetVersion ||
@@ -294,6 +300,10 @@ func defaultWPThemeOfferFetcher(client *http.Client) wpThemeOfferFetcher {
 			return wpThemeOffer{}, err
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound && resp.Request != nil && resp.Request.URL.Scheme == "https" &&
+			resp.Request.URL.Hostname() == "api.wordpress.org" {
+			return wpThemeOffer{}, errWPThemeOfferNotFound
+		}
 		if resp.StatusCode != http.StatusOK || resp.Request == nil || resp.Request.URL.Scheme != "https" ||
 			resp.Request.URL.Hostname() != "api.wordpress.org" {
 			return wpThemeOffer{}, errors.New("theme offer unavailable")

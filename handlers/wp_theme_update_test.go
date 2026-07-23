@@ -54,6 +54,28 @@ func TestWPThemeUpdateConfirmRejectsUnknownJSONAndAcceptsRiskToken(t *testing.T)
 	}
 }
 
+type fakeWPThemeUpdateNotInRepositoryService struct{ fakeWPThemeUpdateAPIService }
+
+func (f *fakeWPThemeUpdateNotInRepositoryService) Preview(context.Context, int, string, string) (models.WPThemeUpdatePreview, error) {
+	return models.WPThemeUpdatePreview{}, executor.ErrWPThemeUpdateNotInRepository
+}
+
+func TestWPThemeUpdateNotInRepositoryReturns409WithSpecificMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set("session_username", "admin"); c.Next() })
+	r.GET("/api/websites/:id/wp-theme-update/preview", (&WPThemeUpdateHandler{Service: &fakeWPThemeUpdateNotInRepositoryService{}}).Preview)
+	req := httptest.NewRequest(http.MethodGet, "/api/websites/1/wp-theme-update/preview?component_key=sample-theme", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status=%d want=%d body=%s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "WordPress.org") {
+		t.Fatalf("body should explain the theme is not in the official repository: %s", rec.Body.String())
+	}
+}
+
 func TestWPThemeUpdateUnavailableServiceReturns503(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

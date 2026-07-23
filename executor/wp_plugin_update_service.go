@@ -20,12 +20,15 @@ import (
 )
 
 var (
-	ErrWPPluginUpdateInvalid     = errors.New("invalid plugin update request")
-	ErrWPPluginUpdateNotFound    = errors.New("plugin update resource not found")
-	ErrWPPluginUpdateConflict    = errors.New("plugin update request conflict")
-	ErrWPPluginUpdateBusy        = errors.New("plugin update service busy")
-	ErrWPPluginUpdateUnavailable = errors.New("plugin update upstream unavailable")
-	ErrWPPluginUpdateSiteBusy    = errors.New("plugin update blocked by active site restore")
+	ErrWPPluginUpdateInvalid         = errors.New("invalid plugin update request")
+	ErrWPPluginUpdateNotFound        = errors.New("plugin update resource not found")
+	ErrWPPluginUpdateConflict        = errors.New("plugin update request conflict")
+	ErrWPPluginUpdateBusy            = errors.New("plugin update service busy")
+	ErrWPPluginUpdateUnavailable     = errors.New("plugin update upstream unavailable")
+	ErrWPPluginUpdateSiteBusy        = errors.New("plugin update blocked by active site restore")
+	ErrWPPluginUpdateNotInRepository = errors.New("plugin not available in the official WordPress.org repository")
+
+	errWPPluginOfferNotFound = errors.New("plugin offer not found")
 )
 
 type wpPluginOffer struct {
@@ -82,6 +85,9 @@ func (s *WPPluginUpdateService) Preview(ctx context.Context, siteID int, usernam
 	offer, err := s.fetchOffer(ctx, slug)
 	if err != nil {
 		log.Printf("插件更新预览失败 site=%d domain=%s component=%s: 查询 WordPress.org 插件信息失败: %v", siteID, candidate.domain, componentKey, err)
+		if errors.Is(err, errWPPluginOfferNotFound) {
+			return models.WPPluginUpdatePreview{}, ErrWPPluginUpdateNotInRepository
+		}
 		return models.WPPluginUpdatePreview{}, ErrWPPluginUpdateUnavailable
 	}
 	if offer.Slug != slug || offer.Version != candidate.targetVersion ||
@@ -332,6 +338,10 @@ func defaultWPPluginOfferFetcher(client *http.Client) wpPluginOfferFetcher {
 			return wpPluginOffer{}, err
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound && resp.Request != nil && resp.Request.URL.Scheme == "https" &&
+			resp.Request.URL.Hostname() == "api.wordpress.org" {
+			return wpPluginOffer{}, errWPPluginOfferNotFound
+		}
 		if resp.StatusCode != http.StatusOK || resp.Request == nil || resp.Request.URL.Scheme != "https" ||
 			resp.Request.URL.Hostname() != "api.wordpress.org" {
 			return wpPluginOffer{}, errors.New("plugin offer unavailable")

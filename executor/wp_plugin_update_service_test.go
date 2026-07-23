@@ -92,6 +92,24 @@ func TestWPPluginUpdateServiceConfirmReleasesSiteLockBeforeDownload(t *testing.T
 	}
 }
 
+func TestWPPluginUpdateServicePreviewReportsPluginNotInRepository(t *testing.T) {
+	artifacts, store, siteID := newWPPluginUpdateServiceFixture(t)
+	now := time.Now().UTC()
+	if _, err := store.db.Exec(`UPDATE site_wp_inventory_state SET last_success_at=? WHERE site_id=?`, wpUpdateDBTime(now), siteID); err != nil {
+		t.Fatal(err)
+	}
+	service := &WPPluginUpdateService{
+		db: store.db, store: store, artifacts: artifacts, confirmations: newWPPluginConfirmationStore(),
+		fetchOffer: func(context.Context, string) (wpPluginOffer, error) {
+			return wpPluginOffer{}, errWPPluginOfferNotFound
+		},
+		now: func() time.Time { return now },
+	}
+	if _, err := service.Preview(context.Background(), siteID, "admin", "sample/sample.php"); !errors.Is(err, ErrWPPluginUpdateNotInRepository) {
+		t.Fatalf("preview error = %v, want ErrWPPluginUpdateNotInRepository", err)
+	}
+}
+
 func TestWPPluginUpdateServiceConfirmBlockedByActiveSiteRestore(t *testing.T) {
 	artifacts, store, siteID := newWPPluginUpdateServiceFixture(t)
 	now := time.Now().UTC()
