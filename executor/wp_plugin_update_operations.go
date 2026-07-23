@@ -40,6 +40,7 @@ type wpPluginSystemOperations struct {
 	probe        wpCoreHomeProber
 	lint         wpPluginLinter
 	space        wpPluginSpaceChecker
+	supervisor   wpPluginUpdateSupervisor
 	mu           sync.Mutex
 	sessions     map[string]*wpPluginPreparedSession
 }
@@ -61,11 +62,20 @@ func newDefaultWPPluginSystemOperations(store *wpUpdateStore, wwwRoot string) (*
 	if err != nil {
 		return nil, err
 	}
-	return newWPPluginSystemOperations(store,
+	operations, err := newWPPluginSystemOperations(store,
 		func(ctx context.Context, execution wpPluginUpdateExecution) (wpPluginRunnerSessionAPI, error) {
 			return runner.Prepare(ctx, execution)
 		},
 		defaultWPCoreDatabaseRestorer, defaultWPPluginFilesRestorer, defaultWPCoreHomeProber(nil), defaultWPPluginLinter, defaultWPPluginSpaceChecker)
+	if err != nil {
+		return nil, err
+	}
+	supervisor, ok := runner.opts.scope.(*wpPluginUpdateScope)
+	if !ok {
+		return nil, errors.New("plugin update supervisor unavailable")
+	}
+	operations.supervisor = supervisor
+	return operations, nil
 }
 
 func (o *wpPluginSystemOperations) Prepare(ctx context.Context, execution wpPluginUpdateExecution) (bool, error) {

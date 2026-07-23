@@ -119,6 +119,24 @@ func (f *fakeWPCoreWorkerExecutor) Execute(ctx context.Context, id, owner string
 	return f.store.markSuccess(ctx, id, owner, time.Now().UTC())
 }
 
+type unusedWPPluginWorkerTasks struct{}
+
+func (unusedWPPluginWorkerTasks) validateAndClaimPluginUpdate(context.Context, string, string, string) (WPUpdateTask, error) {
+	return WPUpdateTask{}, context.Canceled
+}
+func (unusedWPPluginWorkerTasks) preparePluginBackups(context.Context, string, string) error {
+	return context.Canceled
+}
+
+type fakeWPPluginWorkerSupervisor struct {
+	state wpPluginScopeState
+	err   error
+}
+
+func (f fakeWPPluginWorkerSupervisor) Inspect(context.Context, string) (wpPluginScopeState, error) {
+	return f.state, f.err
+}
+
 func TestWPCoreUpdateWorkerClaimsBacksUpAndExecutes(t *testing.T) {
 	store, siteID := newWPUpdateStoreTest(t)
 	task := createAndSealUpdateTask(t, store, siteID, time.Now().Add(-time.Minute))
@@ -138,6 +156,141 @@ func TestWPCoreUpdateWorkerClaimsBacksUpAndExecutes(t *testing.T) {
 	executor.mu.Unlock()
 	if len(backupCalls) != 1 || len(executorCalls) != 1 {
 		t.Fatalf("backup calls=%v executor calls=%v", backupCalls, executorCalls)
+	}
+}
+
+func TestWPCoreUpdateWorkerClaimsBacksUpAndExecutesPlugin(t *testing.T) {
+	service, store, task := preparePluginSnapshotPlan(t)
+	webRoot := filepath.Join(t.TempDir(), "wordpress")
+	pluginRoot := filepath.Join(webRoot, "wp-content", "plugins", "sample")
+	if err := os.MkdirAll(pluginRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginRoot, "sample.php"), []byte("<?php\n/*\nPlugin Name: Sample\nVersion: 1.0.0\n*/"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE websites SET web_root=?,db_name='wordpress_db' WHERE id=?`, webRoot, task.SiteID); err != nil {
+		t.Fatal(err)
+	}
+	source := writePluginPackageFixture(t, "sample", "sample.php", "1.1.0")
+	digest, _, err := hashRegularFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _, err = service.snapshotValidateAndSealPluginPackage(context.Background(), task.ID, source, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coreBackups := &fakeWPCoreWorkerBackups{store: store}
+	coreExecutor := &fakeWPCoreWorkerExecutor{store: store}
+	pluginExecutor := &fakeWPCoreWorkerExecutor{store: store}
+	worker, err := newWPCoreUpdateWorker(wpCoreUpdateWorkerOptions{
+		store: store, backups: coreBackups, executor: coreExecutor,
+		observeVersion: func(context.Context, int) (string, error) { return "7.0.1", nil },
+		pluginTasks:    service, pluginExecutor: pluginExecutor,
+		pluginSupervisor: fakeWPPluginWorkerSupervisor{state: wpPluginScopeState{
+			LoadState: "not-found", ActiveState: "inactive", SubState: "dead",
+		}},
+		observePlugin: func(ctx context.Context, task WPUpdateTask) (string, error) {
+			return observeWPPluginUpdateVersion(ctx, store, task)
+		},
+		owner: "test-plugin-worker", pollInterval: 5 * time.Millisecond,
+		heartbeatInterval: 20 * time.Millisecond, sweepInterval: 20 * time.Millisecond, now: time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitWPUpdateTaskStatus(t, store, task.ID, wpUpdateSuccess)
+	stopWPCoreUpdateWorker(t, worker)
+	if len(coreBackups.calls) != 0 || len(coreExecutor.calls) != 0 || len(pluginExecutor.calls) != 1 {
+		t.Fatalf("core backup=%v core executor=%v plugin executor=%v", coreBackups.calls, coreExecutor.calls, pluginExecutor.calls)
+	}
+	var backups int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM wp_update_task_backups WHERE task_id=?`, task.ID).Scan(&backups); err != nil || backups != 2 {
+		t.Fatalf("backups=%d err=%v", backups, err)
+	}
+}
+
+func TestWPCoreUpdateWorkerRestartDefersActivePluginScopeRecovery(t *testing.T) {
+	service, store, task, _ := prepareRunningPluginArtifactTask(t, fakeUpdateDump)
+	worker := newPluginRecoveryTestWorker(t, store, service, fakeWPPluginWorkerSupervisor{state: wpPluginScopeState{
+		LoadState: "loaded", ActiveState: "active", SubState: "running", MainPID: 123,
+	}})
+	if err := worker.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(40 * time.Millisecond)
+	stopWPCoreUpdateWorker(t, worker)
+	current, err := store.getTask(context.Background(), task.ID)
+	if err != nil || current.Status != wpUpdateRunning || current.LeaseOwner != "worker-plugin" {
+		t.Fatalf("active supervised task was recovered: task=%+v err=%v", current, err)
+	}
+}
+
+func TestWPCoreUpdateWorkerRestartRecoversStoppedPluginScope(t *testing.T) {
+	service, store, task, _ := prepareRunningPluginArtifactTask(t, fakeUpdateDump)
+	worker := newPluginRecoveryTestWorker(t, store, service, fakeWPPluginWorkerSupervisor{state: wpPluginScopeState{
+		LoadState: "not-found", ActiveState: "inactive", SubState: "dead",
+	}})
+	if err := worker.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitWPUpdateTaskStatus(t, store, task.ID, wpUpdateInterrupted)
+	stopWPCoreUpdateWorker(t, worker)
+}
+
+func newPluginRecoveryTestWorker(t *testing.T, store *wpUpdateStore, service wpPluginUpdateTaskService, supervisor wpPluginUpdateSupervisor) *WPCoreUpdateWorker {
+	t.Helper()
+	worker, err := newWPCoreUpdateWorker(wpCoreUpdateWorkerOptions{
+		store:   store,
+		backups: &fakeWPCoreWorkerBackups{store: store}, executor: &fakeWPCoreWorkerExecutor{store: store},
+		observeVersion: func(context.Context, int) (string, error) { return "7.0.1", nil },
+		pluginTasks:    service, pluginExecutor: &fakeWPCoreWorkerExecutor{store: store},
+		observePlugin:    func(context.Context, WPUpdateTask) (string, error) { return "1.0.0", nil },
+		pluginSupervisor: supervisor,
+		owner:            "test-restart-worker", pollInterval: 5 * time.Millisecond,
+		heartbeatInterval: 20 * time.Millisecond, sweepInterval: 20 * time.Millisecond, now: time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return worker
+}
+
+func TestObserveWPPluginUpdateVersionRejectsSymlinkAndReadsHeader(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	webRoot := filepath.Join(t.TempDir(), "wordpress")
+	pluginRoot := filepath.Join(webRoot, "wp-content", "plugins", "sample")
+	if err := os.MkdirAll(pluginRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mainFile := filepath.Join(pluginRoot, "sample.php")
+	if err := os.WriteFile(mainFile, []byte("<?php\n/* Plugin Name: Sample\nVersion: 1.2.3 */"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE websites SET web_root=? WHERE id=?`, webRoot, siteID); err != nil {
+		t.Fatal(err)
+	}
+	task := WPUpdateTask{SiteID: siteID, ComponentType: "plugin", ComponentKey: "sample/sample.php"}
+	version, err := observeWPPluginUpdateVersion(context.Background(), store, task)
+	if err != nil || version != "1.2.3" {
+		t.Fatalf("version=%q err=%v", version, err)
+	}
+	target := filepath.Join(t.TempDir(), "outside.php")
+	if err := os.WriteFile(target, []byte("<?php /* Plugin Name: Outside Version: 9.9.9 */"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(mainFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, mainFile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := observeWPPluginUpdateVersion(context.Background(), store, task); err == nil {
+		t.Fatal("symlink plugin main file was observed")
 	}
 }
 
@@ -299,7 +452,13 @@ func newTestWPCoreUpdateWorker(t *testing.T, store *wpUpdateStore, backups wpCor
 	worker, err := newWPCoreUpdateWorker(wpCoreUpdateWorkerOptions{
 		store: store, backups: backups, executor: executor,
 		observeVersion: func(context.Context, int) (string, error) { return version, nil },
-		owner:          "test-core-worker", pollInterval: 5 * time.Millisecond,
+		pluginTasks:    unusedWPPluginWorkerTasks{},
+		pluginExecutor: &fakeWPCoreWorkerExecutor{store: store},
+		observePlugin:  func(context.Context, WPUpdateTask) (string, error) { return "", context.Canceled },
+		pluginSupervisor: fakeWPPluginWorkerSupervisor{state: wpPluginScopeState{
+			LoadState: "not-found", ActiveState: "inactive", SubState: "dead",
+		}},
+		owner: "test-core-worker", pollInterval: 5 * time.Millisecond,
 		heartbeatInterval: 20 * time.Millisecond, sweepInterval: 20 * time.Millisecond, now: time.Now,
 	})
 	if err != nil {

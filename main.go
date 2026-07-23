@@ -200,10 +200,10 @@ func main() {
 	if candidate, err := startWPCoreUpdateWorker(cfg, func(cfg *config.Config) (wpCoreUpdateWorkerLifecycle, error) {
 		return executor.NewWPCoreUpdateWorker(cfg)
 	}); err != nil {
-		log.Println("WordPress 核心更新后台任务未启动")
+		log.Println("WordPress 更新后台任务未启动")
 	} else {
 		coreUpdateWorker = candidate
-		log.Println("WordPress 核心更新后台任务已启动")
+		log.Println("WordPress 更新后台任务已启动")
 	}
 
 	collector.Start()

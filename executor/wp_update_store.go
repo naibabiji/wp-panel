@@ -388,6 +388,40 @@ func (s *wpUpdateStore) nextQueuedCoreUpdate(ctx context.Context) (WPUpdateTask,
 	return s.getTask(ctx, id)
 }
 
+func (s *wpUpdateStore) nextQueuedUpdateCandidates(ctx context.Context) ([]WPUpdateTask, error) {
+	rows, err := s.db.QueryContext(ctx, `WITH ranked AS (
+		SELECT id,requested_at,component_type,
+			ROW_NUMBER() OVER (PARTITION BY component_type ORDER BY requested_at,id) AS candidate_rank
+		FROM wp_update_tasks
+		WHERE status='queued' AND task_kind='update' AND component_type IN ('core','plugin')
+	)
+	SELECT id FROM ranked WHERE candidate_rank=1 ORDER BY requested_at,id`)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	tasks := make([]WPUpdateTask, 0, len(ids))
+	for _, id := range ids {
+		task, err := s.getTask(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, task)
+	}
+	return tasks, nil
+}
+
 func (s *wpUpdateStore) interruptOwned(ctx context.Context, id, owner, code string, now time.Time) (bool, error) {
 	if owner == "" || code == "" {
 		return false, errors.New("invalid update interruption")
@@ -426,8 +460,23 @@ func (s *wpUpdateStore) recoverAfterRestart(ctx context.Context, now time.Time) 
 }
 
 func (s *wpUpdateStore) recoverRunning(ctx context.Context, code string, now time.Time, allRunning bool) (int64, error) {
+	return s.recoverRunningComponent(ctx, code, now, allRunning, "")
+}
+
+func (s *wpUpdateStore) recoverCoreExpired(ctx context.Context, now time.Time) (int64, error) {
+	return s.recoverRunningComponent(ctx, "lease_expired", now, false, "core")
+}
+
+func (s *wpUpdateStore) recoverCoreAfterRestart(ctx context.Context, now time.Time) (int64, error) {
+	return s.recoverRunningComponent(ctx, "worker_restarted", now, true, "core")
+}
+
+func (s *wpUpdateStore) recoverRunningComponent(ctx context.Context, code string, now time.Time, allRunning bool, component string) (int64, error) {
 	if code == "" {
 		return 0, errors.New("invalid update recovery")
+	}
+	if component != "" && component != "core" {
+		return 0, errors.New("invalid update recovery component")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -439,11 +488,21 @@ func (s *wpUpdateStore) recoverRunning(ctx context.Context, code string, now tim
 		requires_attention=1,lease_owner='',lease_expires_at=NULL,finished_at=?,updated_at=?
 		WHERE status='running' AND lease_expires_at<=? RETURNING id`
 	queryArgs := []any{stamp, stamp, stamp}
+	if component == "core" {
+		query = `UPDATE wp_update_tasks SET status='interrupted_unknown',stage='interrupted',
+			requires_attention=1,lease_owner='',lease_expires_at=NULL,finished_at=?,updated_at=?
+			WHERE status='running' AND component_type='core' AND lease_expires_at<=? RETURNING id`
+	}
 	if allRunning {
 		query = `UPDATE wp_update_tasks SET status='interrupted_unknown',stage='interrupted',
 			requires_attention=1,lease_owner='',lease_expires_at=NULL,finished_at=?,updated_at=?
 			WHERE status='running' RETURNING id`
 		queryArgs = []any{stamp, stamp}
+		if component == "core" {
+			query = `UPDATE wp_update_tasks SET status='interrupted_unknown',stage='interrupted',
+				requires_attention=1,lease_owner='',lease_expires_at=NULL,finished_at=?,updated_at=?
+				WHERE status='running' AND component_type='core' RETURNING id`
+		}
 	}
 	rows, err := tx.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
@@ -470,6 +529,41 @@ func (s *wpUpdateStore) recoverRunning(ctx context.Context, code string, now tim
 		return 0, err
 	}
 	return int64(len(ids)), nil
+}
+
+func (s *wpUpdateStore) runningPluginTasks(ctx context.Context, now time.Time, expiredOnly bool) ([]WPUpdateTask, error) {
+	query := `SELECT id FROM wp_update_tasks WHERE status='running' AND component_type='plugin'`
+	args := []any{}
+	if expiredOnly {
+		query += ` AND lease_expires_at<=?`
+		args = append(args, wpUpdateDBTime(now))
+	}
+	query += ` ORDER BY id`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	tasks := make([]WPUpdateTask, 0, len(ids))
+	for _, id := range ids {
+		task, err := s.getTask(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, task)
+	}
+	return tasks, nil
 }
 
 func (s *wpUpdateStore) markSuccess(ctx context.Context, id, owner string, now time.Time) error {

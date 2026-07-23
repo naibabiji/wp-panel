@@ -186,13 +186,21 @@ func readWPComponentHeaders(zf *zip.File, names ...string) (map[string]string, e
 	if err != nil {
 		return nil, err
 	}
-	body, err := io.ReadAll(io.LimitReader(rc, wpComponentHeaderBytes))
+	headers, err := readWPComponentHeadersFromReader(rc, names...)
 	closeErr := rc.Close()
 	if err != nil {
 		return nil, err
 	}
 	if closeErr != nil {
 		return nil, closeErr
+	}
+	return headers, nil
+}
+
+func readWPComponentHeadersFromReader(reader io.Reader, names ...string) (map[string]string, error) {
+	body, err := io.ReadAll(io.LimitReader(reader, wpComponentHeaderBytes))
+	if err != nil {
+		return nil, err
 	}
 	text := strings.ReplaceAll(string(body), "\r", "\n")
 	headers := make(map[string]string, len(names))

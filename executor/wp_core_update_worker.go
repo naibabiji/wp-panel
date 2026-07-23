@@ -3,10 +3,12 @@ package executor
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"errors"
+	"io"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,11 +38,26 @@ type wpCoreUpdateTaskExecutor interface {
 
 type wpCoreUpdateVersionObserver func(context.Context, int) (string, error)
 
+type wpPluginUpdateTaskService interface {
+	validateAndClaimPluginUpdate(context.Context, string, string, string) (WPUpdateTask, error)
+	preparePluginBackups(context.Context, string, string) error
+}
+
+type wpPluginUpdateVersionObserver func(context.Context, WPUpdateTask) (string, error)
+
+type wpPluginUpdateSupervisor interface {
+	Inspect(context.Context, string) (wpPluginScopeState, error)
+}
+
 type WPCoreUpdateWorker struct {
 	store             *wpUpdateStore
 	backups           wpCoreUpdateBackupPreparer
 	executor          wpCoreUpdateTaskExecutor
 	observeVersion    wpCoreUpdateVersionObserver
+	pluginTasks       wpPluginUpdateTaskService
+	pluginExecutor    wpCoreUpdateTaskExecutor
+	observePlugin     wpPluginUpdateVersionObserver
+	pluginSupervisor  wpPluginUpdateSupervisor
 	owner             string
 	pollInterval      time.Duration
 	heartbeatInterval time.Duration
@@ -58,6 +75,10 @@ type wpCoreUpdateWorkerOptions struct {
 	backups           wpCoreUpdateBackupPreparer
 	executor          wpCoreUpdateTaskExecutor
 	observeVersion    wpCoreUpdateVersionObserver
+	pluginTasks       wpPluginUpdateTaskService
+	pluginExecutor    wpCoreUpdateTaskExecutor
+	observePlugin     wpPluginUpdateVersionObserver
+	pluginSupervisor  wpPluginUpdateSupervisor
 	owner             string
 	pollInterval      time.Duration
 	heartbeatInterval time.Duration
@@ -83,6 +104,14 @@ func NewWPCoreUpdateWorker(cfg *config.Config) (*WPCoreUpdateWorker, error) {
 	if err != nil {
 		return nil, errors.New("core update executor unavailable")
 	}
+	pluginOps, err := newDefaultWPPluginSystemOperations(store, filepath.Clean(cfg.Paths.WWWRoot))
+	if err != nil {
+		return nil, errors.New("plugin update operations unavailable")
+	}
+	pluginExecutor, err := newWPPluginUpdateExecutor(store, root, pluginOps)
+	if err != nil {
+		return nil, errors.New("plugin update executor unavailable")
+	}
 	owner, err := newWPCoreUpdateWorkerOwner()
 	if err != nil {
 		return nil, errors.New("core update worker identity unavailable")
@@ -91,6 +120,12 @@ func NewWPCoreUpdateWorker(cfg *config.Config) (*WPCoreUpdateWorker, error) {
 		store: store, backups: backups, executor: executor,
 		observeVersion: func(ctx context.Context, siteID int) (string, error) {
 			return observeWPCoreUpdateVersion(ctx, store, siteID)
+		},
+		pluginTasks:      backups,
+		pluginExecutor:   pluginExecutor,
+		pluginSupervisor: pluginOps.supervisor,
+		observePlugin: func(ctx context.Context, task WPUpdateTask) (string, error) {
+			return observeWPPluginUpdateVersion(ctx, store, task)
 		},
 		owner: owner, pollInterval: wpCoreUpdateWorkerPollInterval,
 		heartbeatInterval: wpCoreUpdateWorkerHeartbeatInterval,
@@ -126,14 +161,59 @@ func observeWPCoreUpdateVersion(ctx context.Context, store *wpUpdateStore, siteI
 	return identity.Version, nil
 }
 
+func observeWPPluginUpdateVersion(ctx context.Context, store *wpUpdateStore, task WPUpdateTask) (string, error) {
+	if store == nil || store.db == nil || task.SiteID <= 0 || task.ComponentType != "plugin" || !validWPPluginComponentKey(task.ComponentKey) {
+		return "", errors.New("invalid plugin update version observation")
+	}
+	var webRoot string
+	if err := store.db.QueryRowContext(ctx, `SELECT web_root FROM websites
+		WHERE id=? AND site_type='wordpress' AND status='active'`, task.SiteID).Scan(&webRoot); err != nil {
+		return "", errors.New("plugin update site unavailable")
+	}
+	webRoot, err := safeSiteWebRoot(webRoot)
+	if err != nil {
+		return "", errors.New("plugin update site unavailable")
+	}
+	parts := strings.Split(task.ComponentKey, "/")
+	pluginRoot, err := os.OpenRoot(filepath.Join(webRoot, "wp-content", "plugins", parts[0]))
+	if err != nil {
+		return "", errors.New("installed plugin unavailable")
+	}
+	defer pluginRoot.Close()
+	info, err := pluginRoot.Lstat(parts[1])
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("installed plugin unavailable")
+	}
+	f, err := pluginRoot.Open(parts[1])
+	if err != nil {
+		return "", errors.New("installed plugin unavailable")
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		return "", errors.New("installed plugin changed")
+	}
+	headers, err := readWPComponentHeadersFromReader(io.LimitReader(f, wpComponentHeaderBytes), "Plugin Name", "Version")
+	if err != nil || headers["Plugin Name"] == "" || !wpComponentVersionPattern.MatchString(headers["Version"]) {
+		return "", errors.New("installed plugin version unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return headers["Version"], nil
+}
+
 func newWPCoreUpdateWorker(opts wpCoreUpdateWorkerOptions) (*WPCoreUpdateWorker, error) {
 	if opts.store == nil || opts.store.db == nil || opts.backups == nil || opts.executor == nil || opts.observeVersion == nil ||
+		opts.pluginTasks == nil || opts.pluginExecutor == nil || opts.observePlugin == nil || opts.pluginSupervisor == nil ||
 		opts.owner == "" || opts.pollInterval <= 0 || opts.heartbeatInterval <= 0 || opts.sweepInterval <= 0 || opts.now == nil {
 		return nil, errors.New("invalid core update worker options")
 	}
 	return &WPCoreUpdateWorker{
 		store: opts.store, backups: opts.backups, executor: opts.executor, observeVersion: opts.observeVersion,
-		owner: opts.owner, pollInterval: opts.pollInterval, heartbeatInterval: opts.heartbeatInterval,
+		pluginTasks: opts.pluginTasks, pluginExecutor: opts.pluginExecutor, observePlugin: opts.observePlugin,
+		pluginSupervisor: opts.pluginSupervisor,
+		owner:            opts.owner, pollInterval: opts.pollInterval, heartbeatInterval: opts.heartbeatInterval,
 		sweepInterval: opts.sweepInterval, now: opts.now,
 	}, nil
 }
@@ -157,7 +237,10 @@ func (w *WPCoreUpdateWorker) Start() error {
 	if wpCoreUpdateWorkerInstance.active {
 		return errors.New("core update worker already active")
 	}
-	if _, err := w.store.recoverAfterRestart(context.Background(), w.now().UTC()); err != nil {
+	if _, err := w.store.recoverCoreAfterRestart(context.Background(), w.now().UTC()); err != nil {
+		return err
+	}
+	if err := w.recoverPluginTasks(context.Background(), false, "worker_restarted"); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -230,9 +313,36 @@ func (w *WPCoreUpdateWorker) sweep(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_, _ = w.store.recoverExpired(context.Background(), w.now().UTC())
+			_, _ = w.store.recoverCoreExpired(context.Background(), w.now().UTC())
+			_ = w.recoverPluginTasks(context.Background(), true, "lease_expired")
 		}
 	}
+}
+
+func (w *WPCoreUpdateWorker) recoverPluginTasks(ctx context.Context, expiredOnly bool, code string) error {
+	now := w.now().UTC()
+	tasks, err := w.store.runningPluginTasks(ctx, now, expiredOnly)
+	if err != nil {
+		return err
+	}
+	for _, task := range tasks {
+		inspectCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), wpPluginUpdateControlTimeout)
+		state, inspectErr := w.pluginSupervisor.Inspect(inspectCtx, task.ID)
+		cancel()
+		if inspectErr != nil {
+			continue
+		}
+		if state.ActiveState == "active" || state.ActiveState == "activating" || state.ActiveState == "reloading" {
+			continue
+		}
+		if state.LoadState != "not-found" && state.ActiveState != "inactive" && state.ActiveState != "failed" {
+			continue
+		}
+		if _, err := w.store.interruptOwned(ctx, task.ID, task.LeaseOwner, code, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (w *WPCoreUpdateWorker) processOne(ctx context.Context) bool {
@@ -242,16 +352,40 @@ func (w *WPCoreUpdateWorker) processOne(ctx context.Context) bool {
 	case <-ctx.Done():
 		return false
 	}
-	task, err := w.store.nextQueuedCoreUpdate(ctx)
-	if errors.Is(err, sql.ErrNoRows) || err != nil {
-		return false
-	}
-	observed, err := w.observeVersion(ctx, task.SiteID)
+	tasks, err := w.store.nextQueuedUpdateCandidates(ctx)
 	if err != nil {
 		return false
 	}
-	claimed, err := w.store.claimCoreUpdate(ctx, task.ID, w.owner, observed, w.now().UTC())
-	if err != nil {
+	for _, task := range tasks {
+		if w.processCandidate(ctx, task) {
+			return true
+		}
+	}
+	return false
+}
+
+func (w *WPCoreUpdateWorker) processCandidate(ctx context.Context, task WPUpdateTask) bool {
+	var claimed WPUpdateTask
+	switch task.ComponentType {
+	case "core":
+		observed, err := w.observeVersion(ctx, task.SiteID)
+		if err != nil {
+			return false
+		}
+		claimed, err = w.store.claimCoreUpdate(ctx, task.ID, w.owner, observed, w.now().UTC())
+		if err != nil {
+			return false
+		}
+	case "plugin":
+		observed, err := w.observePlugin(ctx, task)
+		if err != nil {
+			return false
+		}
+		claimed, err = w.pluginTasks.validateAndClaimPluginUpdate(ctx, task.ID, w.owner, observed)
+		if err != nil {
+			return false
+		}
+	default:
 		return false
 	}
 	w.runOwned(ctx, claimed)
@@ -268,14 +402,27 @@ func (w *WPCoreUpdateWorker) runOwned(parent context.Context, task WPUpdateTask)
 				done <- errors.New("core update worker execution panic")
 			}
 		}()
-		if err := w.backups.prepareCoreBackups(runCtx, task.ID, w.owner); err != nil {
+		var err error
+		switch task.ComponentType {
+		case "core":
+			err = w.backups.prepareCoreBackups(runCtx, task.ID, w.owner)
+		case "plugin":
+			err = w.pluginTasks.preparePluginBackups(runCtx, task.ID, w.owner)
+		default:
+			err = errors.New("unsupported update component")
+		}
+		if err != nil {
 			if runCtx.Err() == nil {
 				_ = w.store.markFailure(context.Background(), task.ID, w.owner, "backup", false, w.now().UTC())
 			}
 			done <- err
 			return
 		}
-		done <- w.executor.Execute(runCtx, task.ID, w.owner)
+		if task.ComponentType == "plugin" {
+			done <- w.pluginExecutor.Execute(runCtx, task.ID, w.owner)
+		} else {
+			done <- w.executor.Execute(runCtx, task.ID, w.owner)
+		}
 	}()
 	ticker := time.NewTicker(w.heartbeatInterval)
 	defer ticker.Stop()
