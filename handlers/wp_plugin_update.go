@@ -136,6 +136,8 @@ func wpPluginUpdateError(c *gin.Context, err error) {
 		status, key = http.StatusConflict, "wp_plugin_update.not_in_repository"
 	case errors.Is(err, executor.ErrWPPluginUpdateLicenseInvalid):
 		status, key = http.StatusConflict, "wp_plugin_update.license_invalid"
+	case errors.Is(err, executor.ErrWPPluginUpdateLicenseProtocolUnsupported):
+		status, key = http.StatusConflict, "wp_plugin_update.license_protocol_unsupported"
 	case errors.Is(err, executor.ErrWPPluginUpdateUnavailable):
 		status, key = http.StatusServiceUnavailable, "wp_plugin_update.unavailable"
 	}

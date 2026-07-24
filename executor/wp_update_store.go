@@ -1357,6 +1357,22 @@ func validWPThemeComponentKey(key string) bool {
 	return wpComponentSlugPattern.MatchString(key)
 }
 
+// wpUpdateDownloadURLUsesLicenseProtocol reports whether the offer download URL
+// uses a custom (non http/https) scheme such as license:// or edd://. These are
+// commercial/license-based update mechanisms that the panel cannot fetch (it only
+// supports packages served over HTTPS from WordPress.org or an external vendor
+// host). When the offer's slug and version otherwise match the candidate, we
+// surface a dedicated, actionable error (license protocol unsupported) instead of
+// the misleading "site/component/candidate changed, please re-check" conflict.
+func wpUpdateDownloadURLUsesLicenseProtocol(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u == nil || u.Scheme == "" {
+		return false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	return scheme != "http" && scheme != "https"
+}
+
 func validWPThemeDownloadURL(raw, slug, targetVersion string) bool {
 	u, err := url.Parse(raw)
 	if err != nil {

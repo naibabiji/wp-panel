@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/naibabiji/wp-panel/i18n"
@@ -487,28 +488,6 @@ const data = (nextSites = sites, nextCounts = counts) => ({ generated_at: '2026-
 	}
 	if output = bytes.TrimSpace(output); len(output) > 0 {
 		t.Log(string(output))
-	}
-}
-
-func TestWPFleetEnglishPlaceholders(t *testing.T) {
-	content, err := os.ReadFile("../i18n/locales/en-US.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var locale struct {
-		WPFleet map[string]string `json:"wp_fleet"`
-	}
-	if err := json.Unmarshal(content, &locale); err != nil {
-		t.Fatal(err)
-	}
-	if len(locale.WPFleet) == 0 {
-		t.Fatal("en-US is missing wp_fleet messages")
-	}
-	for key, value := range locale.WPFleet {
-		want := "EN_TODO: wp_fleet." + key
-		if value != want {
-			t.Errorf("wp_fleet.%s = %q, want %q", key, value, want)
-		}
 	}
 }
 
@@ -1027,27 +1006,29 @@ global.clearTimeout = id => { global.clearedTimer = id; };
 	}
 }
 
-func TestWPInventoryEnglishPlaceholders(t *testing.T) {
+func TestWPUSNoUntranslatedPlaceholders(t *testing.T) {
 	content, err := os.ReadFile("../i18n/locales/en-US.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var locale struct {
-		WPInventory map[string]string `json:"wp_inventory"`
-	}
+	var locale map[string]any
 	if err := json.Unmarshal(content, &locale); err != nil {
 		t.Fatal(err)
 	}
-	messages := locale.WPInventory
-	if len(messages) == 0 {
-		t.Fatal("en-US is missing wp_inventory messages")
-	}
-	for key, value := range messages {
-		want := "EN_TODO: wp_inventory." + key
-		if value != want {
-			t.Errorf("wp_inventory.%s = %q, want %q", key, value, want)
+	var walk func(prefix string, node any)
+	walk = func(prefix string, node any) {
+		switch v := node.(type) {
+		case map[string]any:
+			for key, child := range v {
+				walk(prefix+"."+key, child)
+			}
+		case string:
+			if strings.HasPrefix(v, "EN_TODO:") {
+				t.Errorf("%s = %q is an untranslated placeholder", strings.TrimPrefix(prefix, "."), v)
+			}
 		}
 	}
+	walk("", locale)
 }
 
 func wpInventoryPanelScript(t *testing.T) []byte {

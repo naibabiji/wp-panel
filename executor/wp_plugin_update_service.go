@@ -26,6 +26,7 @@ var (
 	ErrWPPluginUpdateSiteBusy        = errors.New("plugin update blocked by active site restore")
 	ErrWPPluginUpdateNotInRepository = errors.New("plugin not available in the official WordPress.org repository")
 	ErrWPPluginUpdateLicenseInvalid  = errors.New("plugin update license invalid or not activated")
+	ErrWPPluginUpdateLicenseProtocolUnsupported = errors.New("plugin update uses a commercial license download protocol not supported by the panel")
 )
 
 type wpPluginOffer struct {
@@ -101,8 +102,17 @@ func (s *WPPluginUpdateService) Preview(ctx context.Context, siteID int, usernam
 		}
 		return models.WPPluginUpdatePreview{}, ErrWPPluginUpdateUnavailable
 	}
-	if offer.Slug != slug || offer.Version != candidate.targetVersion ||
-		!validWPPluginDownloadURL(offer.DownloadURL, slug, candidate.targetVersion) {
+	if offer.Slug != slug || offer.Version != candidate.targetVersion {
+		log.Printf("插件更新预览冲突 site=%d domain=%s component=%s: offer(slug=%q version=%q) 与候选(target=%q slug=%q) 不匹配",
+			siteID, candidate.domain, componentKey, offer.Slug, offer.Version, candidate.targetVersion, slug)
+		return models.WPPluginUpdatePreview{}, ErrWPPluginUpdateConflict
+	}
+	if !validWPPluginDownloadURL(offer.DownloadURL, slug, candidate.targetVersion) {
+		if wpUpdateDownloadURLUsesLicenseProtocol(offer.DownloadURL) {
+			log.Printf("插件更新预览冲突 site=%d domain=%s component=%s: offer(slug=%q version=%q url=%q) 使用商业授权下载协议，面板暂不支持",
+				siteID, candidate.domain, componentKey, offer.Slug, offer.Version, offer.DownloadURL)
+			return models.WPPluginUpdatePreview{}, ErrWPPluginUpdateLicenseProtocolUnsupported
+		}
 		log.Printf("插件更新预览冲突 site=%d domain=%s component=%s: offer(slug=%q version=%q url=%q) 与候选(target=%q slug=%q) 不匹配；downloadURLValid=%v",
 			siteID, candidate.domain, componentKey, offer.Slug, offer.Version, offer.DownloadURL, candidate.targetVersion, slug,
 			validWPPluginDownloadURL(offer.DownloadURL, slug, candidate.targetVersion))

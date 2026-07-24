@@ -136,6 +136,8 @@ func wpThemeUpdateError(c *gin.Context, err error) {
 		status, key = http.StatusConflict, "wp_theme_update.not_in_repository"
 	case errors.Is(err, executor.ErrWPThemeUpdateLicenseInvalid):
 		status, key = http.StatusConflict, "wp_theme_update.license_invalid"
+	case errors.Is(err, executor.ErrWPThemeUpdateLicenseProtocolUnsupported):
+		status, key = http.StatusConflict, "wp_theme_update.license_protocol_unsupported"
 	case errors.Is(err, executor.ErrWPThemeUpdateUnavailable):
 		status, key = http.StatusServiceUnavailable, "wp_theme_update.unavailable"
 	}

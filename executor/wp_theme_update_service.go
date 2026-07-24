@@ -25,6 +25,7 @@ var (
 	ErrWPThemeUpdateSiteBusy        = errors.New("theme update blocked by active site restore")
 	ErrWPThemeUpdateNotInRepository = errors.New("theme not available in the official WordPress.org repository")
 	ErrWPThemeUpdateLicenseInvalid  = errors.New("theme update license invalid or not activated")
+	ErrWPThemeUpdateLicenseProtocolUnsupported = errors.New("theme update uses a commercial license download protocol not supported by the panel")
 )
 
 type wpThemeOffer struct {
@@ -96,8 +97,15 @@ func (s *WPThemeUpdateService) Preview(ctx context.Context, siteID int, username
 		}
 		return models.WPThemeUpdatePreview{}, ErrWPThemeUpdateUnavailable
 	}
-	if offer.Slug != componentKey || offer.Version != candidate.targetVersion ||
-		!validWPThemeDownloadURL(offer.DownloadURL, componentKey, candidate.targetVersion) {
+	if offer.Slug != componentKey || offer.Version != candidate.targetVersion {
+		return models.WPThemeUpdatePreview{}, ErrWPThemeUpdateConflict
+	}
+	if !validWPThemeDownloadURL(offer.DownloadURL, componentKey, candidate.targetVersion) {
+		if wpUpdateDownloadURLUsesLicenseProtocol(offer.DownloadURL) {
+			log.Printf("主题更新预览冲突 site=%d domain=%s component=%s: offer(slug=%q version=%q url=%q) 使用商业授权下载协议，面板暂不支持",
+				siteID, candidate.domain, componentKey, offer.Slug, offer.Version, offer.DownloadURL)
+			return models.WPThemeUpdatePreview{}, ErrWPThemeUpdateLicenseProtocolUnsupported
+		}
 		return models.WPThemeUpdatePreview{}, ErrWPThemeUpdateConflict
 	}
 	now := s.now().UTC()
