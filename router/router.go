@@ -882,6 +882,26 @@ var i18nKeys = []string{
 	"wp_update_backup.restore_success",
 	"wp_update_backup.restore_task_failed",
 	"wp_update_backup.restore_status_failed",
+	"wp_update_log.load_failed",
+	"wp_update_log.copy",
+	"wp_update_log.copied",
+	"wp_update_log.copy_failed",
+	"wp_update_log.kind_update",
+	"wp_update_log.kind_rollback",
+	"wp_update_log.requires_attention",
+	"wp_update_log.rollback_failed",
+	"wp_update_log.status_success",
+	"wp_update_log.status_failed",
+	"wp_update_log.status_running",
+	"wp_update_log.status_queued",
+	"wp_update_log.status_preparing",
+	"wp_update_log.status_interrupted_unknown",
+	"wp_update_log.no_events",
+	"wp_update_log.event_result_info",
+	"wp_update_log.event_result_success",
+	"wp_update_log.event_result_failed",
+	"wp_update_log.event_result_interrupted",
+	"wp_update_log.event_result_manual",
 }
 
 func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version string, configPath string) *gin.Engine {
@@ -1016,6 +1036,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	wpPluginUpdateHandler := newWPPluginUpdateHandler(db, cfg.Panel.BackupDir)
 	wpThemeUpdateHandler := newWPThemeUpdateHandler(db, cfg.Panel.BackupDir)
 	wpUpdateBackupHandler := &handlers.WPUpdateBackupHandler{BackupDir: cfg.Panel.BackupDir}
+	wpUpdateLogHandler := &handlers.WPUpdateLogHandler{}
 	protected.GET("/api/websites", websiteHandler.List)
 	protected.GET("/api/wp-fleet/overview", wpFleetOverviewHandler.Overview)
 	protected.POST("/api/websites", websiteHandler.Create)
@@ -1040,6 +1061,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/websites/:id/wp-theme-update/tasks/:task_id", wpThemeUpdateHandler.Task)
 	protected.GET("/api/websites/:id/wp-update-backups", wpUpdateBackupHandler.List)
 	protected.POST("/api/websites/:id/wp-update-backups/:backup_id/restore", wpUpdateBackupHandler.Restore)
+	protected.GET("/api/websites/:id/wp-update-logs", wpUpdateLogHandler.List)
 	protected.DELETE("/api/websites/:id", websiteHandler.Delete)
 	protected.GET("/api/websites/:id/backup-usage", websiteHandler.BackupUsage)
 	protected.PATCH("/api/websites/:id/status", websiteHandler.ToggleStatus)

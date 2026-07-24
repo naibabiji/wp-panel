@@ -1113,7 +1113,12 @@ func newWPUpdateTaskID() (string, error) {
 	return "wpu_" + hex.EncodeToString(raw[:]), nil
 }
 
-func wpUpdateDBTime(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05.000000") }
+// WPUpdateDBTime 将时间格式化为 wp_update_tasks 等表里 DATETIME 列存储/比较时使用的
+// 统一字符串（2006-01-02 15:04:05.000000）。handler 与清理逻辑共用同一格式，避免字符串
+// 比较时因格式不一致（如缺少小数秒）导致的边界错判。
+func WPUpdateDBTime(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05.000000") }
+
+func wpUpdateDBTime(t time.Time) string { return WPUpdateDBTime(t) }
 
 func boolInt(value bool) int {
 	if value {

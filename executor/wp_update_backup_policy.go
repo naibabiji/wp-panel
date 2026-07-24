@@ -181,3 +181,18 @@ func (s *wpUpdateArtifactService) cleanupExpiredArtifacts(ctx context.Context, n
 	}
 	return nil
 }
+
+// cleanupExpiredUpdateLogs 严格按 24 小时清理更新任务的事件日志：只要任务已结束且
+// finished_at 超过保留窗口，其 wp_update_task_events 行一律删除（不区分成功/失败/需人工介入）。
+// 与 cleanupExpiredArtifacts 不同，本方法只删事件、不删任务行，避免级联删除
+// wp_update_task_backups 行导致备份文件孤儿；任务行仍由其原有逻辑保留。
+// 仅依赖 s.store.db，不依赖 s.root，便于独立单测。
+func (s *wpUpdateArtifactService) cleanupExpiredUpdateLogs(ctx context.Context, now time.Time) error {
+	if s == nil || s.store == nil {
+		return errors.New("update log cleanup unavailable")
+	}
+	cutoff := wpUpdateDBTime(now.Add(-wpUpdateArtifactRetention))
+	_, err := s.store.db.ExecContext(ctx, `DELETE FROM wp_update_task_events WHERE task_id IN (
+		SELECT id FROM wp_update_tasks WHERE finished_at IS NOT NULL AND finished_at<=?)`, cutoff)
+	return err
+}

@@ -81,6 +81,7 @@
                         <button @click="selectTab('themes')" :class="activeTab === 'themes' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_inventory.tab_themes"}}</button>
                         <button @click="selectTab('updates')" :class="activeTab === 'updates' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="inline-flex items-center gap-1.5 border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_inventory.tab_updates"}}<span x-show="hasAvailableUpdates()" class="h-1.5 w-1.5 rounded-full bg-red-500"></span></button>
                         <button @click="selectTab('backups')" :class="activeTab === 'backups' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_update_backup.tab"}}</button>
+                        <button @click="selectTab('logs')" :class="activeTab === 'logs' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'" class="border-b-2 px-4 py-2 text-sm font-medium">{{t .Lang "wp_update_log.tab"}}</button>
                     </div>
 
                     <div x-show="currentPage().error" class="mt-3 rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200" x-text="currentPage().error"></div>
@@ -154,7 +155,40 @@
                         </div>
                     </div>
 
-                    <div x-show="activeTab !== 'backups' && !currentPage().loading && currentPage().total > currentPage().pageSize" class="mt-4 flex flex-col gap-3 text-sm text-gray-400 sm:flex-row sm:items-center sm:justify-between">
+                    <div x-show="activeTab === 'logs' && !currentPage().loading" class="mt-4">
+                        <p class="mb-3 text-sm text-gray-400">{{t .Lang "wp_update_log.description"}}</p>
+                        <div class="space-y-3">
+                            <template x-for="task in currentPage().items" :key="task.task_id">
+                                <div class="rounded border border-gray-700 bg-gray-950/40 p-4">
+                                    <div class="flex flex-wrap items-center justify-between gap-2">
+                                        <div class="flex flex-wrap items-center gap-2 text-sm">
+                                            <span class="whitespace-nowrap text-gray-400" x-text="fmtTime(task.created_at)"></span>
+                                            <span class="badge-info" x-text="typeLabel(task.component_type)"></span>
+                                            <span class="break-all font-mono text-xs text-gray-400" x-text="task.component_key"></span>
+                                            <span class="whitespace-nowrap text-gray-300" x-text="(task.current_version || t('common.none')) + ' → ' + (task.target_version || t('common.none'))"></span>
+                                            <span class="badge-info" x-text="task.task_kind === 'rollback' ? t('wp_update_log.kind_rollback') : t('wp_update_log.kind_update')"></span>
+                                            <span :class="logStatusClass(task)" x-text="logStatusText(task)"></span>
+                                            <span x-show="task.requires_attention" class="badge-danger" x-text="t('wp_update_log.requires_attention')"></span>
+                                            <span x-show="task.rollback_status === 'failed'" class="badge-danger" x-text="t('wp_update_log.rollback_failed')"></span>
+                                        </div>
+                                        <button @click="copyUpdateLog(task)" class="btn-secondary text-xs" x-text="t('wp_update_log.copy')"></button>
+                                    </div>
+                                    <div class="mt-3">
+                                        <div class="mb-1 text-xs text-gray-500">{{t .Lang "wp_update_log.event_timeline"}}</div>
+                                        <div x-show="task.events.length === 0" class="text-xs text-gray-600" x-text="t('wp_update_log.no_events')"></div>
+                                        <ul x-show="task.events.length > 0" class="space-y-0.5 font-mono text-xs">
+                                            <template x-for="(ev, idx) in task.events" :key="task.task_id + ':' + idx">
+                                                <li :class="logEventClass(ev.result)" x-text="logEventText(ev)"></li>
+                                            </template>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </template>
+                            <div x-show="currentPage().items.length === 0" class="py-8 text-center text-sm text-gray-500">{{t .Lang "wp_update_log.empty"}}</div>
+                        </div>
+                    </div>
+
+                    <div x-show="activeTab !== 'backups' && activeTab !== 'logs' && !currentPage().loading && currentPage().total > currentPage().pageSize" class="mt-4 flex flex-col gap-3 text-sm text-gray-400 sm:flex-row sm:items-center sm:justify-between">
                         <span x-text="t('wp_inventory.page_summary', { page: currentPage().page, total: currentPage().total })"></span>
                         <div class="flex gap-2">
                             <button @click="changePage(-1)" :disabled="currentPage().loading || currentPage().page <= 1" class="btn-secondary text-sm">{{t .Lang "wp_inventory.previous"}}</button>
@@ -232,7 +266,7 @@ function wpInventoryPanel() {
         summaryError: '',
         refreshing: false,
         activeTab: 'plugins',
-        pages: { plugins: newPage(), themes: newPage(), updates: newPage(), backups: newPage() },
+        pages: { plugins: newPage(), themes: newPage(), updates: newPage(), backups: newPage(), logs: newPage() },
         pollTimer: null,
         pollStartedAt: 0,
         pluginUpdate: newPluginUpdate(),
@@ -270,7 +304,7 @@ function wpInventoryPanel() {
             this.summaryError = '';
             this.refreshing = false;
             this.activeTab = 'plugins';
-            this.pages = { plugins: newPage(), themes: newPage(), updates: newPage(), backups: newPage() };
+            this.pages = { plugins: newPage(), themes: newPage(), updates: newPage(), backups: newPage(), logs: newPage() };
             this.pluginUpdate = newPluginUpdate();
             if (this.siteID) await this.loadSummary();
         },
@@ -455,7 +489,7 @@ function wpInventoryPanel() {
             return this.pages[this.activeTab];
         },
         selectTab(tab) {
-            if (!['plugins', 'themes', 'updates', 'backups'].includes(tab) || tab === this.activeTab) return;
+            if (!['plugins', 'themes', 'updates', 'backups', 'logs'].includes(tab) || tab === this.activeTab) return;
             this.activeTab = tab;
             if (!this.currentPage().loaded) this.loadPage(tab);
         },
@@ -475,6 +509,10 @@ function wpInventoryPanel() {
             if (!this.siteID || !state || state.loading || !this.summary?.has_successful_inventory) return;
             if (tab === 'backups') {
                 await this.loadUpdateBackups();
+                return;
+            }
+            if (tab === 'logs') {
+                await this.loadUpdateLogs();
                 return;
             }
             const generation = this.requestGeneration;
@@ -543,6 +581,87 @@ function wpInventoryPanel() {
                 theme_files: 'wp_update_backup.kind_theme_files',
             };
             return t(keys[kind] || 'common.none');
+        },
+        async loadUpdateLogs() {
+            const state = this.pages.logs;
+            if (!this.siteID || state.loading) return;
+            const generation = this.requestGeneration;
+            const siteID = this.siteID;
+            state.loading = true;
+            state.error = '';
+            try {
+                const response = await api('/websites/' + siteID + '/wp-update-logs', { suppressToast: true });
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                if (!Array.isArray(response.data)) throw new Error(t('wp_update_log.load_failed'));
+                state.items = response.data;
+                state.total = response.data.length;
+                state.loaded = true;
+            } catch (error) {
+                if (generation === this.requestGeneration && siteID === this.siteID) state.error = error.message || t('wp_update_log.load_failed');
+            } finally {
+                if (generation === this.requestGeneration && siteID === this.siteID) state.loading = false;
+            }
+        },
+        logStatusKey(task) {
+            if (task.requires_attention) return 'wp_update_log.requires_attention';
+            if (task.rollback_status === 'failed') return 'wp_update_log.rollback_failed';
+            const map = {
+                success: 'wp_update_log.status_success',
+                failed: 'wp_update_log.status_failed',
+                running: 'wp_update_log.status_running',
+                queued: 'wp_update_log.status_queued',
+                preparing: 'wp_update_log.status_preparing',
+                interrupted_unknown: 'wp_update_log.status_interrupted_unknown',
+            };
+            return map[task.status] || 'common.none';
+        },
+        logStatusText(task) {
+            return t(this.logStatusKey(task));
+        },
+        logStatusClass(task) {
+            const key = this.logStatusKey(task);
+            if (key === 'wp_update_log.status_success') return 'badge-success';
+            if (key === 'wp_update_log.requires_attention' || key === 'wp_update_log.rollback_failed' || key === 'wp_update_log.status_failed') return 'badge-danger';
+            if (key === 'wp_update_log.status_interrupted_unknown') return 'badge-warning';
+            return 'badge-info';
+        },
+        logEventText(ev) {
+            const resultKey = {
+                info: 'wp_update_log.event_result_info',
+                success: 'wp_update_log.event_result_success',
+                failed: 'wp_update_log.event_result_failed',
+                interrupted: 'wp_update_log.event_result_interrupted',
+                manual: 'wp_update_log.event_result_manual',
+            }[ev.result] || ev.result;
+            return fmtTime(ev.created_at) + '  ' + ev.stage + ' · ' + t(resultKey) + (ev.error_code ? ' · ' + ev.error_code : '');
+        },
+        logEventClass(result) {
+            if (result === 'failed') return 'text-red-300';
+            if (result === 'success') return 'text-green-300';
+            if (result === 'interrupted') return 'text-yellow-300';
+            return 'text-gray-300';
+        },
+        async copyUpdateLog(task) {
+            const lines = [];
+            lines.push('WP Panel 更新日志');
+            if (this.siteURL) lines.push('站点: ' + this.siteURL);
+            lines.push('任务: ' + task.task_id);
+            lines.push('类型: ' + t(task.task_kind === 'rollback' ? 'wp_update_log.kind_rollback' : 'wp_update_log.kind_update') + '  组件: ' + task.component_type + '  ' + task.component_key);
+            lines.push('版本: ' + (task.current_version || '-') + ' → ' + (task.target_version || '-'));
+            lines.push('状态: ' + this.logStatusText(task) + '  回滚: ' + task.rollback_status);
+            lines.push('开始: ' + (task.started_at ? fmtTime(task.started_at) : '-') + '  结束: ' + (task.finished_at ? fmtTime(task.finished_at) : '-'));
+            lines.push('--- 事件 ---');
+            if (task.events.length === 0) {
+                lines.push(t('wp_update_log.no_events'));
+            } else {
+                for (const ev of task.events) lines.push(this.logEventText(ev));
+            }
+            try {
+                await navigator.clipboard.writeText(lines.join('\n'));
+                showToast(t('wp_update_log.copied'), 'success');
+            } catch (e) {
+                showToast(t('wp_update_log.copy_failed'), 'error');
+            }
         },
         async restoreUpdateBackup(backup) {
             const state = this.pages.backups;

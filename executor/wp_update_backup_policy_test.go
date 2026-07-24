@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,5 +171,88 @@ func TestWPPluginUpdateReuseSkipsDatabaseDumpButKeepsPluginBackup(t *testing.T) 
 	}
 	if databaseRows != 0 || pluginRows != 1 {
 		t.Fatalf("database rows=%d plugin rows=%d", databaseRows, pluginRows)
+	}
+}
+
+func insertWPUpdateLogEventForTest(t *testing.T, db *sql.DB, taskID, stage, result string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO wp_update_task_events(task_id,stage,result,error_code,summary,created_at)
+		VALUES(?,?,?,'','',?)`, taskID, stage, result, wpUpdateDBTime(time.Now().UTC())); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func countWPUpdateLogEvents(t *testing.T, db *sql.DB, taskID string) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM wp_update_task_events WHERE task_id=?`, taskID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// TestCleanupExpiredUpdateLogsDeletesOldEvents 验证严格 24h 清理：已结束且 finished_at
+// 超过保留窗口的任务，其事件日志一律删除（不区分成功/失败/需人工介入）。
+func TestCleanupExpiredUpdateLogsDeletesOldEvents(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	service, err := newWPUpdateArtifactService(store, t.TempDir(), func(context.Context, string, string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	task := createAndSealUpdateTask(t, store, siteID, now.Add(-26*time.Hour))
+	if _, err := store.db.Exec(`UPDATE wp_update_tasks SET status='failed',finished_at=? WHERE id=?`, wpUpdateDBTime(now.Add(-26*time.Hour)), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	insertWPUpdateLogEventForTest(t, store.db, task.ID, "rollback", "failed")
+	insertWPUpdateLogEventForTest(t, store.db, task.ID, "manual_disposition", "manual")
+	before := countWPUpdateLogEvents(t, store.db, task.ID)
+	if before < 2 {
+		t.Fatalf("seed events = %d want at least 2", before)
+	}
+
+	if err := service.cleanupExpiredUpdateLogs(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	if got := countWPUpdateLogEvents(t, store.db, task.ID); got != 0 {
+		t.Fatalf("events after cleanup = %d want 0 (strict 24h deletion)", got)
+	}
+}
+
+// TestCleanupExpiredUpdateLogsKeepsRecentAndUnfinished 验证近 24h 内结束的任务与
+// 尚未结束（finished_at IS NULL）的任务事件都保留，不被误删。
+func TestCleanupExpiredUpdateLogsKeepsRecentAndUnfinished(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	service, err := newWPUpdateArtifactService(store, t.TempDir(), func(context.Context, string, string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+
+	recentTask := createAndSealUpdateTask(t, store, siteID, now.Add(-2*time.Hour))
+	if _, err := store.db.Exec(`UPDATE wp_update_tasks SET status='success',finished_at=? WHERE id=?`, wpUpdateDBTime(now.Add(-1*time.Hour)), recentTask.ID); err != nil {
+		t.Fatal(err)
+	}
+	insertWPUpdateLogEventForTest(t, store.db, recentTask.ID, "complete", "success")
+
+	// recentTask 已置为 success（非 active），同一站点可再创建一个 active 任务。
+	runningTask := createAndSealUpdateTask(t, store, siteID, now.Add(-time.Minute))
+	// runningTask 保持 finished_at IS NULL（未结束）。
+	insertWPUpdateLogEventForTest(t, store.db, runningTask.ID, "claimed", "info")
+
+	recentBefore := countWPUpdateLogEvents(t, store.db, recentTask.ID)
+	runningBefore := countWPUpdateLogEvents(t, store.db, runningTask.ID)
+	if recentBefore == 0 || runningBefore == 0 {
+		t.Fatalf("seed events recent=%d running=%d", recentBefore, runningBefore)
+	}
+
+	if err := service.cleanupExpiredUpdateLogs(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	if got := countWPUpdateLogEvents(t, store.db, recentTask.ID); got != recentBefore {
+		t.Fatalf("recent task events = %d want %d (kept)", got, recentBefore)
+	}
+	if got := countWPUpdateLogEvents(t, store.db, runningTask.ID); got != runningBefore {
+		t.Fatalf("running task events = %d want %d (kept)", got, runningBefore)
 	}
 }

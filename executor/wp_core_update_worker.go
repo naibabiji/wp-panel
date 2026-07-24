@@ -381,6 +381,11 @@ func (w *WPCoreUpdateWorker) sweep(ctx context.Context) {
 			}); ok {
 				_ = cleaner.cleanupExpiredArtifacts(context.Background(), w.now().UTC())
 			}
+			if logCleaner, ok := w.backups.(interface {
+				cleanupExpiredUpdateLogs(context.Context, time.Time) error
+			}); ok {
+				_ = logCleaner.cleanupExpiredUpdateLogs(context.Background(), w.now().UTC())
+			}
 		}
 	}
 }
