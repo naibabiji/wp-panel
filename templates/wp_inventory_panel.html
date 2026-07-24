@@ -643,14 +643,14 @@ function wpInventoryPanel() {
         },
         async copyUpdateLog(task) {
             const lines = [];
-            lines.push('WP Panel 更新日志');
-            if (this.siteURL) lines.push('站点: ' + this.siteURL);
-            lines.push('任务: ' + task.task_id);
-            lines.push('类型: ' + t(task.task_kind === 'rollback' ? 'wp_update_log.kind_rollback' : 'wp_update_log.kind_update') + '  组件: ' + task.component_type + '  ' + task.component_key);
-            lines.push('版本: ' + (task.current_version || '-') + ' → ' + (task.target_version || '-'));
-            lines.push('状态: ' + this.logStatusText(task) + '  回滚: ' + task.rollback_status);
-            lines.push('开始: ' + (task.started_at ? fmtTime(task.started_at) : '-') + '  结束: ' + (task.finished_at ? fmtTime(task.finished_at) : '-'));
-            lines.push('--- 事件 ---');
+            lines.push(t('wp_update_log.copy_title'));
+            if (this.siteURL) lines.push(t('wp_update_log.copy_site') + ': ' + this.siteURL);
+            lines.push(t('wp_update_log.copy_task') + ': ' + task.task_id);
+            lines.push(t('wp_update_log.copy_type') + ': ' + t(task.task_kind === 'rollback' ? 'wp_update_log.kind_rollback' : 'wp_update_log.kind_update') + '  ' + t('wp_update_log.copy_component') + ': ' + task.component_type + '  ' + task.component_key);
+            lines.push(t('wp_update_log.copy_version') + ': ' + (task.current_version || '-') + ' → ' + (task.target_version || '-'));
+            lines.push(t('wp_update_log.copy_status') + ': ' + this.logStatusText(task) + '  ' + t('wp_update_log.copy_rollback') + ': ' + task.rollback_status);
+            lines.push(t('wp_update_log.copy_started') + ': ' + (task.started_at ? fmtTime(task.started_at) : '-') + '  ' + t('wp_update_log.copy_finished') + ': ' + (task.finished_at ? fmtTime(task.finished_at) : '-'));
+            lines.push(t('wp_update_log.copy_events_divider'));
             if (task.events.length === 0) {
                 lines.push(t('wp_update_log.no_events'));
             } else {

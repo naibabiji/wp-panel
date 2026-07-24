@@ -98,6 +98,15 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 			t.Fatalf("%s exists = %d, want 1", table, exists)
 		}
 	}
+	for _, index := range []string{"ix_wp_update_tasks_finished_at"} {
+		var exists int
+		if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?", index).Scan(&exists); err != nil {
+			t.Fatalf("query %s index: %v", index, err)
+		}
+		if exists != 1 {
+			t.Fatalf("%s exists = %d, want 1", index, exists)
+		}
+	}
 	for _, col := range []string{"backup_type", "s3_endpoint", "s3_bucket", "s3_region", "s3_access_key_id", "s3_secret_key", "s3_path_prefix"} {
 		var exists int
 		if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('remote_backup_settings') WHERE name = ?", col).Scan(&exists); err != nil {
@@ -227,7 +236,7 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.34" {
+	if got := LatestVersion(); got != "1.0.35" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
 	for _, column := range []string{"database_backup_mode", "database_backup_source_id"} {
@@ -278,6 +287,48 @@ func TestUpgradeAddsPasswordResetModeColumnFrom1033(t *testing.T) {
 	}
 	if def != "'allow'" {
 		t.Fatalf("password_reset_mode default = %q, want %q", def, "'allow'")
+	}
+
+	var version string
+	if err := DB.QueryRow("SELECT version FROM schema_version ORDER BY updated_at DESC, rowid DESC LIMIT 1").Scan(&version); err != nil {
+		t.Fatalf("query schema_version: %v", err)
+	}
+	if version != LatestVersion() {
+		t.Fatalf("schema_version = %q, want %q", version, LatestVersion())
+	}
+}
+
+func TestUpgradeAddsWPUpdateTasksFinishedAtIndexFrom1034(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.34')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+	if _, err := DB.Exec("DROP INDEX IF EXISTS ix_wp_update_tasks_finished_at"); err != nil {
+		t.Fatalf("drop index: %v", err)
+	}
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("second RunUpgrades() error = %v", err)
+	}
+
+	var exists int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'ix_wp_update_tasks_finished_at'").Scan(&exists); err != nil {
+		t.Fatalf("query index: %v", err)
+	}
+	if exists != 1 {
+		t.Fatalf("ix_wp_update_tasks_finished_at exists = %d, want 1 after upgrade from 1.0.34", exists)
 	}
 
 	var version string

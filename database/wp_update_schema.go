@@ -54,6 +54,8 @@ var wpUpdateSchemaStatements = []string{
 		ON wp_update_tasks(status, requested_at)`,
 	`CREATE INDEX IF NOT EXISTS ix_wp_update_tasks_site_history
 		ON wp_update_tasks(site_id, created_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS ix_wp_update_tasks_finished_at
+		ON wp_update_tasks(finished_at)`,
 	`CREATE TABLE IF NOT EXISTS wp_update_task_events (
 		id          INTEGER PRIMARY KEY AUTOINCREMENT,
 		task_id     TEXT NOT NULL,

@@ -443,6 +443,13 @@ var upgrades = []Upgrade{
 		Description: "新增 WordPress 站点密码找回保护模式字段",
 		Func:        ensurePasswordResetModeColumn,
 	},
+	{
+		Version:     "1.0.35",
+		Description: "新增 wp_update_tasks.finished_at 索引以加速更新日志清理",
+		SQL: []string{
+			`CREATE INDEX IF NOT EXISTS ix_wp_update_tasks_finished_at ON wp_update_tasks(finished_at)`,
+		},
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {
