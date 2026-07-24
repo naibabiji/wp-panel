@@ -38,11 +38,19 @@ func ValidatePasswordResetMode(mode string) (string, error) {
 //   - allow：删除托管文件（若存在），恢复 WordPress 默认行为。
 //   - all / admin：写入对应逻辑的 mu-plugin，并确保文件归属站点用户。
 //
-// mu-plugins 目录在需要时自动创建；webRoot 必须非空且指向真实站点根目录。
+// mu-plugins 目录在需要时自动创建；webRoot 必须非空、绝对路径且不能为文件系统根，
+// 同时派生的 mu-plugin 路径必须在 webRoot 之内，避免 DB 字段被篡改后写入非预期位置。
 func ApplyWPPasswordResetMode(webRoot, systemUser, mode string) error {
 	webRoot = strings.TrimSpace(webRoot)
 	if webRoot == "" {
 		return fmt.Errorf("web root is empty")
+	}
+	webRoot = filepath.Clean(webRoot)
+	if !filepath.IsAbs(webRoot) {
+		return fmt.Errorf("web root must be an absolute path: %s", webRoot)
+	}
+	if webRoot == string(filepath.Separator) {
+		return fmt.Errorf("web root cannot be filesystem root")
 	}
 	mode, err := ValidatePasswordResetMode(mode)
 	if err != nil {
@@ -51,7 +59,12 @@ func ApplyWPPasswordResetMode(webRoot, systemUser, mode string) error {
 
 	muDir := filepath.Join(webRoot, "wp-content", "mu-plugins")
 	pluginPath := filepath.Join(muDir, wpPasswordResetPluginFile)
-
+	for _, p := range []string{muDir, pluginPath} {
+		rel, err := filepath.Rel(webRoot, p)
+		if err != nil || strings.HasPrefix(rel, "..") || rel == ".." {
+			return fmt.Errorf("mu-plugin path %q is outside web root %q", p, webRoot)
+		}
+	}
 	if mode == PasswordResetModeAllow {
 		if _, statErr := os.Stat(pluginPath); statErr == nil {
 			if rmErr := os.Remove(pluginPath); rmErr != nil {

@@ -373,38 +373,92 @@ type wpPluginBatchConfirmer interface {
 // wpPluginBatchOrchestrator 挂在现有更新 worker 的 sweep 节奏上，每次 tick 为每个仍在进行
 // 中的批量派发「下一项」——同一时刻每个站点只有一个活跃任务，所以批量天然是串行推进的。
 type wpPluginBatchOrchestrator struct {
-	store     *wpUpdateStore
-	confirmer wpPluginBatchConfirmer
-	now       func() time.Time
-	mu        sync.Mutex
+	store      *wpUpdateStore
+	confirmer  wpPluginBatchConfirmer
+	now        func() time.Time
+	mu         sync.Mutex // protects batchLocks
+	batchLocks map[string]*batchLock
+}
+
+type batchLock struct {
+	mu  sync.Mutex
+	ref int
 }
 
 func newWPPluginBatchOrchestrator(store *wpUpdateStore, confirmer wpPluginBatchConfirmer) (*wpPluginBatchOrchestrator, error) {
 	if store == nil || store.db == nil || confirmer == nil {
 		return nil, errors.New("invalid plugin batch orchestrator")
 	}
-	return &wpPluginBatchOrchestrator{store: store, confirmer: confirmer, now: time.Now}, nil
+	return &wpPluginBatchOrchestrator{
+		store: store, confirmer: confirmer, now: time.Now,
+		batchLocks: make(map[string]*batchLock),
+	}, nil
+}
+
+// lockBatch 返回指定 batch 的互斥锁，并增加引用计数；调用方必须调用 unlockBatch。
+func (o *wpPluginBatchOrchestrator) lockBatch(batchID string) *batchLock {
+	o.mu.Lock()
+	bl, ok := o.batchLocks[batchID]
+	if !ok {
+		bl = &batchLock{}
+		o.batchLocks[batchID] = bl
+	}
+	bl.ref++
+	o.mu.Unlock()
+	bl.mu.Lock()
+	return bl
+}
+
+// unlockBatch 释放 batch 锁并减少引用计数。
+func (o *wpPluginBatchOrchestrator) unlockBatch(bl *batchLock) {
+	bl.mu.Unlock()
+	o.mu.Lock()
+	bl.ref--
+	o.mu.Unlock()
+}
+
+// pruneBatchLocks 删除不再运行且引用计数为 0 的 batch 锁，避免已结束批量泄漏内存。
+func (o *wpPluginBatchOrchestrator) pruneBatchLocks(running map[string]bool) {
+	o.mu.Lock()
+	for id, bl := range o.batchLocks {
+		if !running[id] && bl.ref == 0 {
+			delete(o.batchLocks, id)
+		}
+	}
+	o.mu.Unlock()
 }
 
 // Tick 扫描所有 running 批量，为每个「站点当前没有阻塞任务」的批量派发一项。
 // 单个批量在一次 tick 内最多派发一项，派发失败的项标记为 failed 后立即继续下一项，
 // 避免一次 tick 里因为连续多个坏插件而做无界的工作量。
 //
-// Tick 同时被 worker 主循环（1s 节奏 + task 完成即触发）和 sweep（30s 兜底）调用，
-// 加互斥锁防止两个 goroutine 并发派发同一项导致重复建任务。
+// Tick 同时被 worker 主循环（1s 节奏 + task 完成即触发）和 sweep（30s 兜底）调用。
+// 为了防止两个 goroutine 并发派发同一项导致重复建任务，每个 batch 有独立的互斥锁；
+// 不同 batch 可以并发处理，避免某个 batch 的 Preview/下载阻塞其它 batch 的推进。
 func (o *wpPluginBatchOrchestrator) Tick(ctx context.Context) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
 	batches, err := o.store.listRunningBatches(ctx)
 	if err != nil {
 		log.Printf("批量更新编排器读取进行中批量失败: %v", err)
 		return
 	}
+	runningIDs := make(map[string]bool, len(batches))
 	for _, batch := range batches {
-		if err := o.advance(ctx, batch); err != nil {
-			log.Printf("批量更新编排器推进 batch=%s site=%d 失败: %v", batch.ID, batch.SiteID, err)
-		}
+		runningIDs[batch.ID] = true
 	}
+	var wg sync.WaitGroup
+	for _, batch := range batches {
+		wg.Add(1)
+		bl := o.lockBatch(batch.ID)
+		go func(b WPUpdateBatch) {
+			defer wg.Done()
+			defer o.unlockBatch(bl)
+			if err := o.advance(ctx, b); err != nil {
+				log.Printf("批量更新编排器推进 batch=%s site=%d 失败: %v", b.ID, b.SiteID, err)
+			}
+		}(batch)
+	}
+	wg.Wait()
+	o.pruneBatchLocks(runningIDs)
 }
 
 func (o *wpPluginBatchOrchestrator) advance(ctx context.Context, batch WPUpdateBatch) error {

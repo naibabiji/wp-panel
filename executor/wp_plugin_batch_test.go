@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -58,6 +59,7 @@ type fakePluginBatchConfirmer struct {
 	store           *wpUpdateStore
 	unavailable     map[string]bool
 	previewErr      map[string]error
+	previewDelay    map[string]chan struct{}
 	confirmFails    map[string]bool
 	confirmErr      map[string]error
 	confirmed       []string
@@ -66,6 +68,9 @@ type fakePluginBatchConfirmer struct {
 }
 
 func (f *fakePluginBatchConfirmer) Preview(_ context.Context, siteID int, _ string, componentKey string) (models.WPPluginUpdatePreview, error) {
+	if delay, ok := f.previewDelay[componentKey]; ok {
+		<-delay
+	}
 	if err, ok := f.previewErr[componentKey]; ok {
 		return models.WPPluginUpdatePreview{}, err
 	}
@@ -319,6 +324,58 @@ func TestWPPluginBatchOrchestratorIsolatesMultipleSites(t *testing.T) {
 	batchAAfter, err := store.getBatch(context.Background(), batchA.ID)
 	if err != nil || batchAAfter.DatabaseBackupSourceID != 0 {
 		t.Fatalf("batchA=%+v err=%v, want no backup source recorded yet (site A's first item never got a backup row in this test)", batchAAfter, err)
+	}
+}
+
+// TestWPPluginBatchOrchestratorSlowBatchDoesNotBlockOthers 验证修复点：
+// 全局锁不再覆盖 Preview/ConfirmForBatch 等网络/IO 操作；一个 batch 的慢 Preview
+// 不会阻塞同一 Tick 中其它 batch 的派发。
+func TestWPPluginBatchOrchestratorSlowBatchDoesNotBlockOthers(t *testing.T) {
+	store, siteA := newWPUpdateStoreTest(t)
+	siteB := seedSecondWebsiteForBatchTest(t, store)
+	now := time.Now().UTC()
+	batchA, err := store.createPluginBatch(context.Background(), siteA, "alice", []string{"a/a.php"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batchB, err := store.createPluginBatch(context.Background(), siteB, "bob", []string{"c/c.php"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockA := make(chan struct{})
+	confirmer := &fakePluginBatchConfirmer{store: store, previewDelay: map[string]chan struct{}{"a/a.php": blockA}}
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		orchestrator.Tick(context.Background())
+	}()
+	// 等 Tick 的 A 协程进入 Preview 阻塞；B 协程应当不受阻塞地完成派发。
+	time.Sleep(100 * time.Millisecond)
+	itemsA, err := store.listBatchItems(context.Background(), batchA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	itemsB, err := store.listBatchItems(context.Background(), batchB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if itemsA[0].Status != "pending" || itemsB[0].Status != "dispatched" {
+		t.Fatalf("itemsA[0].status=%s itemsB[0].status=%s, want A pending and B dispatched while A is blocked", itemsA[0].Status, itemsB[0].Status)
+	}
+	close(blockA)
+	wg.Wait()
+	itemsA, err = store.listBatchItems(context.Background(), batchA.ID)
+	if err != nil || itemsA[0].Status != "dispatched" {
+		t.Fatalf("itemsA=%+v err=%v", itemsA, err)
+	}
+	itemsB, err = store.listBatchItems(context.Background(), batchB.ID)
+	if err != nil || itemsB[0].Status != "dispatched" {
+		t.Fatalf("itemsB=%+v err=%v", itemsB, err)
 	}
 }
 

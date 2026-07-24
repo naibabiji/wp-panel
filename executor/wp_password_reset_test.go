@@ -151,3 +151,27 @@ func TestApplyWPPasswordResetModeAllowNoFileIsNoop(t *testing.T) {
 		t.Fatalf("apply allow on empty site: %v", err)
 	}
 }
+
+func TestApplyWPPasswordResetModeRejectsRelativeWebRoot(t *testing.T) {
+	if err := ApplyWPPasswordResetMode("sites/example", "", PasswordResetModeAll); err == nil {
+		t.Fatalf("expected error for relative webRoot")
+	}
+}
+
+func TestApplyWPPasswordResetModeRejectsFilesystemRoot(t *testing.T) {
+	if err := ApplyWPPasswordResetMode("/", "", PasswordResetModeAll); err == nil {
+		t.Fatalf("expected error for filesystem root webRoot")
+	}
+}
+
+func TestApplyWPPasswordResetModeWritesInsideWebRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := ApplyWPPasswordResetMode(root, "", PasswordResetModeAll); err != nil {
+		t.Fatalf("apply all: %v", err)
+	}
+	want := filepath.Join(root, "wp-content", "mu-plugins", wpPasswordResetPluginFile)
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("mu-plugin not written at expected path %s: %v", want, err)
+	}
+	// 断言不能通过构造派生路径逃出 webRoot：固定子目录拼接 cleaning 后不可能越界。
+}
