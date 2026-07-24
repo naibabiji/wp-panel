@@ -113,6 +113,7 @@ func (e *wpPluginUpdateExecutor) execute(ctx context.Context, execution wpPlugin
 			}
 			return err
 		}
+		e.recordFailureEvent(ctx, taskID, owner, "plugin_update", "plugin_update_failed")
 		return e.rollback(ctx, execution, owner, "plugin_update")
 	}
 	if wasActive {
@@ -126,6 +127,7 @@ func (e *wpPluginUpdateExecutor) execute(ctx context.Context, execution wpPlugin
 				}
 				return err
 			}
+			e.recordFailureEvent(ctx, taskID, owner, "reactivation", "reactivation_failed")
 			return e.rollback(ctx, execution, owner, "reactivation")
 		}
 		if err := e.stage(ctx, taskID, owner, "reactivating", "health_check"); err != nil {
@@ -141,12 +143,14 @@ func (e *wpPluginUpdateExecutor) execute(ctx context.Context, execution wpPlugin
 			}
 			return err
 		}
+		e.recordFailureEvent(ctx, taskID, owner, "health_check", pluginHealthCheckFailureCode(err))
 		return e.rollback(ctx, execution, owner, "health_check")
 	}
 	if err := e.stage(ctx, taskID, owner, "health_check", "restoring_file_lock"); err != nil {
 		return err
 	}
 	if err := e.runWriteSubstage(ctx, func(stageCtx context.Context) error { return e.ops.RestoreFileLock(stageCtx, execution) }); err != nil {
+		e.recordFailureEvent(ctx, taskID, owner, "file_lock_restore", "file_lock_restore_failed")
 		return e.rollback(ctx, execution, owner, "file_lock_restore")
 	}
 	if err := e.finalize(ctx, execution, false); err != nil {
@@ -204,19 +208,24 @@ func (e *wpPluginUpdateExecutor) rollback(ctx context.Context, execution wpPlugi
 	if err != nil {
 		return err
 	}
+	type rollbackStep struct {
+		name string
+		run  func(context.Context) error
+	}
 	var rollbackErr error
-	steps := []func(context.Context) error{
-		func(stepCtx context.Context) error { return e.ops.SetMaintenance(stepCtx, execution, true) },
+	steps := []rollbackStep{
+		{"maintenance_on", func(stepCtx context.Context) error { return e.ops.SetMaintenance(stepCtx, execution, true) }},
 	}
 	if execution.Task.DatabaseBackupMode == "fresh" {
-		steps = append(steps, func(stepCtx context.Context) error { return e.ops.RestoreDatabase(stepCtx, execution) })
+		steps = append(steps, rollbackStep{"restore_database", func(stepCtx context.Context) error { return e.ops.RestoreDatabase(stepCtx, execution) }})
 	}
-	steps = append(steps, func(stepCtx context.Context) error { return e.ops.RestorePluginFiles(stepCtx, execution) })
+	steps = append(steps, rollbackStep{"restore_plugin_files", func(stepCtx context.Context) error { return e.ops.RestorePluginFiles(stepCtx, execution) }})
 	for _, step := range steps {
 		if err := e.requireOwnership(ctx, execution.Task.ID, owner); err != nil {
 			return err
 		}
-		if err := e.runWriteSubstage(ctx, step); err != nil {
+		if err := e.runWriteSubstage(ctx, step.run); err != nil {
+			e.recordFailureEvent(ctx, execution.Task.ID, owner, "rollback", pluginRollbackStepCode(step.name, err))
 			rollbackErr = errors.Join(rollbackErr, err)
 		}
 	}
@@ -225,6 +234,7 @@ func (e *wpPluginUpdateExecutor) rollback(ctx context.Context, execution wpPlugi
 			return err
 		}
 		if err := e.runWriteSubstage(ctx, func(stepCtx context.Context) error { return e.ops.SetMaintenance(stepCtx, execution, false) }); err != nil {
+			e.recordFailureEvent(ctx, execution.Task.ID, owner, "rollback", pluginRollbackStepCode("maintenance_off", err))
 			rollbackErr = err
 		} else {
 			if err := e.requireOwnership(ctx, execution.Task.ID, owner); err != nil {
@@ -237,6 +247,7 @@ func (e *wpPluginUpdateExecutor) rollback(ctx context.Context, execution wpPlugi
 					}
 					return err
 				}
+				e.recordFailureEvent(ctx, execution.Task.ID, owner, "rollback", pluginRollbackStepCode("rollback_health", err))
 				rollbackErr = err
 			}
 		}
@@ -245,6 +256,7 @@ func (e *wpPluginUpdateExecutor) rollback(ctx context.Context, execution wpPlugi
 		return err
 	}
 	if err := e.runWriteSubstage(ctx, func(stepCtx context.Context) error { return e.ops.RestoreFileLock(stepCtx, execution) }); err != nil {
+		e.recordFailureEvent(ctx, execution.Task.ID, owner, "rollback", pluginRollbackStepCode("restore_file_lock", err))
 		rollbackErr = errors.Join(rollbackErr, err)
 	}
 	succeeded := rollbackErr == nil
@@ -262,6 +274,72 @@ func (e *wpPluginUpdateExecutor) rollback(ctx context.Context, execution wpPlugi
 		return errors.New("plugin update failed and automatic rollback failed")
 	}
 	return fmt.Errorf("plugin update failed at %s and was rolled back", failureStage)
+}
+
+// recordFailureEvent 把关键步骤的失败原因落到事件表，供前端日志复制；记录失败不影响主流程。
+func (e *wpPluginUpdateExecutor) recordFailureEvent(ctx context.Context, taskID, owner, stage, code string) {
+	if code == "" {
+		code = stage + "_failed"
+	}
+	if err := e.store.recordEvent(ctx, taskID, owner, stage, "failed", code, e.now().UTC()); err != nil {
+		log.Printf("record %s failure event: %v", stage, err)
+	}
+}
+
+// pluginHealthCheckFailureCode 把健康检查错误映射为稳定的 error_code。
+func pluginHealthCheckFailureCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "site health probe detected fatal response"):
+		return "site_fatal_error"
+	case strings.Contains(msg, "site health probe failed"):
+		return "site_unreachable"
+	case strings.Contains(msg, "site health response invalid"):
+		return "site_response_invalid"
+	case strings.Contains(msg, "plugin lint"):
+		return "plugin_lint_failed"
+	case strings.Contains(msg, "theme lint"):
+		return "theme_lint_failed"
+	case strings.Contains(msg, "invalid probe domain"):
+		return "invalid_probe_domain"
+	case strings.Contains(msg, "plugin health plan mismatch"), strings.Contains(msg, "active expectation changed"):
+		return "plugin_health_plan_mismatch"
+	default:
+		return "health_check_failed"
+	}
+}
+
+// pluginRollbackStepCode 根据回滚步骤和错误生成 error_code。
+func pluginRollbackStepCode(step string, err error) string {
+	if err == nil {
+		return ""
+	}
+	base := step + "_failed"
+	switch step {
+	case "maintenance_on":
+		base = "rollback_maintenance_failed"
+	case "restore_database":
+		base = "rollback_restore_database_failed"
+	case "restore_plugin_files":
+		base = "rollback_restore_plugin_failed"
+	case "maintenance_off":
+		base = "rollback_maintenance_off_failed"
+	case "rollback_health":
+		base = "rollback_health_check_failed"
+	case "restore_file_lock":
+		base = "rollback_restore_lock_failed"
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "plugin lint") || strings.Contains(msg, "theme lint") {
+		return base + "_lint"
+	}
+	if strings.Contains(msg, "site health") {
+		return base + "_site"
+	}
+	return base
 }
 
 func (e *wpPluginUpdateExecutor) interruptForSupervision(ctx context.Context, taskID, owner string, cause error) (bool, error) {

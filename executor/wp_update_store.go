@@ -828,6 +828,33 @@ func (s *wpUpdateStore) recordPluginRunnerJournal(ctx context.Context, id, owner
 	return tx.Commit()
 }
 
+// recordEvent 在任务仍处于 running 且由 owner 持锁时，写入一条带 error_code 的事件。
+// 用于把健康检查/回滚等关键步骤的失败原因落到 wp_update_task_events，方便前端一键复制日志。
+func (s *wpUpdateStore) recordEvent(ctx context.Context, id, owner, stage, result, code string, now time.Time) error {
+	if s == nil || s.db == nil {
+		return errors.New("update store unavailable")
+	}
+	if stage == "" || result == "" {
+		return errors.New("invalid event stage/result")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	owned, err := s.ownsRunningTask(ctx, id, owner)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return errors.New("update task ownership lost")
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, stage, result, code, wpUpdateDBTime(now)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *wpUpdateStore) ownsRunningTask(ctx context.Context, id, owner string) (bool, error) {
 	var owned int
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM wp_update_tasks

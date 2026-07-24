@@ -220,6 +220,21 @@ func TestWPPluginUpdateExecutorRollbackFailureRequiresAttention(t *testing.T) {
 	if err != nil || finished.Status != wpUpdateFailed || finished.RollbackStatus != "failed" || !finished.RequiresAttention {
 		t.Fatalf("finished=%+v err=%v", finished, err)
 	}
+	var healthFailures, rollbackFailures int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM wp_update_task_events
+		WHERE task_id=? AND stage='health_check' AND result='failed' AND error_code='health_check_failed'`, task.ID).Scan(&healthFailures); err != nil {
+		t.Fatalf("query health_check failures: %v", err)
+	}
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM wp_update_task_events
+		WHERE task_id=? AND stage='rollback' AND result='failed' AND error_code='rollback_restore_plugin_failed'`, task.ID).Scan(&rollbackFailures); err != nil {
+		t.Fatalf("query rollback failures: %v", err)
+	}
+	if healthFailures != 1 {
+		t.Fatalf("health_check failure events=%d want 1", healthFailures)
+	}
+	if rollbackFailures != 1 {
+		t.Fatalf("rollback restore_plugin failure events=%d want 1", rollbackFailures)
+	}
 }
 
 func TestWPPluginUpdateExecutorOwnershipLossDoesNotStartNextSubstage(t *testing.T) {
