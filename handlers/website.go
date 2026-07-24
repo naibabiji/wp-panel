@@ -35,6 +35,7 @@ const websiteCols = `id, name, domain, aliases, status, system_user, web_root, d
 	monitoring_enabled, monitoring_interval, disable_wp_updates, disable_file_editing,
 		xmlrpc_enabled, wp_debug_enabled, wp_post_revisions, wp_memory_limit,
 		file_lock_enabled, file_lock_mode, file_lock_apply_status,
+		password_reset_mode,
 		log_retention_days, cdn_realip_enabled, expires_at, created_at, updated_at`
 
 const fileLockBlockedMessage = "该站点已开启文件锁定，请先解除文件锁定后再执行此维护操作"
@@ -59,6 +60,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 	var wpPostRevisions int
 	var wpMemoryLimit string
 	var fileLockEnabled int
+	var passwordResetMode string
 	var logRetentionDays int
 	var cdnRealIPEnabled int
 
@@ -71,6 +73,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 		&monitoringEnabled, &monitoringInterval, &disableWPUpdates, &disableFileEditing,
 		&xmlrpcEnabled, &wpDebugEnabled, &wpPostRevisions, &wpMemoryLimit,
 		&fileLockEnabled, &w.FileLockMode, &w.FileLockApplyStatus,
+		&passwordResetMode,
 		&logRetentionDays, &cdnRealIPEnabled, &w.ExpiresAt,
 		&w.CreatedAt, &w.UpdatedAt,
 	)
@@ -92,6 +95,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 	w.WPPostRevisions = wpPostRevisions
 	w.WPMemoryLimit = wpMemoryLimit
 	w.FileLockEnabled = fileLockEnabled == 1
+	w.PasswordResetMode = passwordResetMode
 	w.LogRetentionDays = logRetentionDays
 	w.CDNRealIPEnabled = cdnRealIPEnabled == 1
 	return &w, nil

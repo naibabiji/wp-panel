@@ -543,6 +543,8 @@ var i18nKeys = []string{
 	"website.file_lock_symlink_warning",
 	"website.file_lock_writable_dirs",
 	"website.save_file_editing",
+	"website.save_password_reset",
+	"website.password_reset_saved",
 	"website.installed",
 	"website.load_current_url_failed",
 	"website.load_failed_with_error",
@@ -1059,6 +1061,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.DELETE("/api/websites/:id/cache", websiteHandler.ClearCache)
 	protected.PUT("/api/websites/:id/wp-optimizations", websiteHandler.SaveWPOptimizations)
 	protected.PUT("/api/websites/:id/file-editor", websiteHandler.SetFileEditingProtection)
+	protected.PUT("/api/websites/:id/password-reset", websiteHandler.SetPasswordResetMode)
 	protected.PUT("/api/websites/:id/file-lock", websiteHandler.SetFileLock)
 	protected.GET("/api/websites/:id/file-lock/preview", websiteHandler.PreviewFileLock)
 	protected.PUT("/api/websites/:id/monitoring", websiteHandler.SaveMonitoring)

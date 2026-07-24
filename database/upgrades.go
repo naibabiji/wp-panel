@@ -438,6 +438,11 @@ var upgrades = []Upgrade{
 		Description: "新增 WordPress 更新数据库备份复用策略",
 		Func:        ensureWPUpdateDatabaseBackupColumns,
 	},
+	{
+		Version:     "1.0.34",
+		Description: "新增 WordPress 站点密码找回保护模式字段",
+		Func:        ensurePasswordResetModeColumn,
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {
@@ -505,6 +510,27 @@ func ensureFileLockModeColumns() error {
 	}
 	_, err := DB.Exec(`UPDATE websites SET file_lock_apply_status = 'ready'
 		WHERE file_lock_enabled = 1 AND COALESCE(file_lock_apply_status, '') = ''`)
+	return err
+}
+
+// ensurePasswordResetModeColumn 为 websites 表新增 password_reset_mode 列，
+// 旧站点默认 'allow'（允许找回密码），与新装迁移的默认值保持一致。
+func ensurePasswordResetModeColumn() error {
+	var tableExists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'websites'`).Scan(&tableExists); err != nil {
+		return err
+	}
+	if tableExists == 0 {
+		return nil
+	}
+	var exists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('websites') WHERE name = 'password_reset_mode'`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 1 {
+		return nil
+	}
+	_, err := DB.Exec(`ALTER TABLE websites ADD COLUMN password_reset_mode TEXT NOT NULL DEFAULT 'allow'`)
 	return err
 }
 

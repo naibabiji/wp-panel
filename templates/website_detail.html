@@ -321,6 +321,22 @@ location ^~ /api/ {
                 </label>
                 <button x-show="!site.file_lock_enabled" @click="saveFileEditingProtection()" :disabled="fileEditingSaving" class="btn-secondary text-sm whitespace-nowrap" x-text="fileEditingSaving ? t('common.saving') : t('website.save_file_editing')"></button>
             </div>
+
+            <hr class="my-5 border-gray-700">
+            <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                <div class="flex-1">
+                    <label class="block text-sm text-gray-300 font-medium mb-1">{{t .Lang "website.password_reset_mode"}}</label>
+                    <span class="block text-xs text-gray-500 mb-2">{{t .Lang "website.password_reset_help"}}</span>
+                    <select x-model="passwordResetMode" :disabled="passwordResetSaving" class="input-field w-full text-sm py-1.5 max-w-xs">
+                        <option value="allow">{{t .Lang "website.password_reset_allow"}}</option>
+                        <option value="all">{{t .Lang "website.password_reset_all"}}</option>
+                        <option value="admin">{{t .Lang "website.password_reset_admin"}}</option>
+                    </select>
+                    <p x-show="passwordResetMode === 'all'" class="text-xs text-yellow-300 mt-2">{{t .Lang "website.password_reset_all_hides_link"}}</p>
+                    <p x-show="passwordResetMode === 'admin'" class="text-xs text-gray-500 mt-2">{{t .Lang "website.password_reset_admin_help"}}</p>
+                </div>
+                <button @click="savePasswordReset()" :disabled="passwordResetSaving" class="btn-secondary text-sm whitespace-nowrap" x-text="passwordResetSaving ? t('common.saving') : t('website.save_password_reset')"></button>
+            </div>
             <p x-show="pluginStatus === 'not_installed'" class="text-xs text-gray-500 mt-4">{{t .Lang "website.file_lock_plugin_optional"}}</p>
         </div>
     </div>
@@ -517,6 +533,8 @@ function websiteDetail() {
         disableFileEditing: false,
         savedDisableFileEditing: false,
         fileEditingSaving: false,
+        passwordResetMode: 'allow',
+        passwordResetSaving: false,
         xmlrpcEnabled: false,
         wpDebug: false,
         wpPostRevisions: -1,
@@ -560,6 +578,7 @@ function websiteDetail() {
                     this.disableWPUpdates = r.data.disable_wp_updates || false;
                     this.disableFileEditing = r.data.disable_file_editing || false;
                     this.savedDisableFileEditing = this.disableFileEditing;
+                    this.passwordResetMode = r.data.password_reset_mode || 'allow';
                     this.xmlrpcEnabled = r.data.xmlrpc_enabled || false;
                     this.wpDebug = r.data.wp_debug_enabled || false;
                     this.wpPostRevisions = r.data.wp_post_revisions != null ? r.data.wp_post_revisions : -1;
@@ -962,6 +981,18 @@ function websiteDetail() {
                 showToast(e.message, 'error');
             }
             this.fileEditingSaving = false;
+        },
+        async savePasswordReset() {
+            this.passwordResetSaving = true;
+            try {
+                const r = await api('/websites/' + this.site.id + '/password-reset', {
+                    method: 'PUT',
+                    body: { mode: this.passwordResetMode }
+                });
+                this.passwordResetMode = r.data?.password_reset_mode ?? this.passwordResetMode;
+                showToast(r.data?.message || t('website.password_reset_saved'), 'success');
+            } catch(e) { showToast(e.message, 'error'); }
+            this.passwordResetSaving = false;
         },
         async saveLogRetention() {
             try {

@@ -50,6 +50,7 @@ type Website struct {
 	FileLockEnabled     bool             `json:"file_lock_enabled"`
 	FileLockMode        string           `json:"file_lock_mode"`
 	FileLockApplyStatus string           `json:"file_lock_apply_status"`
+	PasswordResetMode   string           `json:"password_reset_mode"`
 	LogRetentionDays    int              `json:"log_retention_days"`
 	CDNRealIPEnabled    bool             `json:"cdn_realip_enabled"`
 	CDNRealIPGroups     []CDNRealIPGroup `json:"cdn_realip_groups,omitempty"`
