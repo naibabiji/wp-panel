@@ -1847,6 +1847,7 @@
   "wp_plugin_batch": {
     "button": "Batch update",
     "button_tracking": "View batch progress",
+    "theme_not_supported": "Batch update for themes is not supported. We recommend removing unused themes to reduce security risks and maintenance overhead.",
     "title": "Batch update plugins",
     "select_description": "Selected plugins are updated one at a time: the database is backed up once up front, then each plugin is updated in order. If one update fails, it is NOT rolled back automatically — it stops and waits for you to choose “Roll back” or “Ignore”, without blocking the remaining items.",
     "select_none": "No plugins are currently eligible for batch update",

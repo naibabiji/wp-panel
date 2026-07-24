@@ -1096,6 +1096,12 @@ function wpInventoryPanel() {
         },
         openPluginBatchSelect() {
             if (!this.siteID || this.pluginTaskActive()) return;
+            const pluginItems = this.pluginBatchSelectableItems();
+            const hasThemeUpdates = this.pages.updates.items.some(item => item.type === 'theme');
+            if (pluginItems.length === 0 && hasThemeUpdates) {
+                alertModal(t('wp_plugin_batch.theme_not_supported'));
+                return;
+            }
             this.pluginBatch = newPluginBatch();
             this.pluginBatch.mode = 'select';
         },
