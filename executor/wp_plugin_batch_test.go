@@ -57,13 +57,18 @@ func TestWPUpdateStoreCreatePluginBatchRejectsDuplicatesAndBlockedSite(t *testin
 type fakePluginBatchConfirmer struct {
 	store           *wpUpdateStore
 	unavailable     map[string]bool
+	previewErr      map[string]error
 	confirmFails    map[string]bool
+	confirmErr      map[string]error
 	confirmed       []string
 	confirmedMode   map[string]string
 	confirmedSource map[string]int64
 }
 
 func (f *fakePluginBatchConfirmer) Preview(_ context.Context, siteID int, _ string, componentKey string) (models.WPPluginUpdatePreview, error) {
+	if err, ok := f.previewErr[componentKey]; ok {
+		return models.WPPluginUpdatePreview{}, err
+	}
 	if f.unavailable[componentKey] {
 		return models.WPPluginUpdatePreview{Available: false}, nil
 	}
@@ -72,6 +77,9 @@ func (f *fakePluginBatchConfirmer) Preview(_ context.Context, siteID int, _ stri
 }
 
 func (f *fakePluginBatchConfirmer) ConfirmForBatch(ctx context.Context, siteID int, _, componentKey, _, _, backupMode, batchID string, sourceID int64) (models.WPPluginUpdateTask, error) {
+	if err, ok := f.confirmErr[componentKey]; ok {
+		return models.WPPluginUpdateTask{}, err
+	}
 	if f.confirmFails[componentKey] {
 		return models.WPPluginUpdateTask{}, errors.New("injected confirm failure")
 	}
@@ -403,5 +411,265 @@ func TestWPPluginBatchOrchestratorSkipsUnavailableItemInSameTick(t *testing.T) {
 	}
 	if len(confirmer.confirmed) != 1 || confirmer.confirmed[0] != "b/b.php" {
 		t.Fatalf("confirmed=%v", confirmer.confirmed)
+	}
+}
+
+// TestWPPluginBatchOrchestratorRetriesRetryablePreviewError 验证 Preview 返回可重试的瞬时错误
+// （如 api.wordpress.org 抖动误判为「不在仓库」）时，编排器不会把这一项永久标记 failed，
+// 而是写入退避重试状态保持 pending，且同一 tick 不跳过去派发后面的项（保序）。
+func TestWPPluginBatchOrchestratorRetriesRetryablePreviewError(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	batch, err := store.createPluginBatch(context.Background(), siteID, "alice", []string{"a/a.php", "b/b.php"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmer := &fakePluginBatchConfirmer{
+		store:      store,
+		previewErr: map[string]error{"a/a.php": ErrWPPluginUpdateNotInRepository},
+	}
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orchestrator.now = func() time.Time { return now }
+	orchestrator.Tick(context.Background())
+
+	items, err := store.listBatchItems(context.Background(), batch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if items[0].Status != "pending" {
+		t.Fatalf("items[0].Status=%q want pending (retryable error must not fail)", items[0].Status)
+	}
+	if items[0].RetryCount != 1 {
+		t.Fatalf("items[0].RetryCount=%d want 1", items[0].RetryCount)
+	}
+	if want := wpUpdateDBTime(now.Add(30 * time.Second)); items[0].NextRetryAt != want {
+		t.Fatalf("items[0].NextRetryAt=%q want %q", items[0].NextRetryAt, want)
+	}
+	if items[0].Message == "" {
+		t.Fatalf("items[0].Message empty, want recorded failure cause")
+	}
+	if items[1].Status != "pending" {
+		t.Fatalf("items[1].Status=%q want pending (must not skip ahead while retryable item waits)", items[1].Status)
+	}
+	if len(confirmer.confirmed) != 0 {
+		t.Fatalf("confirmed=%v, want nothing dispatched", confirmer.confirmed)
+	}
+}
+
+// TestWPPluginBatchOrchestratorWaitsDuringBackoff 验证退避期内（next_retry_at 在未来）
+// 编排器本次 tick 直接返回，既不重试也不派发；退避期过后才重新尝试同一项。
+func TestWPPluginBatchOrchestratorWaitsDuringBackoff(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	batch, err := store.createPluginBatch(context.Background(), siteID, "alice", []string{"a/a.php"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmer := &fakePluginBatchConfirmer{
+		store:      store,
+		previewErr: map[string]error{"a/a.php": ErrWPPluginUpdateUnavailable},
+	}
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orchestrator.now = func() time.Time { return now }
+	orchestrator.Tick(context.Background())
+
+	items, _ := store.listBatchItems(context.Background(), batch.ID)
+	if items[0].RetryCount != 1 {
+		t.Fatalf("after first tick RetryCount=%d want 1", items[0].RetryCount)
+	}
+
+	// 第二次 tick：next_retry_at 仍在未来，必须原地等待，不重试。
+	orchestrator.Tick(context.Background())
+	items, _ = store.listBatchItems(context.Background(), batch.ID)
+	if items[0].RetryCount != 1 {
+		t.Fatalf("during backoff RetryCount=%d want 1 (must not retry yet)", items[0].RetryCount)
+	}
+	if items[0].Status != "pending" {
+		t.Fatalf("during backoff Status=%q want pending", items[0].Status)
+	}
+
+	// 把 next_retry_at 改成过去模拟退避期满；同时移除 previewErr 让重试能成功。
+	if _, err := store.db.Exec(`UPDATE wp_update_batch_items SET next_retry_at=? WHERE batch_id=?`,
+		wpUpdateDBTime(now.Add(-time.Minute)), batch.ID); err != nil {
+		t.Fatal(err)
+	}
+	delete(confirmer.previewErr, "a/a.php")
+	orchestrator.Tick(context.Background())
+
+	items, _ = store.listBatchItems(context.Background(), batch.ID)
+	if items[0].Status != "dispatched" || items[0].TaskID == "" {
+		t.Fatalf("after backoff items[0]=%+v want dispatched", items[0])
+	}
+	if len(confirmer.confirmed) != 1 || confirmer.confirmed[0] != "a/a.php" {
+		t.Fatalf("confirmed=%v want [a/a.php]", confirmer.confirmed)
+	}
+}
+
+// TestWPPluginBatchOrchestratorRetriesThenSucceeds 验证重试几次后上游恢复时这一项能正常派发。
+func TestWPPluginBatchOrchestratorRetriesThenSucceeds(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	batch, err := store.createPluginBatch(context.Background(), siteID, "alice", []string{"a/a.php"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmer := &fakePluginBatchConfirmer{
+		store:      store,
+		previewErr: map[string]error{"a/a.php": ErrWPPluginUpdateBusy},
+	}
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orchestrator.now = func() time.Time { return now }
+
+	// 第一次 tick：进入退避。
+	orchestrator.Tick(context.Background())
+	// 退避期满后第二次 tick：移除错误源，重试应成功。
+	if _, err := store.db.Exec(`UPDATE wp_update_batch_items SET next_retry_at=? WHERE batch_id=?`,
+		wpUpdateDBTime(now.Add(-time.Minute)), batch.ID); err != nil {
+		t.Fatal(err)
+	}
+	delete(confirmer.previewErr, "a/a.php")
+	orchestrator.Tick(context.Background())
+
+	items, _ := store.listBatchItems(context.Background(), batch.ID)
+	if items[0].Status != "dispatched" || items[0].TaskID == "" {
+		t.Fatalf("items[0]=%+v want dispatched after retry succeeds", items[0])
+	}
+	if items[0].RetryCount != 1 {
+		t.Fatalf("RetryCount=%d want 1 (success does not reset retry count)", items[0].RetryCount)
+	}
+}
+
+// TestWPPluginBatchOrchestratorMarksFailedAfterMaxRetries 验证重试次数用尽后，
+// 即使错误类型仍可重试也会永久标记为 failed，避免故障插件源无限期占着批量不前进。
+func TestWPPluginBatchOrchestratorMarksFailedAfterMaxRetries(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	batch, err := store.createPluginBatch(context.Background(), siteID, "alice", []string{"a/a.php"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmer := &fakePluginBatchConfirmer{
+		store:      store,
+		previewErr: map[string]error{"a/a.php": ErrWPPluginUpdateNotInRepository},
+	}
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orchestrator.now = func() time.Time { return now }
+
+	// 重试上限是 3 次：retry_count 会从 0 递增到 3（每次 tick 之间把退避时间改到过去）。
+	for attempt := 0; attempt < wpPluginBatchMaxDispatchRetries; attempt++ {
+		orchestrator.Tick(context.Background())
+		if _, err := store.db.Exec(`UPDATE wp_update_batch_items SET next_retry_at=? WHERE batch_id=?`,
+			wpUpdateDBTime(now.Add(-time.Minute)), batch.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, _ := store.listBatchItems(context.Background(), batch.ID)
+	if items[0].RetryCount != wpPluginBatchMaxDispatchRetries {
+		t.Fatalf("RetryCount=%d want %d", items[0].RetryCount, wpPluginBatchMaxDispatchRetries)
+	}
+	if items[0].Status != "pending" {
+		t.Fatalf("Status=%q want pending (still retryable at the cap)", items[0].Status)
+	}
+
+	// 再 tick 一次：重试次数已达上限，必须永久 failed。
+	orchestrator.Tick(context.Background())
+	items, _ = store.listBatchItems(context.Background(), batch.ID)
+	if items[0].Status != "failed" {
+		t.Fatalf("Status=%q want failed after exhausting retries", items[0].Status)
+	}
+	if len(confirmer.confirmed) != 0 {
+		t.Fatalf("confirmed=%v, want nothing dispatched", confirmer.confirmed)
+	}
+}
+
+// TestWPPluginBatchOrchestratorFailsImmediatelyOnNonRetryableError 验证不可重试的错误
+// （如状态真不一致）立即标记 failed，不浪费退避时间，且同一 tick 继续派发下一项。
+func TestWPPluginBatchOrchestratorFailsImmediatelyOnNonRetryableError(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	batch, err := store.createPluginBatch(context.Background(), siteID, "alice", []string{"a/a.php", "b/b.php"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permanent := errors.New("permanent preview failure")
+	confirmer := &fakePluginBatchConfirmer{
+		store:      store,
+		previewErr: map[string]error{"a/a.php": permanent},
+	}
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orchestrator.now = func() time.Time { return now }
+	orchestrator.Tick(context.Background())
+
+	items, err := store.listBatchItems(context.Background(), batch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if items[0].Status != "failed" {
+		t.Fatalf("items[0].Status=%q want failed immediately (non-retryable)", items[0].Status)
+	}
+	if items[0].RetryCount != 0 {
+		t.Fatalf("items[0].RetryCount=%d want 0 (non-retryable must not retry)", items[0].RetryCount)
+	}
+	if items[1].Status != "dispatched" || items[1].TaskID == "" {
+		t.Fatalf("items[1]=%+v want dispatched (same tick continues after permanent failure)", items[1])
+	}
+	if len(confirmer.confirmed) != 1 || confirmer.confirmed[0] != "b/b.php" {
+		t.Fatalf("confirmed=%v want [b/b.php]", confirmer.confirmed)
+	}
+}
+
+func TestWPPluginBatchRetryBackoff(t *testing.T) {
+	cases := []struct {
+		retryCount int
+		want       time.Duration
+	}{
+		{0, 30 * time.Second},
+		{1, 30 * time.Second},
+		{2, 2 * time.Minute},
+		{3, 5 * time.Minute},
+		{4, 5 * time.Minute},
+		{99, 5 * time.Minute},
+	}
+	for _, c := range cases {
+		if got := wpPluginBatchRetryBackoff(c.retryCount); got != c.want {
+			t.Fatalf("wpPluginBatchRetryBackoff(%d)=%v want %v", c.retryCount, got, c.want)
+		}
+	}
+}
+
+func TestIsRetryableWPPluginBatchDispatchError(t *testing.T) {
+	for _, err := range []error{
+		ErrWPPluginUpdateNotInRepository,
+		ErrWPPluginUpdateUnavailable,
+		ErrWPPluginUpdateBusy,
+		ErrWPPluginUpdateSiteBusy,
+	} {
+		if !isRetryableWPPluginBatchDispatchError(err) {
+			t.Fatalf("isRetryable(%v)=false want true", err)
+		}
+	}
+	for _, err := range []error{
+		nil,
+		ErrWPPluginUpdateConflict,
+		errors.New("some other error"),
+	} {
+		if isRetryableWPPluginBatchDispatchError(err) {
+			t.Fatalf("isRetryable(%v)=true want false", err)
+		}
 	}
 }

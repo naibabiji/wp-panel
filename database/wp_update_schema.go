@@ -135,6 +135,8 @@ var wpUpdateSchemaStatements = []string{
 		status        TEXT NOT NULL DEFAULT 'pending',
 		message       TEXT NOT NULL DEFAULT '',
 		task_id       TEXT,
+		retry_count   INTEGER NOT NULL DEFAULT 0,
+		next_retry_at DATETIME,
 		created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (batch_id) REFERENCES wp_update_batches(id) ON DELETE CASCADE,

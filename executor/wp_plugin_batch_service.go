@@ -168,7 +168,7 @@ func (s *WPPluginBatchService) batchModel(ctx context.Context, batch WPUpdateBat
 	for _, it := range items {
 		model.Items = append(model.Items, models.WPPluginBatchItem{
 			Position: it.Position, ComponentKey: it.ComponentKey, Status: it.Status, Message: it.Message, TaskID: it.TaskID,
-			TaskStatus: it.TaskStatus, TaskRollbackStatus: it.TaskRollbackStatus, TaskRequiresAttention: it.TaskRequiresAttention,
+			TaskStatus: it.TaskStatus, TaskStage: it.TaskStage, TaskRollbackStatus: it.TaskRollbackStatus, TaskRequiresAttention: it.TaskRequiresAttention,
 			TaskManualDisposition: it.TaskManualDisposition, CurrentVersion: it.CurrentVersion, TargetVersion: it.TargetVersion,
 		})
 	}

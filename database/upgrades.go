@@ -455,6 +455,11 @@ var upgrades = []Upgrade{
 		Description: "新增 WordPress 插件批量更新（auto_rollback 字段与批量编排表）",
 		Func:        ensureWPUpdateBatchSchema,
 	},
+	{
+		Version:     "1.0.37",
+		Description: "新增批量插件更新派发前置检查失败重试字段",
+		Func:        ensureWPUpdateBatchRetrySchema,
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {
@@ -556,6 +561,34 @@ func ensureWPUpdateBatchSchema() error {
 	for _, stmt := range statements {
 		if _, err := DB.Exec(stmt); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func ensureWPUpdateBatchRetrySchema() error {
+	var tableExists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='wp_update_batch_items'`).Scan(&tableExists); err != nil {
+		return err
+	}
+	if tableExists == 0 {
+		return nil
+	}
+	for _, column := range []struct {
+		name string
+		sql  string
+	}{
+		{"retry_count", `ALTER TABLE wp_update_batch_items ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`},
+		{"next_retry_at", `ALTER TABLE wp_update_batch_items ADD COLUMN next_retry_at DATETIME`},
+	} {
+		var exists int
+		if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('wp_update_batch_items') WHERE name=?`, column.name).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			if _, err := DB.Exec(column.sql); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

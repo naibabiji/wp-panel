@@ -1205,10 +1205,26 @@ function wpInventoryPanel() {
         pluginBatchItemCanRollback(item) {
             return item?.task_status === 'failed';
         },
+        pluginBatchStageText(stage) {
+            if (stage === 'queued') return t('wp_plugin_update.stage_queued');
+            if (stage === 'claimed') return t('wp_plugin_update.stage_claimed');
+            if (stage === 'backups_ready') return t('wp_plugin_update.stage_backups_ready');
+            if (stage === 'unlocking') return t('wp_plugin_update.stage_unlocking');
+            if (stage === 'updating_component') return t('wp_plugin_update.stage_updating_component');
+            if (stage === 'reactivating') return t('wp_plugin_update.stage_reactivating');
+            if (stage === 'health_check') return t('wp_plugin_update.stage_health_check');
+            if (stage === 'rollback') return t('wp_plugin_update.stage_rollback');
+            if (stage === 'restoring_file_lock') return t('wp_plugin_update.stage_restoring_file_lock');
+            if (stage === 'complete') return t('wp_plugin_update.stage_complete');
+            return t('wp_plugin_update.stage_unknown');
+        },
         pluginBatchItemText(item) {
             if (item.status === 'pending') return t('wp_plugin_batch.item_pending');
             if (item.status === 'failed') return t('wp_plugin_batch.item_dispatch_failed', { message: item.message || '' });
-            if (['preparing', 'queued', 'running'].includes(item.task_status)) return t('wp_plugin_batch.item_updating');
+            if (['preparing', 'queued', 'running'].includes(item.task_status)) {
+                if (item.task_stage) return t('wp_plugin_update.stage_value', { stage: this.pluginBatchStageText(item.task_stage) });
+                return t('wp_plugin_batch.item_updating');
+            }
             if (item.task_status === 'success') return t('wp_plugin_batch.item_success');
             if (item.task_status === 'interrupted_unknown') {
                 return item.task_manual_disposition ? t('wp_plugin_batch.item_interrupted_acknowledged') : t('wp_plugin_batch.item_interrupted');

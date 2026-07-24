@@ -236,7 +236,7 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.36" {
+	if got := LatestVersion(); got != "1.0.37" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
 	for _, column := range []string{"database_backup_mode", "database_backup_source_id", "auto_rollback", "batch_id"} {
@@ -398,6 +398,103 @@ func TestRunMigrationsAloneDoesNotCrashOnPre1036WPUpdateTasksSchema(t *testing.T
 		t.Fatalf("second RunMigrations() error = %v", err)
 	}
 	assertWPUpdateBatchSchemaComplete(t)
+}
+
+func revertWPUpdateBatchItemsToPre1037Schema(t *testing.T) {
+	t.Helper()
+	for _, stmt := range []string{
+		`ALTER TABLE wp_update_batch_items RENAME TO wp_update_batch_items_new`,
+		`CREATE TABLE wp_update_batch_items (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			batch_id      TEXT NOT NULL,
+			position      INTEGER NOT NULL,
+			component_key TEXT NOT NULL,
+			status        TEXT NOT NULL DEFAULT 'pending',
+			message       TEXT NOT NULL DEFAULT '',
+			task_id       TEXT,
+			created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (batch_id) REFERENCES wp_update_batches(id) ON DELETE CASCADE,
+			FOREIGN KEY (task_id) REFERENCES wp_update_tasks(id) ON DELETE SET NULL,
+			CHECK (status IN ('pending','dispatched','failed')),
+			UNIQUE (batch_id, position),
+			UNIQUE (batch_id, component_key)
+		)`,
+		`INSERT INTO wp_update_batch_items SELECT id,batch_id,position,component_key,status,message,task_id,created_at,updated_at
+			FROM wp_update_batch_items_new`,
+		`DROP TABLE wp_update_batch_items_new`,
+		`CREATE INDEX IF NOT EXISTS ix_wp_update_batch_items_batch ON wp_update_batch_items(batch_id, position)`,
+	} {
+		if _, err := DB.Exec(stmt); err != nil {
+			t.Fatalf("revert to pre-1.0.37 schema (%s): %v", stmt, err)
+		}
+	}
+}
+
+func assertWPUpdateBatchRetrySchemaComplete(t *testing.T) {
+	t.Helper()
+	for _, column := range []string{"retry_count", "next_retry_at"} {
+		var exists int
+		if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('wp_update_batch_items') WHERE name=?`, column).Scan(&exists); err != nil {
+			t.Fatalf("query %s: %v", column, err)
+		}
+		if exists != 1 {
+			t.Fatalf("column %s exists = %d, want 1", column, exists)
+		}
+	}
+	var def string
+	if err := DB.QueryRow(`SELECT COALESCE(dflt_value, '') FROM pragma_table_info('wp_update_batch_items') WHERE name = 'retry_count'`).Scan(&def); err != nil {
+		t.Fatalf("query retry_count default: %v", err)
+	}
+	if def != "0" {
+		t.Fatalf("retry_count default = %q, want %q", def, "0")
+	}
+}
+
+func TestUpgradeAddsWPUpdateBatchRetrySchemaFrom1036(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.36')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+	revertWPUpdateBatchItemsToPre1037Schema(t)
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("second RunUpgrades() error = %v", err)
+	}
+	assertWPUpdateBatchRetrySchemaComplete(t)
+}
+
+// TestRunMigrationsAloneDoesNotCrashOnPre1037WPUpdateBatchItemsSchema 验证若
+// wp_update_batch_items 表是升级到 1.0.37 之前建的（没有 retry_count/next_retry_at
+// 列），单独调用 RunMigrations()（不调用 RunUpgrades()）也不会因为字段缺失而崩溃——
+// migrations.go 里的 CREATE TABLE IF NOT EXISTS 对已存在的旧表是空操作，缺失的列
+// 需要等 RunUpgrades() 的版本化 ALTER TABLE 补上，这里只确认 RunMigrations() 本身
+// 在这种过渡状态下依然能正常启动、不报错。
+func TestRunMigrationsAloneDoesNotCrashOnPre1037WPUpdateBatchItemsSchema(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("initial RunMigrations() error = %v", err)
+	}
+	revertWPUpdateBatchItemsToPre1037Schema(t)
+
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() must not fail when wp_update_batch_items predates retry_count/next_retry_at: %v", err)
+	}
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("second RunMigrations() error = %v", err)
+	}
 }
 
 func TestUpgradeAddsPasswordResetModeColumnFrom1033(t *testing.T) {
