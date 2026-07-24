@@ -5,21 +5,30 @@
             <h3 class="text-lg font-semibold text-white">{{t .Lang "wp_fleet.title"}}</h3>
             <p class="mt-1 text-sm text-gray-400">{{t .Lang "wp_fleet.description"}}</p>
         </div>
-        <button @click="reloadOverview()" :disabled="loading" class="btn-secondary whitespace-nowrap">
-            <span x-text="loading ? t('wp_fleet.loading') : t('wp_fleet.reload')"></span>
-        </button>
+        <div class="flex items-center gap-2">
+            <div x-data="{ showHowItWorks: false }">
+                <button @click="showHowItWorks = true" class="btn-secondary whitespace-nowrap text-sm">{{t .Lang "wp_inventory.how_it_works_title"}}</button>
+                <div x-show="showHowItWorks" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="showHowItWorks = false">
+                    <div class="bg-gray-800 rounded-lg p-6 max-w-2xl w-full mx-4 shadow-xl max-h-[80vh] overflow-y-auto">
+                        <h3 class="text-lg font-bold text-white mb-4">{{t .Lang "wp_inventory.how_it_works_title"}}</h3>
+                        <ul class="text-sm text-gray-300 space-y-3 list-disc pl-5">
+                            <li>{{t .Lang "wp_inventory.how_it_works_readonly"}}</li>
+                            <li>{{t .Lang "wp_inventory.how_it_works_check"}}</li>
+                            <li>{{t .Lang "wp_inventory.how_it_works_serial"}}</li>
+                            <li>{{t .Lang "wp_inventory.how_it_works_limits"}}</li>
+                            <li>{{t .Lang "wp_inventory.how_it_works_schedule"}}</li>
+                        </ul>
+                        <div class="mt-5 text-right">
+                            <button @click="showHowItWorks = false" class="btn-primary text-sm">{{t .Lang "close"}}</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <button @click="reloadOverview()" :disabled="loading" class="btn-secondary whitespace-nowrap">
+                <span x-text="loading ? t('wp_fleet.loading') : t('wp_fleet.reload')"></span>
+            </button>
+        </div>
     </div>
-
-    <details class="rounded border border-gray-700 bg-gray-900/40 p-3 text-sm">
-        <summary class="cursor-pointer list-none font-medium text-gray-200">ℹ️ {{t .Lang "wp_inventory.how_it_works_title"}}</summary>
-        <ul class="mt-3 list-disc space-y-2 pl-5 text-gray-400">
-            <li>{{t .Lang "wp_inventory.how_it_works_readonly"}}</li>
-            <li>{{t .Lang "wp_inventory.how_it_works_check"}}</li>
-            <li>{{t .Lang "wp_inventory.how_it_works_serial"}}</li>
-            <li>{{t .Lang "wp_inventory.how_it_works_limits"}}</li>
-            <li>{{t .Lang "wp_inventory.how_it_works_schedule"}}</li>
-        </ul>
-    </details>
 
     <div x-show="loadError && staleOverview" class="rounded border border-yellow-700 bg-yellow-950/30 p-3 text-sm text-yellow-200">
         <span x-text="t('wp_fleet.showing_stale_overview')"></span>

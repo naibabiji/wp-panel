@@ -12,17 +12,6 @@
             <button @click="refreshInventory()" :disabled="refreshing || summaryLoading || !summary || hasActiveTask()" class="btn-primary whitespace-nowrap" x-text="refreshing ? t('wp_inventory.refreshing') : t('wp_inventory.refresh')"></button>
         </div>
 
-        <details class="mt-4 rounded border border-gray-700 bg-gray-900/40 p-3 text-sm">
-            <summary class="cursor-pointer list-none font-medium text-gray-200">ℹ️ {{t .Lang "wp_inventory.how_it_works_title"}}</summary>
-            <ul class="mt-3 list-disc space-y-2 pl-5 text-gray-400">
-                <li>{{t .Lang "wp_inventory.how_it_works_readonly"}}</li>
-                <li>{{t .Lang "wp_inventory.how_it_works_check"}}</li>
-                <li>{{t .Lang "wp_inventory.how_it_works_serial"}}</li>
-                <li>{{t .Lang "wp_inventory.how_it_works_limits"}}</li>
-                <li>{{t .Lang "wp_inventory.how_it_works_schedule"}}</li>
-            </ul>
-        </details>
-
         <div x-show="summaryError" class="mt-4 flex flex-col gap-3 rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200 sm:flex-row sm:items-center sm:justify-between">
             <span x-text="summaryError"></span>
             <button @click="loadSummary()" :disabled="summaryLoading" class="text-left text-red-100 underline hover:text-white sm:text-right">{{t .Lang "wp_inventory.retry"}}</button>

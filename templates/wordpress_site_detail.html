@@ -6,7 +6,27 @@
             <h2 class="text-xl font-bold text-white">{{t .Lang "wp_inventory.title"}}</h2>
             <p x-show="site" class="mt-1 text-sm text-gray-400" x-text="site?.domain"></p>
         </div>
-        <a href="/{{.RandomSuffix}}/wordpress-overview" class="btn-secondary">{{t .Lang "wp_inventory.back_to_overview"}}</a>
+        <div class="flex items-center gap-2">
+            <div x-data="{ showHowItWorks: false }">
+                <button @click="showHowItWorks = true" class="btn-secondary whitespace-nowrap text-sm">{{t .Lang "wp_inventory.how_it_works_title"}}</button>
+                <div x-show="showHowItWorks" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="showHowItWorks = false">
+                    <div class="bg-gray-800 rounded-lg p-6 max-w-2xl w-full mx-4 shadow-xl max-h-[80vh] overflow-y-auto">
+                        <h3 class="text-lg font-bold text-white mb-4">{{t .Lang "wp_inventory.how_it_works_title"}}</h3>
+                        <ul class="text-sm text-gray-300 space-y-3 list-disc pl-5">
+                            <li>{{t .Lang "wp_inventory.how_it_works_readonly"}}</li>
+                            <li>{{t .Lang "wp_inventory.how_it_works_check"}}</li>
+                            <li>{{t .Lang "wp_inventory.how_it_works_serial"}}</li>
+                            <li>{{t .Lang "wp_inventory.how_it_works_limits"}}</li>
+                            <li>{{t .Lang "wp_inventory.how_it_works_schedule"}}</li>
+                        </ul>
+                        <div class="mt-5 text-right">
+                            <button @click="showHowItWorks = false" class="btn-primary text-sm">{{t .Lang "close"}}</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <a href="/{{.RandomSuffix}}/wordpress-overview" class="btn-secondary">{{t .Lang "wp_inventory.back_to_overview"}}</a>
+        </div>
     </div>
 
     <div x-show="loading" class="py-8 text-center text-sm text-gray-400">{{t .Lang "website.loading"}}</div>
