@@ -39,11 +39,11 @@ func TestWPPluginSystemOperationsInactiveFlow(t *testing.T) {
 	store, _ := newWPUpdateStoreTest(t)
 	packagePath := writeComponentZIP(t, []componentZIPEntry{{name: "sample/sample.php", body: pluginHeader("Sample", "2.0.0")}})
 	session := &fakeWPPluginRunnerSession{}
-	linted, probed := 0, 0
+	probed := 0
 	ops, err := newWPPluginSystemOperations(store,
 		func(context.Context, wpPluginUpdateExecution) (wpPluginRunnerSessionAPI, error) { return session, nil },
 		func(context.Context, string, string) error { return nil }, func(context.Context, wpPluginUpdateExecution) error { return nil },
-		func(context.Context, string) error { probed++; return nil }, func(context.Context, wpPluginUpdateExecution) error { linted++; return nil },
+		func(context.Context, string) error { probed++; return nil },
 		func(context.Context, wpPluginUpdateExecution, ZIPInspection) error { return nil })
 	if err != nil {
 		t.Fatal(err)
@@ -59,8 +59,8 @@ func TestWPPluginSystemOperationsInactiveFlow(t *testing.T) {
 	if err := ops.CheckTargetHealth(context.Background(), execution, false); err != nil {
 		t.Fatal(err)
 	}
-	if linted != 1 || probed != 1 {
-		t.Fatalf("linted=%d probed=%d", linted, probed)
+	if probed != 1 {
+		t.Fatalf("probed=%d", probed)
 	}
 	want := []string{"observe", "update", "check:2.0.0:false"}
 	if !reflect.DeepEqual(session.calls, want) {
@@ -72,7 +72,7 @@ func TestWPPluginSystemOperationsPreservesUncertainSession(t *testing.T) {
 	store, _ := newWPUpdateStoreTest(t)
 	packagePath := writeComponentZIP(t, []componentZIPEntry{{name: "sample/sample.php", body: pluginHeader("Sample", "2.0.0")}})
 	session := &fakeWPPluginRunnerSession{err: errWPPluginScopeSupervisionUncertain}
-	ops, _ := newWPPluginSystemOperations(store, func(context.Context, wpPluginUpdateExecution) (wpPluginRunnerSessionAPI, error) { return session, nil }, func(context.Context, string, string) error { return nil }, func(context.Context, wpPluginUpdateExecution) error { return nil }, func(context.Context, string) error { return nil }, func(context.Context, wpPluginUpdateExecution) error { return nil }, func(context.Context, wpPluginUpdateExecution, ZIPInspection) error { return nil })
+	ops, _ := newWPPluginSystemOperations(store, func(context.Context, wpPluginUpdateExecution) (wpPluginRunnerSessionAPI, error) { return session, nil }, func(context.Context, string, string) error { return nil }, func(context.Context, wpPluginUpdateExecution) error { return nil }, func(context.Context, string) error { return nil }, func(context.Context, wpPluginUpdateExecution, ZIPInspection) error { return nil })
 	execution := wpPluginUpdateExecution{Task: WPUpdateTask{ID: "wpu_0123456789abcdef0123456789abcdef", ComponentType: "plugin", ComponentKey: "sample/sample.php", CurrentVersion: "1.0.0", TargetVersion: "2.0.0", VerificationLevel: "structure_only"}, PackagePath: packagePath}
 	if _, err := ops.Prepare(context.Background(), execution); !errors.Is(err, errWPPluginScopeSupervisionUncertain) {
 		t.Fatalf("err=%v", err)

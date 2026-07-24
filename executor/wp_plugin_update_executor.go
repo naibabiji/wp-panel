@@ -299,10 +299,6 @@ func pluginHealthCheckFailureCode(err error) string {
 		return "site_unreachable"
 	case strings.Contains(msg, "site health response invalid"):
 		return "site_response_invalid"
-	case strings.Contains(msg, "plugin lint"):
-		return "plugin_lint_failed"
-	case strings.Contains(msg, "theme lint"):
-		return "theme_lint_failed"
 	case strings.Contains(msg, "invalid probe domain"):
 		return "invalid_probe_domain"
 	case strings.Contains(msg, "plugin health plan mismatch"), strings.Contains(msg, "active expectation changed"):
@@ -333,9 +329,6 @@ func pluginRollbackStepCode(step string, err error) string {
 		base = "rollback_restore_lock_failed"
 	}
 	msg := err.Error()
-	if strings.Contains(msg, "plugin lint") || strings.Contains(msg, "theme lint") {
-		return base + "_lint"
-	}
 	if strings.Contains(msg, "site health") {
 		return base + "_site"
 	}

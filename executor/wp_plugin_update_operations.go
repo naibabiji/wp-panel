@@ -3,13 +3,8 @@ package executor
 import (
 	"context"
 	"errors"
-	"io"
-	"io/fs"
 	"os"
-	"os/exec"
-	"os/user"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -29,7 +24,6 @@ type wpPluginRunnerSessionAPI interface {
 
 type wpPluginRunnerPreparer func(context.Context, wpPluginUpdateExecution) (wpPluginRunnerSessionAPI, error)
 type wpPluginFilesRestorer func(context.Context, wpPluginUpdateExecution) error
-type wpPluginLinter func(context.Context, wpPluginUpdateExecution) error
 type wpPluginSpaceChecker func(context.Context, wpPluginUpdateExecution, ZIPInspection) error
 
 type wpPluginSystemOperations struct {
@@ -39,7 +33,6 @@ type wpPluginSystemOperations struct {
 	restoreDB     wpCoreDatabaseRestorer
 	restoreFiles  wpPluginFilesRestorer
 	probe         wpCoreHomeProber
-	lint          wpPluginLinter
 	space         wpPluginSpaceChecker
 	supervisor    wpPluginUpdateSupervisor
 	mu            sync.Mutex
@@ -51,11 +44,11 @@ type wpPluginPreparedSession struct {
 	wasActive bool
 }
 
-func newWPPluginSystemOperations(store *wpUpdateStore, prepare wpPluginRunnerPreparer, restoreDB wpCoreDatabaseRestorer, restoreFiles wpPluginFilesRestorer, probe wpCoreHomeProber, lint wpPluginLinter, space wpPluginSpaceChecker) (*wpPluginSystemOperations, error) {
-	if store == nil || store.db == nil || prepare == nil || restoreDB == nil || restoreFiles == nil || probe == nil || lint == nil || space == nil {
+func newWPPluginSystemOperations(store *wpUpdateStore, prepare wpPluginRunnerPreparer, restoreDB wpCoreDatabaseRestorer, restoreFiles wpPluginFilesRestorer, probe wpCoreHomeProber, space wpPluginSpaceChecker) (*wpPluginSystemOperations, error) {
+	if store == nil || store.db == nil || prepare == nil || restoreDB == nil || restoreFiles == nil || probe == nil || space == nil {
 		return nil, errors.New("invalid plugin update operations")
 	}
-	return &wpPluginSystemOperations{store: store, componentType: "plugin", prepare: prepare, restoreDB: restoreDB, restoreFiles: restoreFiles, probe: probe, lint: lint, space: space, sessions: map[string]*wpPluginPreparedSession{}}, nil
+	return &wpPluginSystemOperations{store: store, componentType: "plugin", prepare: prepare, restoreDB: restoreDB, restoreFiles: restoreFiles, probe: probe, space: space, sessions: map[string]*wpPluginPreparedSession{}}, nil
 }
 
 func newDefaultWPPluginSystemOperations(store *wpUpdateStore, wwwRoot string) (*wpPluginSystemOperations, error) {
@@ -67,7 +60,7 @@ func newDefaultWPPluginSystemOperations(store *wpUpdateStore, wwwRoot string) (*
 		func(ctx context.Context, execution wpPluginUpdateExecution) (wpPluginRunnerSessionAPI, error) {
 			return runner.Prepare(ctx, execution)
 		},
-		defaultWPCoreDatabaseRestorer, defaultWPPluginFilesRestorer, defaultWPCoreHomeProber(nil), defaultWPPluginLinter, defaultWPPluginSpaceChecker)
+		defaultWPCoreDatabaseRestorer, defaultWPPluginFilesRestorer, defaultWPCoreHomeProber(nil), defaultWPPluginSpaceChecker)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +81,7 @@ func newDefaultWPThemeSystemOperations(store *wpUpdateStore, wwwRoot string) (*w
 		func(ctx context.Context, execution wpPluginUpdateExecution) (wpPluginRunnerSessionAPI, error) {
 			return runner.Prepare(ctx, execution)
 		},
-		defaultWPCoreDatabaseRestorer, defaultWPThemeFilesRestorer, defaultWPCoreHomeProber(nil), defaultWPPluginLinter, defaultWPPluginSpaceChecker)
+		defaultWPCoreDatabaseRestorer, defaultWPThemeFilesRestorer, defaultWPCoreHomeProber(nil), defaultWPPluginSpaceChecker)
 	if err != nil {
 		return nil, err
 	}
@@ -192,11 +185,6 @@ func (o *wpPluginSystemOperations) CheckTargetHealth(ctx context.Context, execut
 	if err := session.runner.Check(ctx, execution.Task.TargetVersion, expectedActive); err != nil {
 		return err
 	}
-	if !expectedActive {
-		if err := o.lint(ctx, execution); err != nil {
-			return err
-		}
-	}
 	return o.probe(ctx, execution.Domain)
 }
 
@@ -219,11 +207,6 @@ func (o *wpPluginSystemOperations) CheckRollbackHealth(ctx context.Context, exec
 	}
 	if err := session.runner.Check(ctx, execution.Task.CurrentVersion, session.wasActive); err != nil {
 		return err
-	}
-	if !session.wasActive {
-		if err := o.lint(ctx, execution); err != nil {
-			return err
-		}
 	}
 	return o.probe(ctx, execution.Domain)
 }
@@ -280,112 +263,6 @@ func (o *wpPluginSystemOperations) deleteReservation(taskID string) {
 
 func pluginExecutionWebsite(execution wpPluginUpdateExecution) *models.Website {
 	return &models.Website{ID: execution.Task.SiteID, Domain: execution.Domain, SystemUser: execution.SystemUser, WebRoot: execution.WebRoot, DBName: execution.DatabaseName, SiteType: "wordpress", Status: models.StatusActive, FileLockEnabled: execution.FileLockActive, FileLockMode: execution.FileLockMode}
-}
-
-func defaultWPPluginLinter(ctx context.Context, execution wpPluginUpdateExecution) error {
-	componentDir, slug := "plugins", ""
-	switch execution.Task.ComponentType {
-	case "plugin":
-		parts := strings.Split(execution.Task.ComponentKey, "/")
-		if len(parts) != 2 {
-			return errors.New("invalid plugin lint target")
-		}
-		slug = parts[0]
-	case "theme":
-		if !validWPThemeComponentKey(execution.Task.ComponentKey) {
-			return errors.New("invalid theme lint target")
-		}
-		componentDir, slug = "themes", execution.Task.ComponentKey
-	default:
-		return errors.New("invalid component lint target")
-	}
-	u, err := user.Lookup(execution.SystemUser)
-	if err != nil {
-		return errors.New("plugin lint user unavailable")
-	}
-	uid, uidErr := strconv.Atoi(u.Uid)
-	gid, gidErr := strconv.Atoi(u.Gid)
-	if uidErr != nil || gidErr != nil || uid <= 0 || gid <= 0 || u.Username != execution.SystemUser {
-		return errors.New("invalid plugin lint identity")
-	}
-	php, err := validateInventoryBinary(wpInventoryPHPPath, "/usr/bin", 0, 0)
-	if err != nil {
-		return err
-	}
-	runuser, err := validateInventoryBinary(wpInventoryRunuserPath, "/usr/sbin", 0, 0)
-	if err != nil {
-		return err
-	}
-	rootPath := filepath.Join(execution.WebRoot, "wp-content", componentDir, slug)
-	root, err := os.OpenRoot(rootPath)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	count := 0
-	err = fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, walkErr error) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if walkErr != nil {
-			return walkErr
-		}
-		if len(filepath.ToSlash(name)) > wpComponentMaxPathBytes {
-			return errors.New("plugin lint path budget exceeded")
-		}
-		info, err := entry.Info()
-		if err != nil || info.Mode()&os.ModeSymlink != 0 || (!info.IsDir() && !info.Mode().IsRegular()) {
-			return errors.New("invalid plugin lint entry")
-		}
-		if !info.Mode().IsRegular() || !strings.EqualFold(filepath.Ext(name), ".php") {
-			return nil
-		}
-		count++
-		if count > wpComponentMaxPHPFiles || info.Size() > wpComponentMaxPHPBytes {
-			return errors.New("plugin lint budget exceeded")
-		}
-		return lintWPPluginFile(ctx, root, name, info, runuser, php, u)
-	})
-	return err
-}
-
-func lintWPPluginFile(ctx context.Context, root *os.Root, name string, expected os.FileInfo, runuser, php string, u *user.User) error {
-	src, err := root.Open(name)
-	if err != nil {
-		return errors.New("plugin lint file unavailable")
-	}
-	opened, statErr := src.Stat()
-	if statErr != nil || !opened.Mode().IsRegular() || !os.SameFile(expected, opened) {
-		_ = src.Close()
-		return errors.New("plugin lint file changed")
-	}
-	tmp, err := os.CreateTemp("", ".wp-panel-plugin-lint-*.php")
-	if err != nil {
-		src.Close()
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	written, copyErr := io.Copy(tmp, io.LimitReader(src, wpComponentMaxPHPBytes+1))
-	closeSrcErr := src.Close()
-	chmodErr := tmp.Chmod(0444)
-	syncErr := tmp.Sync()
-	closeErr := tmp.Close()
-	if copyErr != nil || closeSrcErr != nil || chmodErr != nil || syncErr != nil || closeErr != nil || written != expected.Size() {
-		return errors.New("plugin lint copy failed")
-	}
-	cmd := exec.CommandContext(ctx, runuser, "-u", u.Username, "--", php, "-d", "display_errors=0", "-d", "allow_url_include=0", "-d", "open_basedir="+filepath.Dir(tmpName), "-l", tmpName)
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "HOME=" + u.HomeDir, "USER=" + u.Username, "LOGNAME=" + u.Username}
-	out := newCountingSink(64<<10, false)
-	cmd.Stdout, cmd.Stderr = out, out
-	if err := cmd.Run(); err != nil {
-		return errors.New("plugin PHP syntax check failed")
-	}
-	_, exceeded, _ := out.snapshot()
-	if exceeded {
-		return errors.New("plugin PHP syntax output exceeded")
-	}
-	return nil
 }
 
 func defaultWPPluginSpaceChecker(ctx context.Context, execution wpPluginUpdateExecution, inspection ZIPInspection) error {
