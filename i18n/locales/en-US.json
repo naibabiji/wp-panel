@@ -324,6 +324,7 @@
     "how_it_works_serial": "EN_TODO: wp_inventory.how_it_works_serial",
     "how_it_works_limits": "EN_TODO: wp_inventory.how_it_works_limits",
     "how_it_works_schedule": "EN_TODO: wp_inventory.how_it_works_schedule",
+    "how_it_works_file_lock": "File-lock compatible: enabling this panel's WordPress file protection does not block updates. The update flow temporarily releases the file lock before writing and automatically restores it afterward (including on failure or rollback), so the site is never left unprotected for long. Note: if you set DISALLOW_FILE_MODS=true directly in wp-config.php, that is a WordPress-level restriction the updater does not bypass and will fail closed.",
     "updates_overall": "EN_TODO: wp_inventory.updates_overall",
     "status_updates_available": "EN_TODO: wp_inventory.status_updates_available",
     "status_up_to_date": "EN_TODO: wp_inventory.status_up_to_date",
