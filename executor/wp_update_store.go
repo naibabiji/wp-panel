@@ -50,6 +50,8 @@ type WPUpdateTask struct {
 	BackupReady            bool
 	DatabaseBackupMode     string
 	DatabaseBackupSourceID int64
+	AutoRollback           bool
+	BatchID                string
 	PlanSealedAt           string
 	LeaseOwner             string
 	LeaseExpiresAt         string
@@ -67,6 +69,12 @@ type WPUpdatePlan struct {
 	DownloadURL            string
 	DatabaseBackupMode     string
 	DatabaseBackupSourceID int64
+	// SkipAutoRollback 为 true 时，健康检查/更新失败不会自动回滚，任务终止在
+	// requires_attention=1、rollback_status='pending'，等待人工选择回滚或忽略。
+	// 零值 false 与现有所有调用方保持一致：始终自动回滚。
+	SkipAutoRollback bool
+	// BatchID 非空时标记该任务属于哪个批量更新分组，供批量汇总查询使用。
+	BatchID string
 }
 
 func validWPUpdateBackupPlan(plan WPUpdatePlan) bool {
@@ -133,10 +141,11 @@ func (s *wpUpdateStore) createPluginManualPlan(ctx context.Context, plan WPUpdat
 	stamp := wpUpdateDBTime(now)
 	_, err = tx.ExecContext(ctx, `INSERT INTO wp_update_tasks
 		(id,site_id,component_type,component_key,task_kind,trigger_type,status,stage,
-		 current_version,target_version,package_source,download_url,database_backup_mode,database_backup_source_id,requested_at,created_at,updated_at)
-		VALUES (?,?,'plugin',?,'update','manual','preparing','plan',?,?,?,?,?,?,?,?,?)`,
+		 current_version,target_version,package_source,download_url,database_backup_mode,database_backup_source_id,
+		 auto_rollback,batch_id,requested_at,created_at,updated_at)
+		VALUES (?,?,'plugin',?,'update','manual','preparing','plan',?,?,?,?,?,?,?,?,?,?,?)`,
 		id, plan.SiteID, plan.ComponentKey, plan.CurrentVersion, plan.TargetVersion, plan.PackageSource, plan.DownloadURL,
-		plan.DatabaseBackupMode, nullableBackupSource(plan.DatabaseBackupSourceID), stamp, stamp, stamp)
+		plan.DatabaseBackupMode, nullableBackupSource(plan.DatabaseBackupSourceID), boolInt(!plan.SkipAutoRollback), plan.BatchID, stamp, stamp, stamp)
 	if err != nil {
 		return WPUpdateTask{}, err
 	}
@@ -202,10 +211,11 @@ func (s *wpUpdateStore) createThemeManualPlan(ctx context.Context, plan WPUpdate
 	stamp := wpUpdateDBTime(now)
 	_, err = tx.ExecContext(ctx, `INSERT INTO wp_update_tasks
 		(id,site_id,component_type,component_key,task_kind,trigger_type,status,stage,
-		 current_version,target_version,package_source,download_url,database_backup_mode,database_backup_source_id,requested_at,created_at,updated_at)
-		VALUES (?,?,'theme',?,'update','manual','preparing','plan',?,?,?,?,?,?,?,?,?)`,
+		 current_version,target_version,package_source,download_url,database_backup_mode,database_backup_source_id,
+		 auto_rollback,batch_id,requested_at,created_at,updated_at)
+		VALUES (?,?,'theme',?,'update','manual','preparing','plan',?,?,?,?,?,?,?,?,?,?,?)`,
 		id, plan.SiteID, plan.ComponentKey, plan.CurrentVersion, plan.TargetVersion, plan.PackageSource, plan.DownloadURL,
-		plan.DatabaseBackupMode, nullableBackupSource(plan.DatabaseBackupSourceID), stamp, stamp, stamp)
+		plan.DatabaseBackupMode, nullableBackupSource(plan.DatabaseBackupSourceID), boolInt(!plan.SkipAutoRollback), plan.BatchID, stamp, stamp, stamp)
 	if err != nil {
 		return WPUpdateTask{}, err
 	}
@@ -262,10 +272,11 @@ func (s *wpUpdateStore) createCoreManualPlan(ctx context.Context, plan WPUpdateP
 	stamp := wpUpdateDBTime(now)
 	_, err = tx.ExecContext(ctx, `INSERT INTO wp_update_tasks
 		(id,site_id,component_type,component_key,task_kind,trigger_type,status,stage,
-		 current_version,target_version,package_source,download_url,database_backup_mode,database_backup_source_id,requested_at,created_at,updated_at)
-		VALUES (?,?,'core','core','update','manual','preparing','plan',?,?,?,?,?,?,?,?,?)`,
+		 current_version,target_version,package_source,download_url,database_backup_mode,database_backup_source_id,
+		 auto_rollback,batch_id,requested_at,created_at,updated_at)
+		VALUES (?,?,'core','core','update','manual','preparing','plan',?,?,?,?,?,?,?,?,?,?,?)`,
 		id, plan.SiteID, plan.CurrentVersion, plan.TargetVersion, plan.PackageSource, plan.DownloadURL,
-		plan.DatabaseBackupMode, nullableBackupSource(plan.DatabaseBackupSourceID), stamp, stamp, stamp)
+		plan.DatabaseBackupMode, nullableBackupSource(plan.DatabaseBackupSourceID), boolInt(!plan.SkipAutoRollback), plan.BatchID, stamp, stamp, stamp)
 	if err != nil {
 		return WPUpdateTask{}, err
 	}
@@ -831,6 +842,12 @@ func (s *wpUpdateStore) recordPluginRunnerJournal(ctx context.Context, id, owner
 // recordEvent 在任务仍处于 running 且由 owner 持锁时，写入一条带 error_code 的事件。
 // 用于把健康检查/回滚等关键步骤的失败原因落到 wp_update_task_events，方便前端一键复制日志。
 func (s *wpUpdateStore) recordEvent(ctx context.Context, id, owner, stage, result, code string, now time.Time) error {
+	return s.recordEventWithStatus(ctx, id, owner, wpUpdateRunning, stage, result, code, now)
+}
+
+// recordEventWithStatus 在任务仍处于 status 且由 owner 持锁时，写入一条带 error_code 的事件。
+// status='running' 供自动执行使用；status='failed' 供批量更新失败后的人工回滚使用。
+func (s *wpUpdateStore) recordEventWithStatus(ctx context.Context, id, owner, status, stage, result, code string, now time.Time) error {
 	if s == nil || s.db == nil {
 		return errors.New("update store unavailable")
 	}
@@ -842,7 +859,7 @@ func (s *wpUpdateStore) recordEvent(ctx context.Context, id, owner, stage, resul
 		return err
 	}
 	defer tx.Rollback()
-	owned, err := s.ownsRunningTask(ctx, id, owner)
+	owned, err := s.ownsTaskWithStatus(ctx, id, owner, status)
 	if err != nil {
 		return err
 	}
@@ -856,9 +873,15 @@ func (s *wpUpdateStore) recordEvent(ctx context.Context, id, owner, stage, resul
 }
 
 func (s *wpUpdateStore) ownsRunningTask(ctx context.Context, id, owner string) (bool, error) {
+	return s.ownsTaskWithStatus(ctx, id, owner, wpUpdateRunning)
+}
+
+// ownsTaskWithStatus 供自动执行（status='running'）和批量更新失败后的人工回滚
+// （status='failed'）共用同一套持有权校验。
+func (s *wpUpdateStore) ownsTaskWithStatus(ctx context.Context, id, owner, status string) (bool, error) {
 	var owned int
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM wp_update_tasks
-		WHERE id=? AND lease_owner=? AND status='running')`, id, owner).Scan(&owned)
+		WHERE id=? AND lease_owner=? AND status=?)`, id, owner, status).Scan(&owned)
 	return owned == 1, err
 }
 
@@ -907,6 +930,155 @@ func (s *wpUpdateStore) finishAutomaticRollback(ctx context.Context, id, owner s
 		return errors.New("update task ownership lost")
 	}
 	if err := insertWPUpdateEvent(ctx, tx, id, "rollback", resultType, code, stamp); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// haltForManualRollback 用于 auto_rollback=0 的任务（批量更新）：健康检查/更新失败时不做任何
+// 文件或数据库改动，直接终态化为 failed，rollback_status='pending'，等待用户选择回滚或忽略。
+func (s *wpUpdateStore) haltForManualRollback(ctx context.Context, id, owner, failureStage string, now time.Time) error {
+	if failureStage == "" {
+		return errors.New("failure stage is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stamp := wpUpdateDBTime(now)
+	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET status='failed',stage='rollback',failure_stage=?,
+		rollback_status='pending',requires_attention=1,lease_owner='',lease_expires_at=NULL,finished_at=?,updated_at=?
+		WHERE id=? AND lease_owner=? AND status='running' AND rollback_status='not_required' AND auto_rollback=0`,
+		failureStage, stamp, stamp, id, owner)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return errors.New("update task ownership lost")
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, "rollback", "manual", "auto_rollback_disabled_awaiting_decision", stamp); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// beginManualRollback 认领一个等待人工决定的失败任务（status='failed', rollback_status='pending'），
+// 为其临时加租约以执行用户触发的回滚。租约过期（wpUpdateLease）后可被重新认领，避免执行中途崩溃导致永久卡死。
+// beginManualRollback 认领条件用 requires_attention=1（而不是死抠 rollback_status=
+// 'pending'）：一次人工回滚本身执行失败后 rollback_status 会变成 'failed'，但只要
+// requires_attention 仍是 1、manual_disposition 还没写入，就说明用户还没有对这个任务
+// 做出最终决定，应该允许重新发起回滚（比如上次是磁盘抖动之类的瞬时故障）。
+func (s *wpUpdateStore) beginManualRollback(ctx context.Context, id, owner string, now time.Time) error {
+	if owner == "" {
+		return errors.New("rollback owner is required")
+	}
+	stamp := wpUpdateDBTime(now)
+	leaseUntil := wpUpdateDBTime(now.Add(wpUpdateLease))
+	result, err := s.db.ExecContext(ctx, `UPDATE wp_update_tasks SET lease_owner=?,lease_expires_at=?,updated_at=?
+		WHERE id=? AND status='failed' AND requires_attention=1 AND manual_disposition=''
+		  AND (lease_owner='' OR lease_expires_at IS NULL OR lease_expires_at<?)`,
+		owner, leaseUntil, stamp, id, stamp)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return errors.New("manual rollback task is not claimable")
+	}
+	return nil
+}
+
+// renewManualRollbackClaim 在人工回滚执行过程中的每一步之前续租，把 lease_expires_at
+// 重新推到 now+wpUpdateLease。人工回滚是同步执行的（没有像 worker 那样的独立心跳协程），
+// 如果只在 beginManualRollback 时设置一次固定 10 分钟租约、执行期间从不续租，遇到大数据库
+// 恢复等耗时步骤就可能在回滚还没跑完时租约过期，被第二个请求重新认领、与仍在运行的第一次
+// 执行短暂并发。RowsAffected==1 本身就同时证明了「仍然持有」和「续租成功」。
+func (s *wpUpdateStore) renewManualRollbackClaim(ctx context.Context, id, owner string, now time.Time) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE wp_update_tasks SET lease_expires_at=?,updated_at=?
+		WHERE id=? AND lease_owner=? AND status='failed'`, wpUpdateDBTime(now.Add(wpUpdateLease)), wpUpdateDBTime(now), id, owner)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed == 1, err
+}
+
+// abandonManualRollback 释放一次未能进入实际回滚步骤（如加载执行上下文失败）的认领，
+// 使任务立即回到可重新认领状态，而不必等待租约自然过期。
+// abandonManualRollback 释放认领时不能再要求 rollback_status='pending'：一次重试
+// （上一次回滚本身失败过，rollback_status 已经是 'failed'）在 loadExecution/Prepare
+// 阶段又失败，也必须能正确释放，否则 lease_owner 会一直非空——Ignore 要求
+// lease_owner=”（见 disposeFailedTaskIgnored），用户会被卡死，既不能重试也不能忽略。
+// 必须检查 RowsAffected，0 行时说明持有权已经不在这个 owner 手上，视为错误而不是静默成功。
+func (s *wpUpdateStore) abandonManualRollback(ctx context.Context, id, owner string, now time.Time) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE wp_update_tasks SET lease_owner='',lease_expires_at=NULL,updated_at=?
+		WHERE id=? AND lease_owner=? AND status='failed' AND requires_attention=1 AND manual_disposition=''`,
+		wpUpdateDBTime(now), id, owner)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return errors.New("manual rollback claim is not abandonable")
+	}
+	return nil
+}
+
+// finishManualRollback 记录人工触发回滚的最终结果；无论成功与否 status 都保持 failed
+// （原始更新终归是失败的），rollback_status 记录回滚本身是否成功。
+func (s *wpUpdateStore) finishManualRollback(ctx context.Context, id, owner string, succeeded bool, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stamp := wpUpdateDBTime(now)
+	rollbackStatus, attention, disposition, resultType, code := "success", 0, "manually_rolled_back", "success", "manual_rollback_succeeded"
+	if !succeeded {
+		rollbackStatus, attention, disposition, resultType, code = "failed", 1, "", "failed", "manual_rollback_failed"
+	}
+	// 不要求 rollback_status='pending'：一次重试（上次回滚本身失败过，rollback_status
+	// 已经是 'failed'）也要能正常写入这次的结果，只靠 lease_owner+status 校验持有权即可。
+	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET rollback_status=?,requires_attention=?,manual_disposition=?,
+		lease_owner='',lease_expires_at=NULL,updated_at=? WHERE id=? AND lease_owner=? AND status='failed'`,
+		rollbackStatus, attention, disposition, stamp, id, owner)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return errors.New("manual rollback task ownership lost")
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, "rollback", resultType, code, stamp); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// disposeFailedTaskIgnored 供用户在批量更新失败项上选择「忽略，我自己去后台检查」时使用：
+// 不做任何文件/数据库改动，只是清除 requires_attention 并记录处置结果。
+func (s *wpUpdateStore) disposeFailedTaskIgnored(ctx context.Context, id string, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stamp := wpUpdateDBTime(now)
+	// lease_owner 必须为空（且租约已过期或从未设置）才能忽略：如果一个人工回滚正
+	// 认领着这个任务在执行，不能让「忽略」在回滚跑完前抢先改写处置结果，否则会
+	// 出现回滚和忽略同时“成功”、互相覆盖 manual_disposition 的竞态。
+	// 不要求 rollback_status='pending'：哪怕上一次人工回滚本身失败过（rollback_status=
+	// 'failed'），只要 requires_attention 仍是 1 且还没有处置结果，用户也应该能选择
+	// 「不再重试了，我自己去后台确认」，而不是被卡死在无法忽略的状态。
+	result, err := tx.ExecContext(ctx, `UPDATE wp_update_tasks SET manual_disposition='marked_failed_no_action',
+		requires_attention=0,updated_at=? WHERE id=? AND status='failed' AND requires_attention=1 AND manual_disposition=''
+		AND lease_owner='' AND (lease_expires_at IS NULL OR lease_expires_at<?)`,
+		stamp, id, stamp)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return errors.New("failed task is not disposable")
+	}
+	if err := insertWPUpdateEvent(ctx, tx, id, "manual_disposition", "manual", "marked_failed_no_action", stamp); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -975,22 +1147,23 @@ func (s *wpUpdateStore) hasEffectiveManualSuccess(ctx context.Context, siteID in
 
 func (s *wpUpdateStore) getTask(ctx context.Context, id string) (WPUpdateTask, error) {
 	var task WPUpdateTask
-	var attention, backupReady int
+	var attention, backupReady, autoRollback int
 	var backupSource sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `SELECT id,site_id,component_type,component_key,task_kind,COALESCE(parent_task_id,''),
 		trigger_type,status,stage,failure_stage,rollback_status,requires_attention,manual_disposition,current_version,target_version,
 		package_source,download_url,downloaded_sha256,verification_level,package_snapshot_path,backup_ready,
-		database_backup_mode,database_backup_source_id,COALESCE(plan_sealed_at,''),
+		database_backup_mode,database_backup_source_id,auto_rollback,batch_id,COALESCE(plan_sealed_at,''),
 		lease_owner,COALESCE(lease_expires_at,''),requested_at,COALESCE(started_at,''),COALESCE(finished_at,'')
 		FROM wp_update_tasks WHERE id=?`, id).Scan(&task.ID, &task.SiteID, &task.ComponentType, &task.ComponentKey,
 		&task.TaskKind, &task.ParentTaskID, &task.TriggerType, &task.Status, &task.Stage, &task.FailureStage,
 		&task.RollbackStatus, &attention, &task.ManualDisposition, &task.CurrentVersion, &task.TargetVersion,
 		&task.PackageSource, &task.DownloadURL, &task.DownloadedSHA256, &task.VerificationLevel,
-		&task.PackageSnapshotPath, &backupReady, &task.DatabaseBackupMode, &backupSource,
+		&task.PackageSnapshotPath, &backupReady, &task.DatabaseBackupMode, &backupSource, &autoRollback, &task.BatchID,
 		&task.PlanSealedAt, &task.LeaseOwner, &task.LeaseExpiresAt,
 		&task.RequestedAt, &task.StartedAt, &task.FinishedAt)
 	task.RequiresAttention = attention != 0
 	task.BackupReady = backupReady != 0
+	task.AutoRollback = autoRollback != 0
 	if backupSource.Valid {
 		task.DatabaseBackupSourceID = backupSource.Int64
 	}

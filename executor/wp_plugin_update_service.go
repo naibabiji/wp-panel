@@ -132,6 +132,23 @@ func (s *WPPluginUpdateService) Preview(ctx context.Context, siteID int, usernam
 }
 
 func (s *WPPluginUpdateService) Confirm(ctx context.Context, siteID int, username, componentKey, token, target, backupMode string) (models.WPPluginUpdateTask, error) {
+	return s.confirm(ctx, siteID, username, componentKey, token, target, backupMode, false, "", 0)
+}
+
+// ConfirmForBatch 与 Confirm 相同，但用于批量更新编排器代表用户派发批量中的下一项：
+// 生成的任务 auto_rollback=0（失败后不自动回滚，等待用户决定）并打上 batchID 分组标记。
+// databaseBackupSourceID 由编排器通过 ensureBatchDatabaseBackupSource 固定下来，是整个
+// 批量共享的数据库备份来源，不使用 Preview 确认令牌里那个基于「最近可复用备份」推断出的
+// 备份 id——后者一旦批量里某一项失败进入 requires_attention 状态就会失效，导致后续每一项
+// 都被迫重新备份一次数据库，而不是复用批量开始时的那一次。
+func (s *WPPluginUpdateService) ConfirmForBatch(ctx context.Context, siteID int, username, componentKey, token, target, backupMode, batchID string, databaseBackupSourceID int64) (models.WPPluginUpdateTask, error) {
+	if batchID == "" {
+		return models.WPPluginUpdateTask{}, ErrWPPluginUpdateInvalid
+	}
+	return s.confirm(ctx, siteID, username, componentKey, token, target, backupMode, true, batchID, databaseBackupSourceID)
+}
+
+func (s *WPPluginUpdateService) confirm(ctx context.Context, siteID int, username, componentKey, token, target, backupMode string, forBatch bool, batchID string, batchBackupSourceID int64) (models.WPPluginUpdateTask, error) {
 	if s == nil || siteID <= 0 || username == "" || !validWPPluginComponentKey(componentKey) || token == "" || target == "" {
 		return models.WPPluginUpdateTask{}, ErrWPPluginUpdateInvalid
 	}
@@ -144,9 +161,17 @@ func (s *WPPluginUpdateService) Confirm(ctx context.Context, siteID int, usernam
 	}
 	var sourceID int64
 	if backupMode == "reuse" {
-		sourceID = record.recentBackupID
+		if forBatch {
+			sourceID = batchBackupSourceID
+		} else {
+			sourceID = record.recentBackupID
+		}
 	}
-	if err := s.store.validateDatabaseBackupChoice(ctx, siteID, backupMode, sourceID, s.artifacts.root, s.now().UTC()); err != nil {
+	if forBatch {
+		if err := s.store.validateBatchDatabaseBackup(ctx, siteID, backupMode, sourceID, s.artifacts.root); err != nil {
+			return models.WPPluginUpdateTask{}, ErrWPPluginUpdateConflict
+		}
+	} else if err := s.store.validateDatabaseBackupChoice(ctx, siteID, backupMode, sourceID, s.artifacts.root, s.now().UTC()); err != nil {
 		return models.WPPluginUpdateTask{}, ErrWPPluginUpdateConflict
 	}
 	candidate, err := s.loadCandidate(ctx, siteID, componentKey)
@@ -161,6 +186,7 @@ func (s *WPPluginUpdateService) Confirm(ctx context.Context, siteID int, usernam
 		SiteID: siteID, ComponentKey: componentKey, CurrentVersion: record.currentVersion, TargetVersion: record.targetVersion,
 		PackageSource: "wordpress.org", DownloadURL: record.downloadURL,
 		DatabaseBackupMode: backupMode, DatabaseBackupSourceID: sourceID,
+		SkipAutoRollback: forBatch, BatchID: batchID,
 	}, s.now().UTC())
 	// See wp_core_update_service.go Confirm() for why the lock is released
 	// immediately after this write instead of held through the download/seal.
@@ -307,8 +333,8 @@ func (s *WPPluginUpdateService) taskModel(ctx context.Context, task WPUpdateTask
 		TaskKind: task.TaskKind, Status: task.Status, Stage: task.Stage, FailureStage: task.FailureStage,
 		RollbackStatus: task.RollbackStatus, RequiresAttention: task.RequiresAttention, ManualDisposition: task.ManualDisposition,
 		CurrentVersion: task.CurrentVersion, TargetVersion: task.TargetVersion, VerificationLevel: task.VerificationLevel,
-		DatabaseBackupMode: task.DatabaseBackupMode,
-		RequestedAt:        requested, StartedAt: started, FinishedAt: finished,
+		DatabaseBackupMode: task.DatabaseBackupMode, AutoRollback: task.AutoRollback, BatchID: task.BatchID,
+		RequestedAt: requested, StartedAt: started, FinishedAt: finished,
 	}
 	if !includeEvents {
 		return model, nil

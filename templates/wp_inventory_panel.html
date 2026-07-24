@@ -109,7 +109,11 @@
                         </table>
                     </div>
 
-                    <div x-show="activeTab === 'updates' && !currentPage().loading" class="mt-4 overflow-x-auto">
+                    <div x-show="activeTab === 'updates' && !currentPage().loading" class="mt-4 flex justify-end">
+                        <button x-show="pluginBatch.activeBatchID" @click="openPluginBatchProgress()" class="btn-secondary text-sm mr-2" x-text="t('wp_plugin_batch.button_tracking')"></button>
+                        <button x-show="!pluginBatch.activeBatchID" @click="openPluginBatchSelect()" :disabled="pluginTaskActive()" class="btn-secondary text-sm" x-text="t('wp_plugin_batch.button')"></button>
+                    </div>
+                    <div x-show="activeTab === 'updates' && !currentPage().loading" class="mt-2 overflow-x-auto">
                         <table class="w-full text-sm">
                             <thead><tr><th class="table-header">{{t .Lang "wp_inventory.column_type"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_key"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_version"}}</th><th class="table-header">{{t .Lang "wp_inventory.column_target_version"}}</th><th class="table-header text-right">{{t .Lang "wp_plugin_update.column_action"}}</th></tr></thead>
                             <tbody>
@@ -252,12 +256,86 @@
             </div>
         </div>
     </div>
+
+    <div x-cloak x-show="pluginBatch.mode === 'select'" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" @keydown.escape.window="closePluginBatch()">
+        <div class="w-full max-w-xl rounded-lg border border-gray-700 bg-gray-900 p-5 shadow-2xl" @click.outside="closePluginBatch()">
+            <div class="flex items-start justify-between gap-4">
+                <h3 class="text-lg font-semibold text-white">{{t .Lang "wp_plugin_batch.title"}}</h3>
+                <button @click="closePluginBatch()" class="text-xl text-gray-400 hover:text-white" aria-label="{{t .Lang "common.cancel"}}">×</button>
+            </div>
+            <p class="mt-2 text-sm text-gray-400">{{t .Lang "wp_plugin_batch.select_description"}}</p>
+            <div x-show="pluginBatch.error" class="mt-4 rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200" x-text="pluginBatch.error"></div>
+
+            <div x-show="pluginBatchSelectableItems().length === 0" class="mt-5 rounded border border-dashed border-gray-700 py-8 text-center text-sm text-gray-500">{{t .Lang "wp_plugin_batch.select_none"}}</div>
+
+            <template x-if="pluginBatchSelectableItems().length > 0">
+                <div class="mt-4">
+                    <div class="flex items-center justify-between text-xs text-gray-400">
+                        <span x-text="t('wp_plugin_batch.selected_count', { count: pluginBatch.selected.size })"></span>
+                        <span class="space-x-3">
+                            <button @click="pluginBatchSelectAll()" class="underline hover:text-white">{{t .Lang "wp_plugin_batch.select_all"}}</button>
+                            <button @click="pluginBatchSelectClear()" class="underline hover:text-white">{{t .Lang "wp_plugin_batch.select_clear"}}</button>
+                        </span>
+                    </div>
+                    <ul class="mt-2 max-h-72 space-y-1 overflow-y-auto rounded border border-gray-700 bg-gray-950/40 p-2">
+                        <template x-for="item in pluginBatchSelectableItems()" :key="item.key">
+                            <li>
+                                <label class="flex items-start gap-2 rounded px-2 py-1.5 text-sm hover:bg-gray-800/60">
+                                    <input type="checkbox" class="mt-1" :checked="pluginBatch.selected.has(item.key)" @change="togglePluginBatchItem(item.key)">
+                                    <span class="min-w-0">
+                                        <span class="block truncate text-white" x-text="item.name || item.key"></span>
+                                        <span class="block break-all font-mono text-xs text-gray-500" x-text="item.key + ': ' + (item.current_version || '?') + ' → ' + item.target_version"></span>
+                                    </span>
+                                </label>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
+            </template>
+
+            <div class="mt-5 flex justify-end gap-3">
+                <button @click="closePluginBatch()" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
+                <button @click="submitPluginBatch()" :disabled="pluginBatch.submitting || pluginBatch.selected.size === 0" class="btn-primary" x-text="pluginBatch.submitting ? t('wp_plugin_batch.starting') : t('wp_plugin_batch.start')"></button>
+            </div>
+        </div>
+    </div>
+
+    <div x-cloak x-show="pluginBatch.mode === 'progress'" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" @keydown.escape.window="closePluginBatch()">
+        <div class="w-full max-w-2xl rounded-lg border border-gray-700 bg-gray-900 p-5 shadow-2xl" @click.outside="closePluginBatch()">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <h3 class="text-lg font-semibold text-white">{{t .Lang "wp_plugin_batch.progress_title"}}</h3>
+                    <p class="mt-1 text-sm text-gray-400">{{t .Lang "wp_plugin_batch.progress_description"}}</p>
+                </div>
+                <span class="whitespace-nowrap rounded-full px-2 py-1 text-xs" :class="pluginBatch.batch?.status === 'completed' ? 'bg-green-900/60 text-green-200' : 'bg-blue-900/60 text-blue-200'" x-text="pluginBatch.batch?.status === 'completed' ? t('wp_plugin_batch.status_completed') : t('wp_plugin_batch.status_running')"></span>
+            </div>
+            <div x-show="pluginBatch.error" class="mt-4 rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200" x-text="pluginBatch.error"></div>
+            <ul class="mt-4 max-h-96 space-y-2 overflow-y-auto">
+                <template x-for="item in (pluginBatch.batch?.items || [])" :key="item.position">
+                    <li class="rounded border border-gray-700 bg-gray-950/40 p-3">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <span class="break-all font-mono text-xs text-gray-400" x-text="item.component_key"></span>
+                            <span class="text-sm" :class="pluginBatchItemClass(item)" x-text="pluginBatchItemText(item)"></span>
+                        </div>
+                        <div x-show="pluginBatchItemNeedsDecision(item)" class="mt-2 flex justify-end gap-2">
+                            <button @click="ignorePluginBatchItem(item)" :disabled="pluginBatch.decidingTaskID === item.task_id" class="btn-secondary text-xs" x-text="t('wp_plugin_batch.ignore_button')"></button>
+                            <button x-show="pluginBatchItemCanRollback(item)" @click="rollbackPluginBatchItem(item)" :disabled="pluginBatch.decidingTaskID === item.task_id" class="btn-danger text-xs" x-text="pluginBatch.decidingTaskID === item.task_id ? t('wp_plugin_batch.rollback_submitting') : t('wp_plugin_batch.rollback_button')"></button>
+                        </div>
+                    </li>
+                </template>
+            </ul>
+            <div class="mt-5 flex justify-end">
+                <button @click="closePluginBatch()" class="btn-secondary">{{t .Lang "wp_plugin_batch.close"}}</button>
+            </div>
+        </div>
+    </div>
 </section>
 
 <script>
 function wpInventoryPanel() {
     const newPage = () => ({ items: [], total: 0, page: 1, pageSize: 50, loading: false, error: '', loaded: false, restoringID: null });
     const newPluginUpdate = () => ({ open: false, loading: false, submitting: false, componentType: '', componentKey: '', preview: null, task: null, error: '', riskAccepted: false, databaseBackupMode: 'fresh', preparationController: null, preparationCancelled: false, pollStartedAt: 0 });
+    const newPluginBatch = () => ({ mode: '', activeBatchID: '', submitting: false, error: '', selected: new Set(), batch: null, decidingTaskID: null, pollTimer: null, pollStartedAt: 0 });
     return {
         siteID: null,
         siteURL: '',
@@ -271,6 +349,7 @@ function wpInventoryPanel() {
         pollStartedAt: 0,
         pluginUpdate: newPluginUpdate(),
         pluginPollTimer: null,
+        pluginBatch: newPluginBatch(),
         backupRestoreTimer: null,
         requestGeneration: 0,
         pagehideHandler: null,
@@ -284,6 +363,7 @@ function wpInventoryPanel() {
             this.stopPolling();
             this.stopPluginPolling();
             this.stopBackupRestorePolling();
+            this.stopPluginBatchPolling();
             this.requestGeneration++;
             if (this.pagehideHandler) window.removeEventListener('pagehide', this.pagehideHandler);
             this.pagehideHandler = null;
@@ -295,6 +375,7 @@ function wpInventoryPanel() {
             this.stopPolling();
             this.stopPluginPolling();
             this.stopBackupRestorePolling();
+            this.stopPluginBatchPolling();
             this.requestGeneration++;
             this.siteID = Number.isInteger(nextID) && nextID > 0 ? nextID : null;
             this.siteURL = this.siteID && typeof site.domain === 'string' && site.domain !== ''
@@ -306,7 +387,11 @@ function wpInventoryPanel() {
             this.activeTab = 'plugins';
             this.pages = { plugins: newPage(), themes: newPage(), updates: newPage(), backups: newPage(), logs: newPage() };
             this.pluginUpdate = newPluginUpdate();
-            if (this.siteID) await this.loadSummary();
+            this.pluginBatch = newPluginBatch();
+            if (this.siteID) {
+                await this.loadSummary();
+                await this.checkActivePluginBatch();
+            }
         },
         hasActiveTask() {
             return this.summary?.active_task?.status === 'queued' || this.summary?.active_task?.status === 'running';
@@ -988,6 +1073,199 @@ function wpInventoryPanel() {
             if (type === 'plugin') return t('wp_inventory.type_plugin');
             if (type === 'theme') return t('wp_inventory.type_theme');
             return t('wp_inventory.error_generic');
+        },
+        validPluginBatch(value) {
+            return value && typeof value.batch_id === 'string' && value.batch_id !== '' && value.site_id === this.siteID &&
+                ['running', 'completed'].includes(value.status) && Array.isArray(value.items);
+        },
+        async checkActivePluginBatch() {
+            if (!this.siteID) return;
+            const generation = this.requestGeneration;
+            const siteID = this.siteID;
+            try {
+                const response = await api('/websites/' + siteID + '/wp-plugin-batch', { suppressToast: true });
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                const running = Array.isArray(response.data) ? response.data.find(b => b.status === 'running') : null;
+                this.pluginBatch.activeBatchID = running && typeof running.batch_id === 'string' ? running.batch_id : '';
+            } catch (_) {
+                // 静默失败：这只是恢复「查看批量进度」按钮的可见性，不影响其他功能。
+            }
+        },
+        pluginBatchSelectableItems() {
+            return this.pages.updates.items.filter(item => this.canUpdatePlugin(item));
+        },
+        openPluginBatchSelect() {
+            if (!this.siteID || this.pluginTaskActive()) return;
+            this.pluginBatch = newPluginBatch();
+            this.pluginBatch.mode = 'select';
+        },
+        togglePluginBatchItem(key) {
+            if (this.pluginBatch.selected.has(key)) this.pluginBatch.selected.delete(key);
+            else this.pluginBatch.selected.add(key);
+        },
+        pluginBatchSelectAll() {
+            this.pluginBatch.selected = new Set(this.pluginBatchSelectableItems().map(item => item.key));
+        },
+        pluginBatchSelectClear() {
+            this.pluginBatch.selected = new Set();
+        },
+        closePluginBatch() {
+            if (this.pluginBatch.submitting) return;
+            const activeBatchID = this.pluginBatch.activeBatchID;
+            this.stopPluginBatchPolling();
+            this.pluginBatch = newPluginBatch();
+            this.pluginBatch.activeBatchID = activeBatchID;
+        },
+        async submitPluginBatch() {
+            if (!this.siteID || this.pluginBatch.submitting || this.pluginBatch.selected.size === 0) return;
+            const generation = this.requestGeneration;
+            const siteID = this.siteID;
+            this.pluginBatch.submitting = true;
+            this.pluginBatch.error = '';
+            try {
+                const response = await api('/websites/' + siteID + '/wp-plugin-batch', {
+                    method: 'POST', suppressToast: true,
+                    body: { component_keys: Array.from(this.pluginBatch.selected) },
+                });
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                if (!this.validPluginBatch(response.data)) throw new Error(t('wp_plugin_batch.start_invalid'));
+                showToast(t('wp_plugin_batch.start'), 'success');
+                this.pluginBatch = newPluginBatch();
+                this.pluginBatch.activeBatchID = response.data.batch_id;
+                this.pluginBatch.mode = 'progress';
+                this.pluginBatch.batch = response.data;
+                this.startPluginBatchPolling();
+            } catch (error) {
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                this.pluginBatch.error = error.message || t('wp_plugin_batch.start_failed');
+            } finally {
+                if (generation === this.requestGeneration && siteID === this.siteID) this.pluginBatch.submitting = false;
+            }
+        },
+        async openPluginBatchProgress() {
+            if (!this.siteID || !this.pluginBatch.activeBatchID) return;
+            const batchID = this.pluginBatch.activeBatchID;
+            this.pluginBatch.mode = 'progress';
+            this.pluginBatch.error = '';
+            await this.pollPluginBatch(batchID, true);
+        },
+        startPluginBatchPolling() {
+            this.stopPluginBatchPolling();
+            this.pluginBatch.pollStartedAt = Date.now();
+            this.schedulePluginBatchPoll(this.pollDelay(0));
+        },
+        schedulePluginBatchPoll(delay) {
+            this.stopPluginBatchPolling();
+            this.pluginBatch.pollTimer = setTimeout(() => {
+                this.pluginBatch.pollTimer = null;
+                this.pollPluginBatch(this.pluginBatch.activeBatchID, false);
+            }, delay);
+        },
+        stopPluginBatchPolling() {
+            if (this.pluginBatch.pollTimer !== null) clearTimeout(this.pluginBatch.pollTimer);
+            this.pluginBatch.pollTimer = null;
+        },
+        async pollPluginBatch(batchID, immediate) {
+            const generation = this.requestGeneration;
+            const siteID = this.siteID;
+            if (!siteID || !batchID) return;
+            try {
+                const response = await api('/websites/' + siteID + '/wp-plugin-batch/' + encodeURIComponent(batchID), { suppressToast: true });
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                if (!this.validPluginBatch(response.data) || response.data.batch_id !== batchID) throw new Error(t('wp_plugin_batch.task_invalid'));
+                this.pluginBatch.batch = response.data;
+                this.pluginBatch.error = '';
+                if (response.data.status === 'completed') {
+                    this.stopPluginBatchPolling();
+                    this.pluginBatch.activeBatchID = '';
+                    this.pages.plugins.loaded = false;
+                    this.pages.updates.loaded = false;
+                    this.pages.backups.loaded = false;
+                    return;
+                }
+                if (!immediate) this.schedulePluginBatchPoll(this.pollDelay(Date.now() - this.pluginBatch.pollStartedAt));
+                else this.startPluginBatchPolling();
+            } catch (error) {
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                this.pluginBatch.error = error.message || t('wp_plugin_batch.load_failed');
+                this.schedulePluginBatchPoll(5000);
+            }
+        },
+        // 一个已派发的项需要人工决定，覆盖两种情况：更新失败挂起（或人工回滚本身也失败了，
+        // 只要 requires_attention 还是 1 就还没有处置结果）；或者 runner 执行结果不确定
+        // （interrupted_unknown 且 task_manual_disposition 还是空，说明还没有人确认过）。
+        pluginBatchItemNeedsDecision(item) {
+            if (item?.status !== 'dispatched') return false;
+            if (item.task_status === 'failed') return item.task_requires_attention === true;
+            if (item.task_status === 'interrupted_unknown') return !item.task_manual_disposition;
+            return false;
+        },
+        // interrupted_unknown 不允许回滚：执行结果本身不确定，贸然恢复文件/数据库可能
+        // 覆盖掉一次其实已经成功的更新，只能选择「忽略」去后台自行核实。
+        pluginBatchItemCanRollback(item) {
+            return item?.task_status === 'failed';
+        },
+        pluginBatchItemText(item) {
+            if (item.status === 'pending') return t('wp_plugin_batch.item_pending');
+            if (item.status === 'failed') return t('wp_plugin_batch.item_dispatch_failed', { message: item.message || '' });
+            if (['preparing', 'queued', 'running'].includes(item.task_status)) return t('wp_plugin_batch.item_updating');
+            if (item.task_status === 'success') return t('wp_plugin_batch.item_success');
+            if (item.task_status === 'interrupted_unknown') {
+                return item.task_manual_disposition ? t('wp_plugin_batch.item_interrupted_acknowledged') : t('wp_plugin_batch.item_interrupted');
+            }
+            if (item.task_status === 'failed') {
+                if (this.pluginBatchItemNeedsDecision(item)) return t('wp_plugin_batch.item_failed_awaiting_decision');
+                if (item.task_rollback_status === 'success') return t('wp_plugin_batch.item_failed_rolled_back');
+                if (item.task_rollback_status === 'failed') return t('wp_plugin_batch.item_failed_rollback_failed');
+                return t('wp_plugin_batch.item_failed_generic');
+            }
+            return t('wp_plugin_batch.item_pending');
+        },
+        pluginBatchItemClass(item) {
+            if (item.status === 'failed' || item.task_status === 'failed' || item.task_status === 'interrupted_unknown') return 'text-red-300';
+            if (item.task_status === 'success') return 'text-green-300';
+            if (['preparing', 'queued', 'running'].includes(item.task_status)) return 'text-blue-300';
+            return 'text-gray-400';
+        },
+        async rollbackPluginBatchItem(item) {
+            if (!this.siteID || !item?.task_id || this.pluginBatch.decidingTaskID) return;
+            const accepted = await confirmModal(t('wp_plugin_batch.rollback_confirm'));
+            if (!accepted) return;
+            const generation = this.requestGeneration;
+            const siteID = this.siteID;
+            const batchID = this.pluginBatch.activeBatchID;
+            this.pluginBatch.decidingTaskID = item.task_id;
+            try {
+                await api('/websites/' + siteID + '/wp-plugin-batch/tasks/' + encodeURIComponent(item.task_id) + '/rollback', { method: 'POST', suppressToast: true });
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                showToast(t('wp_plugin_batch.rollback_success'), 'success');
+                await this.pollPluginBatch(batchID, true);
+            } catch (error) {
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                showToast(error.message || t('wp_plugin_batch.rollback_failed'), 'error');
+            } finally {
+                if (generation === this.requestGeneration && siteID === this.siteID) this.pluginBatch.decidingTaskID = null;
+            }
+        },
+        async ignorePluginBatchItem(item) {
+            if (!this.siteID || !item?.task_id || this.pluginBatch.decidingTaskID) return;
+            const accepted = await confirmModal(t('wp_plugin_batch.ignore_confirm'));
+            if (!accepted) return;
+            const generation = this.requestGeneration;
+            const siteID = this.siteID;
+            const batchID = this.pluginBatch.activeBatchID;
+            this.pluginBatch.decidingTaskID = item.task_id;
+            try {
+                await api('/websites/' + siteID + '/wp-plugin-batch/tasks/' + encodeURIComponent(item.task_id) + '/ignore', { method: 'POST', suppressToast: true });
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                showToast(t('wp_plugin_batch.ignore_success'), 'success');
+                await this.pollPluginBatch(batchID, true);
+            } catch (error) {
+                if (generation !== this.requestGeneration || siteID !== this.siteID) return;
+                showToast(error.message || t('wp_plugin_batch.ignore_failed'), 'error');
+            } finally {
+                if (generation === this.requestGeneration && siteID === this.siteID) this.pluginBatch.decidingTaskID = null;
+            }
         }
     };
 }

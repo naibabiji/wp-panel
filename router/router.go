@@ -829,6 +829,36 @@ var i18nKeys = []string{
 	"wp_plugin_update.task_read_failed",
 	"wp_plugin_update.tracking",
 	"wp_plugin_update.title",
+	"wp_plugin_batch.button",
+	"wp_plugin_batch.button_tracking",
+	"wp_plugin_batch.ignore_button",
+	"wp_plugin_batch.ignore_confirm",
+	"wp_plugin_batch.ignore_failed",
+	"wp_plugin_batch.ignore_success",
+	"wp_plugin_batch.item_dispatch_failed",
+	"wp_plugin_batch.item_failed_awaiting_decision",
+	"wp_plugin_batch.item_failed_generic",
+	"wp_plugin_batch.item_failed_rollback_failed",
+	"wp_plugin_batch.item_failed_rolled_back",
+	"wp_plugin_batch.item_interrupted",
+	"wp_plugin_batch.item_interrupted_acknowledged",
+	"wp_plugin_batch.item_pending",
+	"wp_plugin_batch.item_success",
+	"wp_plugin_batch.item_updating",
+	"wp_plugin_batch.load_failed",
+	"wp_plugin_batch.rollback_button",
+	"wp_plugin_batch.rollback_confirm",
+	"wp_plugin_batch.rollback_failed",
+	"wp_plugin_batch.rollback_submitting",
+	"wp_plugin_batch.rollback_success",
+	"wp_plugin_batch.selected_count",
+	"wp_plugin_batch.start",
+	"wp_plugin_batch.start_failed",
+	"wp_plugin_batch.start_invalid",
+	"wp_plugin_batch.starting",
+	"wp_plugin_batch.status_completed",
+	"wp_plugin_batch.status_running",
+	"wp_plugin_batch.task_invalid",
 	"wp_theme_update.action",
 	"wp_theme_update.backup_scope_value",
 	"wp_theme_update.checking",
@@ -1045,6 +1075,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	wpFleetOverviewHandler := &handlers.WPFleetOverviewHandler{DB: db}
 	wpCoreUpdateHandler := newWPCoreUpdateHandler(db, cfg.Panel.BackupDir)
 	wpPluginUpdateHandler := newWPPluginUpdateHandler(db, cfg.Panel.BackupDir)
+	wpPluginBatchHandler := newWPPluginBatchHandler(db, cfg.Panel.BackupDir, cfg.Paths.WWWRoot)
 	wpThemeUpdateHandler := newWPThemeUpdateHandler(db, cfg.Panel.BackupDir)
 	wpUpdateBackupHandler := &handlers.WPUpdateBackupHandler{BackupDir: cfg.Panel.BackupDir}
 	wpUpdateLogHandler := &handlers.WPUpdateLogHandler{}
@@ -1066,6 +1097,11 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/websites/:id/wp-plugin-update/confirm", wpPluginUpdateHandler.Confirm)
 	protected.GET("/api/websites/:id/wp-plugin-update/tasks/latest", wpPluginUpdateHandler.LatestTask)
 	protected.GET("/api/websites/:id/wp-plugin-update/tasks/:task_id", wpPluginUpdateHandler.Task)
+	protected.POST("/api/websites/:id/wp-plugin-batch", wpPluginBatchHandler.Create)
+	protected.GET("/api/websites/:id/wp-plugin-batch", wpPluginBatchHandler.List)
+	protected.GET("/api/websites/:id/wp-plugin-batch/:batch_id", wpPluginBatchHandler.Get)
+	protected.POST("/api/websites/:id/wp-plugin-batch/tasks/:task_id/rollback", wpPluginBatchHandler.Rollback)
+	protected.POST("/api/websites/:id/wp-plugin-batch/tasks/:task_id/ignore", wpPluginBatchHandler.Ignore)
 	protected.GET("/api/websites/:id/wp-theme-update/preview", wpThemeUpdateHandler.Preview)
 	protected.POST("/api/websites/:id/wp-theme-update/confirm", wpThemeUpdateHandler.Confirm)
 	protected.GET("/api/websites/:id/wp-theme-update/tasks/latest", wpThemeUpdateHandler.LatestTask)
@@ -1319,6 +1355,17 @@ func newWPPluginUpdateHandler(db *sql.DB, backupDir string) *handlers.WPPluginUp
 	service, err := executor.NewWPPluginUpdateService(db, backupDir)
 	if err != nil {
 		log.Println("WordPress 插件更新 API 未启用")
+		return handler
+	}
+	handler.Service = service
+	return handler
+}
+
+func newWPPluginBatchHandler(db *sql.DB, backupDir, wwwRoot string) *handlers.WPPluginBatchHandler {
+	handler := &handlers.WPPluginBatchHandler{}
+	service, err := executor.NewWPPluginBatchService(db, backupDir, wwwRoot)
+	if err != nil {
+		log.Println("WordPress 插件批量更新 API 未启用")
 		return handler
 	}
 	handler.Service = service

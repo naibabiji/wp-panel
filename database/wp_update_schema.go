@@ -25,6 +25,8 @@ var wpUpdateSchemaStatements = []string{
 		backup_ready          INTEGER NOT NULL DEFAULT 0,
 		database_backup_mode  TEXT NOT NULL DEFAULT 'fresh',
 		database_backup_source_id INTEGER,
+		auto_rollback         INTEGER NOT NULL DEFAULT 1,
+		batch_id              TEXT NOT NULL DEFAULT '',
 		plan_sealed_at        DATETIME,
 		lease_owner           TEXT NOT NULL DEFAULT '',
 		lease_expires_at      DATETIME,
@@ -44,6 +46,7 @@ var wpUpdateSchemaStatements = []string{
 		CHECK (manual_disposition IN ('','confirmed_target_version','manually_rolled_back','marked_failed_no_action','escalated')),
 		CHECK (verification_level IN ('','structure_only','official_verified')),
 		CHECK (database_backup_mode IN ('fresh','reuse')),
+		CHECK (auto_rollback IN (0,1)),
 		CHECK ((task_kind = 'update' AND parent_task_id IS NULL) OR (task_kind = 'rollback' AND parent_task_id IS NOT NULL))
 	)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS ux_wp_update_tasks_active_site
@@ -56,6 +59,8 @@ var wpUpdateSchemaStatements = []string{
 		ON wp_update_tasks(site_id, created_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS ix_wp_update_tasks_finished_at
 		ON wp_update_tasks(finished_at)`,
+	`CREATE INDEX IF NOT EXISTS ix_wp_update_tasks_batch
+		ON wp_update_tasks(batch_id) WHERE batch_id != ''`,
 	`CREATE TABLE IF NOT EXISTS wp_update_task_events (
 		id          INTEGER PRIMARY KEY AUTOINCREMENT,
 		task_id     TEXT NOT NULL,
@@ -108,4 +113,42 @@ var wpUpdateSchemaStatements = []string{
 		BEFORE UPDATE OF database_backup_mode ON wp_update_tasks
 		WHEN OLD.plan_sealed_at IS NOT NULL AND NEW.database_backup_mode != OLD.database_backup_mode
 		BEGIN SELECT RAISE(ABORT, 'sealed update backup mode is immutable'); END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_wp_update_tasks_sealed_auto_rollback_immutable
+		BEFORE UPDATE OF auto_rollback ON wp_update_tasks
+		WHEN OLD.plan_sealed_at IS NOT NULL AND NEW.auto_rollback != OLD.auto_rollback
+		BEGIN SELECT RAISE(ABORT, 'sealed update auto rollback flag is immutable'); END`,
+	`CREATE TABLE IF NOT EXISTS wp_update_batches (
+		id          TEXT PRIMARY KEY,
+		site_id     INTEGER NOT NULL,
+		created_by  TEXT NOT NULL,
+		status      TEXT NOT NULL DEFAULT 'running',
+		total_count INTEGER NOT NULL DEFAULT 0,
+		database_backup_source_id INTEGER,
+		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE,
+		CHECK (status IN ('running','completed'))
+	)`,
+	`CREATE INDEX IF NOT EXISTS ix_wp_update_batches_site
+		ON wp_update_batches(site_id, created_at DESC)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS ux_wp_update_batches_active_site
+		ON wp_update_batches(site_id) WHERE status = 'running'`,
+	`CREATE TABLE IF NOT EXISTS wp_update_batch_items (
+		id            INTEGER PRIMARY KEY AUTOINCREMENT,
+		batch_id      TEXT NOT NULL,
+		position      INTEGER NOT NULL,
+		component_key TEXT NOT NULL,
+		status        TEXT NOT NULL DEFAULT 'pending',
+		message       TEXT NOT NULL DEFAULT '',
+		task_id       TEXT,
+		created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (batch_id) REFERENCES wp_update_batches(id) ON DELETE CASCADE,
+		FOREIGN KEY (task_id) REFERENCES wp_update_tasks(id) ON DELETE SET NULL,
+		CHECK (status IN ('pending','dispatched','failed')),
+		UNIQUE (batch_id, position),
+		UNIQUE (batch_id, component_key)
+	)`,
+	`CREATE INDEX IF NOT EXISTS ix_wp_update_batch_items_batch
+		ON wp_update_batch_items(batch_id, position)`,
 }

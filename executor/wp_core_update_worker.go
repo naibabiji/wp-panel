@@ -73,6 +73,7 @@ type WPCoreUpdateWorker struct {
 	themeExecutor     wpCoreUpdateTaskExecutor
 	observeTheme      wpThemeUpdateObserver
 	themeSupervisor   wpPluginUpdateSupervisor
+	batchOrchestrator *wpPluginBatchOrchestrator
 	owner             string
 	pollInterval      time.Duration
 	heartbeatInterval time.Duration
@@ -98,6 +99,7 @@ type wpCoreUpdateWorkerOptions struct {
 	themeExecutor     wpCoreUpdateTaskExecutor
 	observeTheme      wpThemeUpdateObserver
 	themeSupervisor   wpPluginUpdateSupervisor
+	batchOrchestrator *wpPluginBatchOrchestrator
 	owner             string
 	pollInterval      time.Duration
 	heartbeatInterval time.Duration
@@ -139,6 +141,14 @@ func NewWPCoreUpdateWorker(cfg *config.Config) (*WPCoreUpdateWorker, error) {
 	if err != nil {
 		return nil, errors.New("theme update executor unavailable")
 	}
+	pluginService, err := NewWPPluginUpdateService(database.GetDB(), cfg.Panel.BackupDir)
+	if err != nil {
+		return nil, errors.New("plugin update service unavailable")
+	}
+	batchOrchestrator, err := newWPPluginBatchOrchestrator(store, pluginService)
+	if err != nil {
+		return nil, errors.New("plugin batch orchestrator unavailable")
+	}
 	owner, err := newWPCoreUpdateWorkerOwner()
 	if err != nil {
 		return nil, errors.New("core update worker identity unavailable")
@@ -160,7 +170,8 @@ func NewWPCoreUpdateWorker(cfg *config.Config) (*WPCoreUpdateWorker, error) {
 		observeTheme: func(ctx context.Context, task WPUpdateTask) (wpThemeUpdateIdentity, error) {
 			return observeWPThemeUpdateIdentity(ctx, store, task)
 		},
-		owner: owner, pollInterval: wpCoreUpdateWorkerPollInterval,
+		batchOrchestrator: batchOrchestrator,
+		owner:             owner, pollInterval: wpCoreUpdateWorkerPollInterval,
 		heartbeatInterval: wpCoreUpdateWorkerHeartbeatInterval,
 		sweepInterval:     wpCoreUpdateWorkerSweepInterval, now: time.Now,
 	})
@@ -265,12 +276,13 @@ func newWPCoreUpdateWorker(opts wpCoreUpdateWorkerOptions) (*WPCoreUpdateWorker,
 	return &WPCoreUpdateWorker{
 		store: opts.store, backups: opts.backups, executor: opts.executor, observeVersion: opts.observeVersion,
 		pluginTasks: opts.pluginTasks, pluginExecutor: opts.pluginExecutor, observePlugin: opts.observePlugin,
-		pluginSupervisor: opts.pluginSupervisor,
-		themeTasks:       opts.themeTasks,
-		themeExecutor:    opts.themeExecutor,
-		observeTheme:     opts.observeTheme,
-		themeSupervisor:  opts.themeSupervisor,
-		owner:            opts.owner, pollInterval: opts.pollInterval, heartbeatInterval: opts.heartbeatInterval,
+		pluginSupervisor:  opts.pluginSupervisor,
+		themeTasks:        opts.themeTasks,
+		themeExecutor:     opts.themeExecutor,
+		observeTheme:      opts.observeTheme,
+		themeSupervisor:   opts.themeSupervisor,
+		batchOrchestrator: opts.batchOrchestrator,
+		owner:             opts.owner, pollInterval: opts.pollInterval, heartbeatInterval: opts.heartbeatInterval,
 		sweepInterval: opts.sweepInterval, now: opts.now,
 	}, nil
 }
@@ -385,6 +397,9 @@ func (w *WPCoreUpdateWorker) sweep(ctx context.Context) {
 				cleanupExpiredUpdateLogs(context.Context, time.Time) error
 			}); ok {
 				_ = logCleaner.cleanupExpiredUpdateLogs(context.Background(), w.now().UTC())
+			}
+			if w.batchOrchestrator != nil {
+				w.batchOrchestrator.Tick(context.Background())
 			}
 		}
 	}

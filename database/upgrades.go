@@ -450,6 +450,11 @@ var upgrades = []Upgrade{
 			`CREATE INDEX IF NOT EXISTS ix_wp_update_tasks_finished_at ON wp_update_tasks(finished_at)`,
 		},
 	},
+	{
+		Version:     "1.0.36",
+		Description: "新增 WordPress 插件批量更新（auto_rollback 字段与批量编排表）",
+		Func:        ensureWPUpdateBatchSchema,
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {
@@ -482,6 +487,78 @@ func ensureWPUpdateDatabaseBackupColumns() error {
 		WHEN OLD.plan_sealed_at IS NOT NULL AND NEW.database_backup_mode != OLD.database_backup_mode
 		BEGIN SELECT RAISE(ABORT, 'sealed update backup mode is immutable'); END`)
 	return err
+}
+
+// ensureWPUpdateBatchSchema 为批量插件更新新增 auto_rollback/batch_id 字段与批量编排表。
+func ensureWPUpdateBatchSchema() error {
+	var tableExists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='wp_update_tasks'`).Scan(&tableExists); err != nil {
+		return err
+	}
+	if tableExists == 0 {
+		return nil
+	}
+	for _, column := range []struct {
+		name string
+		sql  string
+	}{
+		{"auto_rollback", `ALTER TABLE wp_update_tasks ADD COLUMN auto_rollback INTEGER NOT NULL DEFAULT 1 CHECK (auto_rollback IN (0,1))`},
+		{"batch_id", `ALTER TABLE wp_update_tasks ADD COLUMN batch_id TEXT NOT NULL DEFAULT ''`},
+	} {
+		var exists int
+		if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('wp_update_tasks') WHERE name=?`, column.name).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			if _, err := DB.Exec(column.sql); err != nil {
+				return err
+			}
+		}
+	}
+	statements := []string{
+		`CREATE INDEX IF NOT EXISTS ix_wp_update_tasks_batch ON wp_update_tasks(batch_id) WHERE batch_id != ''`,
+		`CREATE TRIGGER IF NOT EXISTS trg_wp_update_tasks_sealed_auto_rollback_immutable
+			BEFORE UPDATE OF auto_rollback ON wp_update_tasks
+			WHEN OLD.plan_sealed_at IS NOT NULL AND NEW.auto_rollback != OLD.auto_rollback
+			BEGIN SELECT RAISE(ABORT, 'sealed update auto rollback flag is immutable'); END`,
+		`CREATE TABLE IF NOT EXISTS wp_update_batches (
+			id          TEXT PRIMARY KEY,
+			site_id     INTEGER NOT NULL,
+			created_by  TEXT NOT NULL,
+			status      TEXT NOT NULL DEFAULT 'running',
+			total_count INTEGER NOT NULL DEFAULT 0,
+			database_backup_source_id INTEGER,
+			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE,
+			CHECK (status IN ('running','completed'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS ix_wp_update_batches_site ON wp_update_batches(site_id, created_at DESC)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS ux_wp_update_batches_active_site ON wp_update_batches(site_id) WHERE status = 'running'`,
+		`CREATE TABLE IF NOT EXISTS wp_update_batch_items (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			batch_id      TEXT NOT NULL,
+			position      INTEGER NOT NULL,
+			component_key TEXT NOT NULL,
+			status        TEXT NOT NULL DEFAULT 'pending',
+			message       TEXT NOT NULL DEFAULT '',
+			task_id       TEXT,
+			created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (batch_id) REFERENCES wp_update_batches(id) ON DELETE CASCADE,
+			FOREIGN KEY (task_id) REFERENCES wp_update_tasks(id) ON DELETE SET NULL,
+			CHECK (status IN ('pending','dispatched','failed')),
+			UNIQUE (batch_id, position),
+			UNIQUE (batch_id, component_key)
+		)`,
+		`CREATE INDEX IF NOT EXISTS ix_wp_update_batch_items_batch ON wp_update_batch_items(batch_id, position)`,
+	}
+	for _, stmt := range statements {
+		if _, err := DB.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ensureFileLockModeColumns() error {

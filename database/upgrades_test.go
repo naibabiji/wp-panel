@@ -236,13 +236,126 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.35" {
+	if got := LatestVersion(); got != "1.0.36" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
-	for _, column := range []string{"database_backup_mode", "database_backup_source_id"} {
+	for _, column := range []string{"database_backup_mode", "database_backup_source_id", "auto_rollback", "batch_id"} {
 		var exists int
 		if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('wp_update_tasks') WHERE name=?`, column).Scan(&exists); err != nil || exists != 1 {
 			t.Fatalf("column %s exists=%d err=%v", column, exists, err)
+		}
+	}
+}
+
+func TestUpgradeAddsWPUpdateBatchSchemaFrom1035(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.35')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+	for _, table := range []string{"wp_update_batches", "wp_update_batch_items"} {
+		if _, err := DB.Exec("DROP TABLE IF EXISTS " + table); err != nil {
+			t.Fatalf("drop %s: %v", table, err)
+		}
+	}
+	// auto_rollback/batch_id 是表级 CHECK 约束涉及的列，SQLite 的 DROP COLUMN
+	// 不支持这种情况，因此用整表重建的方式还原成 1.0.35 之前（不含这两列）的旧表结构。
+	for _, stmt := range []string{
+		`DROP TRIGGER IF EXISTS trg_wp_update_tasks_sealed_auto_rollback_immutable`,
+		`DROP TRIGGER IF EXISTS trg_wp_update_tasks_sealed_immutable`,
+		`DROP TRIGGER IF EXISTS trg_wp_update_tasks_sealed_backup_mode_immutable`,
+		`ALTER TABLE wp_update_tasks RENAME TO wp_update_tasks_new`,
+		`CREATE TABLE wp_update_tasks (
+			id                    TEXT PRIMARY KEY,
+			site_id               INTEGER NOT NULL,
+			component_type        TEXT NOT NULL,
+			component_key         TEXT NOT NULL DEFAULT 'core',
+			task_kind             TEXT NOT NULL DEFAULT 'update',
+			parent_task_id         TEXT,
+			trigger_type          TEXT NOT NULL DEFAULT 'manual',
+			status                TEXT NOT NULL DEFAULT 'preparing',
+			stage                 TEXT NOT NULL DEFAULT 'created',
+			failure_stage         TEXT NOT NULL DEFAULT '',
+			rollback_status       TEXT NOT NULL DEFAULT 'not_required',
+			requires_attention    INTEGER NOT NULL DEFAULT 0,
+			manual_disposition    TEXT NOT NULL DEFAULT '',
+			current_version       TEXT NOT NULL,
+			target_version        TEXT NOT NULL,
+			package_source        TEXT NOT NULL,
+			download_url          TEXT NOT NULL,
+			downloaded_sha256     TEXT NOT NULL DEFAULT '',
+			verification_level    TEXT NOT NULL DEFAULT '',
+			package_snapshot_path TEXT NOT NULL DEFAULT '',
+			backup_ready          INTEGER NOT NULL DEFAULT 0,
+			database_backup_mode  TEXT NOT NULL DEFAULT 'fresh',
+			database_backup_source_id INTEGER,
+			plan_sealed_at        DATETIME,
+			lease_owner           TEXT NOT NULL DEFAULT '',
+			lease_expires_at      DATETIME,
+			requested_at          DATETIME NOT NULL,
+			started_at            DATETIME,
+			finished_at           DATETIME,
+			created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			CHECK (component_type IN ('core','plugin','theme')),
+			CHECK (task_kind IN ('update','rollback')),
+			CHECK (trigger_type = 'manual'),
+			CHECK (status IN ('preparing','queued','running','success','failed','interrupted_unknown')),
+			CHECK (rollback_status IN ('not_required','pending','success','failed')),
+			CHECK (requires_attention IN (0,1)),
+			CHECK (manual_disposition IN ('','confirmed_target_version','manually_rolled_back','marked_failed_no_action','escalated')),
+			CHECK (verification_level IN ('','structure_only','official_verified')),
+			CHECK (database_backup_mode IN ('fresh','reuse')),
+			CHECK ((task_kind = 'update' AND parent_task_id IS NULL) OR (task_kind = 'rollback' AND parent_task_id IS NOT NULL))
+		)`,
+		`INSERT INTO wp_update_tasks SELECT id,site_id,component_type,component_key,task_kind,parent_task_id,
+			trigger_type,status,stage,failure_stage,rollback_status,requires_attention,manual_disposition,
+			current_version,target_version,package_source,download_url,downloaded_sha256,verification_level,
+			package_snapshot_path,backup_ready,database_backup_mode,database_backup_source_id,
+			plan_sealed_at,lease_owner,lease_expires_at,requested_at,started_at,finished_at,created_at,updated_at
+			FROM wp_update_tasks_new`,
+		`DROP TABLE wp_update_tasks_new`,
+	} {
+		if _, err := DB.Exec(stmt); err != nil {
+			t.Fatalf("revert to pre-1.0.36 schema (%s): %v", stmt, err)
+		}
+	}
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("second RunUpgrades() error = %v", err)
+	}
+
+	for _, column := range []string{"auto_rollback", "batch_id"} {
+		var exists int
+		if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('wp_update_tasks') WHERE name=?`, column).Scan(&exists); err != nil {
+			t.Fatalf("query %s: %v", column, err)
+		}
+		if exists != 1 {
+			t.Fatalf("column %s exists = %d, want 1 after upgrade from 1.0.35", column, exists)
+		}
+	}
+	var def string
+	if err := DB.QueryRow(`SELECT COALESCE(dflt_value, '') FROM pragma_table_info('wp_update_tasks') WHERE name = 'auto_rollback'`).Scan(&def); err != nil {
+		t.Fatalf("query auto_rollback default: %v", err)
+	}
+	if def != "1" {
+		t.Fatalf("auto_rollback default = %q, want %q (existing single-update tasks must keep automatic rollback)", def, "1")
+	}
+	for _, table := range []string{"wp_update_batches", "wp_update_batch_items"} {
+		var exists int
+		if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&exists); err != nil || exists != 1 {
+			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
 }

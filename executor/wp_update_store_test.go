@@ -176,6 +176,236 @@ func TestWPUpdateStoreFailPreparingPlan(t *testing.T) {
 	}
 }
 
+func haltPluginTaskForManualDecision(t *testing.T, store *wpUpdateStore, siteID int, now time.Time) WPUpdateTask {
+	t.Helper()
+	task, err := store.createCoreManualPlan(context.Background(), WPUpdatePlan{
+		SiteID: siteID, CurrentVersion: "7.0.1", TargetVersion: "7.0.2", PackageSource: "wordpress.org",
+		DownloadURL: "https://downloads.wordpress.org/release.zip", SkipAutoRollback: true, BatchID: "wpub_test",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err = store.sealPlan(context.Background(), task.ID, strings.Repeat("a", 64), "official_verified", filepath.Join(t.TempDir(), "snapshot.zip"), now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := wpUpdateDBTime(now.Add(2 * time.Second))
+	if _, err := store.db.Exec(`UPDATE wp_update_tasks SET status='running',stage='claimed',lease_owner='worker-halt',
+		lease_expires_at=?,started_at=?,updated_at=? WHERE id=? AND status='queued'`, stamp, stamp, stamp, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.haltForManualRollback(context.Background(), task.ID, "worker-halt", "health_check", now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	halted, err := store.getTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return halted
+}
+
+func TestWPUpdateStoreDisposeFailedTaskIgnored(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	task := haltPluginTaskForManualDecision(t, store, siteID, now)
+	if task.Status != wpUpdateFailed || task.RollbackStatus != "pending" || !task.RequiresAttention {
+		t.Fatalf("halted task=%+v", task)
+	}
+	if err := store.disposeFailedTaskIgnored(context.Background(), task.ID, now.Add(4*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	disposed, err := store.getTask(context.Background(), task.ID)
+	if err != nil || disposed.RequiresAttention || disposed.ManualDisposition != "marked_failed_no_action" || disposed.RollbackStatus != "pending" {
+		t.Fatalf("disposed=%+v err=%v", disposed, err)
+	}
+	if err := store.disposeFailedTaskIgnored(context.Background(), task.ID, now.Add(5*time.Second)); err == nil {
+		t.Fatal("expected second ignore-dispose to be rejected")
+	}
+}
+
+func TestWPUpdateStoreManualRollbackClaimIsExclusive(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	task := haltPluginTaskForManualDecision(t, store, siteID, now)
+	if err := store.beginManualRollback(context.Background(), task.ID, "rollback-owner-a", now.Add(4*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.beginManualRollback(context.Background(), task.ID, "rollback-owner-b", now.Add(5*time.Second)); err == nil {
+		t.Fatal("expected a second concurrent manual rollback claim to be rejected")
+	}
+	if err := store.abandonManualRollback(context.Background(), task.ID, "rollback-owner-a", now.Add(6*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.beginManualRollback(context.Background(), task.ID, "rollback-owner-b", now.Add(7*time.Second)); err != nil {
+		t.Fatalf("expected claim to succeed after abandon: %v", err)
+	}
+	if err := store.finishManualRollback(context.Background(), task.ID, "rollback-owner-b", true, now.Add(8*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	finished, err := store.getTask(context.Background(), task.ID)
+	if err != nil || finished.RollbackStatus != "success" || finished.RequiresAttention || finished.ManualDisposition != "manually_rolled_back" {
+		t.Fatalf("finished=%+v err=%v", finished, err)
+	}
+}
+
+func TestWPUpdateStoreIgnoreRejectedWhileRollbackClaimHeld(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	task := haltPluginTaskForManualDecision(t, store, siteID, now)
+	if err := store.beginManualRollback(context.Background(), task.ID, "rollback-owner-a", now.Add(1*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	// 回滚仍在进行（lease_owner 非空），忽略必须被拒绝，不能在回滚跑完前抢先改写处置结果。
+	if err := store.disposeFailedTaskIgnored(context.Background(), task.ID, now.Add(2*time.Second)); err == nil {
+		t.Fatal("expected ignore to be rejected while a manual rollback claim is held")
+	}
+	if err := store.finishManualRollback(context.Background(), task.ID, "rollback-owner-a", false, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	// 回滚本身失败了（rollback_status='failed'），但 requires_attention 仍然是 1、
+	// manual_disposition 还没写入——这个任务仍然「等待决定」，忽略现在应该被允许
+	// （否则用户会永久卡在无法处置这个任务的状态，见第三方审核发现的问题）。
+	if err := store.disposeFailedTaskIgnored(context.Background(), task.ID, now.Add(4*time.Second)); err != nil {
+		t.Fatalf("expected ignore to succeed after a failed rollback attempt: %v", err)
+	}
+	finished, err := store.getTask(context.Background(), task.ID)
+	if err != nil || finished.RequiresAttention || finished.ManualDisposition != "marked_failed_no_action" || finished.RollbackStatus != "failed" {
+		t.Fatalf("finished=%+v err=%v", finished, err)
+	}
+}
+
+func TestWPUpdateStoreManualRollbackRetrySucceedsAfterPreviousFailure(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	task := haltPluginTaskForManualDecision(t, store, siteID, now)
+	if err := store.beginManualRollback(context.Background(), task.ID, "rollback-owner-a", now.Add(1*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.finishManualRollback(context.Background(), task.ID, "rollback-owner-a", false, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	// 上一次回滚失败了，但用户选择再试一次，应该能重新认领。
+	if err := store.beginManualRollback(context.Background(), task.ID, "rollback-owner-b", now.Add(3*time.Second)); err != nil {
+		t.Fatalf("expected retry claim to succeed after a previous rollback failure: %v", err)
+	}
+	if err := store.finishManualRollback(context.Background(), task.ID, "rollback-owner-b", true, now.Add(4*time.Second)); err != nil {
+		t.Fatalf("expected retry to record success: %v", err)
+	}
+	finished, err := store.getTask(context.Background(), task.ID)
+	if err != nil || finished.RequiresAttention || finished.RollbackStatus != "success" || finished.ManualDisposition != "manually_rolled_back" {
+		t.Fatalf("finished=%+v err=%v", finished, err)
+	}
+}
+
+// TestWPUpdateStoreAbandonManualRollbackReleasesRetryClaimAfterPreviousFailure 覆盖第三方
+// 审核发现的问题：第一次人工回滚失败后（rollback_status='failed'），用户再次发起回滚，
+// 但这次在 loadExecution/Prepare 阶段就出错（比如执行上下文已经损坏）需要放弃认领——
+// abandonManualRollback 不能再要求 rollback_status='pending'，否则这次放弃会静默地
+// 影响 0 行，lease_owner 永远不会被清空，用户既不能重新回滚也不能 Ignore。
+func TestWPUpdateStoreAbandonManualRollbackReleasesRetryClaimAfterPreviousFailure(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	task := haltPluginTaskForManualDecision(t, store, siteID, now)
+	// 第一次人工回滚：认领后执行失败。
+	if err := store.beginManualRollback(context.Background(), task.ID, "rollback-owner-a", now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.finishManualRollback(context.Background(), task.ID, "rollback-owner-a", false, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	// 用户再次发起回滚：认领成功（rollback_status 现在是 'failed'，不是 'pending'）。
+	if err := store.beginManualRollback(context.Background(), task.ID, "rollback-owner-b", now.Add(3*time.Second)); err != nil {
+		t.Fatalf("expected retry claim to succeed: %v", err)
+	}
+	// 这次在 loadExecution/Prepare 阶段就失败了，需要放弃认领。
+	if err := store.abandonManualRollback(context.Background(), task.ID, "rollback-owner-b", now.Add(4*time.Second)); err != nil {
+		t.Fatalf("expected abandon to release the retry claim: %v", err)
+	}
+	released, err := store.getTask(context.Background(), task.ID)
+	if err != nil || released.LeaseOwner != "" {
+		t.Fatalf("released=%+v err=%v, want lease_owner cleared", released, err)
+	}
+	// lease 已经释放，用户现在既能选择再次回滚，也能选择忽略——这里验证忽略能成功。
+	if err := store.disposeFailedTaskIgnored(context.Background(), task.ID, now.Add(5*time.Second)); err != nil {
+		t.Fatalf("expected ignore to succeed after the retry claim was abandoned: %v", err)
+	}
+}
+
+// TestWPUpdateStoreAbandonManualRollbackRejectsWrongOwnerOrAlreadyDisposed 确认
+// abandonManualRollback 现在会正确报告"没有实际释放任何东西"，而不是静默返回 nil：
+// owner 不匹配、或者任务已经被处置过，都应该返回错误。
+func TestWPUpdateStoreAbandonManualRollbackRejectsWrongOwnerOrAlreadyDisposed(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	task := haltPluginTaskForManualDecision(t, store, siteID, now)
+	if err := store.beginManualRollback(context.Background(), task.ID, "rollback-owner-a", now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.abandonManualRollback(context.Background(), task.ID, "wrong-owner", now.Add(2*time.Second)); err == nil {
+		t.Fatal("expected abandon with the wrong owner to fail")
+	}
+	if err := store.abandonManualRollback(context.Background(), task.ID, "rollback-owner-a", now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.disposeFailedTaskIgnored(context.Background(), task.ID, now.Add(4*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	// 任务已经被忽略处置过，再次放弃认领应该失败（没有东西可放弃）。
+	if err := store.abandonManualRollback(context.Background(), task.ID, "rollback-owner-a", now.Add(5*time.Second)); err == nil {
+		t.Fatal("expected abandon on an already-disposed task to fail")
+	}
+}
+
+func TestWPUpdateStoreIgnoreSucceedsAfterRollbackLeaseAbandoned(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	task := haltPluginTaskForManualDecision(t, store, siteID, now)
+	if err := store.beginManualRollback(context.Background(), task.ID, "rollback-owner-a", now.Add(1*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.abandonManualRollback(context.Background(), task.ID, "rollback-owner-a", now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.disposeFailedTaskIgnored(context.Background(), task.ID, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("expected ignore to succeed once the rollback claim was released: %v", err)
+	}
+}
+
+func TestWPUpdateStoreManualRollbackClaimRenewalExtendsLeaseAndBlocksIgnore(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	task := haltPluginTaskForManualDecision(t, store, siteID, now)
+	if err := store.beginManualRollback(context.Background(), task.ID, "rollback-owner-a", now.Add(1*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.getTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 模拟租约即将过期前的续租（人工回滚每一步开始前都会做一次），续租时刻要比认领时刻晚，
+	// 否则算出来的新 lease_expires_at 会和原来一样，看不出续租效果。
+	renewAt := now.Add(wpUpdateLease / 2)
+	renewed, err := store.renewManualRollbackClaim(context.Background(), task.ID, "rollback-owner-a", renewAt)
+	if err != nil || !renewed {
+		t.Fatalf("renewed=%v err=%v", renewed, err)
+	}
+	afterRenew, err := store.getTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterRenew.LeaseExpiresAt <= claimed.LeaseExpiresAt {
+		t.Fatalf("lease not extended: before=%s after=%s", claimed.LeaseExpiresAt, afterRenew.LeaseExpiresAt)
+	}
+	// 一个不知道 owner 的第二方续租应该失败（说明续租本身也在做持有权校验，不是无条件续期）。
+	if renewed, err := store.renewManualRollbackClaim(context.Background(), task.ID, "rollback-owner-b", renewAt); err != nil || renewed {
+		t.Fatalf("renewed=%v err=%v, want a different owner's renewal to fail", renewed, err)
+	}
+	// 续租期间忽略仍然应该被拒绝。
+	if err := store.disposeFailedTaskIgnored(context.Background(), task.ID, now.Add(5*time.Second)); err == nil {
+		t.Fatal("expected ignore to still be rejected after lease renewal")
+	}
+}
+
 func TestWPUpdateStoreCannotFailSealedPlanAsPreparing(t *testing.T) {
 	store, siteID := newWPUpdateStoreTest(t)
 	now := time.Now().UTC()
