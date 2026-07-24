@@ -145,6 +145,31 @@ function wp_panel_inventory_core_updates(): array
     );
 }
 
+function wp_panel_inventory_maybe_force_update_check(): void
+{
+    if (getenv('WP_PANEL_FORCE_UPDATE_CHECK') !== '1') {
+        return;
+    }
+    if (!function_exists('wp_update_plugins')) {
+        $adminUpdate = ABSPATH . 'wp-admin/includes/update.php';
+        if (is_file($adminUpdate)) {
+            require_once $adminUpdate;
+        }
+    }
+    foreach (array('update_core', 'update_plugins', 'update_themes') as $name) {
+        delete_site_transient($name);
+    }
+    if (function_exists('wp_version_check')) {
+        wp_version_check();
+    }
+    if (function_exists('wp_update_plugins')) {
+        wp_update_plugins();
+    }
+    if (function_exists('wp_update_themes')) {
+        wp_update_themes();
+    }
+}
+
 function wp_panel_inventory_collect(): array
 {
     global $wp_version;
@@ -152,6 +177,7 @@ function wp_panel_inventory_collect(): array
     if (!function_exists('get_plugins')) {
         require_once ABSPATH . 'wp-admin/includes/plugin.php';
     }
+    wp_panel_inventory_maybe_force_update_check();
     $pluginRows = array();
     $activePlugins = array_fill_keys((array) get_option('active_plugins', array()), true);
     $networkPlugins = is_multisite() ? (array) get_site_option('active_sitewide_plugins', array()) : array();

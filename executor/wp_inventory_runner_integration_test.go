@@ -49,7 +49,7 @@ func TestWPInventoryRunnerE2E(t *testing.T) {
 	walls := make([]time.Duration, 0, repeat)
 	var maxRSS int64
 	for i := 0; i < repeat; i++ {
-		result, collectErr := runner.Collect(context.Background(), cfg, site)
+		result, collectErr := runner.Collect(context.Background(), cfg, site, false)
 		if expectedCode == "" {
 			if collectErr != nil {
 				t.Fatalf("collect %d/%d: %v", i+1, repeat, collectErr)

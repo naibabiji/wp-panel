@@ -20,7 +20,7 @@ const (
 var wpInventoryWorkerSlot = make(chan struct{}, 1)
 
 type wpInventoryCollector interface {
-	Collect(context.Context, *config.Config, *models.Website) (WPInventoryRunResult, error)
+	Collect(context.Context, *config.Config, *models.Website, bool) (WPInventoryRunResult, error)
 }
 
 type WPInventoryWorker struct {
@@ -173,7 +173,8 @@ func (w *WPInventoryWorker) processOne(ctx context.Context) (bool, bool) {
 		ID: identity.ID, Domain: identity.Domain, Status: identity.Status,
 		SystemUser: identity.SystemUser, WebRoot: identity.WebRoot, SiteType: identity.SiteType,
 	}
-	result, runErr := w.collect(ctx, site)
+	force := job.Trigger == wpInventoryTriggerManual
+	result, runErr := w.collect(ctx, site, force)
 	if ctx.Err() != nil {
 		w.release(job.ID)
 		return true, false
@@ -191,14 +192,14 @@ func (w *WPInventoryWorker) processOne(ctx context.Context) (bool, bool) {
 	return true, true
 }
 
-func (w *WPInventoryWorker) collect(ctx context.Context, site *models.Website) (result WPInventoryRunResult, runErr *WPInventoryRunError) {
+func (w *WPInventoryWorker) collect(ctx context.Context, site *models.Website, force bool) (result WPInventoryRunResult, runErr *WPInventoryRunError) {
 	defer func() {
 		if recover() != nil {
 			result = WPInventoryRunResult{}
 			runErr = wpInventoryWorkerInternalError()
 		}
 	}()
-	result, err := w.collector.Collect(ctx, w.cfg, site)
+	result, err := w.collector.Collect(ctx, w.cfg, site, force)
 	if err == nil {
 		return result, nil
 	}

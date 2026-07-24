@@ -204,7 +204,7 @@ type wpInventoryFakeCollector struct {
 	maxConcurrent int
 }
 
-func (f *wpInventoryFakeCollector) Collect(ctx context.Context, _ *config.Config, _ *models.Website) (WPInventoryRunResult, error) {
+func (f *wpInventoryFakeCollector) Collect(ctx context.Context, _ *config.Config, _ *models.Website, _ bool) (WPInventoryRunResult, error) {
 	f.mu.Lock()
 	f.calls++
 	f.active++

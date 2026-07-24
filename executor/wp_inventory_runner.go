@@ -39,6 +39,11 @@ const (
 	wpInventoryRunuserPath            = "/usr/sbin/runuser"
 	wpInventoryLockWait               = 10 * time.Second
 	wpInventoryExecutionTimeout       = 5 * time.Second
+	// wpInventoryForceUpdateTimeout bounds a scan that also triggers a live
+	// WordPress update check (core/plugins/themes API calls). The check makes
+	// several outbound requests to api.wordpress.org, so it needs far more
+	// headroom than the read-only scan.
+	wpInventoryForceUpdateTimeout = 60 * time.Second
 	// wpInventoryRunnerMemoryLimit bounds the read-only inventory scan's PHP
 	// process (WordPress bootstrap + plugin/theme introspection), not real
 	// site traffic. 64M turned out to be too tight for real-world sites with
@@ -272,7 +277,7 @@ func newWPInventoryRunner(opts wpInventoryRunnerOptions) (*WPInventoryRunner, er
 	}, nil
 }
 
-func (r *WPInventoryRunner) Collect(ctx context.Context, cfg *config.Config, site *models.Website) (WPInventoryRunResult, error) {
+func (r *WPInventoryRunner) Collect(ctx context.Context, cfg *config.Config, site *models.Website, forceUpdateCheck bool) (WPInventoryRunResult, error) {
 	meta := WPInventoryRunMeta{ExitCode: -1, RunnerHash: r.hash, RunnerVersion: wpInventoryRunnerVersion, SchemaVersion: wpInventorySchemaVersion}
 	if err := wpInventoryPlatformSupported(); err != nil {
 		return WPInventoryRunResult{Meta: meta}, runError(WPInventoryUnsupportedPlatform, WPInventoryStageValidate, -1, false, err)
@@ -306,7 +311,7 @@ func (r *WPInventoryRunner) Collect(ctx context.Context, cfg *config.Config, sit
 	if err != nil {
 		return WPInventoryRunResult{Meta: meta}, err
 	}
-	return r.execute(ctx, validated, runnerPath, meta)
+	return r.execute(ctx, validated, runnerPath, meta, forceUpdateCheck)
 }
 
 type wpInventoryValidatedInput struct {
@@ -670,7 +675,7 @@ func randomInventoryToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func (r *WPInventoryRunner) execute(ctx context.Context, input wpInventoryValidatedInput, runnerPath string, meta WPInventoryRunMeta) (WPInventoryRunResult, error) {
+func (r *WPInventoryRunner) execute(ctx context.Context, input wpInventoryValidatedInput, runnerPath string, meta WPInventoryRunMeta, forceUpdateCheck bool) (WPInventoryRunResult, error) {
 	token, err := randomInventoryToken()
 	if err != nil {
 		return WPInventoryRunResult{Meta: meta}, runError(WPInventoryRunnerStartFailed, WPInventoryStageStart, -1, false, err)
@@ -682,10 +687,18 @@ func (r *WPInventoryRunner) execute(ctx context.Context, input wpInventoryValida
 		"-d", "disable_functions=" + sitePHPDisabledFunctions(),
 		"-d", "allow_url_include=0", "-d", "memory_limit=" + wpInventoryRunnerMemoryLimit, runnerPath, input.siteRoot,
 	}
-	execCtx, cancel := context.WithTimeout(ctx, wpInventoryExecutionTimeout)
+	execTimeout := wpInventoryExecutionTimeout
+	if forceUpdateCheck {
+		execTimeout = wpInventoryForceUpdateTimeout
+	}
+	execCtx, cancel := context.WithTimeout(ctx, execTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(execCtx, input.runuser, args...)
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "HOME=" + input.user.HomeDir, "USER=" + input.user.Name, "LOGNAME=" + input.user.Name, "TMPDIR=/tmp", "WP_PANEL_RUNNER_TOKEN=" + token}
+	forceEnv := "WP_PANEL_FORCE_UPDATE_CHECK=0"
+	if forceUpdateCheck {
+		forceEnv = "WP_PANEL_FORCE_UPDATE_CHECK=1"
+	}
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "HOME=" + input.user.HomeDir, "USER=" + input.user.Name, "LOGNAME=" + input.user.Name, "TMPDIR=/tmp", "WP_PANEL_RUNNER_TOKEN=" + token, forceEnv}
 	stdout := newCountingSink(wpInventoryStreamLimit, false)
 	stderr := newCountingSink(wpInventoryStreamLimit, false)
 	protocol := newCountingSink(wpInventoryProtocolLimit, true)

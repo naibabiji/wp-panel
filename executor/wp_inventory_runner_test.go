@@ -211,7 +211,7 @@ func TestWPInventoryCollectUsesFixedArgsAndMinimalEnvironment(t *testing.T) {
 	openBase := sitePHPRunnerOpenBaseDir(fixture.site.WebRoot, fixture.site.Domain, filepath.Join(runner.runnerRoot, runner.hash))
 	writeProtocolWrapper(t, runner.runuserPath, fixture.auditPath, fixture.uid, fixture.gid, openBase, false)
 	t.Setenv("PARENT_SECRET", "must-not-leak")
-	result, err := runner.Collect(context.Background(), fixture.cfg, fixture.site)
+	result, err := runner.Collect(context.Background(), fixture.cfg, fixture.site, false)
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
@@ -233,11 +233,11 @@ func TestWPInventoryCollectUsesFixedArgsAndMinimalEnvironment(t *testing.T) {
 func TestWPInventoryCollectTimeoutRecovers(t *testing.T) {
 	runner, fixture := newTestInventoryRunner(t, []byte("<?php // embedded"))
 	writeProtocolWrapper(t, runner.runuserPath, fixture.auditPath, fixture.uid, fixture.gid, "", true)
-	_, err := runner.Collect(context.Background(), fixture.cfg, fixture.site)
+	_, err := runner.Collect(context.Background(), fixture.cfg, fixture.site, false)
 	assertInventoryErrorCode(t, err, WPInventoryRunnerTimeout)
 	openBase := sitePHPRunnerOpenBaseDir(fixture.site.WebRoot, fixture.site.Domain, filepath.Join(runner.runnerRoot, runner.hash))
 	writeProtocolWrapper(t, runner.runuserPath, fixture.auditPath, fixture.uid, fixture.gid, openBase, false)
-	if _, err := runner.Collect(context.Background(), fixture.cfg, fixture.site); err != nil {
+	if _, err := runner.Collect(context.Background(), fixture.cfg, fixture.site, false); err != nil {
 		t.Fatalf("collect after timeout: %v", err)
 	}
 }
@@ -255,7 +255,7 @@ func TestWPInventoryCollectGlobalSlotAcrossRunnerInstances(t *testing.T) {
 		wg.Add(1)
 		go func(candidate *WPInventoryRunner) {
 			defer wg.Done()
-			_, err := candidate.Collect(context.Background(), fixture.cfg, fixture.site)
+			_, err := candidate.Collect(context.Background(), fixture.cfg, fixture.site, false)
 			errs <- err
 		}(candidate)
 	}
