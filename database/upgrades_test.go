@@ -247,27 +247,16 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 	}
 }
 
-func TestUpgradeAddsWPUpdateBatchSchemaFrom1035(t *testing.T) {
-	openTempDB(t)
-	if err := RunMigrations(); err != nil {
-		t.Fatalf("RunMigrations() error = %v", err)
-	}
-	if err := RunUpgrades(); err != nil {
-		t.Fatalf("initial RunUpgrades() error = %v", err)
-	}
-	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
-		t.Fatalf("delete schema_version: %v", err)
-	}
-	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.35')"); err != nil {
-		t.Fatalf("seed schema_version: %v", err)
-	}
+// revertWPUpdateTasksToPre1036Schema 把 wp_update_tasks 还原成 1.0.36（批量插件更新）
+// 之前的旧表结构（不含 auto_rollback/batch_id）。auto_rollback/batch_id 是表级 CHECK
+// 约束涉及的列，SQLite 的 DROP COLUMN 不支持这种情况，因此用整表重建的方式还原。
+func revertWPUpdateTasksToPre1036Schema(t *testing.T) {
+	t.Helper()
 	for _, table := range []string{"wp_update_batches", "wp_update_batch_items"} {
 		if _, err := DB.Exec("DROP TABLE IF EXISTS " + table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
 	}
-	// auto_rollback/batch_id 是表级 CHECK 约束涉及的列，SQLite 的 DROP COLUMN
-	// 不支持这种情况，因此用整表重建的方式还原成 1.0.35 之前（不含这两列）的旧表结构。
 	for _, stmt := range []string{
 		`DROP TRIGGER IF EXISTS trg_wp_update_tasks_sealed_auto_rollback_immutable`,
 		`DROP TRIGGER IF EXISTS trg_wp_update_tasks_sealed_immutable`,
@@ -328,21 +317,17 @@ func TestUpgradeAddsWPUpdateBatchSchemaFrom1035(t *testing.T) {
 			t.Fatalf("revert to pre-1.0.36 schema (%s): %v", stmt, err)
 		}
 	}
+}
 
-	if err := RunUpgrades(); err != nil {
-		t.Fatalf("RunUpgrades() error = %v", err)
-	}
-	if err := RunUpgrades(); err != nil {
-		t.Fatalf("second RunUpgrades() error = %v", err)
-	}
-
+func assertWPUpdateBatchSchemaComplete(t *testing.T) {
+	t.Helper()
 	for _, column := range []string{"auto_rollback", "batch_id"} {
 		var exists int
 		if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('wp_update_tasks') WHERE name=?`, column).Scan(&exists); err != nil {
 			t.Fatalf("query %s: %v", column, err)
 		}
 		if exists != 1 {
-			t.Fatalf("column %s exists = %d, want 1 after upgrade from 1.0.35", column, exists)
+			t.Fatalf("column %s exists = %d, want 1", column, exists)
 		}
 	}
 	var def string
@@ -358,6 +343,61 @@ func TestUpgradeAddsWPUpdateBatchSchemaFrom1035(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
+	for _, name := range []string{"ix_wp_update_tasks_batch", "trg_wp_update_tasks_sealed_auto_rollback_immutable"} {
+		var exists int
+		if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE name=?", name).Scan(&exists); err != nil || exists != 1 {
+			t.Fatalf("object %s exists=%d err=%v", name, exists, err)
+		}
+	}
+}
+
+func TestUpgradeAddsWPUpdateBatchSchemaFrom1035(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.35')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+	revertWPUpdateTasksToPre1036Schema(t)
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("second RunUpgrades() error = %v", err)
+	}
+	assertWPUpdateBatchSchemaComplete(t)
+}
+
+// TestRunMigrationsAloneDoesNotCrashOnPre1036WPUpdateTasksSchema 复现了一次真实的线上
+// 事故：面板升级到新二进制后，进程启动时 RunMigrations() 先于 RunUpgrades() 执行；如果
+// wp_update_tasks 表是旧版本建的（没有 auto_rollback/batch_id 列），而新增的索引/触发器
+// 又被错放进 RunMigrations() 无条件执行的语句列表里，会在字段还没被 RunUpgrades() 的
+// ALTER TABLE 补上之前就报 "no such column" 直接崩溃退出，导致面板服务起不来。
+// 这里只调用 RunMigrations()，完全不调用 RunUpgrades()，验证它自己就能把
+// auto_rollback/batch_id 字段和相关索引/触发器补齐，不会因为顺序问题崩溃。
+func TestRunMigrationsAloneDoesNotCrashOnPre1036WPUpdateTasksSchema(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("initial RunMigrations() error = %v", err)
+	}
+	revertWPUpdateTasksToPre1036Schema(t)
+
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() must not fail when wp_update_tasks predates auto_rollback/batch_id: %v", err)
+	}
+	// 幂等性：再跑一次也不能出错（模拟进程反复重启）。
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("second RunMigrations() error = %v", err)
+	}
+	assertWPUpdateBatchSchemaComplete(t)
 }
 
 func TestUpgradeAddsPasswordResetModeColumnFrom1033(t *testing.T) {

@@ -59,8 +59,6 @@ var wpUpdateSchemaStatements = []string{
 		ON wp_update_tasks(site_id, created_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS ix_wp_update_tasks_finished_at
 		ON wp_update_tasks(finished_at)`,
-	`CREATE INDEX IF NOT EXISTS ix_wp_update_tasks_batch
-		ON wp_update_tasks(batch_id) WHERE batch_id != ''`,
 	`CREATE TABLE IF NOT EXISTS wp_update_task_events (
 		id          INTEGER PRIMARY KEY AUTOINCREMENT,
 		task_id     TEXT NOT NULL,
@@ -113,10 +111,6 @@ var wpUpdateSchemaStatements = []string{
 		BEFORE UPDATE OF database_backup_mode ON wp_update_tasks
 		WHEN OLD.plan_sealed_at IS NOT NULL AND NEW.database_backup_mode != OLD.database_backup_mode
 		BEGIN SELECT RAISE(ABORT, 'sealed update backup mode is immutable'); END`,
-	`CREATE TRIGGER IF NOT EXISTS trg_wp_update_tasks_sealed_auto_rollback_immutable
-		BEFORE UPDATE OF auto_rollback ON wp_update_tasks
-		WHEN OLD.plan_sealed_at IS NOT NULL AND NEW.auto_rollback != OLD.auto_rollback
-		BEGIN SELECT RAISE(ABORT, 'sealed update auto rollback flag is immutable'); END`,
 	`CREATE TABLE IF NOT EXISTS wp_update_batches (
 		id          TEXT PRIMARY KEY,
 		site_id     INTEGER NOT NULL,
