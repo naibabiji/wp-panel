@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/naibabiji/wp-panel/models"
@@ -375,6 +376,7 @@ type wpPluginBatchOrchestrator struct {
 	store     *wpUpdateStore
 	confirmer wpPluginBatchConfirmer
 	now       func() time.Time
+	mu        sync.Mutex
 }
 
 func newWPPluginBatchOrchestrator(store *wpUpdateStore, confirmer wpPluginBatchConfirmer) (*wpPluginBatchOrchestrator, error) {
@@ -387,7 +389,12 @@ func newWPPluginBatchOrchestrator(store *wpUpdateStore, confirmer wpPluginBatchC
 // Tick 扫描所有 running 批量，为每个「站点当前没有阻塞任务」的批量派发一项。
 // 单个批量在一次 tick 内最多派发一项，派发失败的项标记为 failed 后立即继续下一项，
 // 避免一次 tick 里因为连续多个坏插件而做无界的工作量。
+//
+// Tick 同时被 worker 主循环（1s 节奏 + task 完成即触发）和 sweep（30s 兜底）调用，
+// 加互斥锁防止两个 goroutine 并发派发同一项导致重复建任务。
 func (o *wpPluginBatchOrchestrator) Tick(ctx context.Context) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	batches, err := o.store.listRunningBatches(ctx)
 	if err != nil {
 		log.Printf("批量更新编排器读取进行中批量失败: %v", err)
