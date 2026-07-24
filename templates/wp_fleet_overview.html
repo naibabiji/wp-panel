@@ -7,7 +7,7 @@
         </div>
         <div class="flex items-center gap-2">
             <div x-data="{ showHowItWorks: false }">
-                <button @click="showHowItWorks = true" class="btn-secondary whitespace-nowrap text-sm">{{t .Lang "wp_inventory.how_it_works_title"}}</button>
+                <button @click="showHowItWorks = true" class="text-sm text-blue-400 hover:text-blue-300 hover:underline bg-transparent border-0 p-0 cursor-pointer font-normal">{{t .Lang "wp_inventory.how_it_works_title"}}</button>
                 <div x-show="showHowItWorks" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="showHowItWorks = false">
                     <div class="bg-gray-800 rounded-lg p-6 max-w-2xl w-full mx-4 shadow-xl max-h-[80vh] overflow-y-auto">
                         <h3 class="text-lg font-bold text-white mb-4">{{t .Lang "wp_inventory.how_it_works_title"}}</h3>
