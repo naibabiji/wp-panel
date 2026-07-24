@@ -70,9 +70,32 @@ func (h *WebsiteHandler) SetPasswordResetMode(c *gin.Context) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	prevMode := site.PasswordResetMode
-	if err := executor.ApplyWPPasswordResetMode(site.WebRoot, site.SystemUser, mode); err != nil {
+	// 加锁后从 DB 重新读取当前已提交的模式作为回滚基准。site 对象是加锁前读取的快照，
+	// 可能被并发请求改写；若此处仍用旧值，本请求回滚时会把磁盘恢复到过时状态，
+	// 与 DB 当前值不一致（评审意见第 2 点）。
+	var prevMode string
+	if err := database.GetDB().QueryRow(
+		"SELECT COALESCE(password_reset_mode, 'allow') FROM websites WHERE id = ?", id,
+	).Scan(&prevMode); err != nil {
 		recordHandlerOperationLog("wp_password_reset", site.Domain, "failed", err.Error())
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "website.password_reset_save_failed")))
+		return
+	}
+
+	// rollbackToPrev 把磁盘 mu-plugin 恢复到 prevMode，使磁盘状态与 DB 中已提交的模式一致。
+	rollbackToPrev := func(reason string) {
+		if rbErr := executor.ApplyWPPasswordResetMode(site.WebRoot, site.SystemUser, prevMode); rbErr != nil {
+			recordHandlerOperationLog("wp_password_reset", site.Domain, "failed",
+				fmt.Sprintf("%s; rollback also failed: %v", reason, rbErr))
+		} else {
+			recordHandlerOperationLog("wp_password_reset", site.Domain, "failed", reason)
+		}
+	}
+
+	if err := executor.ApplyWPPasswordResetMode(site.WebRoot, site.SystemUser, mode); err != nil {
+		// apply 失败：文件可能已写入新模式（如 chown 失败），按 prevMode 回滚磁盘，
+		// 保持磁盘与 DB 一致（评审意见第 1 点）。
+		rollbackToPrev(fmt.Sprintf("apply failed: %v", err))
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "website.password_reset_save_failed")))
 		return
 	}
@@ -82,12 +105,7 @@ func (h *WebsiteHandler) SetPasswordResetMode(c *gin.Context) {
 		mode, id,
 	); err != nil {
 		// 数据库落库失败则回滚 mu-plugin 文件，保持磁盘与状态一致。
-		if rbErr := executor.ApplyWPPasswordResetMode(site.WebRoot, site.SystemUser, prevMode); rbErr != nil {
-			recordHandlerOperationLog("wp_password_reset", site.Domain, "failed",
-				fmt.Sprintf("save failed (%v); rollback also failed: %v", err, rbErr))
-		} else {
-			recordHandlerOperationLog("wp_password_reset", site.Domain, "failed", err.Error())
-		}
+		rollbackToPrev(fmt.Sprintf("save failed: %v", err))
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "website.password_reset_save_failed")))
 		return
 	}
