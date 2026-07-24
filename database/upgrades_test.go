@@ -238,6 +238,57 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 	}
 }
 
+func TestUpgradeAddsPasswordResetModeColumnFrom1033(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.33')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+	if _, err := DB.Exec("ALTER TABLE websites DROP COLUMN password_reset_mode"); err != nil {
+		t.Fatalf("drop password_reset_mode: %v", err)
+	}
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("second RunUpgrades() error = %v", err)
+	}
+
+	var exists int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('websites') WHERE name = 'password_reset_mode'").Scan(&exists); err != nil {
+		t.Fatalf("query password_reset_mode: %v", err)
+	}
+	if exists != 1 {
+		t.Fatalf("password_reset_mode exists = %d, want 1 after upgrade from 1.0.33", exists)
+	}
+
+	// 旧站点默认值必须与新装迁移一致，否则既有站点升级后行为漂移。
+	var def string
+	if err := DB.QueryRow("SELECT COALESCE(dflt_value, '') FROM pragma_table_info('websites') WHERE name = 'password_reset_mode'").Scan(&def); err != nil {
+		t.Fatalf("query password_reset_mode default: %v", err)
+	}
+	if def != "'allow'" {
+		t.Fatalf("password_reset_mode default = %q, want %q", def, "'allow'")
+	}
+
+	var version string
+	if err := DB.QueryRow("SELECT version FROM schema_version ORDER BY updated_at DESC, rowid DESC LIMIT 1").Scan(&version); err != nil {
+		t.Fatalf("query schema_version: %v", err)
+	}
+	if version != LatestVersion() {
+		t.Fatalf("schema_version = %q, want %q", version, LatestVersion())
+	}
+}
+
 func TestUpgradeAddsFileLockModesAndBackfillsLegacySites(t *testing.T) {
 	openTempDB(t)
 	if err := RunMigrations(); err != nil {
