@@ -242,6 +242,36 @@ func TestWPInventoryCollectTimeoutRecovers(t *testing.T) {
 	}
 }
 
+func TestWPInventoryCollectForceUpdateCheckEnvAndTimeout(t *testing.T) {
+	runner, fixture := newTestInventoryRunner(t, []byte("<?php // embedded"))
+	openBase := sitePHPRunnerOpenBaseDir(fixture.site.WebRoot, fixture.site.Domain, filepath.Join(runner.runnerRoot, runner.hash))
+	writeAdaptiveTimeoutWrapper(t, runner.runuserPath, fixture.auditPath, fixture.uid, fixture.gid, openBase)
+
+	// force=false: env is "0" and the 5s read-only timeout fires before the wrapper finishes.
+	_, err := runner.Collect(context.Background(), fixture.cfg, fixture.site, false)
+	assertInventoryErrorCode(t, err, WPInventoryRunnerTimeout)
+	audit, err := os.ReadFile(fixture.auditPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(audit) != "0\n" {
+		t.Fatalf("force=false audit want \"0\\n\", got %q", audit)
+	}
+
+	// force=true: env is "1" and the 60s timeout lets the wrapper complete.
+	_, err = runner.Collect(context.Background(), fixture.cfg, fixture.site, true)
+	if err != nil {
+		t.Fatalf("collect force=true: %v", err)
+	}
+	audit, err = os.ReadFile(fixture.auditPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(audit) != "1\n" {
+		t.Fatalf("force=true audit want \"1\\n\", got %q", audit)
+	}
+}
+
 func TestWPInventoryCollectGlobalSlotAcrossRunnerInstances(t *testing.T) {
 	runner, fixture := newTestInventoryRunner(t, []byte("<?php // embedded"))
 	second := *runner
@@ -347,6 +377,18 @@ func writeProtocolWrapper(t *testing.T, path, auditPath string, uid, gid int, op
 		jsonBody := validSuccessEnvelopeBody(uid, gid, openBase)
 		script = fmt.Sprintf("#!/bin/sh\nprintf '%%s\\nPARENT_SECRET=%%s\\n' \"$*\" \"${PARENT_SECRET-unset}\" > %q\nprintf 'WP_PANEL_INVENTORY_BEGIN %%s\\n%%s\\nWP_PANEL_INVENTORY_END %%s\\n' \"$WP_PANEL_RUNNER_TOKEN\" %q \"$WP_PANEL_RUNNER_TOKEN\" >&3\n", auditPath, jsonBody)
 	}
+	if err := os.Chmod(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(script), 0555); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeAdaptiveTimeoutWrapper(t *testing.T, path, auditPath string, uid, gid int, openBase string) {
+	t.Helper()
+	body := validSuccessEnvelopeBody(uid, gid, openBase)
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$WP_PANEL_FORCE_UPDATE_CHECK\" > %q\nif [ \"$WP_PANEL_FORCE_UPDATE_CHECK\" = \"1\" ]; then\n  sleep 1\nelse\n  sleep 6\nfi\nprintf 'WP_PANEL_INVENTORY_BEGIN %%s\\n%%s\\nWP_PANEL_INVENTORY_END %%s\\n' \"$WP_PANEL_RUNNER_TOKEN\" %q \"$WP_PANEL_RUNNER_TOKEN\" >&3\n", auditPath, body)
 	if err := os.Chmod(path, 0755); err != nil {
 		t.Fatal(err)
 	}

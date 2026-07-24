@@ -159,14 +159,20 @@ function wp_panel_inventory_maybe_force_update_check(): void
     foreach (array('update_core', 'update_plugins', 'update_themes') as $name) {
         delete_site_transient($name);
     }
-    if (function_exists('wp_version_check')) {
-        wp_version_check();
-    }
-    if (function_exists('wp_update_plugins')) {
-        wp_update_plugins();
-    }
-    if (function_exists('wp_update_themes')) {
-        wp_update_themes();
+    try {
+        if (function_exists('wp_version_check')) {
+            wp_version_check();
+        }
+        if (function_exists('wp_update_plugins')) {
+            wp_update_plugins();
+        }
+        if (function_exists('wp_update_themes')) {
+            wp_update_themes();
+        }
+    } catch (Throwable $error) {
+        // A failed live update check should not fail the entire read-only
+        // inventory scan. The deleted transients will be repopulated by
+        // WordPress on the next regular update check or admin page load.
     }
 }
 
