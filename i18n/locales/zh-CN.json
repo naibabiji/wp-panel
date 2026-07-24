@@ -324,6 +324,7 @@
     "how_it_works_serial": "串行扫描：为避免占用过多服务器内存，同一时刻只扫描一个站点。",
     "how_it_works_limits": "已知限制：WordPress 启动所需内存超过 256M 的超大站点（通常插件极多）可能采集失败；屏蔽更新检查的站点更新状态可能不确定。",
     "how_it_works_schedule": "扫描按调度自动进行，也可随时点击“重新扫描”手动触发。",
+    "how_it_works_wp_flow": "更新走 WordPress 自带流程（核心/插件/主题均用 WP 原生 Upgrader）。与在后台手动更新的区别：面板在写入前自动备份数据库与文件，失败时自动回滚。",
     "how_it_works_file_lock": "文件锁定兼容：开启「文件锁定」后更新仍可正常进行（写入前临时解除、完成后自动恢复）。注意：若你在 wp-config.php 中自行加入 DISALLOW_FILE_MODS=true，更新会被面板拒绝。",
     "updates_overall": "更新检查结果",
     "status_updates_available": "有可用更新",
