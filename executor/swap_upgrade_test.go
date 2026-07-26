@@ -77,6 +77,46 @@ func TestEnsureAutomaticSwapSkipsExistingSwap(t *testing.T) {
 	}
 }
 
+func TestEnsureAutomaticSwapSkipsLargeMemoryServer(t *testing.T) {
+	root := t.TempDir()
+	meminfo := filepath.Join(root, "meminfo")
+	swaps := filepath.Join(root, "swaps")
+	mustWriteSwapTestFile(t, meminfo, "MemTotal:       16777216 kB\n")
+	mustWriteSwapTestFile(t, swaps, "Filename Type Size Used Priority\n")
+
+	created, reason, err := ensureAutomaticSwap(
+		meminfo, swaps, filepath.Join(root, "swapfile"), filepath.Join(root, "fstab"), filepath.Join(root, "swap.conf"),
+	)
+	if err != nil || created || reason != "物理内存超过 8GB" {
+		t.Fatalf("ensureAutomaticSwap() = created %v, reason %q, err %v", created, reason, err)
+	}
+}
+
+func TestEnsureAutomaticSwapSkipsLowDiskSpace(t *testing.T) {
+	root := t.TempDir()
+	meminfo := filepath.Join(root, "meminfo")
+	swaps := filepath.Join(root, "swaps")
+	mustWriteSwapTestFile(t, meminfo, "MemTotal:        4194304 kB\n")
+	mustWriteSwapTestFile(t, swaps, "Filename Type Size Used Priority\n")
+
+	oldStatfs := swapStatfs
+	swapStatfs = func(_ string, stat *syscall.Statfs_t) error {
+		stat.Bsize = 4096
+		stat.Blocks = 2 * 1024 * 1024
+		stat.Bfree = 1024
+		stat.Bavail = 1024
+		return nil
+	}
+	t.Cleanup(func() { swapStatfs = oldStatfs })
+
+	created, reason, err := ensureAutomaticSwap(
+		meminfo, swaps, filepath.Join(root, "swapfile"), filepath.Join(root, "fstab"), filepath.Join(root, "swap.conf"),
+	)
+	if err != nil || created || reason != "根分区可用空间不足 8GB" {
+		t.Fatalf("ensureAutomaticSwap() = created %v, reason %q, err %v", created, reason, err)
+	}
+}
+
 func TestEnsureAutomaticSwapCleansFailedAllocation(t *testing.T) {
 	root := t.TempDir()
 	meminfo := filepath.Join(root, "meminfo")
@@ -114,6 +154,21 @@ func TestEnsureAutomaticSwapCleansFailedAllocation(t *testing.T) {
 	}
 	if _, statErr := os.Stat(swapfile); !os.IsNotExist(statErr) {
 		t.Fatalf("partial swap file remains: %v", statErr)
+	}
+}
+
+func TestRollbackFstabAppend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fstab")
+	original := "rootfs / ext4 defaults 0 1\n"
+	mustWriteSwapTestFile(t, path, original+"\n/swapfile none swap sw 0 0\n")
+
+	rollbackFstabAppend(path, int64(len(original)))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != original {
+		t.Fatalf("fstab after rollback = %q, want %q", data, original)
 	}
 }
 

@@ -94,6 +94,7 @@ func ensureAutomaticSwap(meminfoPath, swapsPath, swapPath, fstabPath, sysctlPath
 		return false, "创建后根分区使用率将超过 85%", nil
 	}
 
+	log.Printf("[升级] 正在创建 2GB Swap，可能需要几十秒")
 	if err := swapCommand("dd", "if=/dev/zero", "of="+swapPath, "bs=1M", "count=2048", "status=none"); err != nil {
 		_ = os.Remove(swapPath)
 		return false, "", err
@@ -115,6 +116,12 @@ func ensureAutomaticSwap(meminfoPath, swapsPath, swapPath, fstabPath, sysctlPath
 		return false, "", err
 	}
 
+	fstabInfo, err := os.Stat(fstabPath)
+	if err != nil {
+		_ = swapCommand("swapoff", swapPath)
+		return false, "", fmt.Errorf("检查 %s: %w", fstabPath, err)
+	}
+	fstabSize := fstabInfo.Size()
 	fstab, err := os.OpenFile(fstabPath, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		_ = swapCommand("swapoff", swapPath)
@@ -122,10 +129,18 @@ func ensureAutomaticSwap(meminfoPath, swapsPath, swapPath, fstabPath, sysctlPath
 	}
 	if _, err := fmt.Fprintf(fstab, "\n# WP Panel managed swap\n%s none swap sw 0 0\n", swapPath); err != nil {
 		_ = fstab.Close()
+		rollbackFstabAppend(fstabPath, fstabSize)
 		_ = swapCommand("swapoff", swapPath)
 		return false, "", fmt.Errorf("写入 %s: %w", fstabPath, err)
 	}
+	if err := fstab.Sync(); err != nil {
+		_ = fstab.Close()
+		rollbackFstabAppend(fstabPath, fstabSize)
+		_ = swapCommand("swapoff", swapPath)
+		return false, "", fmt.Errorf("同步 %s: %w", fstabPath, err)
+	}
 	if err := fstab.Close(); err != nil {
+		rollbackFstabAppend(fstabPath, fstabSize)
 		_ = swapCommand("swapoff", swapPath)
 		return false, "", fmt.Errorf("关闭 %s: %w", fstabPath, err)
 	}
@@ -139,6 +154,12 @@ func ensureAutomaticSwap(meminfoPath, swapsPath, swapPath, fstabPath, sysctlPath
 		log.Printf("[升级] Swap 已启用，但应用 swappiness=10 失败: %v", err)
 	}
 	return true, "", nil
+}
+
+func rollbackFstabAppend(path string, size int64) {
+	if err := os.Truncate(path, size); err != nil {
+		log.Printf("[升级] 回滚 %s 失败，请手动删除 Swap 配置行: %v", path, err)
+	}
 }
 
 func readMeminfoValue(path, key string) (int64, error) {

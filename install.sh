@@ -785,6 +785,8 @@ if ! $REPAIR_MODE && [[ $TOTAL_MEM_MB -le 8192 ]]; then
         log_warn "${SWAP_FILE} 已存在但未启用，跳过自动创建"
     elif [[ -z "$ROOT_TOTAL" || -z "$ROOT_USED" || -z "$ROOT_AVAILABLE" ]]; then
         log_warn "无法读取根分区空间，跳过自动创建 Swap"
+    elif [[ $ROOT_TOTAL -le 0 ]]; then
+        log_warn "根分区总容量异常，跳过自动创建 Swap"
     elif [[ $ROOT_AVAILABLE -lt $((8 * 1024 * 1024 * 1024)) ]]; then
         log_warn "根分区可用空间不足 8GB，跳过自动创建 Swap"
     elif [[ $(((ROOT_USED + SWAP_SIZE_BYTES) * 100 / ROOT_TOTAL)) -gt 85 ]]; then

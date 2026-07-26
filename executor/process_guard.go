@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,13 @@ import (
 	"time"
 
 	"github.com/naibabiji/wp-panel/database"
+)
+
+const guardCommandTimeout = 5 * time.Second
+
+var (
+	guardCommand            = runGuardCommand
+	serviceIncidentNotifier = sendServiceIncidentNotification
 )
 
 type GuardService struct {
@@ -143,21 +151,27 @@ func (pg *ProcessGuard) checkAll() {
 }
 
 func (pg *ProcessGuard) check(s *GuardService) {
-	state := readGuardServiceState(s.ServiceName)
-	active := state.active
-
 	pg.mu.Lock()
+	state := readGuardServiceState(s.ServiceName)
+	if !state.valid {
+		pg.mu.Unlock()
+		return
+	}
+	active := state.active
 	wasRunning := s.Running
 	s.Running = active
 
 	if s.Paused {
-		if active {
-			logIncident(s, "unexpected_active", s.Name+" 在暂停守护期间被外部启动")
-		}
 		pg.mu.Unlock()
+		if active {
+			logIncident(s, "unexpected_active", s.Name+" 在暂停守护期间被外部启动", false)
+		}
 		return
 	}
 
+	var incidentEvent string
+	var incidentState guardServiceState
+	recovered := false
 	if !s.countKnown {
 		s.restartCount = state.restarts
 		s.countKnown = state.valid
@@ -165,7 +179,9 @@ func (pg *ProcessGuard) check(s *GuardService) {
 		s.Restarts += int(state.restarts - s.restartCount)
 		s.restartCount = state.restarts
 		s.LastIncident = time.Now().Format("2006-01-02 15:04:05")
-		logIncident(s, "auto_restart", diagnoseServiceIncident(s, state, true))
+		incidentEvent = "auto_restart"
+		incidentState = state
+		recovered = true
 	} else if state.valid {
 		s.restartCount = state.restarts
 	}
@@ -175,17 +191,23 @@ func (pg *ProcessGuard) check(s *GuardService) {
 			pg.mu.Unlock()
 			return
 		}
-		_ = exec.Command("systemctl", "start", s.ServiceName).Run()
-		recovered := readGuardServiceState(s.ServiceName).active
+		_, _ = guardCommand("systemctl", "start", s.ServiceName)
+		recovered = readGuardServiceState(s.ServiceName).active
 		s.Running = recovered
 		if wasRunning {
 			s.Restarts++
 			now := time.Now().Format("2006-01-02 15:04:05")
 			s.LastIncident = now
-			logIncident(s, "restart", diagnoseServiceIncident(s, state, recovered))
+			incidentEvent = "restart"
+			incidentState = state
 		}
 	}
 	pg.mu.Unlock()
+
+	if incidentEvent != "" {
+		message := diagnoseServiceIncident(s, incidentState, recovered)
+		logIncident(s, incidentEvent, message, recovered)
+	}
 }
 
 func (pg *ProcessGuard) loadPaused() {
@@ -223,14 +245,14 @@ type guardServiceState struct {
 }
 
 func readGuardServiceState(service string) guardServiceState {
-	out, err := exec.Command(
+	out, err := guardCommand(
 		"systemctl", "show", service,
 		"--property=ActiveState",
 		"--property=NRestarts",
 		"--property=Result",
 		"--property=ExecMainCode",
 		"--property=ExecMainStatus",
-	).Output()
+	)
 	if err != nil {
 		return guardServiceState{}
 	}
@@ -257,10 +279,10 @@ func readGuardServiceState(service string) guardServiceState {
 }
 
 func diagnoseServiceIncident(s *GuardService, state guardServiceState, recovered bool) string {
-	out, _ := exec.Command(
+	out, _ := guardCommand(
 		"journalctl", "-u", s.ServiceName, "--since", "2 minutes ago",
 		"--no-pager", "-n", "30",
-	).CombinedOutput()
+	)
 	reason := classifyServiceFailure(string(out), state)
 	recovery := "自动恢复成功"
 	if !recovered {
@@ -295,7 +317,17 @@ func classifyServiceFailure(journal string, state guardServiceState) string {
 	}
 }
 
-func logIncident(s *GuardService, event, message string) {
+func runGuardCommand(name string, args ...string) ([]byte, error) {
+	return runGuardCommandWithTimeout(guardCommandTimeout, name, args...)
+}
+
+func runGuardCommandWithTimeout(timeout time.Duration, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+}
+
+func logIncident(s *GuardService, event, message string, notify bool) {
 	db := database.GetDB()
 	if db == nil {
 		return
@@ -316,7 +348,9 @@ func logIncident(s *GuardService, event, message string) {
 	pruneIncidents(db)
 	if coreIncident && isRuleEnabled("alert_service") {
 		logAlert("alert_service", "critical", message)
-		sendServiceIncidentNotification(s.Name, message)
+		if notify {
+			serviceIncidentNotifier(s.Name, message)
+		}
 	}
 }
 
