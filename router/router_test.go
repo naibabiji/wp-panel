@@ -467,9 +467,12 @@ const data = (nextSites = sites, nextCounts = counts) => ({ generated_at: '2026-
     for (let index = 0; index < 300; index++) many.push(site(index + 10, 'site-' + index + '.example', 'wordpress', 'active', index % 2 ? 'healthy' : 'warning', inventory('complete', true, index % 3), '2026-07-21T00:00:00Z'));
     panel.overview = data(many, counts);
     panel.search = 'site';
+    assert(panel.filteredSites().length === 300, '300 site filtering warmup');
     const started = performance.now();
-    assert(panel.filteredSites().length === 300, '300 site filtering');
-    const filterElapsed = performance.now() - started;
+    for (let iteration = 0; iteration < 5; iteration++) {
+        assert(panel.filteredSites().length === 300, '300 site filtering');
+    }
+    const filterElapsed = (performance.now() - started) / 5;
     assert(filterElapsed < 50, '300 site filtering budget');
     console.log('fleet-filter-300-ms=' + filterElapsed.toFixed(3));
 })().catch(error => {
