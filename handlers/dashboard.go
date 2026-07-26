@@ -58,6 +58,7 @@ func collectCurrentStats() *models.SystemStats {
 
 	cpu, _ := readCPUPercent()
 	memTotal, memUsed, memPercent := readMemoryStats()
+	swapTotal, swapUsed := readSwapStats()
 	diskTotal, diskUsed := readDiskStats()
 	load1, load5, load15 := readLoadAvg()
 	uptime := readUptime()
@@ -66,6 +67,8 @@ func collectCurrentStats() *models.SystemStats {
 	stats.MemoryPercent = memPercent
 	stats.MemoryUsedBytes = memUsed
 	stats.MemoryTotalBytes = memTotal
+	stats.SwapUsedBytes = swapUsed
+	stats.SwapTotalBytes = swapTotal
 	stats.DiskTotalBytes = diskTotal
 	stats.DiskUsedBytes = diskUsed
 	stats.LoadAvg1 = load1

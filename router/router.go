@@ -66,6 +66,7 @@ var i18nKeys = []string{
 	"dashboard.chart_load",
 	"dashboard.chart_memory",
 	"dashboard.close",
+	"dashboard.swap_usage",
 	"dashboard.system_updates",
 	"dashboard.tooltip_time",
 	"dashboard.update_available",

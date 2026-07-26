@@ -118,6 +118,34 @@ func readMemoryStats() (int64, int64, float64) {
 	return total, used, percent
 }
 
+func readSwapStats() (int64, int64) {
+	return readSwapStatsFrom("/proc/meminfo")
+}
+
+func readSwapStatsFrom(path string) (int64, int64) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, 0
+	}
+
+	var total, free int64
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		value, _ := strconv.ParseInt(fields[1], 10, 64)
+		value *= 1024
+		switch fields[0] {
+		case "SwapTotal:":
+			total = value
+		case "SwapFree:":
+			free = value
+		}
+	}
+	return total, total - free
+}
+
 func readLoadAvg() (float64, float64, float64) {
 	data, err := os.ReadFile("/proc/loadavg")
 	if err != nil {

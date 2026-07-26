@@ -472,6 +472,7 @@
     "close": "Close",
     "cpu_usage": "CPU Usage",
     "memory_usage": "Memory Usage",
+    "swap_usage": "Swap",
     "disk_usage": "Disk Usage",
     "system_load": "System Load",
     "uptime": "Uptime",

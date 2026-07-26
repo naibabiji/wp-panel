@@ -21,6 +21,8 @@ type SystemStats struct {
 	MemoryPercent    float64 `json:"memory_percent"`
 	MemoryUsedBytes  int64   `json:"memory_used_bytes"`
 	MemoryTotalBytes int64   `json:"memory_total_bytes"`
+	SwapUsedBytes    int64   `json:"swap_used_bytes"`
+	SwapTotalBytes   int64   `json:"swap_total_bytes"`
 	DiskUsedBytes    int64   `json:"disk_used_bytes"`
 	DiskTotalBytes   int64   `json:"disk_total_bytes"`
 	DiskReadBytes    int64   `json:"disk_read_bytes"`

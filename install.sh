@@ -773,18 +773,54 @@ TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 TOTAL_MEM_MB=$((TOTAL_MEM_KB / 1024))
 log_info "物理内存: ${TOTAL_MEM_MB}MB"
 
-if [[ $TOTAL_MEM_MB -le 1024 ]]; then
-    log_info "内存 <= 1GB，创建 2GB Swap 分区..."
+if ! $REPAIR_MODE && [[ $TOTAL_MEM_MB -le 8192 ]]; then
     SWAP_FILE="/swapfile"
-    if [[ ! -f "$SWAP_FILE" ]]; then
-        dd if=/dev/zero of=$SWAP_FILE bs=1M count=2048 status=progress
-        chmod 600 $SWAP_FILE
-        mkswap $SWAP_FILE
-        swapon $SWAP_FILE
-        echo "$SWAP_FILE none swap sw 0 0" >> /etc/fstab
-        log_info "Swap 分区创建完成"
+    SWAP_SIZE_BYTES=$((2 * 1024 * 1024 * 1024))
+    ROOT_STATS=$(df -P -B1 / | awk 'NR == 2 {print $2, $3, $4}')
+    read -r ROOT_TOTAL ROOT_USED ROOT_AVAILABLE <<< "$ROOT_STATS"
+
+    if awk 'NR > 1 && NF {found=1} END {exit !found}' /proc/swaps; then
+        log_info "系统已有启用的 Swap，跳过自动创建"
+    elif [[ -e "$SWAP_FILE" ]]; then
+        log_warn "${SWAP_FILE} 已存在但未启用，跳过自动创建"
+    elif [[ -z "$ROOT_TOTAL" || -z "$ROOT_USED" || -z "$ROOT_AVAILABLE" ]]; then
+        log_warn "无法读取根分区空间，跳过自动创建 Swap"
+    elif [[ $ROOT_AVAILABLE -lt $((8 * 1024 * 1024 * 1024)) ]]; then
+        log_warn "根分区可用空间不足 8GB，跳过自动创建 Swap"
+    elif [[ $(((ROOT_USED + SWAP_SIZE_BYTES) * 100 / ROOT_TOTAL)) -gt 85 ]]; then
+        log_warn "创建 Swap 后根分区使用率将超过 85%，跳过自动创建"
     else
-        log_info "Swap 分区已存在，跳过"
+        log_info "创建 2GB Swap 安全缓冲..."
+        if dd if=/dev/zero of="$SWAP_FILE" bs=1M count=2048 status=progress &&
+           chmod 600 "$SWAP_FILE" &&
+           mkswap "$SWAP_FILE" &&
+           swapon "$SWAP_FILE"; then
+            if {
+                echo ""
+                echo "# WP Panel managed swap"
+                echo "$SWAP_FILE none swap sw 0 0"
+            } >> /etc/fstab; then
+                if ! cat > /etc/sysctl.d/99-wp-panel-swap.conf << 'SWAPSYSCTLEOF'
+# WP Panel managed swap
+vm.swappiness = 10
+SWAPSYSCTLEOF
+                then
+                    log_warn "Swap 已启用，但写入 vm.swappiness 配置失败"
+                else
+                    sysctl -p /etc/sysctl.d/99-wp-panel-swap.conf >/dev/null 2>&1 || \
+                        log_warn "Swap 已启用，但应用 vm.swappiness=10 失败"
+                fi
+                log_info "2GB Swap 创建完成"
+            else
+                swapoff "$SWAP_FILE" 2>/dev/null || true
+                rm -f "$SWAP_FILE"
+                log_warn "写入 /etc/fstab 失败，已回滚 Swap 并继续安装"
+            fi
+        else
+            swapoff "$SWAP_FILE" 2>/dev/null || true
+            rm -f "$SWAP_FILE"
+            log_warn "Swap 创建失败，已清理临时文件并继续安装"
+        fi
     fi
 fi
 

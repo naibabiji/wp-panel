@@ -460,6 +460,10 @@ var upgrades = []Upgrade{
 		Description: "新增批量插件更新派发前置检查失败重试字段",
 		Func:        ensureWPUpdateBatchRetrySchema,
 	},
+	{
+		Version:     "1.0.38",
+		Description: "为内存不超过 8GB 且无 Swap 的服务器一次性补齐 2GB Swap",
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

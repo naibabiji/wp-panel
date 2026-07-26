@@ -472,6 +472,7 @@
     "close": "关闭",
     "cpu_usage": "CPU 使用率",
     "memory_usage": "内存使用率",
+    "swap_usage": "Swap",
     "disk_usage": "磁盘使用率",
     "system_load": "系统负载",
     "uptime": "运行时间",
