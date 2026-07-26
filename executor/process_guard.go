@@ -300,6 +300,12 @@ func logIncident(s *GuardService, event, message string) {
 	if db == nil {
 		return
 	}
+	coreIncident := event != "unexpected_active" && isCoreGuardService(s.ServiceName)
+	if coreIncident {
+		if snapshot := captureIncidentResourceSnapshot(); snapshot != "" {
+			message += "；" + snapshot
+		}
+	}
 	_, err := db.Exec(
 		"INSERT INTO process_guard_incidents (service, event, message) VALUES (?, ?, ?)",
 		s.Name, event, message,
@@ -308,7 +314,7 @@ func logIncident(s *GuardService, event, message string) {
 		log.Printf("记录进程守护事件失败: %v", err)
 	}
 	pruneIncidents(db)
-	if event != "unexpected_active" && isCoreGuardService(s.ServiceName) && isRuleEnabled("alert_service") {
+	if coreIncident && isRuleEnabled("alert_service") {
 		logAlert("alert_service", "critical", message)
 		sendServiceIncidentNotification(s.Name, message)
 	}

@@ -98,6 +98,15 @@ func recordOOMEvent(event oomEvent) error {
 		return err
 	}
 
+	if snapshot := captureIncidentResourceSnapshot(); snapshot != "" {
+		message += "；" + snapshot
+		if _, err := database.GetDB().Exec(
+			"UPDATE system_oom_events SET message = ? WHERE event_key = ?",
+			message, event.Key,
+		); err != nil {
+			return err
+		}
+	}
 	if _, err := database.GetDB().Exec(
 		"INSERT INTO alert_log (alert_type, level, message, created_at) VALUES (?, ?, ?, ?)",
 		"alert_oom", "critical", message, event.OccurredAt,
