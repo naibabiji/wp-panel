@@ -85,6 +85,10 @@
                     <span>{{t .Lang "alert.rule_memory"}}</span>
                 </label>
                 <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer mb-3">
+                    <input type="checkbox" x-model="rules.alert_oom" @change="save">
+                    <span>{{t .Lang "alert.rule_oom"}}</span>
+                </label>
+                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer mb-3">
                     <input type="checkbox" x-model="rules.alert_disk" @change="save">
                     <span>{{t .Lang "alert.rule_disk"}}</span>
                 </label>
@@ -320,6 +324,7 @@ function alertManager() {
             const m = {
                 alert_cpu: t('alert.type_cpu_high_load'),
                 alert_memory: t('alert.type_memory_low'),
+                alert_oom: t('alert.type_oom'),
                 alert_disk: t('alert.type_disk_pressure'),
                 alert_service: t('alert.type_service_abnormal'),
                 alert_ssl: t('alert.type_ssl_expire'),

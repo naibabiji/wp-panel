@@ -161,6 +161,7 @@ var i18nKeys = []string{
 	"alert.type_cron_failed",
 	"alert.type_disk_pressure",
 	"alert.type_memory_low",
+	"alert.type_oom",
 	"alert.type_panel_update",
 	"alert.type_remote_backup_failed",
 	"alert.type_service_abnormal",

@@ -464,6 +464,24 @@ var upgrades = []Upgrade{
 		Version:     "1.0.38",
 		Description: "为内存不超过 8GB 且无 Swap 的服务器一次性补齐 2GB Swap",
 	},
+	{
+		Version:     "1.0.39",
+		Description: "新增系统 OOM 事故记录与告警",
+		SQL: []string{
+			`CREATE TABLE IF NOT EXISTS system_oom_events (
+				id          INTEGER PRIMARY KEY AUTOINCREMENT,
+				event_key   TEXT     NOT NULL UNIQUE,
+				process     TEXT     NOT NULL,
+				pid         INTEGER  NOT NULL,
+				message     TEXT     NOT NULL,
+				occurred_at DATETIME NOT NULL,
+				created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_oom_events_occurred ON system_oom_events(occurred_at)`,
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description)
+			 VALUES ('alert_oom', 'true', '系统发生 OOM 强制终止进程时告警')`,
+		},
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

@@ -249,11 +249,13 @@ func main() {
 	}
 	executor.StartProcessGuard()
 	executor.StartAlertMonitor(Version)
+	executor.StartOOMMonitor()
 	executor.StartTelemetry(Version)
 	executor.StartPanelAutoUpdateScheduler(Version, *configPath, cfg)
 	log.Println("WordPress config baseline ensured")
 	log.Println("进程守护已启动")
 	log.Println("告警监控已启动")
+	log.Println("OOM 事故监控已启动")
 	executor.StartAutoBackupScheduler()
 	log.Println("自动备份调度器已启动")
 	executor.StartDBBackupScheduler()

@@ -276,6 +276,7 @@ var migrations = append([]string{
 		('admin_email',              '',         '管理员通知邮箱'),
 		('alert_cpu',                'true',     'CPU > 80% 持续 5 分钟告警'),
 		('alert_memory',             'true',     '可用内存 < 10% 持续 5 分钟告警'),
+		('alert_oom',                'true',     '系统发生 OOM 强制终止进程时告警'),
 		('alert_disk',               'true',     '磁盘 > 90% 告警'),
 		('alert_service',            'true',     '服务进程异常重启告警'),
 		('alert_ssl',                'true',     'SSL 证书到期告警'),
@@ -388,6 +389,20 @@ var migrations = append([]string{
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_alert_log_type ON alert_log(alert_type, created_at)`,
+
+	// ============================================================
+	// system_oom_events
+	// ============================================================
+	`CREATE TABLE IF NOT EXISTS system_oom_events (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		event_key   TEXT     NOT NULL UNIQUE,
+		process     TEXT     NOT NULL,
+		pid         INTEGER  NOT NULL,
+		message     TEXT     NOT NULL,
+		occurred_at DATETIME NOT NULL,
+		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_oom_events_occurred ON system_oom_events(occurred_at)`,
 
 	// ============================================================
 	// wp_extension_config — 默认主题/插件自动安装配置
