@@ -66,11 +66,11 @@ After installation, the script prints the panel URL and the two login layers: Ba
 1. Install the panel with the one-line installer.
 2. Open the panel URL printed by the installer.
 3. Sign in with BasicAuth first, then complete the web login.
-4. Run `wp info` to confirm the panel version, port, and entry path.
-5. Run `wp status` to check whether the panel is healthy.
-6. Use `wp restart` if you need a quick restart.
-7. Use `wp password` if you need to reset the administrator password.
-8. Use `wp unban` if the administrator account or your IP was banned by mistake.
+4. Run `wpp info` to confirm the panel version, port, and entry path.
+5. Run `wpp status` to check whether the panel is healthy.
+6. Use `wpp restart` if you need a quick restart.
+7. Use `wpp password` if you need to reset the administrator password.
+8. Use `wpp unban` if the administrator account or your IP was banned by mistake.
 
 If you need a fresh WordPress site, use the site management pages in the panel UI to create one. The panel will handle the isolated user, web root, PHP-FPM pool, and MariaDB database for that site.
 
@@ -207,16 +207,16 @@ All runtime components are installed through APT packages; the panel does not co
 
 ## SSH Management Commands
 
-After installation, the panel provides a `wp` command-line helper:
+After installation, the panel provides a `wpp` command-line helper:
 
 | Command | Description |
 |------|------|
-| `wp` | Show panel information |
-| `wp restart` | Restart the panel |
-| `wp password` | Reset the administrator password in one step |
-| `wp info` | Show version, port, and entry path |
-| `wp status` | Show runtime status |
-| `wp unban` | Clear all IP bans for emergency recovery |
+| `wpp` | Show panel information |
+| `wpp restart` | Restart the panel |
+| `wpp password` | Reset the administrator password in one step |
+| `wpp info` | Show version, port, and entry path |
+| `wpp status` | Show runtime status |
+| `wpp unban` | Clear all IP bans for emergency recovery |
 
 ## Panel Database Backup and Restore
 

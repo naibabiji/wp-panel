@@ -528,7 +528,8 @@ do_uninstall() {
 
     echo -e "  → 删除面板文件..."
     rm -f "$BIN_PATH"
-    rm -f /usr/local/bin/wp
+    rm -f /usr/local/bin/wpp
+    grep -q '^# WP Panel CLI' /usr/local/bin/wp 2>/dev/null && rm -f /usr/local/bin/wp
     rm -rf "$INSTALL_DIR"
     echo -e "  ${GREEN}✓${NC} 面板文件已删除"
 
@@ -606,7 +607,8 @@ do_purge() {
 
     echo -e "  → 删除面板文件..."
     rm -f "$BIN_PATH"
-    rm -f /usr/local/bin/wp
+    rm -f /usr/local/bin/wpp
+    grep -q '^# WP Panel CLI' /usr/local/bin/wp 2>/dev/null && rm -f /usr/local/bin/wp
     rm -rf "$INSTALL_DIR"
     echo -e "  ${GREEN}✓${NC} 面板文件已删除"
 
@@ -1352,12 +1354,12 @@ echo -e "  面板程序:   /usr/local/bin/wp-panel"
 echo -e "  面板数据:   /www/server/panel/"
 echo -e "  SSL 证书:   ${CERT_DIR}/"
 echo ""
-echo -e "${BOLD}面板 CLI (wp):${NC}"
-echo -e "  wp              查看面板信息"
-echo -e "  wp restart      重启面板"
-echo -e "  wp password     一键重置管理员密码"
-echo -e "  wp unban        一键清空所有IP封禁"
-echo -e "  wp status       查看运行状态"
+echo -e "${BOLD}面板 CLI (wpp):${NC}"
+echo -e "  wpp              查看面板信息"
+echo -e "  wpp restart      重启面板"
+echo -e "  wpp password     一键重置管理员密码"
+echo -e "  wpp unban        一键清空所有IP封禁"
+echo -e "  wpp status       查看运行状态"
 echo ""
 if ! $REPAIR_MODE; then
     echo -e "${YELLOW}请立即保存以上凭据，此信息仅显示一次${NC}"

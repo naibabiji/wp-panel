@@ -190,16 +190,16 @@ Oracle MySQL 存在许可证和功能限制风险。MariaDB 是 MySQL 的 GPL �
 
 ## SSH 管理命令
 
-安装后面板提供 `wp` 命令行工具：
+安装后面板提供 `wpp` 命令行工具：
 
 | 命令 | 说明 |
 |------|------|
-| `wp` | 查看面板信息 |
-| `wp restart` | 重启面板 |
-| `wp password` | 一键重置管理员账号密码 |
-| `wp info` | 查看版本/端口/入口 |
-| `wp status` | 查看运行状态 |
-| `wp unban` | 清空所有 IP 封禁（管理员被误封时紧急恢复） |
+| `wpp` | 查看面板信息 |
+| `wpp restart` | 重启面板 |
+| `wpp password` | 一键重置管理员账号密码 |
+| `wpp info` | 查看版本/端口/入口 |
+| `wpp status` | 查看运行状态 |
+| `wpp unban` | 清空所有 IP 封禁（管理员被误封时紧急恢复） |
 
 ## 面板数据库备份与恢复
 

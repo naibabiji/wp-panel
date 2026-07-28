@@ -3,10 +3,11 @@ package executor
 import (
 	"log"
 	"os"
+	"strings"
 )
 
 const wpScript = `#!/bin/bash
-# WP Panel CLI — wp
+# WP Panel CLI — wpp
 
 BIN=/usr/local/bin/wp-panel
 CFG=/www/server/panel/config.json
@@ -118,11 +119,11 @@ case "${1:-}" in
                 journalctl -u "$SVC" -n 20 --no-pager 2>/dev/null | tail -20
                 echo "── 结束 ──"
                 echo ""
-                echo "→ 运行 'wp status' 进行完整诊断"
+                echo "→ 运行 'wpp status' 进行完整诊断"
             fi
         else
             red "systemctl restart 失败，服务可能未安装"
-            echo "→ 运行 'wp status' 进行诊断"
+            echo "→ 运行 'wpp status' 进行诊断"
         fi
         ;;
     password)
@@ -162,19 +163,43 @@ case "${1:-}" in
             diag
         fi
         echo ""
-        echo "用法: wp <命令>"
-        echo "  wp restart     重启面板"
-        echo "  wp status      完整诊断检查"
-        echo "  wp log [N]     查看最近 N 条日志（默认30）"
-        echo "  wp password    一键重置管理员账号密码"
-        echo "  wp unban       一键清空所有IP封禁"
+        echo "用法: wpp <命令>"
+        echo "  wpp restart     重启面板"
+        echo "  wpp status      完整诊断检查"
+        echo "  wpp log [N]     查看最近 N 条日志（默认30）"
+        echo "  wpp password    一键重置管理员账号密码"
+        echo "  wpp unban       一键清空所有IP封禁"
         ;;
 esac
 `
 
+// legacyWPCommandMarker identifies a /usr/local/bin/wp file as one this
+// panel created (pre-wpp rename), as opposed to a real WP-CLI install
+// that happens to live at the same path.
+const legacyWPCommandMarker = "# WP Panel CLI"
+
 func EnsureWPCommand() {
-	path := "/usr/local/bin/wp"
+	path := "/usr/local/bin/wpp"
 	if err := os.WriteFile(path, []byte(wpScript), 0755); err != nil {
-		log.Printf("wp 命令安装失败 (%s): %v", path, err)
+		log.Printf("wpp 命令安装失败 (%s): %v", path, err)
+	}
+	removeLegacyWPCommand()
+}
+
+// removeLegacyWPCommand cleans up the old /usr/local/bin/wp shortcut from
+// versions prior to the wpp rename, so it stops shadowing a real WP-CLI
+// install. It only removes the file if it still carries our marker comment;
+// a user-installed WP-CLI at the same path is left untouched.
+func removeLegacyWPCommand() {
+	const legacyPath = "/usr/local/bin/wp"
+	content, err := os.ReadFile(legacyPath)
+	if err != nil {
+		return
+	}
+	if !strings.Contains(string(content), legacyWPCommandMarker) {
+		return
+	}
+	if err := os.Remove(legacyPath); err != nil {
+		log.Printf("清理旧版 wp 命令失败 (%s): %v", legacyPath, err)
 	}
 }
