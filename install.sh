@@ -529,7 +529,7 @@ do_uninstall() {
     echo -e "  → 删除面板文件..."
     rm -f "$BIN_PATH"
     rm -f /usr/local/bin/wpp
-    grep -q '^# WP Panel CLI' /usr/local/bin/wp 2>/dev/null && rm -f /usr/local/bin/wp
+    grep -qx '# WP Panel CLI — wp' /usr/local/bin/wp 2>/dev/null && rm -f /usr/local/bin/wp
     rm -rf "$INSTALL_DIR"
     echo -e "  ${GREEN}✓${NC} 面板文件已删除"
 
@@ -608,7 +608,7 @@ do_purge() {
     echo -e "  → 删除面板文件..."
     rm -f "$BIN_PATH"
     rm -f /usr/local/bin/wpp
-    grep -q '^# WP Panel CLI' /usr/local/bin/wp 2>/dev/null && rm -f /usr/local/bin/wp
+    grep -qx '# WP Panel CLI — wp' /usr/local/bin/wp 2>/dev/null && rm -f /usr/local/bin/wp
     rm -rf "$INSTALL_DIR"
     echo -e "  ${GREEN}✓${NC} 面板文件已删除"
 

@@ -1,8 +1,10 @@
 package executor
 
 import (
+	"bufio"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -173,14 +175,21 @@ case "${1:-}" in
 esac
 `
 
-// legacyWPCommandMarker identifies a /usr/local/bin/wp file as one this
-// panel created (pre-wpp rename), as opposed to a real WP-CLI install
-// that happens to live at the same path.
-const legacyWPCommandMarker = "# WP Panel CLI"
+// legacyWPCommandMarker is the exact second line of the pre-wpp-rename
+// script (see git history of this file). It's used to recognize a leftover
+// /usr/local/bin/wp created by an older version of this panel, as opposed
+// to a real WP-CLI install that happens to live at the same path. Matching
+// requires an exact, line-anchored match — not a substring — so it can't be
+// tripped by "wpp" or by unrelated text elsewhere in a user's own script.
+const legacyWPCommandMarker = "# WP Panel CLI — wp"
+
+// legacyMarkerScanLines caps how many lines of a candidate legacy file are
+// inspected, so a user file placed at the same path is never read in full.
+const legacyMarkerScanLines = 5
 
 func EnsureWPCommand() {
 	path := "/usr/local/bin/wpp"
-	if err := os.WriteFile(path, []byte(wpScript), 0755); err != nil {
+	if err := writeFileAtomic(path, []byte(wpScript), 0755); err != nil {
 		log.Printf("wpp 命令安装失败 (%s): %v", path, err)
 	}
 	removeLegacyWPCommand()
@@ -188,18 +197,59 @@ func EnsureWPCommand() {
 
 // removeLegacyWPCommand cleans up the old /usr/local/bin/wp shortcut from
 // versions prior to the wpp rename, so it stops shadowing a real WP-CLI
-// install. It only removes the file if it still carries our marker comment;
-// a user-installed WP-CLI at the same path is left untouched.
+// install. It only removes the file if one of its first few lines is an
+// exact match for legacyWPCommandMarker; a user-installed WP-CLI (or any
+// other file) at the same path is left untouched.
 func removeLegacyWPCommand() {
-	const legacyPath = "/usr/local/bin/wp"
-	content, err := os.ReadFile(legacyPath)
+	removeLegacyWPCommandAt("/usr/local/bin/wp")
+}
+
+// removeLegacyWPCommandAt implements removeLegacyWPCommand against an
+// explicit path so it can be exercised against a temp file in tests.
+func removeLegacyWPCommandAt(legacyPath string) {
+	file, err := os.Open(legacyPath)
 	if err != nil {
 		return
 	}
-	if !strings.Contains(string(content), legacyWPCommandMarker) {
+	defer file.Close()
+
+	matched := false
+	scanner := bufio.NewScanner(file)
+	for i := 0; i < legacyMarkerScanLines && scanner.Scan(); i++ {
+		if strings.TrimSpace(scanner.Text()) == legacyWPCommandMarker {
+			matched = true
+			break
+		}
+	}
+	if !matched {
 		return
 	}
 	if err := os.Remove(legacyPath); err != nil {
 		log.Printf("清理旧版 wp 命令失败 (%s): %v", legacyPath, err)
 	}
+}
+
+// writeFileAtomic writes data to path via a temp file + rename in the same
+// directory, so a concurrent reader (e.g. someone running wpp mid-upgrade)
+// never observes a partially-written script.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".wpp-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, perm); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
