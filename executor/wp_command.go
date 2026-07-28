@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 const wpScript = `#!/bin/bash
@@ -216,7 +215,7 @@ func removeLegacyWPCommandAt(legacyPath string) {
 	matched := false
 	scanner := bufio.NewScanner(file)
 	for i := 0; i < legacyMarkerScanLines && scanner.Scan(); i++ {
-		if strings.TrimSpace(scanner.Text()) == legacyWPCommandMarker {
+		if scanner.Text() == legacyWPCommandMarker {
 			matched = true
 			break
 		}

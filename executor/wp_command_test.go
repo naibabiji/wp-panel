@@ -54,6 +54,22 @@ func TestRemoveLegacyWPCommandAt_KeepsSubstringMatchOutsideLineBounds(t *testing
 	}
 }
 
+func TestRemoveLegacyWPCommandAt_KeepsPaddedMarkerLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wp")
+	// Padded with leading/trailing whitespace — must not match, to stay in
+	// lockstep with install.sh's strict `grep -qx` check.
+	content := "#!/bin/bash\n  " + legacyWPCommandMarker + "  \n"
+	if err := os.WriteFile(path, []byte(content), 0755); err != nil {
+		t.Fatalf("failed to seed file: %v", err)
+	}
+
+	removeLegacyWPCommandAt(path)
+
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected padded marker line to survive, stat err = %v", err)
+	}
+}
+
 func TestRemoveLegacyWPCommandAt_MissingFileIsNoop(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "does-not-exist")
 	removeLegacyWPCommandAt(path) // must not panic
