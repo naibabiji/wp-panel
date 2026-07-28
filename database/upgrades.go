@@ -482,6 +482,10 @@ var upgrades = []Upgrade{
 			 VALUES ('alert_oom', 'true', '系统发生 OOM 强制终止进程时告警')`,
 		},
 	},
+	{
+		Version:     "1.0.40",
+		Description: "修正受管服务 systemd drop-in 的 StartLimitIntervalSec 段落位置",
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {
