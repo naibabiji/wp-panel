@@ -312,6 +312,9 @@ type inventoryFixture struct {
 func newTestInventoryRunner(t *testing.T, source []byte) (*WPInventoryRunner, inventoryFixture) {
 	t.Helper()
 	base := t.TempDir()
+	if err := os.Chmod(base, 0755); err != nil {
+		t.Fatal(err)
+	}
 	binDir := filepath.Join(base, "bin")
 	sbinDir := filepath.Join(base, "sbin")
 	www := filepath.Join(base, "www")

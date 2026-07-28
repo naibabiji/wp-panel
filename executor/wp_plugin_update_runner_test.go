@@ -326,6 +326,9 @@ func TestRunWPPluginScopeCommandCapsOutput(t *testing.T) {
 func prepareWPPluginRunnerTest(t *testing.T) (wpPluginUpdateExecution, wpPluginPHPRunnerOptions, *fakeWPPluginScope) {
 	t.Helper()
 	wwwRoot := t.TempDir()
+	if err := os.Chmod(wwwRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
 	webRoot := filepath.Join(wwwRoot, "example.com")
 	if err := os.Mkdir(webRoot, 0755); err != nil {
 		t.Fatal(err)
@@ -377,6 +380,10 @@ func prepareWPPluginRunnerTest(t *testing.T) (wpPluginUpdateExecution, wpPluginP
 	}
 	uid, gid := os.Getuid(), os.Getgid()
 	binDir := t.TempDir()
+	runtimeRoot := t.TempDir()
+	if err := os.Chmod(runtimeRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
 	phpPath := filepath.Join(binDir, "php")
 	envPath := filepath.Join(binDir, "env")
 	runuserPath := filepath.Join(binDir, "runuser")
@@ -386,7 +393,7 @@ func prepareWPPluginRunnerTest(t *testing.T) (wpPluginUpdateExecution, wpPluginP
 		}
 	}
 	opts := wpPluginPHPRunnerOptions{
-		wwwRoot: wwwRoot, runtimeRoot: t.TempDir(), phpPath: phpPath, envPath: envPath, runuserPath: runuserPath, phpDir: binDir, envDir: binDir, runuserDir: binDir,
+		wwwRoot: wwwRoot, runtimeRoot: runtimeRoot, phpPath: phpPath, envPath: envPath, runuserPath: runuserPath, phpDir: binDir, envDir: binDir, runuserDir: binDir,
 		ownerUID: uid, ownerGID: gid, lookupUser: func(string) (*user.User, error) {
 			return &user.User{Username: "wp_test", Uid: strconv.Itoa(uid), Gid: strconv.Itoa(gid), HomeDir: t.TempDir()}, nil
 		}, chown: func(string, int, int) error { return nil }, scope: scope,
