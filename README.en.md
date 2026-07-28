@@ -29,13 +29,17 @@ WP Panel focuses on one job: **running WordPress sites efficiently on VPS server
 | Module | What it does |
 |------|------|
 | **Site management** | One-click site provisioning with isolated users, directories, Nginx, PHP-FPM, and databases; pause, enable, delete, and reinstall WordPress |
+| **WordPress update management** | Manual per-site core/plugin/theme updates (preview, dedicated pre-update backup, maintenance mode, health check, automatic rollback on failure); multi-select batch plugin updates; licensed commercial plugins/themes can update through the vendor's channel |
+| **WordPress fleet overview** | Read-only inventory of each site's core version, plugins, themes, and available updates; a dedicated overview page summarizes all sites, with manual refresh and staggered background refresh |
 | **SSL certificates** | Automatic Let's Encrypt issuance, automatic renewal before expiry, manual replacement, and self-signed certificates |
 | **FastCGI cache** | Full-site Nginx caching with one-click purge support from the bundled WordPress plugin |
 | **Security defense** | Fail2ban + nftables progressive bans, allowlists for Cloudflare/Google/Bing, global rate limiting, and WordPress security event analysis |
+| **Password-recovery protection** | Per-site three-state toggle (allow / disable site-wide / disable for admins only); site-wide disable also hides the "Lost your password?" link on the login page |
 | **Database management** | MariaDB password changes, database backup and restore, upload restore, and automatic backups |
 | **Scheduled tasks** | Visual cron management, WP Cron replacement, incremental file backups, and system task inspection |
 | **File manager** | Upload, download, delete, rename, archive, extract, cut, copy, paste, multi-select, and chunked upload with resume support |
 | **Dashboard** | Live CPU, memory, disk, and load monitoring with 24h/7d/15d historical charts |
+| **System stability safeguards** | Automatic swap buffer creation on low-memory servers, OOM incident alerts, crash/anomaly diagnostics for MariaDB/PHP-FPM/Nginx/Redis, and incident resource snapshots |
 | **AI diagnostics** | One-click site health analysis with follow-up questions and diagnostic history, focused on logs and service-state clues |
 | **Alerting** | SMTP mail alerts with independent switches for CPU, memory, disk, service, SSL, site expiry, system update, and panel update rules |
 | **Software management** | PHP, Nginx, MariaDB, and Redis configuration editing, process supervision, and log viewing |
