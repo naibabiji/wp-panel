@@ -89,7 +89,7 @@
     "status_interrupted_unknown": "更新结果不确定，需要人工核对",
     "status_unknown": "更新任务状态异常",
     "requires_attention": "该任务需要人工介入，请勿重复发起更新。",
-    "rescan_after_success": "请重新扫描组件信息，确认页面显示的 WordPress 版本已经刷新。"
+    "rescan_after_success": "更新成功，系统已请求自动重新扫描组件信息；如页面未及时更新，可手动重新扫描。"
   },
   "wp_plugin_update": {
     "invalid_request": "插件更新请求无效",
@@ -152,7 +152,7 @@
     "status_interrupted_unknown": "更新结果不确定，需要人工核对",
     "status_unknown": "插件更新任务状态异常",
     "requires_attention": "该任务需要人工介入，请勿重复发起更新。",
-    "rescan_after_success": "请重新扫描组件信息，确认插件版本和更新候选已经刷新。"
+    "rescan_after_success": "更新成功，系统已请求自动重新扫描组件信息；如页面未及时更新，可手动重新扫描。"
   },
   "wp_theme_update": {
     "invalid_request": "主题更新请求无效",
@@ -202,7 +202,7 @@
     "status_failed": "主题更新失败",
     "status_interrupted_unknown": "更新结果不确定，需要人工核对",
     "status_unknown": "主题更新任务状态异常",
-    "rescan_after_success": "请重新扫描组件信息，确认主题版本、父主题关系和更新候选已经刷新。"
+    "rescan_after_success": "更新成功，系统已请求自动重新扫描组件信息；如页面未及时更新，可手动重新扫描。"
   },
   "wp_update_backup": {
     "invalid_request": "更新备份请求无效",

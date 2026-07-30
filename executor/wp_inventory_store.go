@@ -207,7 +207,15 @@ func (s *wpInventoryStore) enqueue(ctx context.Context, siteID int, trigger wpIn
 }
 
 func (s *wpInventoryStore) enqueueEligibleManual(ctx context.Context, siteID int, requestedAt time.Time) (wpInventoryJob, bool, error) {
-	if siteID <= 0 || requestedAt.IsZero() {
+	return s.enqueueEligible(ctx, siteID, wpInventoryTriggerManual, requestedAt)
+}
+
+func (s *wpInventoryStore) enqueueEligibleUpdateFollowup(ctx context.Context, siteID int, requestedAt time.Time) (wpInventoryJob, bool, error) {
+	return s.enqueueEligible(ctx, siteID, wpInventoryTriggerUpdateFollowup, requestedAt)
+}
+
+func (s *wpInventoryStore) enqueueEligible(ctx context.Context, siteID int, trigger wpInventoryTrigger, requestedAt time.Time) (wpInventoryJob, bool, error) {
+	if siteID <= 0 || requestedAt.IsZero() || (trigger != wpInventoryTriggerManual && trigger != wpInventoryTriggerUpdateFollowup) {
 		return wpInventoryJob{}, false, ErrWPInventoryInvalidRequest
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -232,7 +240,7 @@ func (s *wpInventoryStore) enqueueEligibleManual(ctx context.Context, siteID int
 		return wpInventoryJob{}, false, ErrWPInventorySiteUnavailable
 	}
 
-	jobID, created, err := enqueueWPInventoryJobTx(ctx, tx, siteID, wpInventoryTriggerManual, requestedAt, requestedAt)
+	jobID, created, err := enqueueWPInventoryJobTx(ctx, tx, siteID, trigger, requestedAt, requestedAt)
 	if err != nil {
 		return wpInventoryJob{}, false, err
 	}

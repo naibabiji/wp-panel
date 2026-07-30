@@ -816,7 +816,8 @@ func TestWPInventoryPanelAPIContract(t *testing.T) {
 		[]byte(`'/wp-update-backups'`),
 		[]byte(`'/wp-update-backups/' + encodeURIComponent(backup.backup_id) + '/restore'`),
 		[]byte(`t('wp_update_backup.restore_confirm'`),
-		[]byte(`updates.items = updates.items.filter`),
+		[]byte(`this.invalidatePages();`),
+		[]byte(`await this.loadSummary();`),
 		[]byte(`setTimeout(() =>`),
 	} {
 		if !bytes.Contains(panel, required) {

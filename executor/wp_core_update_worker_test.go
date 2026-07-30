@@ -119,6 +119,20 @@ func (f *fakeWPCoreWorkerExecutor) Execute(ctx context.Context, id, owner string
 	return f.store.markSuccess(ctx, id, owner, time.Now().UTC())
 }
 
+type successThenWaitWPCoreWorkerExecutor struct {
+	store  *wpUpdateStore
+	marked chan struct{}
+}
+
+func (f *successThenWaitWPCoreWorkerExecutor) Execute(ctx context.Context, id, owner string) error {
+	if err := f.store.markSuccess(ctx, id, owner, time.Now().UTC()); err != nil {
+		return err
+	}
+	close(f.marked)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
 type unusedWPPluginWorkerTasks struct{}
 
 func (unusedWPPluginWorkerTasks) validateAndClaimPluginUpdate(context.Context, string, string, string) (WPUpdateTask, error) {
@@ -159,6 +173,46 @@ func TestWPCoreUpdateWorkerClaimsBacksUpAndExecutes(t *testing.T) {
 	}
 }
 
+func TestWPCoreUpdateWorkerRequestsRefreshWhenSuccessRacesWithExit(t *testing.T) {
+	for _, exit := range []string{"worker_stop", "heartbeat_not_owned"} {
+		t.Run(exit, func(t *testing.T) {
+			store, siteID := newWPUpdateStoreTest(t)
+			task := createAndSealUpdateTask(t, store, siteID, time.Now().Add(-time.Minute))
+			const owner = "test-success-exit-race"
+			claimed, err := store.claimCoreUpdate(context.Background(), task.ID, owner, "7.0.1", time.Now().UTC())
+			if err != nil {
+				t.Fatal(err)
+			}
+			marked := make(chan struct{})
+			refresh := &recordingInventoryRefreshRequester{}
+			worker := &WPCoreUpdateWorker{
+				store: store, backups: &fakeWPCoreWorkerBackups{store: store},
+				executor:         &successThenWaitWPCoreWorkerExecutor{store: store, marked: marked},
+				inventoryRefresh: refresh, owner: owner, heartbeatInterval: 5 * time.Millisecond, now: time.Now,
+			}
+			parent, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				worker.runOwned(parent, claimed)
+			}()
+			<-marked
+			if exit == "worker_stop" {
+				cancel()
+			}
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("runOwned did not exit")
+			}
+			if calls := refresh.calls(); len(calls) != 1 || calls[0] != siteID {
+				t.Fatalf("refresh calls=%v, want [%d]", calls, siteID)
+			}
+		})
+	}
+}
+
 func TestWPCoreUpdateWorkerClaimsBacksUpAndExecutesPlugin(t *testing.T) {
 	service, store, task := preparePluginSnapshotPlan(t)
 	webRoot := filepath.Join(t.TempDir(), "wordpress")
@@ -186,8 +240,9 @@ func TestWPCoreUpdateWorkerClaimsBacksUpAndExecutesPlugin(t *testing.T) {
 	pluginExecutor := &fakeWPCoreWorkerExecutor{store: store}
 	worker, err := newWPCoreUpdateWorker(wpCoreUpdateWorkerOptions{
 		store: store, backups: coreBackups, executor: coreExecutor,
-		observeVersion: func(context.Context, int) (string, error) { return "7.0.1", nil },
-		pluginTasks:    service, pluginExecutor: pluginExecutor,
+		inventoryRefresh: &recordingInventoryRefreshRequester{},
+		observeVersion:   func(context.Context, int) (string, error) { return "7.0.1", nil },
+		pluginTasks:      service, pluginExecutor: pluginExecutor,
 		pluginSupervisor: fakeWPPluginWorkerSupervisor{state: wpPluginScopeState{
 			LoadState: "not-found", ActiveState: "inactive", SubState: "dead",
 		}},
@@ -253,8 +308,9 @@ func TestWPCoreUpdateWorkerClaimsBacksUpAndExecutesTheme(t *testing.T) {
 	themeExecutor := &fakeWPCoreWorkerExecutor{store: store}
 	worker, err := newWPCoreUpdateWorker(wpCoreUpdateWorkerOptions{
 		store: store, backups: coreBackups, executor: coreExecutor,
-		observeVersion: func(context.Context, int) (string, error) { return "7.0.1", nil },
-		pluginTasks:    unusedWPPluginWorkerTasks{}, pluginExecutor: &fakeWPCoreWorkerExecutor{store: store},
+		inventoryRefresh: &recordingInventoryRefreshRequester{},
+		observeVersion:   func(context.Context, int) (string, error) { return "7.0.1", nil },
+		pluginTasks:      unusedWPPluginWorkerTasks{}, pluginExecutor: &fakeWPCoreWorkerExecutor{store: store},
 		observePlugin: func(context.Context, WPUpdateTask) (string, error) { return "1.0.0", nil },
 		pluginSupervisor: fakeWPPluginWorkerSupervisor{state: wpPluginScopeState{
 			LoadState: "not-found", ActiveState: "inactive", SubState: "dead",
@@ -312,8 +368,9 @@ func TestWPCoreUpdateWorkerThemeRecoveryUsesSupervisorState(t *testing.T) {
 			service, store, task := prepareRunningThemeWorkerTask(t)
 			worker, err := newWPCoreUpdateWorker(wpCoreUpdateWorkerOptions{
 				store: store, backups: &fakeWPCoreWorkerBackups{store: store}, executor: &fakeWPCoreWorkerExecutor{store: store},
-				observeVersion: func(context.Context, int) (string, error) { return "7.0.1", nil },
-				pluginTasks:    unusedWPPluginWorkerTasks{}, pluginExecutor: &fakeWPCoreWorkerExecutor{store: store},
+				inventoryRefresh: &recordingInventoryRefreshRequester{},
+				observeVersion:   func(context.Context, int) (string, error) { return "7.0.1", nil },
+				pluginTasks:      unusedWPPluginWorkerTasks{}, pluginExecutor: &fakeWPCoreWorkerExecutor{store: store},
 				observePlugin: func(context.Context, WPUpdateTask) (string, error) { return "1.0.0", nil },
 				pluginSupervisor: fakeWPPluginWorkerSupervisor{state: wpPluginScopeState{
 					LoadState: "not-found", ActiveState: "inactive", SubState: "dead",
@@ -410,8 +467,9 @@ func newPluginRecoveryTestWorker(t *testing.T, store *wpUpdateStore, service wpP
 	worker, err := newWPCoreUpdateWorker(wpCoreUpdateWorkerOptions{
 		store:   store,
 		backups: &fakeWPCoreWorkerBackups{store: store}, executor: &fakeWPCoreWorkerExecutor{store: store},
-		observeVersion: func(context.Context, int) (string, error) { return "7.0.1", nil },
-		pluginTasks:    service, pluginExecutor: &fakeWPCoreWorkerExecutor{store: store},
+		inventoryRefresh: &recordingInventoryRefreshRequester{},
+		observeVersion:   func(context.Context, int) (string, error) { return "7.0.1", nil },
+		pluginTasks:      service, pluginExecutor: &fakeWPCoreWorkerExecutor{store: store},
 		observePlugin:    func(context.Context, WPUpdateTask) (string, error) { return "1.0.0", nil },
 		pluginSupervisor: supervisor,
 		owner:            "test-restart-worker", pollInterval: 5 * time.Millisecond,
@@ -614,10 +672,11 @@ func newTestWPCoreUpdateWorker(t *testing.T, store *wpUpdateStore, backups wpCor
 	t.Helper()
 	worker, err := newWPCoreUpdateWorker(wpCoreUpdateWorkerOptions{
 		store: store, backups: backups, executor: executor,
-		observeVersion: func(context.Context, int) (string, error) { return version, nil },
-		pluginTasks:    unusedWPPluginWorkerTasks{},
-		pluginExecutor: &fakeWPCoreWorkerExecutor{store: store},
-		observePlugin:  func(context.Context, WPUpdateTask) (string, error) { return "", context.Canceled },
+		inventoryRefresh: &recordingInventoryRefreshRequester{},
+		observeVersion:   func(context.Context, int) (string, error) { return version, nil },
+		pluginTasks:      unusedWPPluginWorkerTasks{},
+		pluginExecutor:   &fakeWPCoreWorkerExecutor{store: store},
+		observePlugin:    func(context.Context, WPUpdateTask) (string, error) { return "", context.Canceled },
 		pluginSupervisor: fakeWPPluginWorkerSupervisor{state: wpPluginScopeState{
 			LoadState: "not-found", ActiveState: "inactive", SubState: "dead",
 		}},

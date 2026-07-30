@@ -1019,12 +1019,8 @@ function wpInventoryPanel() {
                 }
                 this.stopPluginPolling();
                 if (response.data.status === 'success') {
-                    const updates = this.pages.updates;
-                    updates.items = updates.items.filter(item => !(item.type === this.pluginUpdate.componentType && item.key === componentKey));
-                    updates.total = Math.max(0, updates.total - 1);
-                    this.pages.plugins.loaded = false;
-                    this.pages.themes.loaded = false;
-                    this.pages.backups.loaded = false;
+                    this.invalidatePages();
+                    await this.loadSummary();
                 }
             } catch (error) {
                 if (generation !== this.requestGeneration || siteID !== this.siteID || componentKey !== this.pluginUpdate.componentKey) return;
@@ -1187,6 +1183,7 @@ function wpInventoryPanel() {
                     this.pages.plugins.loaded = false;
                     this.pages.updates.loaded = false;
                     this.pages.backups.loaded = false;
+                    await this.loadSummary();
                     return;
                 }
                 if (!immediate) this.schedulePluginBatchPoll(this.pollDelay(Date.now() - this.pluginBatch.pollStartedAt));

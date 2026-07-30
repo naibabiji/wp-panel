@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,6 +75,7 @@ type WPCoreUpdateWorker struct {
 	observeTheme      wpThemeUpdateObserver
 	themeSupervisor   wpPluginUpdateSupervisor
 	batchOrchestrator *wpPluginBatchOrchestrator
+	inventoryRefresh  wpInventoryRefreshRequester
 	owner             string
 	pollInterval      time.Duration
 	heartbeatInterval time.Duration
@@ -100,6 +102,7 @@ type wpCoreUpdateWorkerOptions struct {
 	observeTheme      wpThemeUpdateObserver
 	themeSupervisor   wpPluginUpdateSupervisor
 	batchOrchestrator *wpPluginBatchOrchestrator
+	inventoryRefresh  wpInventoryRefreshRequester
 	owner             string
 	pollInterval      time.Duration
 	heartbeatInterval time.Duration
@@ -145,7 +148,11 @@ func NewWPCoreUpdateWorker(cfg *config.Config) (*WPCoreUpdateWorker, error) {
 	if err != nil {
 		return nil, errors.New("plugin update service unavailable")
 	}
-	batchOrchestrator, err := newWPPluginBatchOrchestrator(store, pluginService)
+	inventoryRefresh, err := newWPInventoryUpdateRefreshRequester(database.GetDB())
+	if err != nil {
+		return nil, errors.New("wordpress inventory refresh requester unavailable")
+	}
+	batchOrchestrator, err := newWPPluginBatchOrchestrator(store, pluginService, inventoryRefresh)
 	if err != nil {
 		return nil, errors.New("plugin batch orchestrator unavailable")
 	}
@@ -171,6 +178,7 @@ func NewWPCoreUpdateWorker(cfg *config.Config) (*WPCoreUpdateWorker, error) {
 			return observeWPThemeUpdateIdentity(ctx, store, task)
 		},
 		batchOrchestrator: batchOrchestrator,
+		inventoryRefresh:  inventoryRefresh,
 		owner:             owner, pollInterval: wpCoreUpdateWorkerPollInterval,
 		heartbeatInterval: wpCoreUpdateWorkerHeartbeatInterval,
 		sweepInterval:     wpCoreUpdateWorkerSweepInterval, now: time.Now,
@@ -270,7 +278,8 @@ func observeWPPluginUpdateVersion(ctx context.Context, store *wpUpdateStore, tas
 func newWPCoreUpdateWorker(opts wpCoreUpdateWorkerOptions) (*WPCoreUpdateWorker, error) {
 	if opts.store == nil || opts.store.db == nil || opts.backups == nil || opts.executor == nil || opts.observeVersion == nil ||
 		opts.pluginTasks == nil || opts.pluginExecutor == nil || opts.observePlugin == nil || opts.pluginSupervisor == nil ||
-		opts.owner == "" || opts.pollInterval <= 0 || opts.heartbeatInterval <= 0 || opts.sweepInterval <= 0 || opts.now == nil {
+		opts.inventoryRefresh == nil || opts.owner == "" || opts.pollInterval <= 0 || opts.heartbeatInterval <= 0 ||
+		opts.sweepInterval <= 0 || opts.now == nil {
 		return nil, errors.New("invalid core update worker options")
 	}
 	return &WPCoreUpdateWorker{
@@ -282,6 +291,7 @@ func newWPCoreUpdateWorker(opts wpCoreUpdateWorkerOptions) (*WPCoreUpdateWorker,
 		observeTheme:      opts.observeTheme,
 		themeSupervisor:   opts.themeSupervisor,
 		batchOrchestrator: opts.batchOrchestrator,
+		inventoryRefresh:  opts.inventoryRefresh,
 		owner:             opts.owner, pollInterval: opts.pollInterval, heartbeatInterval: opts.heartbeatInterval,
 		sweepInterval: opts.sweepInterval, now: opts.now,
 	}, nil
@@ -573,6 +583,7 @@ func (w *WPCoreUpdateWorker) runOwned(parent context.Context, task WPUpdateTask)
 			cancel()
 			<-done
 			w.interruptIfOwned(task.ID, "worker_stopped")
+			w.requestInventoryRefresh(task.ID)
 			return
 		case <-ticker.C:
 			owned, err := w.store.heartbeat(context.Background(), task.ID, w.owner, w.now().UTC())
@@ -582,10 +593,15 @@ func (w *WPCoreUpdateWorker) runOwned(parent context.Context, task WPUpdateTask)
 				if err != nil {
 					w.resolveUncertainHeartbeat(parent, task.ID)
 				}
+				w.requestInventoryRefresh(task.ID)
 				return
 			}
 		case <-done:
+			// Executors persist a terminal status before returning. Converge any
+			// panic or incomplete return to interrupted_unknown first, then only
+			// successful non-batch tasks are eligible for a follow-up scan.
 			w.interruptIfOwned(task.ID, "execution_result_unknown")
+			w.requestInventoryRefresh(task.ID)
 			return
 		}
 	}
@@ -619,7 +635,22 @@ func (w *WPCoreUpdateWorker) resolveUncertainHeartbeat(ctx context.Context, task
 }
 
 func (w *WPCoreUpdateWorker) interruptIfOwned(taskID, code string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), wpInventoryUpdateRefreshTimeout)
 	defer cancel()
 	_, _ = w.store.interruptOwned(ctx, taskID, w.owner, code, w.now().UTC())
+}
+
+func (w *WPCoreUpdateWorker) requestInventoryRefresh(taskID string) {
+	if w.inventoryRefresh == nil {
+		return
+	}
+	task, err := w.store.getTask(context.Background(), taskID)
+	if err != nil || task.Status != wpUpdateSuccess || task.BatchID != "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := w.inventoryRefresh.Request(ctx, task.SiteID, w.now().UTC()); err != nil {
+		log.Printf("WordPress 更新成功后请求组件扫描失败 task=%s site=%d: %v", task.ID, task.SiteID, err)
+	}
 }

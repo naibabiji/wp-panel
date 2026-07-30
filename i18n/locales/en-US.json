@@ -89,7 +89,7 @@
     "status_interrupted_unknown": "Update result is uncertain. Manual verification required.",
     "status_unknown": "Update task status is abnormal",
     "requires_attention": "This task needs manual attention. Do not start the update again.",
-    "rescan_after_success": "Please rescan the component info to confirm the WordPress version shown on the page has refreshed."
+    "rescan_after_success": "The update succeeded and an automatic component rescan was requested. If the page does not refresh promptly, run a manual rescan."
   },
   "wp_plugin_update": {
     "invalid_request": "Invalid plugin update request",
@@ -152,7 +152,7 @@
     "status_interrupted_unknown": "Update result is uncertain. Manual verification required.",
     "status_unknown": "Plugin update task status is abnormal",
     "requires_attention": "This task needs manual attention. Do not start the update again.",
-    "rescan_after_success": "Please rescan the component info to confirm the plugin versions and update candidates have refreshed."
+    "rescan_after_success": "The update succeeded and an automatic component rescan was requested. If the page does not refresh promptly, run a manual rescan."
   },
   "wp_theme_update": {
     "invalid_request": "Invalid theme update request",
@@ -202,7 +202,7 @@
     "status_failed": "Theme update failed",
     "status_interrupted_unknown": "Update result is uncertain. Manual verification required.",
     "status_unknown": "Theme update task status is abnormal",
-    "rescan_after_success": "Please rescan the component info to confirm the theme version, parent theme relationship, and update candidates have refreshed."
+    "rescan_after_success": "The update succeeded and an automatic component rescan was requested. If the page does not refresh promptly, run a manual rescan."
   },
   "wp_update_backup": {
     "invalid_request": "Invalid update backup request",

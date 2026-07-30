@@ -260,9 +260,14 @@ func (s *wpUpdateStore) retryBatchItem(ctx context.Context, itemID int64, messag
 //
 // 哪怕只是最后一项停在等待人工决定，也必须保持 running，否则批量会在用户还没来得及
 // 处理时就“提前完成”，导致刷新页面/关闭进度框后再也找不到入口去做「回滚」或「忽略」。
-func (s *wpUpdateStore) completeBatchIfExhausted(ctx context.Context, batchID string, now time.Time) error {
+func (s *wpUpdateStore) completeBatchIfExhausted(ctx context.Context, batchID string, siteID int, now time.Time) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
 	var unresolved int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM wp_update_batch_items i
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM wp_update_batch_items i
 		LEFT JOIN wp_update_tasks t ON t.id=i.task_id
 		WHERE i.batch_id=? AND (
 			i.status='pending' OR
@@ -273,14 +278,24 @@ func (s *wpUpdateStore) completeBatchIfExhausted(ctx context.Context, batchID st
 				(t.status='failed' AND t.requires_attention=1)
 			))
 		)`, batchID).Scan(&unresolved); err != nil {
-		return err
+		return false, err
 	}
 	if unresolved > 0 {
-		return nil
+		return false, nil
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE wp_update_batches SET status='completed',updated_at=? WHERE id=? AND status='running'`,
-		wpUpdateDBTime(now), batchID)
-	return err
+	result, err := tx.ExecContext(ctx, `UPDATE wp_update_batches SET status='completed',updated_at=?
+		WHERE id=? AND site_id=? AND status='running'`, wpUpdateDBTime(now), batchID, siteID)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ensureBatchDatabaseBackupSource 在批量的共享数据库备份来源尚未确定时，从批量里已经
@@ -375,6 +390,7 @@ type wpPluginBatchConfirmer interface {
 type wpPluginBatchOrchestrator struct {
 	store      *wpUpdateStore
 	confirmer  wpPluginBatchConfirmer
+	refresh    wpInventoryRefreshRequester
 	now        func() time.Time
 	mu         sync.Mutex // protects batchLocks
 	batchLocks map[string]*batchLock
@@ -385,12 +401,12 @@ type batchLock struct {
 	ref int
 }
 
-func newWPPluginBatchOrchestrator(store *wpUpdateStore, confirmer wpPluginBatchConfirmer) (*wpPluginBatchOrchestrator, error) {
-	if store == nil || store.db == nil || confirmer == nil {
+func newWPPluginBatchOrchestrator(store *wpUpdateStore, confirmer wpPluginBatchConfirmer, refresh wpInventoryRefreshRequester) (*wpPluginBatchOrchestrator, error) {
+	if store == nil || store.db == nil || confirmer == nil || refresh == nil {
 		return nil, errors.New("invalid plugin batch orchestrator")
 	}
 	return &wpPluginBatchOrchestrator{
-		store: store, confirmer: confirmer, now: time.Now,
+		store: store, confirmer: confirmer, refresh: refresh, now: time.Now,
 		batchLocks: make(map[string]*batchLock),
 	}, nil
 }
@@ -466,7 +482,17 @@ func (o *wpPluginBatchOrchestrator) advance(ctx context.Context, batch WPUpdateB
 	for {
 		item, err := o.store.nextPendingBatchItem(ctx, batch.ID)
 		if errors.Is(err, sql.ErrNoRows) {
-			return o.store.completeBatchIfExhausted(ctx, batch.ID, now)
+			completed, completeErr := o.store.completeBatchIfExhausted(ctx, batch.ID, batch.SiteID, now)
+			if completeErr != nil || !completed {
+				return completeErr
+			}
+			refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), wpInventoryUpdateRefreshTimeout)
+			refreshErr := o.refresh.Request(refreshCtx, batch.SiteID, now)
+			cancel()
+			if refreshErr != nil {
+				log.Printf("WordPress 批量更新完成后请求组件扫描失败 batch=%s site=%d: %v", batch.ID, batch.SiteID, refreshErr)
+			}
+			return nil
 		}
 		if err != nil {
 			return err

@@ -120,7 +120,7 @@ func TestWPPluginBatchOrchestratorDispatchesSequentially(t *testing.T) {
 		t.Fatal(err)
 	}
 	confirmer := &fakePluginBatchConfirmer{store: store}
-	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer, &recordingInventoryRefreshRequester{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestWPPluginBatchOrchestratorReusesSharedBackupAcrossFailedItem(t *testing.
 		t.Fatal(err)
 	}
 	confirmer := &fakePluginBatchConfirmer{store: store}
-	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer, &recordingInventoryRefreshRequester{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestWPPluginBatchOrchestratorRecoversOrphanedTaskInsteadOfDuplicating(t *te
 		t.Fatal(err)
 	}
 	confirmer := &fakePluginBatchConfirmer{store: store}
-	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer, &recordingInventoryRefreshRequester{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestWPPluginBatchOrchestratorIsolatesMultipleSites(t *testing.T) {
 		t.Fatal(err)
 	}
 	confirmer := &fakePluginBatchConfirmer{store: store}
-	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer, &recordingInventoryRefreshRequester{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +344,7 @@ func TestWPPluginBatchOrchestratorSlowBatchDoesNotBlockOthers(t *testing.T) {
 	}
 	blockA := make(chan struct{})
 	confirmer := &fakePluginBatchConfirmer{store: store, previewDelay: map[string]chan struct{}{"a/a.php": blockA}}
-	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer, &recordingInventoryRefreshRequester{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +406,7 @@ func TestWPPluginBatchOrchestratorInterruptedUnknownBlocksUntilAcknowledged(t *t
 		t.Fatal(err)
 	}
 	confirmer := &fakePluginBatchConfirmer{store: store}
-	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer, &recordingInventoryRefreshRequester{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +451,7 @@ func TestWPPluginBatchOrchestratorSkipsUnavailableItemInSameTick(t *testing.T) {
 		t.Fatal(err)
 	}
 	confirmer := &fakePluginBatchConfirmer{store: store, unavailable: map[string]bool{"a/a.php": true}}
-	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer, &recordingInventoryRefreshRequester{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -485,7 +485,7 @@ func TestWPPluginBatchOrchestratorRetriesRetryablePreviewError(t *testing.T) {
 		store:      store,
 		previewErr: map[string]error{"a/a.php": ErrWPPluginUpdateNotInRepository},
 	}
-	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer, &recordingInventoryRefreshRequester{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -529,7 +529,7 @@ func TestWPPluginBatchOrchestratorWaitsDuringBackoff(t *testing.T) {
 		store:      store,
 		previewErr: map[string]error{"a/a.php": ErrWPPluginUpdateUnavailable},
 	}
-	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer, &recordingInventoryRefreshRequester{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,7 +580,7 @@ func TestWPPluginBatchOrchestratorRetriesThenSucceeds(t *testing.T) {
 		store:      store,
 		previewErr: map[string]error{"a/a.php": ErrWPPluginUpdateBusy},
 	}
-	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer, &recordingInventoryRefreshRequester{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -618,7 +618,7 @@ func TestWPPluginBatchOrchestratorMarksFailedAfterMaxRetries(t *testing.T) {
 		store:      store,
 		previewErr: map[string]error{"a/a.php": ErrWPPluginUpdateNotInRepository},
 	}
-	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer, &recordingInventoryRefreshRequester{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -665,7 +665,7 @@ func TestWPPluginBatchOrchestratorFailsImmediatelyOnNonRetryableError(t *testing
 		store:      store,
 		previewErr: map[string]error{"a/a.php": permanent},
 	}
-	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer)
+	orchestrator, err := newWPPluginBatchOrchestrator(store, confirmer, &recordingInventoryRefreshRequester{})
 	if err != nil {
 		t.Fatal(err)
 	}
