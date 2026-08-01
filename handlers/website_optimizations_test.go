@@ -133,6 +133,130 @@ func TestSetFileEditingProtectionRejectsLockedSite(t *testing.T) {
 	}
 }
 
+func TestSetWPUpdateChecksUpdatesOnlyUpdateSetting(t *testing.T) {
+	setupWebsiteOptimizationsTestDB(t)
+	router := gin.New()
+	handler := &WebsiteHandler{}
+	router.PUT("/api/websites/:id/wp-update-checks", handler.SetWPUpdateChecks)
+
+	request := func(enabled bool) *httptest.ResponseRecorder {
+		body := `{"enabled":false}`
+		if enabled {
+			body = `{"enabled":true}`
+		}
+		req := httptest.NewRequest(http.MethodPut, "/api/websites/1/wp-update-checks", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := request(false); rec.Code != http.StatusOK {
+		t.Fatalf("disable status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var disabled int
+	var webRoot string
+	if err := database.GetDB().QueryRow(`SELECT disable_wp_updates, web_root FROM websites WHERE id=1`).Scan(&disabled, &webRoot); err != nil {
+		t.Fatal(err)
+	}
+	if disabled != 1 {
+		t.Fatalf("disable_wp_updates=%d", disabled)
+	}
+	config, err := os.ReadFile(filepath.Join(webRoot, "wp-config.php"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(config), "define('AUTOMATIC_UPDATER_DISABLED', true);") {
+		t.Fatalf("constant missing: %s", config)
+	}
+	if strings.Contains(string(config), "DISALLOW_FILE_EDIT") {
+		t.Fatalf("unrelated setting changed: %s", config)
+	}
+
+	if rec := request(true); rec.Code != http.StatusOK {
+		t.Fatalf("enable status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := database.GetDB().QueryRow(`SELECT disable_wp_updates FROM websites WHERE id=1`).Scan(&disabled); err != nil {
+		t.Fatal(err)
+	}
+	if disabled != 0 {
+		t.Fatalf("disable_wp_updates=%d", disabled)
+	}
+	config, err = os.ReadFile(filepath.Join(webRoot, "wp-config.php"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(config), "AUTOMATIC_UPDATER_DISABLED") {
+		t.Fatalf("constant not removed: %s", config)
+	}
+}
+
+func TestSetWPUpdateChecksRejectsUnsupportedAndLockedSites(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prepare func()
+		want    int
+	}{
+		{name: "php", prepare: func() { _, _ = database.GetDB().Exec(`UPDATE websites SET site_type='php' WHERE id=1`) }, want: http.StatusBadRequest},
+		{name: "locked", prepare: func() {
+			_, _ = database.GetDB().Exec(`UPDATE websites SET file_lock_enabled=1, file_lock_mode='standard', file_lock_apply_status='ready' WHERE id=1`)
+		}, want: http.StatusLocked},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupWebsiteOptimizationsTestDB(t)
+			tc.prepare()
+			router := gin.New()
+			router.PUT("/api/websites/:id/wp-update-checks", (&WebsiteHandler{}).SetWPUpdateChecks)
+			req := httptest.NewRequest(http.MethodPut, "/api/websites/1/wp-update-checks", strings.NewReader(`{"enabled":true}`))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status=%d want=%d body=%s", rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestSaveWPOptimizationsRejectsStaleUpdateCheckState(t *testing.T) {
+	setupWebsiteOptimizationsTestDB(t)
+	var webRoot string
+	if err := database.GetDB().QueryRow(`SELECT web_root FROM websites WHERE id=1`).Scan(&webRoot); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(webRoot, "wp-config.php")
+	configBefore, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.GetDB().Exec(`UPDATE websites SET disable_wp_updates=1 WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	router.PUT("/api/websites/:id/wp-optimizations", (&WebsiteHandler{}).SaveWPOptimizations)
+	body := `{"fcache_enabled":false,"fcache_ttl":300,"disable_wp_updates":false,"expected_disable_wp_updates":false,"disable_file_editing":false,"xmlrpc_enabled":false,"wp_debug_enabled":false,"wp_post_revisions":-1,"wp_memory_limit":""}`
+	req := httptest.NewRequest(http.MethodPut, "/api/websites/1/wp-optimizations", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var disabled int
+	if err := database.GetDB().QueryRow(`SELECT disable_wp_updates FROM websites WHERE id=1`).Scan(&disabled); err != nil {
+		t.Fatal(err)
+	}
+	if disabled != 1 {
+		t.Fatalf("stale form overwrote disable_wp_updates=%d", disabled)
+	}
+	configAfter, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(configAfter) != string(configBefore) {
+		t.Fatal("stale form changed wp-config.php")
+	}
+}
+
 func setupWebsiteOptimizationsTestDB(t *testing.T) {
 	t.Helper()
 	oldDB := database.DB

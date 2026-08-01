@@ -3,7 +3,7 @@
  * Plugin Name: WP Panel Optimizer
  * Plugin URI:  https://github.com/naibabiji/wp-panel
  * Description: 与 WP Panel 面板配合，管理 FastCGI 缓存、预加载、调试模式、文章修订、内存限制等优化项。发布/更新文章自动清除缓存。
- * Version:     1.1.8
+ * Version:     1.1.9
  * Author:      WP Panel
  * Author URI:  https://blog.naibabiji.com
  * License:     GPL-2.0+
@@ -34,7 +34,7 @@ function wpp_optimizer_uninstall() {
 
 class WP_Panel_Optimizer {
 
-    const VERSION = '1.1.8';
+    const VERSION = '1.1.9';
 
     const OPTION_FCACHE_ENABLED = 'wpp_optimizer_fcache_enabled';
     const OPTION_FCACHE_TTL     = 'wpp_optimizer_fcache_ttl';
@@ -180,11 +180,15 @@ class WP_Panel_Optimizer {
         remove_action('load-update-core.php', 'wp_update_themes');
         remove_action('wp_update_plugins', 'wp_update_plugins');
         remove_action('wp_update_themes', 'wp_update_themes');
-        add_filter('pre_site_transient_update_core', '__return_null');
-        add_filter('pre_site_transient_update_plugins', '__return_null');
-        add_filter('pre_site_transient_update_themes', '__return_null');
+        add_filter('pre_site_transient_update_core', [__CLASS__, 'suppress_update_transient']);
+        add_filter('pre_site_transient_update_plugins', [__CLASS__, 'suppress_update_transient']);
+        add_filter('pre_site_transient_update_themes', [__CLASS__, 'suppress_update_transient']);
 
         add_filter('wp_get_update_data', [__CLASS__, 'filter_update_data'], 10, 2);
+    }
+
+    public static function suppress_update_transient() {
+        return null;
     }
 
     public static function clear_update_schedules() {

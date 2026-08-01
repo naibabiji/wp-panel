@@ -486,6 +486,16 @@ var upgrades = []Upgrade{
 		Version:     "1.0.40",
 		Description: "修正受管服务 systemd drop-in 的 StartLimitIntervalSec 段落位置",
 	},
+	{
+		Version:     "1.0.41",
+		Description: "新增 WordPress 清单任务优先级，避免批量检测阻塞即时任务",
+		SQL: []string{
+			`ALTER TABLE site_wp_inventory_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 20`,
+			`UPDATE site_wp_inventory_jobs SET priority = CASE trigger_type WHEN 'update_followup' THEN 0 WHEN 'site_created' THEN 10 WHEN 'manual' THEN 20 WHEN 'scheduled' THEN 30 ELSE 20 END`,
+			`DROP INDEX IF EXISTS ix_site_wp_inventory_jobs_claim`,
+			`CREATE INDEX IF NOT EXISTS ix_site_wp_inventory_jobs_claim ON site_wp_inventory_jobs(status, priority, not_before, requested_at)`,
+		},
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

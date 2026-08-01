@@ -77,6 +77,22 @@ func SetWPFileEditingDisabled(webRoot string, disabled bool) error {
 	return os.WriteFile(configPath, []byte(content), info.Mode().Perm())
 }
 
+// SetWPUpdatesDisabled updates only the WordPress automatic update setting
+// without rewriting unrelated optimization constants.
+func SetWPUpdatesDisabled(webRoot string, disabled bool) error {
+	configPath := filepath.Join(webRoot, "wp-config.php")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		return err
+	}
+	content := applyBoolConstant(string(data), "AUTOMATIC_UPDATER_DISABLED", disabled)
+	return os.WriteFile(configPath, []byte(content), info.Mode().Perm())
+}
+
 func constPattern(name string) *regexp.Regexp {
 	return regexp.MustCompile(`(?m)^\s*define\s*\(\s*'` + regexp.QuoteMeta(name) + `'\s*,\s*[^)]+\)\s*;\s*\n?`)
 }

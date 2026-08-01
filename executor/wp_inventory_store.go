@@ -60,13 +60,24 @@ type wpInventoryQueryer interface {
 }
 
 type wpInventorySiteIdentity struct {
-	ID         int
-	Domain     string
-	Status     models.WebsiteStatus
-	SystemUser string
-	WebRoot    string
-	SiteType   string
+	ID               int
+	Domain           string
+	Status           models.WebsiteStatus
+	SystemUser       string
+	WebRoot          string
+	SiteType         string
+	DisableWPUpdates bool
 }
+
+const (
+	wpInventoryPriorityUpdateFollowup     = 0
+	wpInventoryPrioritySiteCreated        = 10
+	wpInventoryPriorityManual             = 20
+	wpInventoryPriorityScheduled          = 30
+	wpInventoryPriorityBulk               = 40
+	wpInventoryBulkEnqueueChunkSize       = 50
+	wpInventoryBulkMaxConsecutiveFailures = 3
+)
 
 type wpInventoryJob struct {
 	ID                 string
@@ -208,6 +219,95 @@ func (s *wpInventoryStore) enqueue(ctx context.Context, siteID int, trigger wpIn
 
 func (s *wpInventoryStore) enqueueEligibleManual(ctx context.Context, siteID int, requestedAt time.Time) (wpInventoryJob, bool, error) {
 	return s.enqueueEligible(ctx, siteID, wpInventoryTriggerManual, requestedAt)
+}
+
+func (s *wpInventoryStore) enqueueAllEligibleManual(ctx context.Context, requestedAt time.Time) ([]int, int, int, int, error) {
+	if requestedAt.IsZero() {
+		return nil, 0, 0, 0, ErrWPInventoryInvalidRequest
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM websites
+		WHERE site_type='wordpress' AND status IN ('active','paused','error') ORDER BY id`)
+	if err != nil {
+		return nil, 0, 0, 0, err
+	}
+	siteIDs := make([]int, 0)
+	for rows.Next() {
+		var siteID int
+		if err := rows.Scan(&siteID); err != nil {
+			rows.Close()
+			return nil, 0, 0, 0, err
+		}
+		siteIDs = append(siteIDs, siteID)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, 0, 0, 0, err
+	}
+	acceptedSiteIDs := make([]int, 0, len(siteIDs))
+	created := 0
+	failed := 0
+	consecutiveFailures := 0
+	var batchErrors []error
+	for start := 0; start < len(siteIDs); start += wpInventoryBulkEnqueueChunkSize {
+		end := min(start+wpInventoryBulkEnqueueChunkSize, len(siteIDs))
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			failed += end - start
+			consecutiveFailures++
+			batchErrors = append(batchErrors, fmt.Errorf("begin bulk inventory batch at %d: %w", start, err))
+			if consecutiveFailures >= wpInventoryBulkMaxConsecutiveFailures {
+				remaining := len(siteIDs) - end
+				failed += remaining
+				batchErrors = append(batchErrors, fmt.Errorf("stopped bulk inventory enqueue after %d consecutive failed batches; %d sites not attempted", consecutiveFailures, remaining))
+				break
+			}
+			continue
+		}
+		chunkCreated := 0
+		chunkAccepted := make([]int, 0, end-start)
+		for _, siteID := range siteIDs[start:end] {
+			_, inserted, accepted, err := enqueueWPInventoryBulkJobTx(ctx, tx, siteID, requestedAt)
+			if err != nil {
+				tx.Rollback()
+				failed += end - start
+				batchErrors = append(batchErrors, fmt.Errorf("enqueue bulk inventory batch at %d: %w", start, err))
+				chunkAccepted = nil
+				chunkCreated = 0
+				break
+			}
+			if inserted {
+				chunkCreated++
+			}
+			if accepted {
+				chunkAccepted = append(chunkAccepted, siteID)
+			}
+		}
+		if chunkAccepted == nil {
+			consecutiveFailures++
+			if consecutiveFailures >= wpInventoryBulkMaxConsecutiveFailures {
+				remaining := len(siteIDs) - end
+				failed += remaining
+				batchErrors = append(batchErrors, fmt.Errorf("stopped bulk inventory enqueue after %d consecutive failed batches; %d sites not attempted", consecutiveFailures, remaining))
+				break
+			}
+			continue
+		}
+		if err := tx.Commit(); err != nil {
+			failed += end - start
+			consecutiveFailures++
+			batchErrors = append(batchErrors, fmt.Errorf("commit bulk inventory batch at %d: %w", start, err))
+			if consecutiveFailures >= wpInventoryBulkMaxConsecutiveFailures {
+				remaining := len(siteIDs) - end
+				failed += remaining
+				batchErrors = append(batchErrors, fmt.Errorf("stopped bulk inventory enqueue after %d consecutive failed batches; %d sites not attempted", consecutiveFailures, remaining))
+				break
+			}
+			continue
+		}
+		consecutiveFailures = 0
+		created += chunkCreated
+		acceptedSiteIDs = append(acceptedSiteIDs, chunkAccepted...)
+	}
+	return acceptedSiteIDs, created, len(acceptedSiteIDs) - created, failed, errors.Join(batchErrors...)
 }
 
 func (s *wpInventoryStore) enqueueEligibleUpdateFollowup(ctx context.Context, siteID int, requestedAt time.Time) (wpInventoryJob, bool, error) {
@@ -362,7 +462,7 @@ func (s *wpInventoryStore) claim(ctx context.Context, owner string, now time.Tim
 		WHERE id = (
 			SELECT id FROM site_wp_inventory_jobs
 			WHERE status = 'queued' AND not_before <= ?
-			ORDER BY requested_at, id LIMIT 1
+			ORDER BY priority, requested_at, id LIMIT 1
 		)
 		RETURNING id, site_id, trigger_type, status, lease_owner,
 			COALESCE(lease_expires_at, ''), attempt_count, lease_recovery_count`,
@@ -957,6 +1057,23 @@ func (s *wpInventoryStore) prune(ctx context.Context, before time.Time, limit in
 }
 
 func enqueueWPInventoryJobTx(ctx context.Context, tx *sql.Tx, siteID int, trigger wpInventoryTrigger, requestedAt, notBefore time.Time) (string, bool, error) {
+	return enqueueWPInventoryJobWithPriorityTx(ctx, tx, siteID, trigger, wpInventoryPriority(trigger), requestedAt, notBefore)
+}
+
+func wpInventoryPriority(trigger wpInventoryTrigger) int {
+	switch trigger {
+	case wpInventoryTriggerUpdateFollowup:
+		return wpInventoryPriorityUpdateFollowup
+	case wpInventoryTriggerSiteCreated:
+		return wpInventoryPrioritySiteCreated
+	case wpInventoryTriggerScheduled:
+		return wpInventoryPriorityScheduled
+	default:
+		return wpInventoryPriorityManual
+	}
+}
+
+func enqueueWPInventoryJobWithPriorityTx(ctx context.Context, tx *sql.Tx, siteID int, trigger wpInventoryTrigger, priority int, requestedAt, notBefore time.Time) (string, bool, error) {
 	jobID, err := newWPInventoryJobID()
 	if err != nil {
 		return "", false, err
@@ -964,9 +1081,9 @@ func enqueueWPInventoryJobTx(ctx context.Context, tx *sql.Tx, siteID int, trigge
 	requested := wpInventoryDBTime(requestedAt)
 	notBeforeValue := wpInventoryDBTime(notBefore)
 	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO site_wp_inventory_jobs
-		(id, site_id, trigger_type, status, requested_at, not_before, created_at, updated_at)
-		VALUES (?, ?, ?, 'queued', ?, ?, ?, ?)`,
-		jobID, siteID, trigger, requested, notBeforeValue, requested, requested)
+		(id, site_id, trigger_type, priority, status, requested_at, not_before, created_at, updated_at)
+		VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+		jobID, siteID, trigger, priority, requested, notBeforeValue, requested, requested)
 	if err != nil {
 		return "", false, err
 	}
@@ -975,12 +1092,48 @@ func enqueueWPInventoryJobTx(ctx context.Context, tx *sql.Tx, siteID int, trigge
 		return "", false, err
 	}
 	if inserted == 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE site_wp_inventory_jobs
+			SET priority = MIN(priority, ?), updated_at = ?
+			WHERE site_id = ? AND status = 'queued'`, priority, requested, siteID); err != nil {
+			return "", false, err
+		}
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM site_wp_inventory_jobs
 			WHERE site_id = ? AND status IN ('queued','running') LIMIT 1`, siteID).Scan(&jobID); err != nil {
 			return "", false, err
 		}
 	}
 	return jobID, inserted == 1, nil
+}
+
+func enqueueWPInventoryBulkJobTx(ctx context.Context, tx *sql.Tx, siteID int, requestedAt time.Time) (string, bool, bool, error) {
+	jobID, err := newWPInventoryJobID()
+	if err != nil {
+		return "", false, false, err
+	}
+	requested := wpInventoryDBTime(requestedAt)
+	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO site_wp_inventory_jobs
+		(id, site_id, trigger_type, priority, status, requested_at, not_before, created_at, updated_at)
+		SELECT ?, id, ?, ?, 'queued', ?, ?, ?, ? FROM websites
+		WHERE id = ? AND site_type = 'wordpress' AND status IN ('active','paused','error')`,
+		jobID, wpInventoryTriggerManual, wpInventoryPriorityBulk, requested, requested, requested, requested, siteID)
+	if err != nil {
+		return "", false, false, err
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return "", false, false, err
+	}
+	if inserted == 1 {
+		return jobID, true, true, nil
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM site_wp_inventory_jobs
+		WHERE site_id = ? AND status IN ('queued','running') LIMIT 1`, siteID).Scan(&jobID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, false, nil
+		}
+		return "", false, false, err
+	}
+	return jobID, false, true, nil
 }
 
 func loadWPInventoryJob(ctx context.Context, queryer wpInventoryQueryer, query string, args ...any) (wpInventoryJob, error) {
@@ -1009,10 +1162,12 @@ func loadOptionalWPInventoryJob(ctx context.Context, queryer wpInventoryQueryer,
 func loadWPInventorySiteIdentity(ctx context.Context, queryer wpInventoryQueryer, siteID int) (wpInventorySiteIdentity, error) {
 	var identity wpInventorySiteIdentity
 	var status string
-	err := queryer.QueryRowContext(ctx, `SELECT id, domain, status, system_user, web_root, site_type
+	var disableWPUpdates int
+	err := queryer.QueryRowContext(ctx, `SELECT id, domain, status, system_user, web_root, site_type, disable_wp_updates
 		FROM websites WHERE id = ?`, siteID).Scan(&identity.ID, &identity.Domain, &status,
-		&identity.SystemUser, &identity.WebRoot, &identity.SiteType)
+		&identity.SystemUser, &identity.WebRoot, &identity.SiteType, &disableWPUpdates)
 	identity.Status = models.WebsiteStatus(status)
+	identity.DisableWPUpdates = disableWPUpdates == 1
 	return identity, err
 }
 

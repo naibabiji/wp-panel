@@ -251,6 +251,46 @@ func TestWPInventoryServiceRefreshEligibilityAndDeduplication(t *testing.T) {
 	}
 }
 
+func TestWPInventoryServiceRefreshAllEnqueuesEligibleSitesAndDeduplicates(t *testing.T) {
+	store, firstSiteID := newWPInventoryStoreTest(t)
+	secondSiteID := insertWPInventoryWorkerSite(t, store, "bulk-second.example.com")
+	if _, err := store.db.Exec(`INSERT INTO websites
+		(name,domain,status,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path,site_type)
+		VALUES ('Creating','creating.example.com','creating','wp_creating','/tmp/creating','/tmp/log','db','dbuser','/tmp/php','/tmp/nginx','wordpress'),
+		('PHP','php.example.com','active','wp_php','/tmp/php-site','/tmp/log','db2','dbuser2','/tmp/php2','/tmp/nginx2','php')`); err != nil {
+		t.Fatalf("insert ineligible sites: %v", err)
+	}
+	now := time.Date(2026, 8, 1, 2, 0, 0, 0, time.UTC)
+	if _, _, err := store.enqueueEligibleManual(context.Background(), firstSiteID, now.Add(-time.Minute)); err != nil {
+		t.Fatalf("seed active task: %v", err)
+	}
+	service := newTestWPInventoryService(t, store)
+	result, err := service.RefreshAll(context.Background(), now)
+	if err != nil {
+		t.Fatalf("RefreshAll(): %v", err)
+	}
+	if len(result.SiteIDs) != 2 || result.SiteIDs[0] != firstSiteID || result.SiteIDs[1] != secondSiteID || result.Created != 1 || result.Existing != 1 {
+		t.Fatalf("RefreshAll() = %+v", result)
+	}
+	if got := countRows(t, store.db, "site_wp_inventory_jobs"); got != 2 {
+		t.Fatalf("inventory jobs = %d, want 2", got)
+	}
+}
+
+func TestWPInventoryServiceRefreshAllWithNoEligibleSites(t *testing.T) {
+	store, siteID := newWPInventoryStoreTest(t)
+	if _, err := store.db.Exec(`UPDATE websites SET site_type='php' WHERE id=?`, siteID); err != nil {
+		t.Fatal(err)
+	}
+	result, err := newTestWPInventoryService(t, store).RefreshAll(context.Background(), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("RefreshAll(): %v", err)
+	}
+	if len(result.SiteIDs) != 0 || result.Created != 0 || result.Existing != 0 {
+		t.Fatalf("RefreshAll() = %+v", result)
+	}
+}
+
 func TestWPInventoryServiceTaskOwnershipAndSafeProjection(t *testing.T) {
 	store, siteID := newWPInventoryStoreTest(t)
 	service := newTestWPInventoryService(t, store)

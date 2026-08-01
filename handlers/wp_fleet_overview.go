@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/naibabiji/wp-panel/executor"
@@ -13,6 +14,26 @@ import (
 
 type WPFleetOverviewHandler struct {
 	DB *sql.DB
+}
+
+func (h *WPFleetOverviewHandler) RefreshAll(c *gin.Context) {
+	service, err := executor.NewWPInventoryService(h.DB)
+	if err != nil {
+		log.Printf("批量检测 WordPress 更新失败: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "wp_fleet.bulk_refresh_failed")))
+		return
+	}
+	result, err := service.RefreshAll(c.Request.Context(), time.Now().UTC())
+	if err != nil {
+		log.Printf("批量检测 WordPress 更新失败: %v", err)
+		if result.Failed > 0 {
+			c.JSON(http.StatusMultiStatus, models.SuccessResponse(result))
+			return
+		}
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "wp_fleet.bulk_refresh_failed")))
+		return
+	}
+	c.JSON(http.StatusAccepted, models.SuccessResponse(result))
 }
 
 func (h *WPFleetOverviewHandler) Overview(c *gin.Context) {

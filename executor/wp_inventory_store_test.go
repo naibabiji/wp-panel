@@ -726,6 +726,146 @@ func newWPInventoryStoreTest(t *testing.T) (*wpInventoryStore, int) {
 	return store, int(siteID)
 }
 
+func TestWPInventoryClaimPrioritizesImmediateWorkOverBulk(t *testing.T) {
+	store, bulkSiteID := newWPInventoryStoreTest(t)
+	immediateSiteID := insertWPInventoryWorkerSite(t, store, "priority.example.com")
+	now := time.Now().UTC()
+	tx, err := store.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := enqueueWPInventoryJobWithPriorityTx(context.Background(), tx, bulkSiteID, wpInventoryTriggerManual, wpInventoryPriorityBulk, now.Add(-time.Minute), now.Add(-time.Minute)); err != nil || !created {
+		t.Fatalf("bulk enqueue created=%t err=%v", created, err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	jobID, created, err := store.enqueue(context.Background(), immediateSiteID, wpInventoryTriggerUpdateFollowup, now, now)
+	if err != nil || !created {
+		t.Fatalf("followup enqueue=%q/%t err=%v", jobID, created, err)
+	}
+	claimed, err := store.claim(context.Background(), "priority-worker", now.Add(time.Second), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.ID != jobID {
+		t.Fatalf("claimed %q, want immediate %q", claimed.ID, jobID)
+	}
+}
+
+func TestWPInventoryEnqueuePromotesQueuedBulkJob(t *testing.T) {
+	store, siteID := newWPInventoryStoreTest(t)
+	now := time.Now().UTC()
+	tx, err := store.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID, created, err := enqueueWPInventoryJobWithPriorityTx(context.Background(), tx, siteID, wpInventoryTriggerManual, wpInventoryPriorityBulk, now, now)
+	if err != nil || !created {
+		t.Fatalf("bulk enqueue = %q/%t, err=%v", jobID, created, err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	reusedID, created, err := store.enqueue(context.Background(), siteID, wpInventoryTriggerUpdateFollowup, now.Add(time.Second), now.Add(time.Second))
+	if err != nil || created || reusedID != jobID {
+		t.Fatalf("followup enqueue = %q/%t, err=%v", reusedID, created, err)
+	}
+	var priority int
+	if err := store.db.QueryRow(`SELECT priority FROM site_wp_inventory_jobs WHERE id=?`, jobID).Scan(&priority); err != nil {
+		t.Fatal(err)
+	}
+	if priority != wpInventoryPriorityUpdateFollowup {
+		t.Fatalf("priority=%d, want %d", priority, wpInventoryPriorityUpdateFollowup)
+	}
+}
+
+func TestWPInventoryEnqueueDoesNotChangeRunningJobPriority(t *testing.T) {
+	store, siteID := newWPInventoryStoreTest(t)
+	now := time.Now().UTC()
+	jobID, created, err := store.enqueue(context.Background(), siteID, wpInventoryTriggerScheduled, now, now)
+	if err != nil || !created {
+		t.Fatalf("enqueue=%q/%t err=%v", jobID, created, err)
+	}
+	if _, err := store.claim(context.Background(), "running-priority", now.Add(time.Second), time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := store.enqueue(context.Background(), siteID, wpInventoryTriggerUpdateFollowup, now.Add(2*time.Second), now.Add(2*time.Second)); err != nil || created {
+		t.Fatalf("reuse running created=%t err=%v", created, err)
+	}
+	var priority int
+	if err := store.db.QueryRow(`SELECT priority FROM site_wp_inventory_jobs WHERE id=?`, jobID).Scan(&priority); err != nil {
+		t.Fatal(err)
+	}
+	if priority != wpInventoryPriorityScheduled {
+		t.Fatalf("running priority=%d want=%d", priority, wpInventoryPriorityScheduled)
+	}
+}
+
+func TestWPInventoryBulkEnqueueReportsPartialBatchFailureAndContinues(t *testing.T) {
+	store, _ := newWPInventoryStoreTest(t)
+	if _, err := store.db.Exec(`DELETE FROM websites`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id := 1; id <= 101; id++ {
+		if _, err := tx.Exec(`INSERT INTO websites (id,name,domain,status,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path) VALUES (?,?,?,'active',?,'/tmp/www','/tmp/log','db','user','/tmp/php','/tmp/nginx')`, id, fmt.Sprintf("site-%d", id), fmt.Sprintf("site-%d.example", id), fmt.Sprintf("wp_%d", id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`CREATE TRIGGER fail_middle_inventory_batch BEFORE INSERT ON site_wp_inventory_jobs WHEN NEW.site_id BETWEEN 51 AND 100 BEGIN SELECT RAISE(ABORT, 'injected batch failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	ids, created, existing, failed, err := store.enqueueAllEligibleManual(context.Background(), time.Now().UTC())
+	if err == nil || !strings.Contains(err.Error(), "injected batch failure") {
+		t.Fatalf("err=%v", err)
+	}
+	if len(ids) != 51 || created != 51 || existing != 0 || failed != 50 {
+		t.Fatalf("ids=%d created=%d existing=%d failed=%d", len(ids), created, existing, failed)
+	}
+	if ids[0] != 1 || ids[49] != 50 || ids[50] != 101 {
+		t.Fatalf("accepted ids=%v", ids)
+	}
+	if got := countRows(t, store.db, "site_wp_inventory_jobs"); got != 51 {
+		t.Fatalf("jobs=%d", got)
+	}
+}
+
+func TestWPInventoryBulkEnqueueStopsAfterConsecutiveBatchFailures(t *testing.T) {
+	store, _ := newWPInventoryStoreTest(t)
+	if _, err := store.db.Exec(`DELETE FROM websites`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id := 1; id <= 200; id++ {
+		if _, err := tx.Exec(`INSERT INTO websites (id,name,domain,status,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path) VALUES (?,?,?,'active',?,'/tmp/www','/tmp/log','db','user','/tmp/php','/tmp/nginx')`, id, fmt.Sprintf("site-%d", id), fmt.Sprintf("site-%d.example", id), fmt.Sprintf("wp_%d", id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`CREATE TRIGGER fail_all_inventory_batches BEFORE INSERT ON site_wp_inventory_jobs BEGIN SELECT RAISE(ABORT, 'database unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	ids, created, existing, failed, err := store.enqueueAllEligibleManual(context.Background(), time.Now().UTC())
+	if err == nil || !strings.Contains(err.Error(), "stopped bulk inventory enqueue after 3 consecutive failed batches; 50 sites not attempted") {
+		t.Fatalf("err=%v", err)
+	}
+	if len(ids) != 0 || created != 0 || existing != 0 || failed != 200 {
+		t.Fatalf("ids=%d created=%d existing=%d failed=%d", len(ids), created, existing, failed)
+	}
+}
+
 func enqueueAndClaimInventory(t *testing.T, store *wpInventoryStore, siteID int, owner string, now time.Time) (string, wpInventorySiteIdentity) {
 	t.Helper()
 	ctx := context.Background()

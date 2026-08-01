@@ -67,6 +67,14 @@ func (s *WPInventoryService) Refresh(ctx context.Context, siteID int, requestedA
 	return models.WPInventoryRefreshResult{Task: task, Created: created}, nil
 }
 
+func (s *WPInventoryService) RefreshAll(ctx context.Context, requestedAt time.Time) (models.WPInventoryBulkRefreshResult, error) {
+	if s == nil || s.store == nil || requestedAt.IsZero() {
+		return models.WPInventoryBulkRefreshResult{}, ErrWPInventoryInvalidRequest
+	}
+	siteIDs, created, existing, failed, err := s.store.enqueueAllEligibleManual(ctx, requestedAt)
+	return models.WPInventoryBulkRefreshResult{SiteIDs: siteIDs, Created: created, Existing: existing, Failed: failed}, err
+}
+
 func (s *WPInventoryService) Task(ctx context.Context, siteID int, taskID string) (models.WPInventoryTask, error) {
 	if s == nil || s.store == nil || siteID <= 0 || !wpInventoryTaskIDPattern.MatchString(taskID) {
 		return models.WPInventoryTask{}, ErrWPInventoryInvalidRequest
@@ -190,6 +198,7 @@ func wpInventorySummaryModel(snapshot wpInventorySummarySnapshot) (models.WPInve
 	}
 	return models.WPInventorySummary{
 		SiteID:                 snapshot.Identity.ID,
+		UpdateChecksDisabled:   snapshot.Identity.DisableWPUpdates,
 		CollectionStatus:       state.Status,
 		HasSuccessfulInventory: hasCollection,
 		WordPress: models.WPInventoryWordPress{

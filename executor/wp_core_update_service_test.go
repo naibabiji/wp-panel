@@ -21,6 +21,13 @@ func TestWPCoreUpdateServicePreviewFixesServerCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// WordPress can return upgrade offers for multiple locales in one core
+	// transient. Preview must select the site's installed locale rather than
+	// treating the unrelated locale as a conflicting second candidate.
+	if _, err := store.db.Exec(`INSERT INTO site_wp_component_updates(site_id,component_type,component_key,target_version,response,locale,collection_id,collected_at)
+		VALUES (?,'core','wordpress','7.0.2','upgrade','en_US','collection-a',?)`, siteID, wpUpdateDBTime(now)); err != nil {
+		t.Fatal(err)
+	}
 	service := &WPCoreUpdateService{db: store.db, store: store, confirmations: newWPCoreConfirmationStore(), now: func() time.Time { return now },
 		versions: func(context.Context) (string, string, error) { return "8.3.0", "11.8.0", nil },
 		fetchOffer: func(context.Context, string, string, string, string) (wpCoreVersionOffer, error) {
@@ -56,6 +63,117 @@ func TestWPCoreUpdateServicePreviewReportsUpToDateWithoutError(t *testing.T) {
 	}
 	if preview.ConfirmationToken != "" || preview.TargetVersion != "" {
 		t.Fatalf("up-to-date response should not carry a confirmation token or target version: %+v", preview)
+	}
+}
+
+func TestWPCoreUpdateServicePreviewReconcilesOutOfBandCoreUpdate(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	stamp := wpUpdateDBTime(now.Add(-time.Hour))
+	if _, err := store.db.Exec(`UPDATE site_wp_inventory_state SET wordpress_locale='en_US',collection_id='collection-a',last_success_at=? WHERE site_id=?`, stamp, siteID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO site_wp_component_updates(site_id,component_type,component_key,target_version,response,locale,collection_id,collected_at)
+		VALUES (?,'core','wordpress','7.0.2','upgrade','en_US','collection-a',?)`, siteID, stamp); err != nil {
+		t.Fatal(err)
+	}
+	service := &WPCoreUpdateService{db: store.db, store: store, now: func() time.Time { return now },
+		identity: func(string) (wpInstalledIdentity, error) {
+			return wpInstalledIdentity{Version: "7.0.2", Locale: "en_US"}, nil
+		}}
+	preview, err := service.Preview(context.Background(), siteID, "admin")
+	if err != nil || preview.Available || preview.CurrentVersion != "7.0.2" {
+		t.Fatalf("preview=%+v err=%v", preview, err)
+	}
+	var version, lastSuccess string
+	if err := store.db.QueryRow(`SELECT wordpress_version,last_success_at FROM site_wp_inventory_state WHERE site_id=?`, siteID).Scan(&version, &lastSuccess); err != nil {
+		t.Fatal(err)
+	}
+	parsedLastSuccess, err := parseRequiredWPInventoryTime(lastSuccess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedLastSuccess, err := parseRequiredWPInventoryTime(stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != "7.0.2" || !parsedLastSuccess.Equal(expectedLastSuccess) {
+		t.Fatalf("version=%q last_success=%q want version reconciled without claiming a full scan", version, lastSuccess)
+	}
+	var candidates, tasks int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM site_wp_component_updates WHERE site_id=? AND component_type='core'`, siteID).Scan(&candidates); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM wp_update_tasks WHERE site_id=?`, siteID).Scan(&tasks); err != nil {
+		t.Fatal(err)
+	}
+	if candidates != 0 || tasks != 0 {
+		t.Fatalf("candidates=%d tasks=%d", candidates, tasks)
+	}
+}
+
+func TestWPCoreUpdateServicePreviewUsesLowerLiveVersionAndKeepsHigherCandidate(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	stamp := wpUpdateDBTime(now)
+	if _, err := store.db.Exec(`UPDATE site_wp_inventory_state SET wordpress_version='7.0.2',wordpress_locale='en_US',collection_id='collection-a',last_success_at=? WHERE site_id=?`, stamp, siteID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO site_wp_component_updates(site_id,component_type,component_key,target_version,response,locale,collection_id,collected_at)
+		VALUES (?,'core','wordpress','7.0.3','upgrade','en_US','collection-a',?)`, siteID, stamp); err != nil {
+		t.Fatal(err)
+	}
+	service := &WPCoreUpdateService{db: store.db, store: store, confirmations: newWPCoreConfirmationStore(), now: func() time.Time { return now },
+		identity: func(string) (wpInstalledIdentity, error) {
+			return wpInstalledIdentity{Version: "7.0.1", Locale: "en_US"}, nil
+		},
+		versions: func(context.Context) (string, string, error) { return "8.3.0", "11.8.0", nil },
+		fetchOffer: func(_ context.Context, current, locale, _, _ string) (wpCoreVersionOffer, error) {
+			if current != "7.0.1" || locale != "en_US" {
+				t.Fatalf("offer request current=%q locale=%q", current, locale)
+			}
+			return wpCoreVersionOffer{Version: "7.0.3", Locale: "en_US", DownloadURL: "https://downloads.wordpress.org/release/wordpress-7.0.3.zip", PHPMin: "7.4", MySQLMin: "5.5"}, nil
+		}}
+	preview, err := service.Preview(context.Background(), siteID, "admin")
+	if err != nil || !preview.Available || preview.CurrentVersion != "7.0.1" || preview.TargetVersion != "7.0.3" {
+		t.Fatalf("preview=%+v err=%v", preview, err)
+	}
+	var version string
+	var candidates int
+	if err := store.db.QueryRow(`SELECT wordpress_version FROM site_wp_inventory_state WHERE site_id=?`, siteID).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM site_wp_component_updates WHERE site_id=? AND target_version='7.0.3'`, siteID).Scan(&candidates); err != nil {
+		t.Fatal(err)
+	}
+	if version != "7.0.1" || candidates != 1 {
+		t.Fatalf("version=%q candidates=%d", version, candidates)
+	}
+}
+
+func TestWPCoreUpdateServicePreviewRejectsMissingStore(t *testing.T) {
+	service := &WPCoreUpdateService{}
+	if _, err := service.Preview(context.Background(), 1, "admin"); !errors.Is(err, ErrWPCoreUpdateInvalid) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestWPCoreUpdateServiceRejectsDuplicateSameLocaleCandidatesBeforeVersionComparison(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	stamp := wpUpdateDBTime(now)
+	if _, err := store.db.Exec(`UPDATE site_wp_inventory_state SET wordpress_locale='en_US',collection_id='collection-a',last_success_at=? WHERE site_id=?`, stamp, siteID); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"7.0.2", "7.0.1"} {
+		if _, err := store.db.Exec(`INSERT INTO site_wp_component_updates(site_id,component_type,component_key,target_version,response,locale,collection_id,collected_at)
+			VALUES (?,'core','wordpress',?,'upgrade','en_US','collection-a',?)`, siteID, target, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := &WPCoreUpdateService{db: store.db, store: store, now: func() time.Time { return now }}
+	if _, err := service.loadCandidate(context.Background(), siteID); !errors.Is(err, ErrWPCoreUpdateConflict) {
+		t.Fatalf("duplicate same-locale candidates err=%v", err)
 	}
 }
 

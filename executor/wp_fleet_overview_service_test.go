@@ -223,6 +223,27 @@ func TestWPFleetOverviewActiveTaskAndHealthBoundaries(t *testing.T) {
 	}
 }
 
+func TestWPFleetOverviewDisabledUpdateChecksDoNotReportCachedUpdates(t *testing.T) {
+	service, db := newWPFleetOverviewTest(t)
+	insertWPFleetSite(t, db, wpFleetTestSite{ID: 1, Domain: "disabled-updates.example.com", SiteType: "wordpress", Status: "active", UpdateChecksDisabled: true})
+	insertWPFleetState(t, db, 1, "complete", "cached", "7.0", 1, 0, wpFleetTestNow, wpFleetTestNow, "", "")
+	insertWPFleetComponentUpdate(t, db, 1, "cached", "plugin", "demo/demo.php", "2.0")
+	overview, err := service.Overview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	site := overview.Sites[0]
+	if !site.UpdateChecksDisabled || site.Inventory == nil || site.Inventory.UpdateTotal != 1 {
+		t.Fatalf("site = %+v", site)
+	}
+	if site.Health.Level != "healthy" || len(site.Health.Issues) != 0 {
+		t.Fatalf("disabled checks must suppress cached update warning: %+v", site.Health)
+	}
+	if overview.Counts.UpdateSites != 0 || overview.Counts.WarningSites != 0 {
+		t.Fatalf("counts = %+v", overview.Counts)
+	}
+}
+
 func TestWPFleetOverviewUsesSingleQuery(t *testing.T) {
 	source, err := os.ReadFile("wp_fleet_overview_service.go")
 	if err != nil {
@@ -433,14 +454,15 @@ func measureWPFleetOverview(t *testing.T, service *WPFleetOverviewService, wantS
 }
 
 type wpFleetTestSite struct {
-	ID            int
-	Domain        string
-	SiteType      string
-	Status        string
-	SSLEnabled    bool
-	SSLExpiresAt  time.Time
-	SSLLastError  string
-	BackupEnabled bool
+	ID                   int
+	Domain               string
+	SiteType             string
+	Status               string
+	SSLEnabled           bool
+	SSLExpiresAt         time.Time
+	SSLLastError         string
+	BackupEnabled        bool
+	UpdateChecksDisabled bool
 }
 
 func newWPFleetOverviewTest(t *testing.T) (*WPFleetOverviewService, *sql.DB) {
@@ -465,11 +487,11 @@ func insertWPFleetSite(t *testing.T, db *sql.DB, site wpFleetTestSite) {
 	if _, err := db.Exec(`INSERT INTO websites
 		(id, name, domain, status, system_user, web_root, log_dir, db_name, db_user,
 		php_pool_path, nginx_conf_path, site_type, ssl_enabled, ssl_expires_at, ssl_last_error,
-		monitoring_enabled, file_lock_enabled, fastcgi_cache_enabled, access_log_mode, created_at)
+		monitoring_enabled, file_lock_enabled, fastcgi_cache_enabled, access_log_mode, disable_wp_updates, created_at)
 		VALUES (?, ?, ?, ?, ?, '/tmp/www', '/tmp/log', 'db', 'user', '/tmp/php.conf',
-		'/tmp/nginx.conf', ?, ?, ?, ?, 1, 1, 1, 'full', ?)`,
+		'/tmp/nginx.conf', ?, ?, ?, ?, 1, 1, 1, 'full', ?, ?)`,
 		site.ID, site.Domain, site.Domain, site.Status, "wp_test", site.SiteType, boolDB(site.SSLEnabled),
-		sslExpiry, site.SSLLastError, wpInventoryDBTime(wpFleetTestNow.Add(-time.Duration(site.ID)*time.Minute))); err != nil {
+		sslExpiry, site.SSLLastError, boolDB(site.UpdateChecksDisabled), wpInventoryDBTime(wpFleetTestNow.Add(-time.Duration(site.ID)*time.Minute))); err != nil {
 		t.Fatalf("insert site %d: %v", site.ID, err)
 	}
 	if site.BackupEnabled {

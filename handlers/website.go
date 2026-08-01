@@ -1831,6 +1831,7 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 		FCacheEnabled      bool   `json:"fcache_enabled"`
 		FCacheTTL          int    `json:"fcache_ttl"`
 		DisableWPUpdates   bool   `json:"disable_wp_updates"`
+		ExpectedWPUpdates  *bool  `json:"expected_disable_wp_updates"`
 		DisableFileEditing bool   `json:"disable_file_editing"`
 		XMLRPCEnabled      bool   `json:"xmlrpc_enabled"`
 		WPDebugEnabled     bool   `json:"wp_debug_enabled"`
@@ -1852,9 +1853,16 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 
 	// 检查 FastCGI / XML-RPC 配置是否变化，决定是否重载 Nginx
 	var domain string
-	var oldFCacheEnabled, oldFCacheTTL, oldXMLRPCEnabled int
-	db.QueryRow("SELECT domain, fastcgi_cache_enabled, fastcgi_cache_ttl, xmlrpc_enabled FROM websites WHERE id = ?", id).
-		Scan(&domain, &oldFCacheEnabled, &oldFCacheTTL, &oldXMLRPCEnabled)
+	var oldFCacheEnabled, oldFCacheTTL, oldXMLRPCEnabled, oldDisableWPUpdates int
+	if err := db.QueryRow("SELECT domain, fastcgi_cache_enabled, fastcgi_cache_ttl, xmlrpc_enabled, disable_wp_updates FROM websites WHERE id = ?", id).
+		Scan(&domain, &oldFCacheEnabled, &oldFCacheTTL, &oldXMLRPCEnabled, &oldDisableWPUpdates); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败"))
+		return
+	}
+	if req.ExpectedWPUpdates != nil && *req.ExpectedWPUpdates != (oldDisableWPUpdates == 1) {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "website.optimization_conflict")))
+		return
+	}
 
 	fcEnabled := 0
 	if req.FCacheEnabled {
@@ -1878,16 +1886,36 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 		wpDebug = 1
 	}
 
-	_, err = db.Exec(`UPDATE websites SET
+	updateQuery := `UPDATE websites SET
 		fastcgi_cache_enabled = ?, fastcgi_cache_ttl = ?,
 		disable_wp_updates = ?, disable_file_editing = ?, xmlrpc_enabled = ?,
-		wp_debug_enabled = ?, wp_post_revisions = ?, wp_memory_limit = ?
-		WHERE id = ?`,
-		fcEnabled, req.FCacheTTL, disableUpdates, disableEditing, xmlrpcEnabled,
-		wpDebug, req.WPPostRevisions, req.WPMemoryLimit, id)
+		wp_debug_enabled = ?, wp_post_revisions = ?, wp_memory_limit = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?`
+	updateArgs := []any{fcEnabled, req.FCacheTTL, disableUpdates, disableEditing, xmlrpcEnabled,
+		wpDebug, req.WPPostRevisions, req.WPMemoryLimit, id}
+	if req.ExpectedWPUpdates != nil {
+		updateQuery += " AND disable_wp_updates = ?"
+		expected := 0
+		if *req.ExpectedWPUpdates {
+			expected = 1
+		}
+		updateArgs = append(updateArgs, expected)
+	}
+	result, err := db.Exec(updateQuery, updateArgs...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败"))
 		return
+	}
+	if req.ExpectedWPUpdates != nil {
+		affected, err := result.RowsAffected()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败"))
+			return
+		}
+		if affected == 0 {
+			c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "website.optimization_conflict")))
+			return
+		}
 	}
 
 	// 更新 wp-config.php
@@ -1919,6 +1947,66 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
+}
+
+func (h *WebsiteHandler) SetWPUpdateChecks(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.invalid_site_id")))
+		return
+	}
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "website.not_found")))
+		return
+	}
+	if site.SiteType != "wordpress" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.update_checks_wordpress_only")))
+		return
+	}
+	if site.FileLockEnabled {
+		c.JSON(http.StatusLocked, models.ErrorResponse(fileLockBlockedMessage))
+		return
+	}
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "common.invalid_params")))
+		return
+	}
+	tx, err := database.GetDB().BeginTx(c.Request.Context(), nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "website.update_checks_save_failed")))
+		return
+	}
+	defer tx.Rollback()
+	disabled := 1
+	if req.Enabled {
+		disabled = 0
+	}
+	if _, err := tx.ExecContext(c.Request.Context(), "UPDATE websites SET disable_wp_updates = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", disabled, id); err != nil {
+		_ = tx.Rollback()
+		recordHandlerOperationLog("wp_update_checks", site.Domain, "failed", err.Error())
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "website.update_checks_save_failed")))
+		return
+	}
+	if err := executor.SetWPUpdatesDisabled(site.WebRoot, !req.Enabled); err != nil {
+		_ = tx.Rollback()
+		recordHandlerOperationLog("wp_update_checks", site.Domain, "failed", err.Error())
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "website.update_checks_save_failed")))
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		if rollbackErr := executor.SetWPUpdatesDisabled(site.WebRoot, site.DisableWPUpdates); rollbackErr != nil {
+			log.Printf("恢复 WordPress 更新检测设置失败 site=%d: %v", id, rollbackErr)
+		}
+		recordHandlerOperationLog("wp_update_checks", site.Domain, "failed", err.Error())
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "website.update_checks_save_failed")))
+		return
+	}
+	recordHandlerOperationLog("wp_update_checks", site.Domain, "success", fmt.Sprintf("WordPress 更新检测=%t", req.Enabled))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"enabled": req.Enabled}))
 }
 
 func (h *WebsiteHandler) SetFileEditingProtection(c *gin.Context) {

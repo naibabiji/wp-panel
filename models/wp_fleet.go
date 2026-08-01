@@ -23,23 +23,24 @@ type WPFleetOverviewCounts struct {
 }
 
 type WPFleetSite struct {
-	ID                  int               `json:"id"`
-	Name                string            `json:"name"`
-	Domain              string            `json:"domain"`
-	SiteType            string            `json:"site_type"`
-	Status              string            `json:"status"`
-	CreatedAt           time.Time         `json:"created_at"`
-	ExpiresAt           *time.Time        `json:"expires_at"`
-	SSLEnabled          bool              `json:"ssl_enabled"`
-	SSLExpiresAt        *time.Time        `json:"ssl_expires_at"`
-	SSLState            string            `json:"ssl_state"`
-	MonitoringEnabled   bool              `json:"monitoring_enabled"`
-	BackupEnabled       bool              `json:"backup_enabled"`
-	FileLockEnabled     bool              `json:"file_lock_enabled"`
-	FastCGICacheEnabled bool              `json:"fastcgi_cache_enabled"`
-	AccessLogMode       string            `json:"access_log_mode"`
-	Health              WPFleetHealth     `json:"health"`
-	Inventory           *WPFleetInventory `json:"inventory"`
+	ID                   int               `json:"id"`
+	Name                 string            `json:"name"`
+	Domain               string            `json:"domain"`
+	SiteType             string            `json:"site_type"`
+	Status               string            `json:"status"`
+	CreatedAt            time.Time         `json:"created_at"`
+	ExpiresAt            *time.Time        `json:"expires_at"`
+	SSLEnabled           bool              `json:"ssl_enabled"`
+	SSLExpiresAt         *time.Time        `json:"ssl_expires_at"`
+	SSLState             string            `json:"ssl_state"`
+	MonitoringEnabled    bool              `json:"monitoring_enabled"`
+	BackupEnabled        bool              `json:"backup_enabled"`
+	FileLockEnabled      bool              `json:"file_lock_enabled"`
+	FastCGICacheEnabled  bool              `json:"fastcgi_cache_enabled"`
+	AccessLogMode        string            `json:"access_log_mode"`
+	UpdateChecksDisabled bool              `json:"update_checks_disabled"`
+	Health               WPFleetHealth     `json:"health"`
+	Inventory            *WPFleetInventory `json:"inventory"`
 }
 
 type WPFleetInventory struct {

@@ -530,6 +530,7 @@ function websiteDetail() {
         fcacheEnabled: false,
         fcacheTTL: 300,
         disableWPUpdates: false,
+        savedDisableWPUpdates: false,
         disableFileEditing: false,
         savedDisableFileEditing: false,
         fileEditingSaving: false,
@@ -576,6 +577,7 @@ function websiteDetail() {
                     this.fcacheEnabled = r.data.fastcgi_cache_enabled;
                     this.fcacheTTL = r.data.fastcgi_cache_ttl || 300;
                     this.disableWPUpdates = r.data.disable_wp_updates || false;
+                    this.savedDisableWPUpdates = this.disableWPUpdates;
                     this.disableFileEditing = r.data.disable_file_editing || false;
                     this.savedDisableFileEditing = this.disableFileEditing;
                     this.passwordResetMode = r.data.password_reset_mode || 'allow';
@@ -954,6 +956,7 @@ function websiteDetail() {
                         fcache_enabled: this.fcacheEnabled,
                         fcache_ttl: parseInt(this.fcacheTTL) || 300,
                         disable_wp_updates: this.disableWPUpdates,
+                        expected_disable_wp_updates: this.savedDisableWPUpdates,
                         disable_file_editing: this.disableFileEditing,
                         xmlrpc_enabled: this.xmlrpcEnabled,
                         wp_debug_enabled: this.wpDebug,
@@ -961,6 +964,7 @@ function websiteDetail() {
                         wp_memory_limit: this.wpMemoryLimit
                     }
                 });
+                this.savedDisableWPUpdates = this.disableWPUpdates;
                 showToast(t('website.optimization_saved'), 'success');
             } catch(e) { showToast(t('website.save_failed_with_error', { error: e.message }), 'error'); }
             this.optimizationSaving = false;

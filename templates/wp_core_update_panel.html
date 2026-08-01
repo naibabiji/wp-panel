@@ -6,7 +6,8 @@
                 <h3 class="text-lg font-semibold text-white">{{t .Lang "wp_core_update.title"}}</h3>
                 <p class="mt-1 text-sm text-gray-400">{{t .Lang "wp_core_update.description"}}</p>
             </div>
-            <button @click="loadPreview()" :disabled="loading || confirming || isActive()" class="btn-primary whitespace-nowrap" x-text="loading ? t('wp_core_update.checking') : t('wp_core_update.check')"></button>
+            <span x-show="loading" class="text-sm text-gray-400" x-text="t('wp_core_update.preparing')"></span>
+            <button x-show="!loading && !preview && (error || upToDate)" @click="loadPreview()" :disabled="confirming || isActive()" class="btn-secondary whitespace-nowrap" x-text="t('wp_core_update.recheck')"></button>
         </div>
 
         <div x-show="error" class="mt-4 rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200" x-text="error"></div>
@@ -88,7 +89,12 @@ function wpCoreUpdatePanel() {
             this.preparationCancelled = false;
             this.task = null;
             this.error = '';
-            if (this.siteID) this.loadLatestTask();
+            if (this.siteID) this.initializeSite(this.siteID, this.generation);
+        },
+        async initializeSite(siteID, generation) {
+            const resumed = await this.loadLatestTask();
+            if (generation !== this.generation || siteID !== this.siteID || resumed || this.task) return;
+            await this.loadPreview();
         },
         async loadLatestTask(expected = null) {
             if (!this.siteID) return false;

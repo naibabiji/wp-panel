@@ -729,6 +729,58 @@ func (s *wpUpdateStore) refreshCoreInventoryAfterUpdate(ctx context.Context, sit
 	return tx.Commit()
 }
 
+// reconcileCoreInventoryVersion updates the cached core version after an
+// out-of-band WordPress update and removes only candidates already satisfied
+// by that version. It intentionally leaves last_success_at unchanged because
+// this is not a complete inventory scan.
+func (s *wpUpdateStore) reconcileCoreInventoryVersion(ctx context.Context, siteID int, collectionID, newVersion string, now time.Time) error {
+	if s == nil || s.db == nil || siteID <= 0 || collectionID == "" || newVersion == "" {
+		return errors.New("invalid core inventory reconciliation")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE site_wp_inventory_state SET wordpress_version=?,updated_at=? WHERE site_id=? AND collection_id=?`, newVersion, wpUpdateDBTime(now), siteID, collectionID)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return tx.Commit()
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT rowid,target_version FROM site_wp_component_updates
+		WHERE site_id=? AND collection_id=? AND component_type='core' AND component_key='wordpress' AND response='upgrade'`, siteID, collectionID)
+	if err != nil {
+		return err
+	}
+	var satisfied []int64
+	for rows.Next() {
+		var rowID int64
+		var target string
+		if err := rows.Scan(&rowID, &target); err != nil {
+			rows.Close()
+			return err
+		}
+		if compareWPVersions(target, newVersion) <= 0 {
+			satisfied = append(satisfied, rowID)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, rowID := range satisfied {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM site_wp_component_updates WHERE rowid=?`, rowID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *wpUpdateStore) markFailure(ctx context.Context, id, owner, failureStage string, attention bool, now time.Time) error {
 	if failureStage == "" {
 		return errors.New("failure stage is required")

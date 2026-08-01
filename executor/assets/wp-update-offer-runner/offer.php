@@ -24,6 +24,10 @@ require $site_root.'/wp-load.php';
 require_once $site_root.'/wp-admin/includes/update.php';
 require_once $site_root.'/wp-admin/includes/plugin.php';
 if(ob_get_length()>0){$send(false,'','','bootstrap_output');exit(1);}
+$administrators=get_users(['role'=>'administrator','number'=>1,'fields'=>'ids']);
+if(is_array($administrators)&&isset($administrators[0]))wp_set_current_user((int)$administrators[0]);
+$update_transient=$component_type==='plugin'?'update_plugins':'update_themes';
+delete_site_transient($update_transient);
 $slug=$component_type==='plugin'?strstr($component_key,'/',true):$component_key;
 $offer=null;
 if($component_type==='plugin'){

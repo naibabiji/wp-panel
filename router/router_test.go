@@ -218,9 +218,14 @@ func TestWPFleetOverviewRouteRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	route := []byte(`protected.GET("/api/wp-fleet/overview", wpFleetOverviewHandler.Overview)`)
-	if !bytes.Contains(source, route) {
-		t.Fatalf("router.go missing protected fleet overview route %s", route)
+	for _, route := range [][]byte{
+		[]byte(`protected.GET("/api/wp-fleet/overview", wpFleetOverviewHandler.Overview)`),
+		[]byte(`protected.POST("/api/wp-fleet/inventory-refresh", wpFleetOverviewHandler.RefreshAll)`),
+		[]byte(`protected.PUT("/api/websites/:id/wp-update-checks", websiteHandler.SetWPUpdateChecks)`),
+	} {
+		if !bytes.Contains(source, route) {
+			t.Fatalf("router.go missing protected fleet route %s", route)
+		}
 	}
 }
 
@@ -276,7 +281,8 @@ func TestWPFleetOverviewPanelIsIsolatedAndWired(t *testing.T) {
 		}
 	}
 	for _, forbidden := range [][]byte{
-		[]byte(`api('/websites/'`),
+		[]byte(`reloadOverview`),
+		[]byte(`wp_fleet.reload`),
 		[]byte(`function toggleStatus(`),
 		[]byte(`function reinstallWP(`),
 		[]byte(`function deleteSite(`),
@@ -304,6 +310,8 @@ func TestWPFleetOverviewPanelAPIContract(t *testing.T) {
 	}
 	for _, required := range [][]byte{
 		[]byte(`api('/wp-fleet/overview', { signal: controller.signal, suppressToast: true })`),
+		[]byte(`api('/wp-fleet/inventory-refresh', { method: 'POST' })`),
+		[]byte(`api('/websites/' + site.id + '/wp-update-checks'`),
 		[]byte(`new TextEncoder().encode(query).length > 128`),
 		[]byte(`toLocaleDateString(currentLocale())`),
 		[]byte(`toLocaleString(currentLocale())`),
@@ -314,12 +322,9 @@ func TestWPFleetOverviewPanelAPIContract(t *testing.T) {
 	}
 	for _, forbidden := range [][]byte{
 		[]byte(`setInterval(`),
-		[]byte(`setTimeout(`),
 		[]byte(`/wp-inventory`),
-		[]byte(`method: 'POST'`),
 		[]byte(`toLocaleDateString('zh-CN')`),
 		[]byte(`toLocaleString('zh-CN')`),
-		[]byte(`api('/websites`),
 	} {
 		if bytes.Contains(panel, forbidden) {
 			t.Fatalf("fleet overview panel contains forbidden API behavior %q", forbidden)
@@ -339,6 +344,7 @@ function assert(condition, message) {
 }
 global.t = (key, params = {}) => key + (params.count === undefined ? '' : ':' + params.count);
 global.currentLocale = () => 'en-US';
+global.showToast = () => {};
 
 const inventory = (status, successful, updates, stale = false) => ({
     status,
@@ -367,6 +373,7 @@ const site = (id, domain, siteType, status, health, siteInventory, createdAt) =>
     file_lock_enabled: false,
     fastcgi_cache_enabled: false,
     access_log_mode: 'off',
+    update_checks_disabled: false,
     health: { level: health, issues: [] },
     inventory: siteInventory,
 });
@@ -438,8 +445,8 @@ const data = (nextSites = sites, nextCounts = counts) => ({ generated_at: '2026-
         if (calls === 1) resolveFirst = resolve;
         else resolveSecond = resolve;
     });
-    const first = panel.reloadOverview();
-    const second = panel.reloadOverview();
+    const first = panel.loadOverview();
+    const second = panel.loadOverview();
     const secondData = data([sites[4]], { ...counts, total_sites: 1, critical_sites: 0, warning_sites: 0, unknown_sites: 0, healthy_sites: 1 });
     resolveSecond({ data: secondData });
     await second;
@@ -450,22 +457,94 @@ const data = (nextSites = sites, nextCounts = counts) => ({ generated_at: '2026-
 
     const previous = panel.overview;
     global.api = async () => { throw new Error('reload failed'); };
-    await panel.reloadOverview();
+    await panel.loadOverview();
     assert(panel.overview === previous && panel.staleOverview && panel.loadError === 'reload failed', 'reload failure preserves old overview');
 
     const initialFailure = wpFleetOverview();
     global.api = async () => { throw new Error('initial failed'); };
-    await initialFailure.reloadOverview();
+    await initialFailure.loadOverview();
     assert(initialFailure.overview === null && !initialFailure.staleOverview && initialFailure.loadError === 'initial failed', 'initial failure state');
 
     const empty = wpFleetOverview();
     global.api = async () => ({ data: data([], { ...counts, total_sites: 0, critical_sites: 0, warning_sites: 0, unknown_sites: 0, healthy_sites: 0 }) });
-    await empty.reloadOverview();
+    await empty.loadOverview();
     assert(Array.isArray(empty.overview.sites) && empty.overview.sites.length === 0, 'empty state');
+
+    const bulk = wpFleetOverview();
+    bulk.overview = bulk.wordpressOnlyOverview(data());
+    global.api = async (path, options = {}) => {
+        if (path === '/wp-fleet/inventory-refresh') {
+            assert(options.method === 'POST', 'bulk refresh uses POST');
+            return { data: { site_ids: [1, 2], created: 1, existing: 1, failed: 0 } };
+        }
+        if (path === '/wp-fleet/overview') {
+            return { data: data([sites[0], sites[1]], { ...counts, total_sites: 2 }) };
+        }
+        throw new Error('unexpected API path ' + path);
+    };
+    await bulk.startBulkRefresh();
+    assert(!bulk.bulkRefresh.running && bulk.bulkRefresh.finished, 'bulk refresh reaches terminal state');
+    assert(bulk.bulkRefresh.total === 2 && bulk.bulkRefresh.succeeded === 1 && bulk.bulkRefresh.failed === 1 && bulk.bulkRefresh.existing === 1, 'bulk refresh progress summary');
+
+    const restricted = site(6, 'restricted.example', 'wordpress', 'active', 'healthy', inventory('complete', true, 3));
+    restricted.update_checks_disabled = true;
+    panel.overview = panel.wordpressOnlyOverview(data([sites[0], restricted], { ...counts, total_sites: 2 }));
+    panel.updateFilter = 'has_updates';
+    assert(panel.filteredSites().map(item => item.id).join(',') === '1', 'disabled sites excluded from has-updates filter');
+    panel.updateFilter = 'no_updates';
+    assert(panel.filteredSites().length === 0, 'disabled sites excluded from no-updates filter');
+    assert(panel.overview.counts.update_sites === 1 && panel.disabledUpdateCheckCount() === 1, 'disabled sites excluded from update count');
+
+    global.api = async (path, options = {}) => {
+        if (path === '/websites/6/wp-update-checks') {
+            assert(options.method === 'PUT' && options.body.enabled === true, 'quick toggle request');
+            return { data: { enabled: true } };
+        }
+        if (path === '/wp-fleet/overview') {
+            const refreshed = { ...restricted, update_checks_disabled: false, health: { level: 'warning', issues: ['updates_available'] } };
+            return { data: data([refreshed], { ...counts, total_sites: 1 }) };
+        }
+        throw new Error('unexpected toggle path ' + path);
+    };
+    await panel.toggleUpdateChecks(restricted);
+    assert(panel.overview.sites[0].update_checks_disabled === false && panel.overview.sites[0].health.level === 'warning' && panel.updateCheckSavingSiteID === null, 'quick toggle reloads authoritative row health and clears saving state');
+
+    const failedToggle = panel.overview.sites[0];
+    global.api = async () => { throw new Error('toggle failed'); };
+    await panel.toggleUpdateChecks(failedToggle);
+    assert(failedToggle.update_checks_disabled === false && panel.updateCheckSavingSiteID === null, 'failed toggle preserves row state');
+
+    restricted.update_checks_disabled = true;
+    const restrictedBulk = wpFleetOverview();
+    restrictedBulk.overview = restrictedBulk.wordpressOnlyOverview(data([restricted], { ...counts, total_sites: 1 }));
+    global.api = async (path) => {
+        if (path === '/wp-fleet/inventory-refresh') return { data: { site_ids: [6], created: 1, existing: 0, failed: 0 } };
+        if (path === '/wp-fleet/overview') return { data: data([restricted], { ...counts, total_sites: 1 }) };
+        throw new Error('unexpected restricted API path ' + path);
+    };
+    await restrictedBulk.startBulkRefresh();
+    assert(restrictedBulk.bulkRefresh.restricted === 1 && restrictedBulk.bulkRefresh.succeeded === 0 && restrictedBulk.bulkRefresh.failed === 0, 'restricted completion bucket');
+
+    const retrying = wpFleetOverview();
+    retrying.overview = retrying.wordpressOnlyOverview(data([sites[4]], { ...counts, total_sites: 1 }));
+    retrying.bulkRefresh = { running: true, finished: false, total: 1, completed: 0, succeeded: 0, restricted: 0, failed: 0, enqueueFailed: 0, existing: 0, siteIDs: [5], error: '' };
+    let loadAttempts = 0;
+    retrying.loadOverview = async () => {
+        loadAttempts++;
+        if (loadAttempts === 1) return null;
+        if (loadAttempts < 4) return false;
+        return true;
+    };
+    const originalTimeout = global.setTimeout;
+    global.setTimeout = callback => { callback(); return 0; };
+    await retrying.pollBulkRefresh();
+    global.setTimeout = originalTimeout;
+    assert(loadAttempts === 5 && retrying.bulkRefresh.finished && !retrying.bulkRefresh.error, 'superseded and transient failures are retried before final reload');
 
     const many = [];
     for (let index = 0; index < 300; index++) many.push(site(index + 10, 'site-' + index + '.example', 'wordpress', 'active', index % 2 ? 'healthy' : 'warning', inventory('complete', true, index % 3), '2026-07-21T00:00:00Z'));
     panel.overview = data(many, counts);
+    panel.updateFilter = 'all';
     panel.search = 'site';
     assert(panel.filteredSites().length === 300, '300 site filtering warmup');
     const started = performance.now();
@@ -643,6 +722,29 @@ global.window = {};
     assert(!panel.validUpToDate({ available: false, site_id: 7, current_version: '' }), 'empty current_version accepted as up-to-date');
 
     panel.siteID = 7;
+    const originalLoadLatestTask = panel.loadLatestTask;
+    const originalLoadPreview = panel.loadPreview;
+    let automaticPreviewLoads = 0;
+    panel.loadLatestTask = async () => false;
+    panel.loadPreview = async () => { automaticPreviewLoads++; };
+    await panel.initializeSite(7, panel.generation);
+    assert(automaticPreviewLoads === 1, 'page load should automatically prepare the core update preview');
+    panel.loadLatestTask = async () => true;
+    await panel.initializeSite(7, panel.generation);
+    assert(automaticPreviewLoads === 1, 'active task recovery must suppress automatic preview preparation');
+
+    let resolveLatestTask;
+    panel.loadLatestTask = () => new Promise(resolve => { resolveLatestTask = resolve; });
+    const staleInitialization = panel.initializeSite(7, panel.generation);
+    panel.siteID = 8;
+    panel.generation++;
+    resolveLatestTask(false);
+    await staleInitialization;
+    assert(automaticPreviewLoads === 1, 'stale site initialization must not prepare a preview');
+    panel.siteID = 7;
+    panel.loadLatestTask = originalLoadLatestTask.bind(panel);
+    panel.loadPreview = originalLoadPreview.bind(panel);
+
     global.api = async () => ({ data: { available: false, site_id: 7, current_version: '7.0.2' } });
     await panel.loadPreview();
     assert(panel.upToDate && panel.upToDate.current_version === '7.0.2', 'up-to-date response was not recorded');

@@ -23,6 +23,7 @@
 
         <template x-if="summary">
             <div>
+                <div x-show="summary.update_checks_disabled" class="mt-4 rounded border border-yellow-700 bg-yellow-950/30 p-3 text-sm text-yellow-200">{{t .Lang "wp_inventory.update_checks_disabled_warning"}}</div>
                 <div x-show="statusKey() !== 'wp_inventory.status_complete'" class="mt-4 rounded border p-3 text-sm" :class="statusNoticeClass()">
                     <div class="font-medium" x-text="t(statusKey())"></div>
                     <p x-show="summary.collection_status === 'failed' && summary.has_successful_inventory" class="mt-1" x-text="t('wp_inventory.stale_notice', { time: displayTime(summary.last_success_at) })"></p>
@@ -401,6 +402,7 @@ function wpInventoryPanel() {
         },
         updatesOverallState() {
             if (!this.summary) return 'unknown';
+            if (this.summary.update_checks_disabled) return 'unknown';
             if (this.summary.core_upgrade_available || this.hasAvailableUpdates()) return 'available';
             const checks = this.summary.update_checks;
             if (checks && !checks.core && !checks.plugins && !checks.themes) return 'unknown';
@@ -478,7 +480,7 @@ function wpInventoryPanel() {
             return value ? fmtTime(value) : t('wp_inventory.never');
         },
         isSummary(value) {
-            return value && typeof value === 'object' && value.site_id === this.siteID && typeof value.collection_status === 'string' && typeof value.has_successful_inventory === 'boolean' && value.wordpress && typeof value.wordpress === 'object' && value.counts && typeof value.counts === 'object' && (!value.active_task || (typeof value.active_task.id === 'string' && ['queued', 'running'].includes(value.active_task.status)));
+            return value && typeof value === 'object' && value.site_id === this.siteID && typeof value.update_checks_disabled === 'boolean' && typeof value.collection_status === 'string' && typeof value.has_successful_inventory === 'boolean' && value.wordpress && typeof value.wordpress === 'object' && value.counts && typeof value.counts === 'object' && (!value.active_task || (typeof value.active_task.id === 'string' && ['queued', 'running'].includes(value.active_task.status)));
         },
         async loadSummary() {
             if (!this.siteID || this.summaryLoading) return;

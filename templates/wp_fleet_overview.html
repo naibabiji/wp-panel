@@ -26,11 +26,19 @@
                     </div>
                 </div>
             </div>
-            <button @click="reloadOverview()" :disabled="loading" class="btn-secondary whitespace-nowrap">
-                <span x-text="loading ? t('wp_fleet.loading') : t('wp_fleet.reload')"></span>
+            <button @click="startBulkRefresh()" :disabled="bulkRefresh.running || loading || !overview || overview.sites.length === 0" class="btn-primary whitespace-nowrap">
+                <span x-text="bulkRefresh.running ? t('wp_fleet.bulk_refresh_running') : t('wp_fleet.bulk_refresh')"></span>
             </button>
         </div>
     </div>
+
+    <div x-show="bulkRefresh.running || bulkRefresh.finished || bulkRefresh.error" class="rounded border border-blue-800 bg-blue-950/30 p-3 text-sm text-blue-100">
+        <div x-show="bulkRefresh.running" x-text="t('wp_fleet.bulk_refresh_progress', { completed: bulkRefresh.completed, total: bulkRefresh.total })"></div>
+        <div x-show="bulkRefresh.finished && !bulkRefresh.error" x-text="t('wp_fleet.bulk_refresh_complete', { succeeded: bulkRefresh.succeeded, restricted: bulkRefresh.restricted, failed: bulkRefresh.failed, existing: bulkRefresh.existing })"></div>
+        <div x-show="bulkRefresh.error" class="text-red-200" x-text="bulkRefresh.error"></div>
+    </div>
+
+    <div x-show="overview && disabledUpdateCheckCount() > 0" class="rounded border border-yellow-700 bg-yellow-950/30 p-3 text-sm text-yellow-200" x-text="t('wp_fleet.update_checks_disabled_warning', { count: disabledUpdateCheckCount() })"></div>
 
     <div x-show="loadError && staleOverview" class="rounded border border-yellow-700 bg-yellow-950/30 p-3 text-sm text-yellow-200">
         <span x-text="t('wp_fleet.showing_stale_overview')"></span>
@@ -102,6 +110,7 @@
                                 <th class="table-header">{{t .Lang "wp_fleet.management_status"}}</th>
                                 <th class="table-header">WordPress</th>
                                 <th class="table-header">{{t .Lang "wp_fleet.updates"}}</th>
+                                <th class="table-header">{{t .Lang "wp_fleet.update_checks"}}</th>
                                 <th class="table-header">{{t .Lang "wp_fleet.last_inventory"}}</th>
                                 <th class="table-header">{{t .Lang "website.actions"}}</th>
                             </tr>
@@ -131,14 +140,18 @@
                                         <span x-show="!site.inventory" class="text-gray-500">{{t .Lang "wp_fleet.inventory_not_applicable"}}</span>
                                     </td>
                                     <td class="table-cell min-w-40">
-                                        <template x-if="site.inventory && site.inventory.update_total > 0">
+                                        <template x-if="!site.update_checks_disabled && site.inventory && site.inventory.update_total > 0">
                                             <div class="space-y-1 text-xs">
                                                 <div x-show="site.inventory.core_upgrade_available" class="text-yellow-300">{{t .Lang "wp_fleet.core_update"}}</div>
                                                 <div x-show="site.inventory.plugin_updates > 0" x-text="t('wp_fleet.plugin_updates', { count: site.inventory.plugin_updates })"></div>
                                                 <div x-show="site.inventory.theme_updates > 0" x-text="t('wp_fleet.theme_updates', { count: site.inventory.theme_updates })"></div>
                                             </div>
                                         </template>
-                                        <span x-show="!site.inventory || site.inventory.update_total === 0" class="text-gray-500">{{t .Lang "wp_fleet.no_updates"}}</span>
+                                        <span x-show="site.update_checks_disabled" class="text-yellow-300">{{t .Lang "wp_fleet.updates_unconfirmed"}}</span>
+                                        <span x-show="!site.update_checks_disabled && (!site.inventory || site.inventory.update_total === 0)" class="text-gray-500">{{t .Lang "wp_fleet.no_updates"}}</span>
+                                    </td>
+                                    <td class="table-cell min-w-36">
+                                        <button type="button" @click.stop.prevent="toggleUpdateChecks(site)" :disabled="updateCheckSavingSiteID !== null" :class="site.update_checks_disabled ? 'badge-info' : 'badge-success'" class="cursor-pointer hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-60" x-text="t(site.update_checks_disabled ? 'wp_fleet.update_checks_disabled' : 'wp_fleet.update_checks_enabled')"></button>
                                     </td>
                                     <td class="table-cell min-w-36 text-xs">
                                         <div x-text="site.inventory && site.inventory.last_success_at ? displayTime(site.inventory.last_success_at) : t('wp_fleet.never')"></div>
@@ -154,7 +167,7 @@
                                 </tr>
                             </template>
                             <tr x-show="filteredSites().length === 0">
-                                <td colspan="6" class="table-cell py-10 text-center text-gray-500" x-text="overview.sites.length === 0 ? t('wp_fleet.empty') : t('wp_fleet.no_matches')"></td>
+                                <td colspan="7" class="table-cell py-10 text-center text-gray-500" x-text="overview.sites.length === 0 ? t('wp_fleet.empty') : t('wp_fleet.no_matches')"></td>
                             </tr>
                         </tbody>
                     </table>
@@ -165,7 +178,7 @@
 
     <div x-show="!loading && !overview && loadError" class="card py-12 text-center text-sm text-red-300">
         <div x-text="loadError"></div>
-        <button @click="reloadOverview()" class="btn-secondary mt-4">{{t .Lang "wp_fleet.reload"}}</button>
+        <button @click="loadOverview()" class="btn-secondary mt-4">{{t .Lang "wp_fleet.retry_load"}}</button>
     </div>
 </section>
 
@@ -182,10 +195,12 @@ function wpFleetOverview() {
         updateFilter: 'all',
         requestGeneration: 0,
         requestController: null,
+        updateCheckSavingSiteID: null,
+        bulkRefresh: { running: false, finished: false, total: 0, completed: 0, succeeded: 0, restricted: 0, failed: 0, enqueueFailed: 0, existing: 0, siteIDs: [], error: '' },
         mount() {
-            return this.reloadOverview();
+            return this.loadOverview();
         },
-        async reloadOverview() {
+        async loadOverview() {
             const generation = ++this.requestGeneration;
             if (this.requestController) this.requestController.abort();
             const controller = new AbortController();
@@ -193,20 +208,98 @@ function wpFleetOverview() {
             this.loading = true;
             try {
                 const response = await api('/wp-fleet/overview', { signal: controller.signal, suppressToast: true });
-                if (generation !== this.requestGeneration) return;
+                if (generation !== this.requestGeneration) return null;
                 if (!response.data || !Array.isArray(response.data.sites) || !response.data.counts) throw new Error(t('wp_fleet.overview_failed'));
                 this.overview = this.wordpressOnlyOverview(response.data);
                 this.loadError = '';
                 this.staleOverview = false;
+                return true;
             } catch (error) {
-                if (generation !== this.requestGeneration) return;
+                if (generation !== this.requestGeneration) return null;
                 this.loadError = error && error.message ? error.message : t('wp_fleet.overview_failed');
                 this.staleOverview = this.overview !== null;
+                return false;
             } finally {
                 if (generation === this.requestGeneration) {
                     this.loading = false;
                     this.requestController = null;
                 }
+            }
+        },
+        async startBulkRefresh() {
+            if (this.bulkRefresh.running) return;
+            this.bulkRefresh = { running: true, finished: false, total: 0, completed: 0, succeeded: 0, restricted: 0, failed: 0, enqueueFailed: 0, existing: 0, siteIDs: [], error: '' };
+            try {
+                const response = await api('/wp-fleet/inventory-refresh', { method: 'POST' });
+                const data = response.data;
+                if (!data || !Array.isArray(data.site_ids) || !Number.isInteger(data.created) || !Number.isInteger(data.existing) || !Number.isInteger(data.failed)) throw new Error(t('wp_fleet.bulk_refresh_failed'));
+                this.bulkRefresh.siteIDs = data.site_ids;
+                this.bulkRefresh.total = data.site_ids.length + data.failed;
+                this.bulkRefresh.existing = data.existing;
+                this.bulkRefresh.enqueueFailed = data.failed;
+                this.bulkRefresh.failed = data.failed;
+                this.bulkRefresh.completed = data.failed;
+                if (data.site_ids.length === 0) {
+                    this.bulkRefresh.running = false;
+                    this.bulkRefresh.finished = true;
+                    return;
+                }
+                await this.pollBulkRefresh();
+            } catch (error) {
+                this.bulkRefresh.running = false;
+                this.bulkRefresh.error = error && error.message ? error.message : t('wp_fleet.bulk_refresh_failed');
+            }
+        },
+        async pollBulkRefresh() {
+            let consecutiveFailures = 0;
+            while (this.bulkRefresh.running) {
+                const loaded = await this.loadOverview();
+                if (loaded === null) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    continue;
+                }
+                if (loaded === false) {
+                    consecutiveFailures++;
+                    if (consecutiveFailures >= 4) throw new Error(this.loadError || t('wp_fleet.bulk_refresh_failed'));
+                    await new Promise(resolve => setTimeout(resolve, Math.min(4000, 500 * (2 ** consecutiveFailures))));
+                    continue;
+                }
+                consecutiveFailures = 0;
+                const targets = new Set(this.bulkRefresh.siteIDs);
+                const sites = this.overview.sites.filter(site => targets.has(site.id));
+                const pending = sites.filter(site => site.inventory && (site.inventory.status === 'queued' || site.inventory.status === 'running')).length;
+                this.bulkRefresh.completed = this.bulkRefresh.total - pending;
+                if (pending === 0) {
+                    await this.loadOverview();
+                    const refreshedSites = this.overview.sites.filter(site => targets.has(site.id));
+                    this.bulkRefresh.failed = this.bulkRefresh.enqueueFailed + refreshedSites.filter(site => site.inventory && site.inventory.status === 'failed').length;
+                    this.bulkRefresh.restricted = refreshedSites.filter(site => site.update_checks_disabled && (!site.inventory || site.inventory.status !== 'failed')).length;
+                    this.bulkRefresh.succeeded = this.bulkRefresh.total - this.bulkRefresh.failed - this.bulkRefresh.restricted;
+                    this.bulkRefresh.running = false;
+                    this.bulkRefresh.finished = true;
+                    return;
+                }
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        },
+        disabledUpdateCheckCount() {
+            return this.overview ? this.overview.sites.filter(site => site.update_checks_disabled).length : 0;
+        },
+        async toggleUpdateChecks(site) {
+            if (!site || this.updateCheckSavingSiteID !== null) return;
+            const enabled = site.update_checks_disabled;
+            this.updateCheckSavingSiteID = site.id;
+            try {
+                const response = await api('/websites/' + site.id + '/wp-update-checks', { method: 'PUT', body: { enabled } });
+                if (!response.data || response.data.enabled !== enabled) throw new Error(t('wp_fleet.update_checks_save_failed'));
+                site.update_checks_disabled = !enabled;
+                const loaded = await this.loadOverview();
+                if (loaded === false) this.overview = this.wordpressOnlyOverview(this.overview);
+                showToast(t(enabled ? 'wp_fleet.update_checks_enabled_saved' : 'wp_fleet.update_checks_disabled_saved'), 'success');
+            } catch (error) {
+                showToast(error && error.message ? error.message : t('wp_fleet.update_checks_save_failed'), 'error');
+            } finally {
+                this.updateCheckSavingSiteID = null;
             }
         },
         tileTone(count, color) {
@@ -239,7 +332,7 @@ function wpFleetOverview() {
                 const inventory = site.inventory;
                 if (!inventory || !inventory.has_successful_inventory) counts.uncollected_sites++;
                 if (!inventory) continue;
-                if (inventory.update_total > 0) counts.update_sites++;
+                if (!site.update_checks_disabled && inventory.update_total > 0) counts.update_sites++;
                 if (inventory.status === 'failed') counts.failed_inventory_sites++;
                 if (inventory.stale) counts.stale_inventory_sites++;
                 if (inventory.status === 'failed' || inventory.stale) counts.inventory_attention_sites++;
@@ -259,8 +352,8 @@ function wpFleetOverview() {
                 const inventory = site.inventory;
                 if (normalized && !(site.name || '').toLocaleLowerCase(currentLocale()).includes(normalized) && !site.domain.toLocaleLowerCase(currentLocale()).includes(normalized)) return false;
                 if (this.healthFilter !== 'all' && site.health.level !== this.healthFilter) return false;
-                if (this.updateFilter === 'has_updates' && (!inventory || inventory.update_total === 0)) return false;
-                if (this.updateFilter === 'no_updates' && inventory && inventory.update_total > 0) return false;
+                if (this.updateFilter === 'has_updates' && (site.update_checks_disabled || !inventory || inventory.update_total === 0)) return false;
+                if (this.updateFilter === 'no_updates' && (site.update_checks_disabled || (inventory && inventory.update_total > 0))) return false;
                 return true;
             });
             const priority = { critical: 0, warning: 1, unknown: 2, healthy: 3 };

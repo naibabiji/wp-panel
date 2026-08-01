@@ -51,14 +51,15 @@ type WPCoreUpdateService struct {
 	confirmations *wpCoreConfirmationStore
 	fetchOffer    wpCoreOfferFetcher
 	versions      wpCoreInstalledVersions
+	identity      func(string) (wpInstalledIdentity, error)
 	now           func() time.Time
 }
 
 type wpCoreUpdateCandidate struct {
-	siteID                                int
-	domain, webRoot, collectionID         string
-	currentVersion, targetVersion, locale string
-	lastSuccess                           time.Time
+	siteID                                                  int
+	domain, webRoot, collectionID                           string
+	inventoryVersion, currentVersion, targetVersion, locale string
+	lastSuccess                                             time.Time
 }
 
 func NewWPCoreUpdateService(db *sql.DB, backupDir string) (*WPCoreUpdateService, error) {
@@ -70,14 +71,19 @@ func NewWPCoreUpdateService(db *sql.DB, backupDir string) (*WPCoreUpdateService,
 	if err != nil {
 		return nil, ErrWPCoreUpdateUnavailable
 	}
-	return &WPCoreUpdateService{db: db, store: store, artifacts: artifacts, confirmations: newWPCoreConfirmationStore(), fetchOffer: defaultWPCoreOfferFetcher(nil), versions: defaultWPCoreInstalledVersions, now: time.Now}, nil
+	return &WPCoreUpdateService{db: db, store: store, artifacts: artifacts, confirmations: newWPCoreConfirmationStore(), fetchOffer: defaultWPCoreOfferFetcher(nil), versions: defaultWPCoreInstalledVersions, identity: readInstalledWordPressIdentity, now: time.Now}, nil
 }
 
 func (s *WPCoreUpdateService) Preview(ctx context.Context, siteID int, username string) (models.WPCoreUpdatePreview, error) {
-	if s == nil || siteID <= 0 || username == "" {
+	if s == nil || s.store == nil || siteID <= 0 || username == "" {
 		return models.WPCoreUpdatePreview{}, ErrWPCoreUpdateInvalid
 	}
 	candidate, err := s.loadCandidate(ctx, siteID)
+	if candidate.inventoryVersion != "" && candidate.currentVersion != candidate.inventoryVersion {
+		if syncErr := s.store.reconcileCoreInventoryVersion(ctx, siteID, candidate.collectionID, candidate.currentVersion, s.now().UTC()); syncErr != nil {
+			log.Printf("核心更新预检同步实际版本失败 site=%d: %v", siteID, syncErr)
+		}
+	}
 	if errors.Is(err, errWPCoreUpdateNoCandidate) {
 		return models.WPCoreUpdatePreview{Available: false, SiteID: siteID, Domain: candidate.domain, CurrentVersion: candidate.currentVersion}, nil
 	}
@@ -230,8 +236,17 @@ func (s *WPCoreUpdateService) loadCandidate(ctx context.Context, siteID int) (wp
 	if status != "active" || siteType != "wordpress" || inventoryStatus != "complete" || multisite != 0 || c.collectionID == "" || c.currentVersion == "" || stateLocale == "" || blocked != 0 || !filepath.IsAbs(c.webRoot) || sTimeStale(c.lastSuccess, s.now().UTC()) {
 		return c, ErrWPCoreUpdateConflict
 	}
+	c.inventoryVersion = c.currentVersion
+	if s.identity != nil {
+		installed, identityErr := s.identity(c.webRoot)
+		if identityErr != nil || installed.Version == "" || installed.Locale == "" {
+			return c, ErrWPCoreUpdateConflict
+		}
+		c.currentVersion = installed.Version
+		stateLocale = installed.Locale
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT target_version,locale FROM site_wp_component_updates
-		WHERE site_id=? AND collection_id=? AND component_type='core' AND component_key='wordpress' AND response='upgrade'`, siteID, c.collectionID)
+		WHERE site_id=? AND collection_id=? AND component_type='core' AND component_key='wordpress' AND response='upgrade' AND locale=?`, siteID, c.collectionID, stateLocale)
 	if err != nil {
 		return c, err
 	}
@@ -249,15 +264,15 @@ func (s *WPCoreUpdateService) loadCandidate(ctx context.Context, siteID int) (wp
 	if count == 0 {
 		return c, errWPCoreUpdateNoCandidate
 	}
+	if count != 1 || c.targetVersion == "" || c.locale == "" || c.locale != stateLocale {
+		return c, ErrWPCoreUpdateConflict
+	}
 	// A target at or below the installed version is not an error: it means the
 	// cached candidate is already satisfied (e.g. the site was rescanned or
 	// updated out-of-band after the candidate was stored). Treat it as "no
 	// update available" rather than a scary conflict that forces a recheck.
 	if compareWPVersions(c.targetVersion, c.currentVersion) <= 0 {
 		return c, errWPCoreUpdateNoCandidate
-	}
-	if count != 1 || c.targetVersion == "" || c.locale == "" || c.locale != stateLocale {
-		return c, ErrWPCoreUpdateConflict
 	}
 	if err := tx.Commit(); err != nil {
 		return c, err

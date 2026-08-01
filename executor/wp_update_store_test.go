@@ -89,6 +89,33 @@ func TestWPUpdateStoreRefreshCoreInventoryAfterUpdate(t *testing.T) {
 	}
 }
 
+func TestWPUpdateStoreReconcileCoreInventoryIgnoresReplacedCollection(t *testing.T) {
+	store, siteID := newWPUpdateStoreTest(t)
+	now := time.Now().UTC()
+	stamp := wpUpdateDBTime(now)
+	if _, err := store.db.Exec(`UPDATE site_wp_inventory_state SET wordpress_version='7.0.3',collection_id='collection-b',last_success_at=? WHERE site_id=?`, stamp, siteID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO site_wp_component_updates(site_id,component_type,component_key,target_version,response,locale,collection_id,collected_at)
+		VALUES (?,'core','wordpress','7.0.4','upgrade','en_US','collection-b',?)`, siteID, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.reconcileCoreInventoryVersion(context.Background(), siteID, "collection-a", "7.0.2", now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	var version string
+	var candidates int
+	if err := store.db.QueryRow(`SELECT wordpress_version FROM site_wp_inventory_state WHERE site_id=?`, siteID).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM site_wp_component_updates WHERE site_id=? AND collection_id='collection-b'`, siteID).Scan(&candidates); err != nil {
+		t.Fatal(err)
+	}
+	if version != "7.0.3" || candidates != 1 {
+		t.Fatalf("version=%q candidates=%d", version, candidates)
+	}
+}
+
 func TestWPUpdateStoreCreatesPluginPlanFromCurrentInventoryCandidate(t *testing.T) {
 	store, siteID := newWPUpdateStoreTest(t)
 	seedPluginUpdateCandidate(t, store, siteID, "sample/sample.php", "1.0.0", "1.1.0", "collection-a")

@@ -1,6 +1,7 @@
 package database
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -251,7 +252,7 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.40" {
+	if got := LatestVersion(); got != "1.0.41" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
 	for _, column := range []string{"database_backup_mode", "database_backup_source_id", "auto_rollback", "batch_id"} {
@@ -259,6 +260,57 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 		if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('wp_update_tasks') WHERE name=?`, column).Scan(&exists); err != nil || exists != 1 {
 			t.Fatalf("column %s exists=%d err=%v", column, exists, err)
 		}
+	}
+}
+
+func TestUpgrade1041BackfillsInventoryJobPriorities(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`DROP INDEX ix_site_wp_inventory_jobs_claim`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`ALTER TABLE site_wp_inventory_jobs DROP COLUMN priority`); err != nil {
+		t.Fatal(err)
+	}
+	for id, trigger := range []string{"update_followup", "site_created", "manual", "scheduled"} {
+		siteID := id + 1
+		if _, err := DB.Exec(`INSERT INTO websites (id,name,domain,status,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path) VALUES (?,?,?,'active',?,'/tmp/www','/tmp/log','db','user','/tmp/php','/tmp/nginx')`, siteID, trigger, trigger+".example", "wp_"+trigger); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := DB.Exec(`INSERT INTO site_wp_inventory_jobs (id,site_id,trigger_type,status,requested_at,not_before) VALUES (?,?,?,'queued','2026-08-01 00:00:00','2026-08-01 00:00:00')`, fmt.Sprintf("%032d", siteID), siteID, trigger); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := DB.Exec(`DELETE FROM schema_version`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`INSERT INTO schema_version(version) VALUES ('1.0.40')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	wants := map[string]int{"update_followup": 0, "site_created": 10, "manual": 20, "scheduled": 30}
+	for trigger, want := range wants {
+		var got int
+		if err := DB.QueryRow(`SELECT priority FROM site_wp_inventory_jobs WHERE trigger_type=?`, trigger).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("%s priority=%d want=%d", trigger, got, want)
+		}
+	}
+	var indexSQL string
+	if err := DB.QueryRow(`SELECT sql FROM sqlite_master WHERE type='index' AND name='ix_site_wp_inventory_jobs_claim'`).Scan(&indexSQL); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(indexSQL, "status, priority, not_before, requested_at") {
+		t.Fatalf("claim index=%s", indexSQL)
 	}
 }
 

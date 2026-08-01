@@ -29,7 +29,7 @@ const wpFleetOverviewSQL = `SELECT
 	w.ssl_enabled, w.ssl_expires_at,
 	CASE WHEN TRIM(COALESCE(w.ssl_last_error, '')) <> '' THEN 1 ELSE 0 END,
 	w.monitoring_enabled, COALESCE(bs.enabled, 0), w.file_lock_enabled,
-	w.fastcgi_cache_enabled, w.access_log_mode,
+	w.fastcgi_cache_enabled, w.access_log_mode, w.disable_wp_updates,
 	CASE WHEN s.site_id IS NULL THEN 0 ELSE 1 END,
 	COALESCE(s.status, 'unknown'), COALESCE(s.wordpress_version, ''),
 	COALESCE(s.collection_id, ''), COALESCE(CAST(s.last_attempt_at AS TEXT), ''),
@@ -82,6 +82,7 @@ type wpFleetOverviewRow struct {
 	fileLockEnabled      bool
 	fastCGICacheEnabled  bool
 	accessLogMode        string
+	updateChecksDisabled bool
 	hasInventoryState    bool
 	inventoryStatus      string
 	wordpressVersion     string
@@ -146,12 +147,12 @@ func (s *WPFleetOverviewService) Overview(ctx context.Context) (models.WPFleetOv
 func scanWPFleetOverviewRow(rows *sql.Rows) (wpFleetOverviewRow, error) {
 	var row wpFleetOverviewRow
 	var sslEnabled, sslHasError, monitoringEnabled, backupEnabled int
-	var fileLockEnabled, fastCGICacheEnabled, hasInventoryState, coreUpgradeAvailable int
+	var fileLockEnabled, fastCGICacheEnabled, updateChecksDisabled, hasInventoryState, coreUpgradeAvailable int
 	err := rows.Scan(
 		&row.id, &row.name, &row.domain, &row.siteType, &row.status,
 		&row.createdAt, &row.expiresAt, &sslEnabled, &row.sslExpiresAt, &sslHasError,
 		&monitoringEnabled, &backupEnabled, &fileLockEnabled, &fastCGICacheEnabled,
-		&row.accessLogMode, &hasInventoryState, &row.inventoryStatus, &row.wordpressVersion,
+		&row.accessLogMode, &updateChecksDisabled, &hasInventoryState, &row.inventoryStatus, &row.wordpressVersion,
 		&row.collectionID, &row.lastAttemptAt,
 		&row.lastSuccessAt, &row.lastErrorCode, &row.lastErrorStage, &row.activeJobStatus,
 		&row.pluginUpdates, &row.themeUpdates, &coreUpgradeAvailable,
@@ -162,6 +163,7 @@ func scanWPFleetOverviewRow(rows *sql.Rows) (wpFleetOverviewRow, error) {
 	row.backupEnabled = backupEnabled == 1
 	row.fileLockEnabled = fileLockEnabled == 1
 	row.fastCGICacheEnabled = fastCGICacheEnabled == 1
+	row.updateChecksDisabled = updateChecksDisabled == 1
 	row.hasInventoryState = hasInventoryState == 1
 	row.coreUpgradeAvailable = coreUpgradeAvailable == 1
 	return row, err
@@ -221,7 +223,8 @@ func wpFleetSiteModel(row wpFleetOverviewRow, generatedAt time.Time) (models.WPF
 		SSLExpiresAt: sslExpiresAt, SSLState: sslState, MonitoringEnabled: row.monitoringEnabled,
 		BackupEnabled: row.backupEnabled, FileLockEnabled: row.fileLockEnabled,
 		FastCGICacheEnabled: row.fastCGICacheEnabled, AccessLogMode: row.accessLogMode,
-		Inventory: inventory,
+		UpdateChecksDisabled: row.updateChecksDisabled,
+		Inventory:            inventory,
 	}
 	site.Health = wpFleetHealth(site)
 	return site, nil
@@ -325,7 +328,7 @@ func wpFleetHealth(site models.WPFleetSite) models.WPFleetHealth {
 			issues = append(issues, "inventory_stale")
 			warning = true
 		}
-		if site.Inventory.UpdateTotal > 0 {
+		if !site.UpdateChecksDisabled && site.Inventory.UpdateTotal > 0 {
 			issues = append(issues, "updates_available")
 			warning = true
 		}
@@ -362,7 +365,7 @@ func wpFleetOverviewCounts(sites []models.WPFleetSite) models.WPFleetOverviewCou
 			continue
 		}
 		counts.WordPressSites++
-		if site.Inventory.UpdateTotal > 0 {
+		if !site.UpdateChecksDisabled && site.Inventory.UpdateTotal > 0 {
 			counts.UpdateSites++
 		}
 		failed := site.Inventory.Status == "failed"

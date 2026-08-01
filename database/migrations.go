@@ -615,6 +615,7 @@ var wpInventorySchemaStatements = []string{
 		id                       TEXT PRIMARY KEY,
 		site_id                  INTEGER NOT NULL,
 		trigger_type              TEXT NOT NULL,
+		priority                  INTEGER NOT NULL DEFAULT 20,
 		status                   TEXT NOT NULL,
 		requested_at             DATETIME NOT NULL,
 		not_before               DATETIME NOT NULL,
@@ -647,7 +648,7 @@ var wpInventorySchemaStatements = []string{
 	`CREATE UNIQUE INDEX IF NOT EXISTS ux_site_wp_inventory_jobs_active_site
 		ON site_wp_inventory_jobs(site_id) WHERE status IN ('queued','running')`,
 	`CREATE INDEX IF NOT EXISTS ix_site_wp_inventory_jobs_claim
-		ON site_wp_inventory_jobs(status, not_before, requested_at)`,
+		ON site_wp_inventory_jobs(status, priority, not_before, requested_at)`,
 	`CREATE INDEX IF NOT EXISTS ix_site_wp_inventory_jobs_finished
 		ON site_wp_inventory_jobs(status, finished_at)`,
 	`CREATE TABLE IF NOT EXISTS site_wp_inventory_job_warnings (

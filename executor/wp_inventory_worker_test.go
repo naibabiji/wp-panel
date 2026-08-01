@@ -200,13 +200,15 @@ type wpInventoryFakeCollector struct {
 	mu            sync.Mutex
 	steps         []wpInventoryFakeStep
 	calls         int
+	forces        []bool
 	active        int
 	maxConcurrent int
 }
 
-func (f *wpInventoryFakeCollector) Collect(ctx context.Context, _ *config.Config, _ *models.Website, _ bool) (WPInventoryRunResult, error) {
+func (f *wpInventoryFakeCollector) Collect(ctx context.Context, _ *config.Config, _ *models.Website, force bool) (WPInventoryRunResult, error) {
 	f.mu.Lock()
 	f.calls++
+	f.forces = append(f.forces, force)
 	f.active++
 	if f.active > f.maxConcurrent {
 		f.maxConcurrent = f.active
@@ -249,6 +251,12 @@ func (f *wpInventoryFakeCollector) Collect(ctx context.Context, _ *config.Config
 	return step.result, step.err
 }
 
+func (f *wpInventoryFakeCollector) forceValues() []bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]bool(nil), f.forces...)
+}
+
 func (f *wpInventoryFakeCollector) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -289,6 +297,89 @@ func enqueueWPInventoryWorkerJob(t *testing.T, store *wpInventoryStore, siteID i
 		t.Fatalf("enqueue job = %q/%t, err = %v", jobID, created, err)
 	}
 	return jobID
+}
+
+func TestWPInventoryWorkerScheduledJobRefreshesUpdateTransients(t *testing.T) {
+	store, siteID := newWPInventoryStoreTest(t)
+	at := time.Now().Add(-time.Second)
+	jobID, created, err := store.enqueue(context.Background(), siteID, wpInventoryTriggerScheduled, at, at)
+	if err != nil || !created {
+		t.Fatalf("enqueue scheduled job = %q/%t, err = %v", jobID, created, err)
+	}
+	collector := &wpInventoryFakeCollector{steps: []wpInventoryFakeStep{{result: sampleWPInventoryResult()}}}
+	worker := newTestWPInventoryWorker(t, store, collector, "worker-scheduled-refresh")
+	if err := worker.Start(); err != nil {
+		t.Fatalf("Start(): %v", err)
+	}
+	waitWPInventoryJobStatus(t, store, jobID, wpInventoryJobSucceeded)
+	stopWPInventoryWorker(t, worker)
+	if got := collector.forceValues(); len(got) != 1 || !got[0] {
+		t.Fatalf("scheduled collector force values = %v, want [true]", got)
+	}
+}
+
+func TestWPInventoryWorkerManualJobRefreshesUpdateTransients(t *testing.T) {
+	store, siteID := newWPInventoryStoreTest(t)
+	at := time.Now().Add(-time.Second)
+	jobID, created, err := store.enqueue(context.Background(), siteID, wpInventoryTriggerManual, at, at)
+	if err != nil || !created {
+		t.Fatalf("enqueue manual job = %q/%t, err = %v", jobID, created, err)
+	}
+	collector := &wpInventoryFakeCollector{steps: []wpInventoryFakeStep{{result: sampleWPInventoryResult()}}}
+	worker := newTestWPInventoryWorker(t, store, collector, "worker-manual-refresh")
+	if err := worker.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitWPInventoryJobStatus(t, store, jobID, wpInventoryJobSucceeded)
+	stopWPInventoryWorker(t, worker)
+	if got := collector.forceValues(); len(got) != 1 || !got[0] {
+		t.Fatalf("manual collector force values = %v, want [true]", got)
+	}
+}
+
+func TestWPInventoryWorkerDisabledSiteDoesNotForceUpdateChecks(t *testing.T) {
+	store, siteID := newWPInventoryStoreTest(t)
+	if _, err := store.db.Exec(`UPDATE websites SET disable_wp_updates=1 WHERE id=?`, siteID); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().Add(-time.Second)
+	jobID, created, err := store.enqueue(context.Background(), siteID, wpInventoryTriggerManual, at, at)
+	if err != nil || !created {
+		t.Fatalf("enqueue=%q/%t err=%v", jobID, created, err)
+	}
+	collector := &wpInventoryFakeCollector{steps: []wpInventoryFakeStep{{result: sampleWPInventoryResult()}}}
+	worker := newTestWPInventoryWorker(t, store, collector, "worker-disabled-site")
+	if err := worker.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitWPInventoryJobStatus(t, store, jobID, wpInventoryJobSucceeded)
+	stopWPInventoryWorker(t, worker)
+	if got := collector.forceValues(); len(got) != 1 || got[0] {
+		t.Fatalf("force values=%v want [false]", got)
+	}
+}
+
+func TestWPInventoryWorkerNonRefreshTriggersDoNotForceUpdateChecks(t *testing.T) {
+	for _, trigger := range []wpInventoryTrigger{wpInventoryTriggerUpdateFollowup, wpInventoryTriggerSiteCreated} {
+		t.Run(string(trigger), func(t *testing.T) {
+			store, siteID := newWPInventoryStoreTest(t)
+			at := time.Now().Add(-time.Second)
+			jobID, created, err := store.enqueue(context.Background(), siteID, trigger, at, at)
+			if err != nil || !created {
+				t.Fatalf("enqueue = %q/%t, err = %v", jobID, created, err)
+			}
+			collector := &wpInventoryFakeCollector{steps: []wpInventoryFakeStep{{result: sampleWPInventoryResult()}}}
+			worker := newTestWPInventoryWorker(t, store, collector, "worker-non-refresh-"+string(trigger))
+			if err := worker.Start(); err != nil {
+				t.Fatal(err)
+			}
+			waitWPInventoryJobStatus(t, store, jobID, wpInventoryJobSucceeded)
+			stopWPInventoryWorker(t, worker)
+			if got := collector.forceValues(); len(got) != 1 || got[0] {
+				t.Fatalf("force values = %v, want [false]", got)
+			}
+		})
+	}
 }
 
 func insertWPInventoryWorkerSite(t *testing.T, store *wpInventoryStore, domain string) int {

@@ -302,7 +302,18 @@ var i18nKeys = []string{
 	"wp_fleet.status_paused",
 	"wp_fleet.theme_updates",
 	"wp_fleet.loading",
-	"wp_fleet.reload",
+	"wp_fleet.retry_load",
+	"wp_fleet.bulk_refresh",
+	"wp_fleet.bulk_refresh_running",
+	"wp_fleet.bulk_refresh_progress",
+	"wp_fleet.bulk_refresh_complete",
+	"wp_fleet.bulk_refresh_failed",
+	"wp_fleet.update_checks_disabled_warning",
+	"wp_fleet.update_checks_disabled",
+	"wp_fleet.update_checks_enabled",
+	"wp_fleet.update_checks_enabled_saved",
+	"wp_fleet.update_checks_disabled_saved",
+	"wp_fleet.update_checks_save_failed",
 	"ai_diagnostics.analyzing",
 	"ai_diagnostics.chat_role_ai",
 	"ai_diagnostics.chat_role_user",
@@ -758,8 +769,8 @@ var i18nKeys = []string{
 	"wp_inventory.wordpress_only",
 	"wp_inventory.yes",
 	"wp_inventory.no",
-	"wp_core_update.check",
-	"wp_core_update.checking",
+	"wp_core_update.preparing",
+	"wp_core_update.recheck",
 	"wp_core_update.confirm_message",
 	"wp_core_update.preview_failed",
 	"wp_core_update.preview_invalid",
@@ -1085,6 +1096,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	wpUpdateLogHandler := &handlers.WPUpdateLogHandler{}
 	protected.GET("/api/websites", websiteHandler.List)
 	protected.GET("/api/wp-fleet/overview", wpFleetOverviewHandler.Overview)
+	protected.POST("/api/wp-fleet/inventory-refresh", wpFleetOverviewHandler.RefreshAll)
 	protected.POST("/api/websites", websiteHandler.Create)
 	protected.POST("/api/websites/ssl-preflight", websiteHandler.SSLPreflight)
 	protected.GET("/api/websites/:id", websiteHandler.Get)
@@ -1133,6 +1145,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.PUT("/api/websites/:id/cache", websiteHandler.UpdateCache)
 	protected.DELETE("/api/websites/:id/cache", websiteHandler.ClearCache)
 	protected.PUT("/api/websites/:id/wp-optimizations", websiteHandler.SaveWPOptimizations)
+	protected.PUT("/api/websites/:id/wp-update-checks", websiteHandler.SetWPUpdateChecks)
 	protected.PUT("/api/websites/:id/file-editor", websiteHandler.SetFileEditingProtection)
 	protected.PUT("/api/websites/:id/password-reset", websiteHandler.SetPasswordResetMode)
 	protected.PUT("/api/websites/:id/file-lock", websiteHandler.SetFileLock)

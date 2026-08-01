@@ -156,6 +156,26 @@ function wp_panel_inventory_maybe_force_update_check(): void
             require_once $adminUpdate;
         }
     }
+    // The panel setting is authoritative. Older optimizer versions may still
+    // have a stale cached option from before the setting was toggled, and may
+    // already have installed pre-transient filters during WordPress bootstrap.
+    // A forced scan is only requested by the worker when update checks are
+    // enabled for this site, so synchronize that option and remove the
+    // uniquely named filters owned by current WP Panel Optimizer versions.
+    update_option('wpp_optimizer_no_updates', '0');
+    if (class_exists('WP_Panel_Optimizer')) {
+        $optimizerCallback = array('WP_Panel_Optimizer', 'suppress_update_transient');
+        foreach (array('update_core', 'update_plugins', 'update_themes') as $name) {
+            remove_filter('pre_site_transient_' . $name, $optimizerCallback);
+        }
+        // Versions before 1.1.9 used the shared __return_null callback. Only
+        // retain that compatibility path when the loaded optimizer is old.
+        if (!method_exists('WP_Panel_Optimizer', 'suppress_update_transient')) {
+            foreach (array('update_core', 'update_plugins', 'update_themes') as $name) {
+                remove_filter('pre_site_transient_' . $name, '__return_null');
+            }
+        }
+    }
     foreach (array('update_core', 'update_plugins', 'update_themes') as $name) {
         delete_site_transient($name);
     }

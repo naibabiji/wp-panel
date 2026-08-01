@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,6 +17,11 @@ type wpFleetOverviewAPIResponse struct {
 	Success bool                   `json:"success"`
 	Message string                 `json:"message"`
 	Data    models.WPFleetOverview `json:"data"`
+}
+
+type wpFleetBulkRefreshAPIResponse struct {
+	Success bool                                `json:"success"`
+	Data    models.WPInventoryBulkRefreshResult `json:"data"`
 }
 
 func TestWPFleetOverviewHandlerReturnsSafePayload(t *testing.T) {
@@ -87,11 +93,96 @@ func TestWPFleetOverviewHandlerInternalErrorIsFixed(t *testing.T) {
 	}
 }
 
+func TestWPFleetOverviewHandlerRefreshAll(t *testing.T) {
+	db := setupWPInventoryHandlerTestDB(t)
+	router := newWPFleetOverviewTestRouter(db)
+	req := httptest.NewRequest(http.MethodPost, "/api/wp-fleet/inventory-refresh", nil)
+	req.Header.Set("Accept-Language", "zh-CN")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var response wpFleetBulkRefreshAPIResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !response.Success || len(response.Data.SiteIDs) != 1 || response.Data.Created != 1 || response.Data.Existing != 0 {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestWPFleetOverviewHandlerRefreshAllInternalError(t *testing.T) {
+	db := setupWPInventoryHandlerTestDB(t)
+	router := newWPFleetOverviewTestRouter(db)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/wp-fleet/inventory-refresh", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWPFleetOverviewHandlerRefreshAllSerializesEmptySiteIDsAsArray(t *testing.T) {
+	db := setupWPInventoryHandlerTestDB(t)
+	if _, err := db.Exec(`UPDATE websites SET site_type='php'`); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	newWPFleetOverviewTestRouter(db).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/wp-fleet/inventory-refresh", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"site_ids":[]`) {
+		t.Fatalf("site_ids must be JSON array: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"failed":0`) {
+		t.Fatalf("failed must be zero: %s", rec.Body.String())
+	}
+}
+
+func TestWPFleetOverviewHandlerRefreshAllReturnsMultiStatusForPartialFailure(t *testing.T) {
+	db := setupWPInventoryHandlerTestDB(t)
+	if _, err := db.Exec(`DELETE FROM websites`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id := 1; id <= 101; id++ {
+		if _, err := tx.Exec(`INSERT INTO websites (id,name,domain,status,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path) VALUES (?,?,?,'active',?,'/tmp/www','/tmp/log','db','user','/tmp/php','/tmp/nginx')`, id, fmt.Sprintf("site-%d", id), fmt.Sprintf("site-%d.example", id), fmt.Sprintf("wp_%d", id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER fail_middle_handler_batch BEFORE INSERT ON site_wp_inventory_jobs WHEN NEW.site_id BETWEEN 51 AND 100 BEGIN SELECT RAISE(ABORT, 'injected handler batch failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	newWPFleetOverviewTestRouter(db).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/wp-fleet/inventory-refresh", nil))
+	if rec.Code != http.StatusMultiStatus {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response wpFleetBulkRefreshAPIResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data.SiteIDs) != 51 || response.Data.Created != 51 || response.Data.Existing != 0 || response.Data.Failed != 50 {
+		t.Fatalf("response=%+v", response.Data)
+	}
+}
+
 func newWPFleetOverviewTestRouter(db *sql.DB) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	handler := &WPFleetOverviewHandler{DB: db}
 	router.GET("/api/wp-fleet/overview", handler.Overview)
+	router.POST("/api/wp-fleet/inventory-refresh", handler.RefreshAll)
 	return router
 }
 

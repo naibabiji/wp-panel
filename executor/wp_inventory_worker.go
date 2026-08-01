@@ -172,8 +172,13 @@ func (w *WPInventoryWorker) processOne(ctx context.Context) (bool, bool) {
 	site := &models.Website{
 		ID: identity.ID, Domain: identity.Domain, Status: identity.Status,
 		SystemUser: identity.SystemUser, WebRoot: identity.WebRoot, SiteType: identity.SiteType,
+		DisableWPUpdates: identity.DisableWPUpdates,
 	}
-	force := job.Trigger == wpInventoryTriggerManual
+	// Scheduled inventory is the source of truth for the fleet overview, so it
+	// must refresh WordPress' update transients just like an explicit manual
+	// scan. Otherwise a present-but-never-checked transient is persisted as an
+	// authoritative "no updates" result until somebody visits wp-admin.
+	force := !identity.DisableWPUpdates && (job.Trigger == wpInventoryTriggerManual || job.Trigger == wpInventoryTriggerScheduled)
 	result, runErr := w.collect(ctx, site, force)
 	if ctx.Err() != nil {
 		w.release(job.ID)

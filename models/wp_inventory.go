@@ -4,6 +4,7 @@ import "time"
 
 type WPInventorySummary struct {
 	SiteID                 int                     `json:"site_id"`
+	UpdateChecksDisabled   bool                    `json:"update_checks_disabled"`
 	CollectionStatus       string                  `json:"collection_status"`
 	HasSuccessfulInventory bool                    `json:"has_successful_inventory"`
 	WordPress              WPInventoryWordPress    `json:"wordpress"`
@@ -69,6 +70,13 @@ type WPInventoryTaskError struct {
 type WPInventoryRefreshResult struct {
 	Task    WPInventoryTask `json:"task"`
 	Created bool            `json:"created"`
+}
+
+type WPInventoryBulkRefreshResult struct {
+	SiteIDs  []int `json:"site_ids"`
+	Created  int   `json:"created"`
+	Existing int   `json:"existing"`
+	Failed   int   `json:"failed"`
 }
 
 type WPInventoryComponent struct {

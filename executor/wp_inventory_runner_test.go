@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,97 @@ import (
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/models"
 )
+
+func TestWPInventoryRunnerForcedCheckClearsStaleOptimizerSuppression(t *testing.T) {
+	source := string(wpInventoryRunnerSource)
+	optionAt := strings.Index(source, "update_option('wpp_optimizer_no_updates', '0')")
+	filterAt := strings.Index(source, "remove_filter('pre_site_transient_' . $name, $optimizerCallback)")
+	checkAt := strings.Index(source, "wp_version_check();")
+	if optionAt < 0 || filterAt < 0 || checkAt < 0 || optionAt > checkAt || filterAt > checkAt {
+		t.Fatal("forced inventory check must clear stale optimizer suppression before checking updates")
+	}
+}
+
+func TestWPInventoryRunnerForcedCheckRemovesOnlyOptimizerCallback(t *testing.T) {
+	php, err := exec.LookPath("php")
+	if err != nil {
+		t.Skip("php is not available")
+	}
+	source := string(wpInventoryRunnerSource)
+	start := strings.Index(source, "function wp_panel_inventory_maybe_force_update_check(): void")
+	end := strings.Index(source[start:], "\nfunction wp_panel_inventory_collect(): array")
+	if start < 0 || end < 0 {
+		t.Fatal("forced-check function not found")
+	}
+	functionSource := source[start : start+end]
+	harness := `
+define('ABSPATH', '/tmp/');
+class WP_Panel_Optimizer { public static function suppress_update_transient() { return null; } }
+$removed = array();
+function update_option($name, $value) {}
+function remove_filter($hook, $callback) { global $removed; $removed[] = array($hook, $callback); }
+function delete_site_transient($name) {}
+function wp_version_check() {}
+function wp_update_plugins() {}
+function wp_update_themes() {}
+putenv('WP_PANEL_FORCE_UPDATE_CHECK=1');
+wp_panel_inventory_maybe_force_update_check();
+foreach ($removed as $entry) {
+    if ($entry[1] === '__return_null') { fwrite(STDERR, 'shared callback removed'); exit(2); }
+    if ($entry[1] !== array('WP_Panel_Optimizer', 'suppress_update_transient')) { fwrite(STDERR, 'unexpected callback'); exit(3); }
+}
+if (count($removed) !== 3) { fwrite(STDERR, 'wrong removal count'); exit(4); }
+echo 'ok';
+`
+	output, err := exec.Command(php, "-r", functionSource+harness).CombinedOutput()
+	if err != nil || string(output) != "ok" {
+		t.Fatalf("forced-check callback test failed: %v output=%s", err, output)
+	}
+}
+
+func TestWPInventoryRunnerForcedCheckLegacyAndMissingOptimizerPaths(t *testing.T) {
+	php, err := exec.LookPath("php")
+	if err != nil {
+		t.Skip("php is not available")
+	}
+	source := string(wpInventoryRunnerSource)
+	start := strings.Index(source, "function wp_panel_inventory_maybe_force_update_check(): void")
+	end := strings.Index(source[start:], "\nfunction wp_panel_inventory_collect(): array")
+	if start < 0 || end < 0 {
+		t.Fatal("forced-check function not found")
+	}
+	functionSource := source[start : start+end]
+	for _, tc := range []struct {
+		name, classDefinition string
+		wantTotal, wantShared int
+	}{
+		{name: "optimizer missing", wantTotal: 0, wantShared: 0},
+		{name: "legacy optimizer", classDefinition: "class WP_Panel_Optimizer {}", wantTotal: 6, wantShared: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			harness := fmt.Sprintf(`
+define('ABSPATH', '/tmp/');
+%s
+$removed = array();
+function update_option($name, $value) {}
+function remove_filter($hook, $callback) { global $removed; $removed[] = array($hook, $callback); }
+function delete_site_transient($name) {}
+function wp_version_check() {}
+function wp_update_plugins() {}
+function wp_update_themes() {}
+putenv('WP_PANEL_FORCE_UPDATE_CHECK=1');
+wp_panel_inventory_maybe_force_update_check();
+$shared = count(array_filter($removed, static fn($entry) => $entry[1] === '__return_null'));
+echo count($removed) . ':' . $shared;
+`, tc.classDefinition)
+			output, err := exec.Command(php, "-r", functionSource+harness).CombinedOutput()
+			want := fmt.Sprintf("%d:%d", tc.wantTotal, tc.wantShared)
+			if err != nil || string(output) != want {
+				t.Fatalf("forced-check compatibility path failed: %v output=%s want=%s", err, output, want)
+			}
+		})
+	}
+}
 
 func TestWPInventoryEmbeddedSource(t *testing.T) {
 	if len(wpInventoryRunnerSource) == 0 || len(wpInventoryRunnerSource) > wpInventorySourceLimit {
