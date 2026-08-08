@@ -121,6 +121,22 @@ func TestWordPressTemplatesBlockRuntimePHPExecution(t *testing.T) {
 	}
 }
 
+func TestFastCGICacheTemplatesDoNotCacheRedirects(t *testing.T) {
+	for name, tmpl := range map[string]string{
+		"wordpress-http":  nginxHTTPTemplate,
+		"wordpress-https": nginxHTTPSTemplate,
+		"php-http":        phpHTTPTemplate,
+		"php-https":       phpHTTPSTemplate,
+	} {
+		if !strings.Contains(tmpl, "fastcgi_cache_valid 200 {{.FCacheTTL}}s;") {
+			t.Fatalf("%s template must cache successful responses", name)
+		}
+		if strings.Contains(tmpl, "fastcgi_cache_valid 200 301") {
+			t.Fatalf("%s template must not cache redirects", name)
+		}
+	}
+}
+
 func TestWPSecurityLogMapRecordsRuntimePHPBeforeContentExclusion(t *testing.T) {
 	rule := "~*^/wp-content/(?!plugins/|themes/|mu-plugins/).*\\.(php|phtml|phar|php[0-9])$ 1;"
 	exclusion := "~^/wp-content/ 0;"
