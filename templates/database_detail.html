@@ -41,6 +41,7 @@
             <div class="flex flex-wrap gap-2 mt-5 pt-5 border-t border-gray-700">
                 <button @click="dbPasswordModal = true" class="btn-primary text-sm">{{t .Lang "website.change_password"}}</button>
                 <button x-show="site.site_type === 'wordpress'" @click="openSiteURLModal()" class="btn-secondary text-sm">{{t .Lang "website.change_site_url"}}</button>
+                <button x-show="site.site_type === 'wordpress'" @click="openAdminModal()" class="btn-secondary text-sm">{{t .Lang "website.change_wp_admin"}}</button>
             </div>
         </div>
 
@@ -151,6 +152,43 @@
             </div>
         </div>
     </div>
+
+    <div x-show="adminModal" class="modal-overlay" x-cloak @click.self="adminModal = false">
+        <div class="modal-content max-w-lg">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-white">{{t .Lang "website.change_wp_admin_title"}}</h3>
+                <button @click="adminModal = false" class="text-gray-400 hover:text-white text-xl">&times;</button>
+            </div>
+            <div x-show="adminLoading" class="text-center py-8 text-sm text-gray-400">{{t .Lang "website.wp_admin_loading"}}</div>
+            <div x-show="!adminLoading && administrators.length === 0" class="p-3 rounded bg-yellow-950/40 border border-yellow-900 text-sm text-yellow-200">{{t .Lang "website.wp_admin_none"}}</div>
+            <div x-show="!adminLoading && administrators.length > 0" class="space-y-3">
+                <div>
+                    <label class="label">{{t .Lang "website.wp_admin_account"}}</label>
+                    <select x-model.number="selectedAdminID" @change="selectAdministrator()" class="input-field w-full">
+                        <template x-for="admin in administrators" :key="admin.id"><option :value="admin.id" x-text="admin.login + ' / ' + admin.email"></option></template>
+                    </select>
+                </div>
+                <div><label class="label">{{t .Lang "website.wp_admin_login"}}</label><input type="text" x-model="adminForm.login" class="input-field w-full font-mono" maxlength="60"></div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div><label class="label">{{t .Lang "website.wp_admin_password"}}</label><input type="text" x-model="adminForm.password" class="input-field w-full font-mono" autocomplete="new-password"></div>
+                    <div><label class="label">{{t .Lang "website.wp_admin_password_confirm"}}</label><input type="text" x-model="adminForm.passwordConfirm" class="input-field w-full font-mono" autocomplete="new-password"></div>
+                </div>
+                <button type="button" @click="generateAdminPassword()" class="btn-secondary text-xs">{{t .Lang "website.wp_admin_generate_password"}}</button>
+                <div><label class="label">{{t .Lang "website.wp_admin_email"}}</label><input type="email" x-model="adminForm.email" class="input-field w-full"></div>
+                <div><label class="label">{{t .Lang "website.wp_admin_display_name"}}</label><input type="text" x-model="adminForm.displayName" class="input-field w-full" maxlength="250"></div>
+                <div class="space-y-2 pt-1 text-sm text-gray-300">
+                    <label class="flex items-start gap-2 cursor-pointer"><input type="checkbox" x-model="adminForm.syncNicename" class="mt-1"><span>{{t .Lang "website.wp_admin_sync_nicename"}}</span></label>
+                    <label class="flex items-start gap-2 cursor-pointer"><input type="checkbox" x-model="adminForm.syncAdminEmail" class="mt-1"><span>{{t .Lang "website.wp_admin_sync_site_email"}}</span></label>
+                    <label class="flex items-start gap-2 cursor-pointer"><input type="checkbox" x-model="adminForm.destroySessions" class="mt-1"><span>{{t .Lang "website.wp_admin_destroy_sessions"}}</span></label>
+                </div>
+                <div class="p-3 rounded text-xs bg-yellow-950/40 border border-yellow-900 text-yellow-200">{{t .Lang "website.wp_admin_warning"}}</div>
+                <div class="flex justify-end gap-2 pt-1">
+                    <button @click="adminModal = false" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
+                    <button @click="updateAdministrator()" :disabled="adminSubmitting" class="btn-primary" x-text="adminSubmitting ? t('website.processing_update') : t('website.confirm_update')"></button>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -169,6 +207,13 @@ function databaseDetail() {
         newSiteURL: '',
         newHomeURL: '',
         siteURLSubmitting: false,
+        adminModal: false,
+        adminLoading: false,
+        adminSubmitting: false,
+        administrators: [],
+        selectedAdminID: 0,
+        siteAdminEmail: '',
+        adminForm: { login: '', password: '', passwordConfirm: '', email: '', displayName: '', syncNicename: true, syncAdminEmail: false, destroySessions: true },
         backups: [],
         showAllBackups: false,
         backupSubmitting: false,
@@ -262,6 +307,62 @@ function databaseDetail() {
                 this.siteURLModal = false;
             } catch (e) { showToast(t('website.update_failed_with_error', { error: e.message }), 'error'); }
             this.siteURLSubmitting = false;
+        },
+        async openAdminModal() {
+            this.adminModal = true;
+            this.adminLoading = true;
+            this.administrators = [];
+            try {
+                const r = await api('/websites/' + this.site.id + '/wp-administrators');
+                this.administrators = r.data?.administrators || [];
+                this.siteAdminEmail = r.data?.site_admin_email || '';
+                if (this.administrators.length) {
+                    this.selectedAdminID = this.administrators[0].id;
+                    this.selectAdministrator();
+                }
+            } catch (e) { showToast(t('website.wp_admin_load_failed'), 'error'); }
+            this.adminLoading = false;
+        },
+        selectAdministrator() {
+            const admin = this.administrators.find(item => item.id === Number(this.selectedAdminID));
+            if (!admin) return;
+            this.adminForm = {
+                login: admin.login || '', password: '', passwordConfirm: '', email: admin.email || '', displayName: admin.display_name || '',
+                syncNicename: true, syncAdminEmail: !!this.siteAdminEmail && this.siteAdminEmail.toLowerCase() === (admin.email || '').toLowerCase(), destroySessions: true
+            };
+        },
+        generateAdminPassword() {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*_-+=';
+            const values = new Uint32Array(24);
+            crypto.getRandomValues(values);
+            const password = Array.from(values, value => chars[value % chars.length]).join('');
+            this.adminForm.password = password;
+            this.adminForm.passwordConfirm = password;
+            showToast(t('website.wp_admin_password_generated'), 'success');
+        },
+        async updateAdministrator() {
+            if (!this.adminForm.login || !this.adminForm.email || !this.adminForm.displayName) { showToast(t('website.wp_admin_required'), 'error'); return; }
+            if (this.adminForm.password && this.adminForm.password.length < 8) { showToast(t('website.wp_admin_password_short'), 'error'); return; }
+            if (this.adminForm.password !== this.adminForm.passwordConfirm) { showToast(t('website.wp_admin_password_mismatch'), 'error'); return; }
+            if (!await confirmModal(t('website.wp_admin_confirm', { login: this.adminForm.login, email: this.adminForm.email }))) return;
+            this.adminSubmitting = true;
+            try {
+                const body = {
+                    user_id: Number(this.selectedAdminID), login: this.adminForm.login, email: this.adminForm.email, display_name: this.adminForm.displayName,
+                    sync_nicename: this.adminForm.syncNicename, sync_admin_email: this.adminForm.syncAdminEmail, destroy_sessions: this.adminForm.destroySessions
+                };
+                if (this.adminForm.password) body.password = this.adminForm.password;
+                const r = await api('/websites/' + this.site.id + '/wp-administrators', { method: 'PUT', body });
+                const updated = r.data?.administrator;
+                if (updated) {
+                    const index = this.administrators.findIndex(item => item.id === updated.id);
+                    if (index >= 0) this.administrators[index] = updated;
+                }
+                await this.fetchBackups();
+                showToast(t('website.wp_admin_updated'), 'success');
+                this.adminModal = false;
+            } catch (e) { showToast(e.message || t('website.wp_admin_update_failed'), 'error'); }
+            this.adminSubmitting = false;
         },
         async fetchBackups() {
             const r = await api('/websites/' + this.site.id + '/backups');

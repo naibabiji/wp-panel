@@ -1181,6 +1181,155 @@ func (h *WebsiteHandler) UpdateWPSiteURLs(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "站点 URL 已更新"}))
 }
 
+func prepareWPAdministratorSite(c *gin.Context) *models.Website {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.wp_admin_invalid_site")))
+		return nil
+	}
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "website.wp_admin_site_not_found")))
+		return nil
+	}
+	if site.SiteType != "wordpress" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.wp_admin_wordpress_only")))
+		return nil
+	}
+	if site.TablePrefix == "" {
+		if prefix, err := executor.ReadWPTablePrefix(site.WebRoot); err == nil {
+			site.TablePrefix = prefix
+		}
+	}
+	if !executor.IsValidWPTablePrefix(site.TablePrefix) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.wp_admin_prefix_required")))
+		return nil
+	}
+	return site
+}
+
+func (h *WebsiteHandler) ListWPAdministrators(c *gin.Context) {
+	site := prepareWPAdministratorSite(c)
+	if site == nil {
+		return
+	}
+	result, err := executor.ListWPAdministrators(c.Request.Context(), site)
+	if err != nil {
+		log.Printf("读取 WordPress 管理员失败 site=%d: %v", site.ID, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "website.wp_admin_load_failed")))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(result))
+}
+
+func wpAdministratorErrorKey(err error) string {
+	switch executor.WPAdminManagerErrorCode(err) {
+	case "administrator_not_found":
+		return "website.wp_admin_not_found"
+	case "invalid_login":
+		return "website.wp_admin_invalid_login"
+	case "login_exists":
+		return "website.wp_admin_login_exists"
+	case "invalid_email":
+		return "website.wp_admin_invalid_email"
+	case "email_exists":
+		return "website.wp_admin_email_exists"
+	case "invalid_display_name":
+		return "website.wp_admin_invalid_display_name"
+	case "invalid_password":
+		return "website.wp_admin_invalid_password"
+	case "multisite_unsupported":
+		return "website.wp_admin_multisite_unsupported"
+	case "database_mismatch":
+		return "website.wp_admin_database_mismatch"
+	case "non_transactional_engine":
+		return "website.wp_admin_non_transactional_engine"
+	case "transaction_failed":
+		return "website.wp_admin_transaction_failed"
+	case "verification_failed", "password_verification_failed":
+		return "website.wp_admin_verification_failed"
+	case "commit_failed", "login_update_failed", "user_update_failed":
+		return "website.wp_admin_write_failed"
+	default:
+		return "website.wp_admin_update_failed"
+	}
+}
+
+func (h *WebsiteHandler) UpdateWPAdministrator(c *gin.Context) {
+	site := prepareWPAdministratorSite(c)
+	if site == nil {
+		return
+	}
+	var req executor.WPAdministratorUpdate
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.wp_admin_invalid_params")))
+		return
+	}
+	req.Login = strings.TrimSpace(req.Login)
+	req.Email = strings.TrimSpace(req.Email)
+	req.DisplayName = strings.TrimSpace(req.DisplayName)
+	if req.UserID <= 0 || req.Login == "" || len(req.Login) > 60 || req.Email == "" || req.DisplayName == "" || len(req.Password) > 4096 || (req.Password != "" && len(req.Password) < 8) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.wp_admin_invalid_params")))
+		return
+	}
+	if !executor.TryAcquireSiteOpLock(site.ID, "wp_administrator_update") {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "website.wp_admin_site_busy")))
+		return
+	}
+	releaseLock := true
+	defer func() {
+		if releaseLock {
+			executor.ReleaseSiteOpLock(site.ID)
+		}
+	}()
+
+	if err := executor.PreflightWPAdministratorUpdate(c.Request.Context(), site, req); err != nil {
+		log.Printf("WordPress 管理员修改预检失败 site=%d user=%d: %v", site.ID, req.UserID, err)
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, wpAdministratorErrorKey(err))))
+		return
+	}
+
+	backupTask := executor.GlobalQueue.Enqueue(executor.TaskCreateBackup, &executor.CreateBackupPayload{Site: site, Auto: false})
+	var backupResult executor.TaskResult
+	select {
+	case backupResult = <-backupTask.ResultCh:
+	case <-time.After(15 * time.Minute):
+		releaseLock = false
+		executor.GoSafe(func() {
+			<-backupTask.ResultCh
+			executor.ReleaseSiteOpLock(site.ID)
+		})
+		c.JSON(http.StatusGatewayTimeout, models.ErrorResponse(i18n.TE(c.Request, "website.wp_admin_backup_timeout")))
+		return
+	case <-c.Request.Context().Done():
+		releaseLock = false
+		executor.GoSafe(func() {
+			<-backupTask.ResultCh
+			executor.ReleaseSiteOpLock(site.ID)
+		})
+		return
+	}
+	if !backupResult.Success {
+		log.Printf("修改 WordPress 管理员前备份失败 site=%d: %s", site.ID, backupResult.Message)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "website.wp_admin_backup_failed")))
+		return
+	}
+
+	result, err := executor.UpdateWPAdministrator(c.Request.Context(), site, req)
+	if err != nil {
+		log.Printf("修改 WordPress 管理员失败 site=%d user=%d: %v", site.ID, req.UserID, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, wpAdministratorErrorKey(err))))
+		return
+	}
+	executor.GoSafe(func() { executor.ClearWPSiteRuntimeCaches(site.ID, site.Domain, site.WebRoot) })
+	log.Printf("WordPress 管理员信息已修改 site=%d user=%d login=%q", site.ID, req.UserID, result.Administrator.Login)
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"administrator":    result.Administrator,
+		"site_admin_email": result.SiteAdminEmail,
+		"backup_message":   backupResult.Message,
+	}))
+}
+
 func (h *WebsiteHandler) ViewLogs(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {

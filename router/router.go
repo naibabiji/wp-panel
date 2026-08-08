@@ -579,6 +579,14 @@ var i18nKeys = []string{
 	"website.save_failed",
 	"website.save_failed_with_error",
 	"website.site_urls_updated",
+	"website.wp_admin_confirm",
+	"website.wp_admin_load_failed",
+	"website.wp_admin_password_generated",
+	"website.wp_admin_password_mismatch",
+	"website.wp_admin_password_short",
+	"website.wp_admin_required",
+	"website.wp_admin_update_failed",
+	"website.wp_admin_updated",
 	"website.ssl_deleted",
 	"website.ssl_export_saved",
 	"website.ssl_manual_required",
@@ -1137,6 +1145,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/websites/:id/detect-table-prefix", websiteHandler.DetectDBTablePrefix)
 	protected.GET("/api/websites/:id/wp-site-urls", websiteHandler.GetWPSiteURLs)
 	protected.PUT("/api/websites/:id/wp-site-urls", websiteHandler.UpdateWPSiteURLs)
+	protected.GET("/api/websites/:id/wp-administrators", websiteHandler.ListWPAdministrators)
+	protected.PUT("/api/websites/:id/wp-administrators", websiteHandler.UpdateWPAdministrator)
 	protected.GET("/api/websites/:id/logs", websiteHandler.ViewLogs)
 	protected.GET("/api/websites/:id/log-files", websiteHandler.ListLogFiles)
 	protected.GET("/api/websites/:id/logs/download", websiteHandler.DownloadLogFile)

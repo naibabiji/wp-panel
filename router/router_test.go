@@ -1226,6 +1226,37 @@ func TestDatabaseDetailShowsFiveRecentBackupsByDefault(t *testing.T) {
 	}
 }
 
+func TestDatabaseDetailProvidesWordPressAdministratorEditor(t *testing.T) {
+	templateSource, err := os.ReadFile("../templates/database_detail.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range [][]byte{
+		[]byte(`@click="openAdminModal()"`),
+		[]byte(`'/wp-administrators'`),
+		[]byte(`sync_nicename:`),
+		[]byte(`sync_admin_email:`),
+		[]byte(`destroy_sessions:`),
+		[]byte(`crypto.getRandomValues(values)`),
+	} {
+		if !bytes.Contains(templateSource, expected) {
+			t.Fatalf("database detail administrator editor is missing %s", expected)
+		}
+	}
+	routerSource, err := os.ReadFile("router.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range [][]byte{
+		[]byte(`protected.GET("/api/websites/:id/wp-administrators", websiteHandler.ListWPAdministrators)`),
+		[]byte(`protected.PUT("/api/websites/:id/wp-administrators", websiteHandler.UpdateWPAdministrator)`),
+	} {
+		if !bytes.Contains(routerSource, expected) {
+			t.Fatalf("administrator route is missing %s", expected)
+		}
+	}
+}
+
 func TestFileManagerStartsWithDirectoryList(t *testing.T) {
 	source, err := os.ReadFile("../templates/files.html")
 	if err != nil {
