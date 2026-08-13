@@ -160,6 +160,41 @@ func TestMaintainRemoteBackupsWithRebuildsOnlyWhenAllowed(t *testing.T) {
 	}
 }
 
+func TestMaintainRemoteBackupsWithFailedRepairDoesNotRebuild(t *testing.T) {
+	full := maintenanceFileRow(1, "full.tar.gz", "full")
+	full.status = "failed"
+	deps := testRemoteMaintenanceDeps([]remoteMaintenanceRow{full}, map[string]bool{})
+	deps.localRegular = func(remoteMaintenanceRow) (string, bool) { return "/local/full.tar.gz", true }
+	deps.sync = func(remoteMaintenanceRow, string) bool { return false }
+	state, message := "", ""
+	deps.setState = func(_ int, status, detail string) { state, message = status, detail }
+	deps.rebuild = func(int) error { t.Fatal("repairable local backup must not trigger a full rebuild"); return nil }
+
+	changed, err := maintainRemoteBackupsWith(true, deps)
+	if err != nil || changed != 0 || state != "repair_pending" || !strings.Contains(message, "本地副本仍在") {
+		t.Fatalf("maintenance = changed=%d state=%q message=%q err=%v", changed, state, message, err)
+	}
+}
+
+func TestMaintainRemoteBackupsWithPartialLocalChainStillRebuilds(t *testing.T) {
+	full := maintenanceFileRow(1, "full.tar.gz", "full")
+	inc := maintenanceFileRow(2, "inc.tar.gz", "incremental")
+	deps := testRemoteMaintenanceDeps([]remoteMaintenanceRow{full, inc}, map[string]bool{})
+	deps.localRegular = func(row remoteMaintenanceRow) (string, bool) {
+		return "/local/" + row.filename, row.filename == "full.tar.gz"
+	}
+	deps.sync = func(remoteMaintenanceRow, string) bool { return false }
+	rebuilt := false
+	deps.rebuild = func(int) error { rebuilt = true; return nil }
+
+	if _, err := maintainRemoteBackupsWith(true, deps); err != nil {
+		t.Fatal(err)
+	}
+	if !rebuilt {
+		t.Fatal("chain with a locally missing incremental backup must rebuild")
+	}
+}
+
 func TestMaintainRemoteBackupsWithPersistsRebuildFailure(t *testing.T) {
 	full := maintenanceFileRow(1, "missing-full.tar.gz", "full")
 	deps := testRemoteMaintenanceDeps([]remoteMaintenanceRow{full}, map[string]bool{})

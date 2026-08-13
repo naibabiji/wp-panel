@@ -51,6 +51,7 @@ var i18nKeys = []string{
 	"backups.reconciling",
 	"backups.remote_chain_healthy",
 	"backups.remote_chain_cleanup_pending",
+	"backups.remote_chain_repair_pending",
 	"backups.remote_chain_rebuild",
 	"backups.remote_chain_unknown",
 	"backups.transport_synced_remote_only",

@@ -177,12 +177,14 @@ function backupsOverview() {
         },
         remoteChainBadgeClass(site) {
             if (site.remote_rebuild_required) return 'badge-warning';
+            if (site.remote_status === 'repair_pending') return 'badge-warning';
             if (site.remote_status === 'cleanup_pending') return 'badge-warning';
             if (site.remote_status === 'healthy') return 'badge-success';
             return 'badge-info';
         },
         remoteChainLabel(site) {
             if (site.remote_rebuild_required) return t('backups.remote_chain_rebuild');
+            if (site.remote_status === 'repair_pending') return t('backups.remote_chain_repair_pending');
             if (site.remote_status === 'cleanup_pending') return t('backups.remote_chain_cleanup_pending');
             if (site.remote_status === 'healthy') return t('backups.remote_chain_healthy');
             return t('backups.remote_chain_unknown');

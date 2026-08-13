@@ -51,7 +51,7 @@ func productionRemoteMaintenanceDeps() remoteMaintenanceDeps {
 			return localPath, err == nil && info.Mode().IsRegular()
 		},
 		sync: func(row remoteMaintenanceRow, localPath string) bool {
-			return SyncBackupToRemote(localPath, row.source, row.siteID, row.filename)
+			return syncRemoteMaintenanceBackup(row, localPath, time.Sleep)
 		},
 		updateStatus: func(row remoteMaintenanceRow, status, message string) {
 			updateBackupTransportStatus(row.source, row.siteID, row.filename, status, message)
@@ -66,6 +66,21 @@ func productionRemoteMaintenanceDeps() remoteMaintenanceDeps {
 			return err
 		},
 	}
+}
+
+func syncRemoteMaintenanceBackup(row remoteMaintenanceRow, localPath string, sleep func(time.Duration)) bool {
+	for attempt, delay := range []time.Duration{0, 2 * time.Second, 5 * time.Second} {
+		if delay > 0 {
+			sleep(delay)
+		}
+		if SyncBackupToRemote(localPath, row.source, row.siteID, row.filename) {
+			return true
+		}
+		if attempt < 2 {
+			log.Printf("远程备份补传失败，准备重试 site_id=%d filename=%s attempt=%d/3", row.siteID, row.filename, attempt+1)
+		}
+	}
+	return false
 }
 
 // MaintainRemoteBackups 核对当前远端、补传仍有本地副本的缺失文件，并判断文件增量链是否需要
@@ -96,6 +111,7 @@ func maintainRemoteBackupsWith(allowRebuild bool, deps remoteMaintenanceDeps) (i
 	}
 
 	changed := 0
+	localFiles := map[int]bool{}
 	for i := range rows {
 		row := &rows[i]
 		key := row.domain + "/" + row.subdir + "/" + row.filename
@@ -111,6 +127,7 @@ func maintainRemoteBackupsWith(allowRebuild bool, deps remoteMaintenanceDeps) (i
 			continue
 		}
 		if localPath, exists := deps.localRegular(*row); exists {
+			localFiles[row.id] = true
 			if deps.sync(*row, localPath) {
 				remoteKeys[key] = true
 				row.status = "synced"
@@ -143,7 +160,15 @@ func maintainRemoteBackupsWith(allowRebuild bool, deps remoteMaintenanceDeps) (i
 		})
 		status := "healthy"
 		if rebuild {
-			status = "rebuild_required"
+			_, stillBrokenWithLocal, _, _ := assessRemoteFileBackupChain(siteRows, func(row remoteMaintenanceRow) bool {
+				return remoteRowExists(row, backupType, s3Prefix, remoteKeys) || localFiles[row.id]
+			})
+			if !stillBrokenWithLocal {
+				status = "repair_pending"
+				message = "远程文件备份链缺失，本地副本仍在，将在下次核对时继续补传"
+			} else {
+				status = "rebuild_required"
+			}
 		} else if len(oldFiles) > 0 {
 			var cleaned int
 			status, message, cleaned = maintainOldChainCleanup(allowRebuild, oldFiles, func(files []string) int {
@@ -152,7 +177,7 @@ func maintainRemoteBackupsWith(allowRebuild bool, deps remoteMaintenanceDeps) (i
 			changed += cleaned
 		}
 		deps.setState(siteID, status, message)
-		if allowRebuild && rebuild {
+		if allowRebuild && status == "rebuild_required" {
 			if backupErr := deps.rebuild(siteID); backupErr != nil {
 				deps.setState(siteID, "rebuild_required", "自动重建全量基线失败: "+backupErr.Error())
 				log.Printf("远程备份自动重建全量基线失败 site_id=%d: %v", siteID, backupErr)

@@ -1924,6 +1924,7 @@
     "reconcile_success": "Done, corrected or re-uploaded {{count}} backup(s)",
     "remote_chain_healthy": "Remote chain healthy",
     "remote_chain_cleanup_pending": "Remote chain healthy, old chain pending cleanup",
+    "remote_chain_repair_pending": "Remote chain incomplete, upload pending",
     "remote_chain_rebuild": "Rebuild scheduled off-peak",
     "remote_chain_unknown": "Remote chain not checked"
   },

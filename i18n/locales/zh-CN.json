@@ -1924,6 +1924,7 @@
     "reconcile_success": "核对完成，已修正或补传 {{count}} 条备份",
     "remote_chain_healthy": "远程链完整",
     "remote_chain_cleanup_pending": "远程链完整，旧链待清理",
+    "remote_chain_repair_pending": "远程链缺失，等待补传",
     "remote_chain_rebuild": "等待低峰重建",
     "remote_chain_unknown": "远程链待核对"
   },
