@@ -1921,7 +1921,11 @@
     "toggle_hint": "Click to expand/collapse",
     "reconcile_remote_status": "Reconcile remote status",
     "reconciling": "Reconciling...",
-    "reconcile_success": "Done, corrected {{count}} record(s)"
+    "reconcile_success": "Done, corrected or re-uploaded {{count}} backup(s)",
+    "remote_chain_healthy": "Remote chain healthy",
+    "remote_chain_cleanup_pending": "Remote chain healthy, old chain pending cleanup",
+    "remote_chain_rebuild": "Rebuild scheduled off-peak",
+    "remote_chain_unknown": "Remote chain not checked"
   },
   "wp_plugin_batch": {
     "button": "Batch update",

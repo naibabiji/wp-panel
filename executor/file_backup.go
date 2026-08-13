@@ -80,10 +80,18 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 	// 探测失败（连接失败/配置无效）同样按"未确认完整"处理，强制全量。
 	forcedFullByRemote := false
 	if !isFull {
-		if hasFull, err := RemoteHasFullFileBackup(domain); err != nil || !hasFull {
+		hasFull, err := RemoteHasFullFileBackup(domain)
+		if err != nil {
+			return "", fmt.Errorf("无法确认远程全量基线，已保留现有增量链: %w", err)
+		}
+		if !hasFull {
 			isFull = true
 			forcedFullByRemote = true
 		}
+	}
+	oldChain := []string{}
+	if isFull {
+		oldChain = loadFileBackupChain(siteID)
 	}
 
 	tarExcludes := []string{
@@ -146,10 +154,6 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 
 	os.WriteFile(stampFile, []byte(time.Now().Format(time.RFC3339)), 0644)
 
-	if isFull {
-		cleanOldBackups(backupDir, keepCount, siteID)
-	}
-
 	info, _ := os.Stat(fullPath)
 	size := int64(0)
 	if info != nil {
@@ -159,15 +163,84 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 	if isFull {
 		modeLabel = "full"
 	}
-	recordFileBackup(siteID, tarName, size, modeLabel, domain)
+	if !recordFileBackup(siteID, tarName, size, modeLabel, domain) {
+		return "", fmt.Errorf("文件备份已生成，但记录写入失败，未执行远程换代")
+	}
 
-	SyncBackupToRemote(fullPath, BackupSourceFile, siteID, tarName)
+	remoteEnabled := remoteBackupEnabled()
+	remoteSynced := SyncBackupToRemote(fullPath, BackupSourceFile, siteID, tarName)
+	if isFull {
+		if remoteEnabled && remoteSynced {
+			cleanupSupersededFileBackupChain(siteID, domain, backupDir, oldChain)
+		} else if !remoteEnabled {
+			cleanOldBackups(backupDir, keepCount, siteID)
+		}
+	}
 	logMsg := fmt.Sprintf("%s 文件备份成功: %s (%s)", domain, tarName, map[bool]string{true: "全量", false: "增量"}[isFull])
 	if forcedFullByRemote {
 		logMsg += "；检测到远程无全量基线，已自动转为全量备份"
 	}
 	appendCronLog(logMsg)
+	if remoteEnabled && !remoteSynced {
+		return "", fmt.Errorf("本地文件备份已生成，但远程同步失败，旧备份链已保留")
+	}
 	return logMsg, nil
+}
+
+func remoteBackupEnabled() bool {
+	var enabled int
+	return database.GetDB().QueryRow(`SELECT enabled FROM remote_backup_settings WHERE id=1`).Scan(&enabled) == nil && enabled == 1
+}
+
+func loadFileBackupChain(siteID int) []string {
+	rows, err := database.GetDB().Query(`SELECT filename FROM file_backups WHERE site_id=? ORDER BY created_at, id`, siteID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var files []string
+	for rows.Next() {
+		var filename string
+		if rows.Scan(&filename) == nil {
+			files = append(files, filename)
+		}
+	}
+	return files
+}
+
+// cleanupSupersededFileBackupChain 仅清理新全量开始前冻结的旧链名单。远端删除成功后才删除
+// 本地文件和数据库记录；失败项保留，供后台维护重试。
+func cleanupSupersededFileBackupChain(siteID int, domain, backupDir string, oldChain []string) int {
+	return cleanupSupersededFileBackupChainWith(siteID, domain, backupDir, oldChain,
+		deleteRemoteBackupFile,
+		func(path string) error { return os.Remove(path) },
+		func(siteID int, filename string) error {
+			_, err := database.GetDB().Exec(`DELETE FROM file_backups WHERE site_id=? AND filename=?`, siteID, filename)
+			return err
+		})
+}
+
+func cleanupSupersededFileBackupChainWith(siteID int, domain, backupDir string, oldChain []string,
+	deleteRemote func(string) error, removeLocal func(string) error, deleteRecord func(int, string) error) int {
+	cleaned := 0
+	for _, filename := range oldChain {
+		relPath := domain + "/files/" + filename
+		if err := deleteRemote(relPath); err != nil {
+			log.Printf("清理远程旧文件备份失败 [%s]: %v", relPath, err)
+			continue
+		}
+		localPath := filepath.Join(backupDir, filename)
+		if err := removeLocal(localPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("清理本地旧文件备份失败 [%s]: %v", localPath, err)
+			continue
+		}
+		if err := deleteRecord(siteID, filename); err != nil {
+			log.Printf("清理旧文件备份记录失败 [%s]: %v", relPath, err)
+			continue
+		}
+		cleaned++
+	}
+	return cleaned
 }
 
 func cleanOldBackups(dir string, keep int, siteID int) {
@@ -228,13 +301,15 @@ func checkDiskSpace(backupDir string, minFree int64) bool {
 // recordFileBackup 把生成的文件备份写入 file_backups 表，供备份总览页面展示。
 // 写入失败不影响已经生成的备份文件（文件备份成本较高，不因记录写入失败而丢弃），
 // 但必须可见地记录下来，避免总览页面缺记录却无人知晓。
-func recordFileBackup(siteID int, filename string, size int64, mode, domain string) {
+func recordFileBackup(siteID int, filename string, size int64, mode, domain string) bool {
 	if _, err := database.GetDB().Exec(`INSERT INTO file_backups (site_id, filename, file_size, mode) VALUES (?, ?, ?, ?)`,
 		siteID, filename, size, mode); err != nil {
 		msg := fmt.Sprintf("%s 文件备份记录写入失败: %v；该备份不会出现在备份总览页面，后续远程同步状态也无法回写", domain, err)
 		log.Printf("文件备份记录写入 file_backups 失败 [%s]: %v", domain, err)
 		appendCronLog(msg)
+		return false
 	}
+	return true
 }
 
 func appendCronLog(msg string) {

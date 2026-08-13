@@ -48,6 +48,13 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 	if oomTableExists != 1 {
 		t.Fatalf("system_oom_events exists = %d, want 1", oomTableExists)
 	}
+	var remoteStateTableExists int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'remote_backup_site_state'").Scan(&remoteStateTableExists); err != nil {
+		t.Fatalf("query remote_backup_site_state: %v", err)
+	}
+	if remoteStateTableExists != 1 {
+		t.Fatalf("remote_backup_site_state exists = %d, want 1", remoteStateTableExists)
+	}
 	var oomAlertEnabled string
 	if err := DB.QueryRow("SELECT svalue FROM security_settings WHERE skey = 'alert_oom'").Scan(&oomAlertEnabled); err != nil {
 		t.Fatalf("query alert_oom: %v", err)
@@ -260,7 +267,7 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.42" {
+	if got := LatestVersion(); got != "1.0.43" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
 	for _, column := range []string{"database_backup_mode", "database_backup_source_id", "auto_rollback", "batch_id"} {
@@ -305,6 +312,35 @@ func TestUpgradeAddsRemoteBackupIsolationWithoutChangingLegacyTarget(t *testing.
 	}
 	if mode != "legacy" || username != "wpbackup" || authType != "password" || password != "secret" || remotePath != "/mnt/backup/old" || s3Prefix != "legacy-prefix" {
 		t.Fatalf("legacy remote backup changed after upgrade: mode=%q username=%q auth=%q password=%q path=%q s3=%q", mode, username, authType, password, remotePath, s3Prefix)
+	}
+}
+
+func TestUpgrade1043AddsRemoteBackupSiteState(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`DROP TABLE remote_backup_site_state`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`DELETE FROM schema_version`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`INSERT INTO schema_version(version) VALUES ('1.0.42')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() from 1.0.42: %v", err)
+	}
+	var exists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='remote_backup_site_state'`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists != 1 {
+		t.Fatalf("remote_backup_site_state exists=%d, want 1", exists)
 	}
 }
 

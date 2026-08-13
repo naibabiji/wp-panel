@@ -50,6 +50,7 @@
                     </svg>
                     <span class="text-lg font-semibold text-white truncate" x-text="site.domain"></span>
                     <span class="text-xs text-gray-400 whitespace-nowrap" x-text="siteSummaryText(site)"></span>
+                    <span :class="remoteChainBadgeClass(site)" class="text-xs whitespace-nowrap" :title="site.remote_message || ''" x-text="remoteChainLabel(site)"></span>
                     <span class="text-xs text-gray-500 whitespace-nowrap hidden sm:inline">{{t .Lang "backups.toggle_hint"}}</span>
                 </span>
                 <button type="button" @click.stop.prevent="goToSite(site.site_id)" class="btn-secondary text-xs py-1 px-3 flex-shrink-0">{{t .Lang "backups.view_website"}}</button>
@@ -173,6 +174,18 @@ function backupsOverview() {
             if (site.db_backups && site.db_backups.length) parts.push(t('backups.summary_db_count', { count: site.db_backups.length }));
             if (site.file_backups && site.file_backups.length) parts.push(t('backups.summary_file_count', { count: site.file_backups.length }));
             return parts.length ? parts.join(' · ') : t('backups.no_backups');
+        },
+        remoteChainBadgeClass(site) {
+            if (site.remote_rebuild_required) return 'badge-warning';
+            if (site.remote_status === 'cleanup_pending') return 'badge-warning';
+            if (site.remote_status === 'healthy') return 'badge-success';
+            return 'badge-info';
+        },
+        remoteChainLabel(site) {
+            if (site.remote_rebuild_required) return t('backups.remote_chain_rebuild');
+            if (site.remote_status === 'cleanup_pending') return t('backups.remote_chain_cleanup_pending');
+            if (site.remote_status === 'healthy') return t('backups.remote_chain_healthy');
+            return t('backups.remote_chain_unknown');
         },
         transportBadgeClass(b) {
             if (b.transport_status === 'synced') return 'badge-success';

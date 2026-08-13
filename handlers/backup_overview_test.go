@@ -14,10 +14,12 @@ import (
 )
 
 type overviewSite struct {
-	SiteID      int              `json:"site_id"`
-	Domain      string           `json:"domain"`
-	DBBackups   []map[string]any `json:"db_backups"`
-	FileBackups []map[string]any `json:"file_backups"`
+	SiteID                int              `json:"site_id"`
+	Domain                string           `json:"domain"`
+	RemoteStatus          string           `json:"remote_status"`
+	RemoteRebuildRequired bool             `json:"remote_rebuild_required"`
+	DBBackups             []map[string]any `json:"db_backups"`
+	FileBackups           []map[string]any `json:"file_backups"`
 }
 
 type overviewData struct {
@@ -61,6 +63,9 @@ func TestGetBackupOverviewReturnsSitesAndPanelBackups(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO file_backups (site_id, filename, file_size, mode, transport_status) VALUES (1, 'file_full_x.tar.gz', 20, 'full', 'local')`); err != nil {
 		t.Fatalf("insert file_backups: %v", err)
 	}
+	if _, err := db.Exec(`INSERT INTO remote_backup_site_state (site_id,status,rebuild_required,message) VALUES (1,'rebuild_required',1,'missing baseline')`); err != nil {
+		t.Fatalf("insert remote backup state: %v", err)
+	}
 
 	backupRoot := t.TempDir()
 	panelDir := filepath.Join(backupRoot, "panel-db")
@@ -97,6 +102,9 @@ func TestGetBackupOverviewReturnsSitesAndPanelBackups(t *testing.T) {
 	site := resp.Data.Sites[0]
 	if site.Domain != "overview.example.com" {
 		t.Fatalf("site domain = %q, want overview.example.com", site.Domain)
+	}
+	if site.RemoteStatus != "rebuild_required" || !site.RemoteRebuildRequired {
+		t.Fatalf("remote state = %q/%v, want rebuild_required/true", site.RemoteStatus, site.RemoteRebuildRequired)
 	}
 	if len(site.DBBackups) != 1 || site.DBBackups[0]["filename"] != "db.sql.gz" {
 		t.Fatalf("db_backups = %+v, want one entry for db.sql.gz", site.DBBackups)
@@ -487,7 +495,7 @@ func TestReconcileBackupStatusReturnsUpdatedCountWhenNothingPending(t *testing.T
 	gin.SetMode(gin.TestMode)
 	setupBackupOverviewTestDB(t)
 	db := database.GetDB()
-	// 启用远程备份，但没有任何 transport_status='local' 的记录：应该在不发远程请求的情况下
+	// 启用远程备份，但没有任何 transport_status 为 local/synced 的记录：应该在不发远程请求的情况下
 	// 直接返回 updated=0。
 	if _, err := db.Exec(`UPDATE remote_backup_settings SET enabled = 1, backup_type = 's3',
 		s3_endpoint = 'https://invalid.example.invalid', s3_bucket = 'x', s3_access_key_id = 'k', s3_secret_key = 'secret' WHERE id = 1`); err != nil {

@@ -456,6 +456,16 @@ var migrations = append([]string{
 		)`,
 	`INSERT OR IGNORE INTO remote_backup_settings (id) VALUES (1)`,
 
+	`CREATE TABLE IF NOT EXISTS remote_backup_site_state (
+		site_id          INTEGER PRIMARY KEY,
+		status           TEXT NOT NULL DEFAULT 'unknown',
+		rebuild_required INTEGER NOT NULL DEFAULT 0,
+		message          TEXT NOT NULL DEFAULT '',
+		last_checked_at  DATETIME,
+		updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE
+	)`,
+
 	// ============================================================
 	// ai_settings
 	// ============================================================

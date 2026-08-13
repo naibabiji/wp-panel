@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -193,6 +194,13 @@ func SaveRemoteBackup(c *gin.Context) {
 		req.S3Endpoint, req.S3Bucket, req.S3Region, req.S3AccessKeyID, req.S3SecretKey, strings.Trim(req.S3PathPrefix, "/"), strings.Trim(req.S3BasePrefix, "/")); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存远程备份设置失败"))
 		return
+	}
+	if req.Enabled {
+		executor.GoSafe(func() {
+			if _, err := executor.MaintainRemoteBackups(false); err != nil {
+				log.Printf("远程备份配置保存后自动核对失败: %v", err)
+			}
+		})
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "设置已保存"}))

@@ -30,10 +30,13 @@ type OverviewFileBackup struct {
 
 // SiteBackupOverview 汇总单个网站的数据库备份和文件备份列表，供备份总览页面展示。
 type SiteBackupOverview struct {
-	SiteID      int                  `json:"site_id"`
-	Domain      string               `json:"domain"`
-	DBBackups   []OverviewDBBackup   `json:"db_backups"`
-	FileBackups []OverviewFileBackup `json:"file_backups"`
+	SiteID                int                  `json:"site_id"`
+	Domain                string               `json:"domain"`
+	RemoteStatus          string               `json:"remote_status"`
+	RemoteRebuildRequired bool                 `json:"remote_rebuild_required"`
+	RemoteMessage         string               `json:"remote_message"`
+	DBBackups             []OverviewDBBackup   `json:"db_backups"`
+	FileBackups           []OverviewFileBackup `json:"file_backups"`
 }
 
 // GetBackupOverview 返回所有网站的备份总览（数据库备份 + 文件备份）以及面板自身数据库备份列表。
@@ -59,13 +62,43 @@ func GetBackupOverview(c *gin.Context) {
 		}
 		siteIndex[id] = len(sites)
 		sites = append(sites, SiteBackupOverview{
-			SiteID:      id,
-			Domain:      domain,
-			DBBackups:   []OverviewDBBackup{},
-			FileBackups: []OverviewFileBackup{},
+			SiteID:       id,
+			Domain:       domain,
+			RemoteStatus: "unknown",
+			DBBackups:    []OverviewDBBackup{},
+			FileBackups:  []OverviewFileBackup{},
 		})
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取网站列表失败"))
+		return
+	}
 	rows.Close()
+	stateRows, err := db.Query(`SELECT site_id,status,rebuild_required,message FROM remote_backup_site_state`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询远程备份维护状态失败"))
+		return
+	}
+	for stateRows.Next() {
+		var siteID, rebuild int
+		var status, message string
+		if err := stateRows.Scan(&siteID, &status, &rebuild, &message); err != nil {
+			log.Printf("备份总览: 扫描远程维护状态失败: %v", err)
+			continue
+		}
+		if idx, ok := siteIndex[siteID]; ok {
+			sites[idx].RemoteStatus = status
+			sites[idx].RemoteRebuildRequired = rebuild == 1
+			sites[idx].RemoteMessage = message
+		}
+	}
+	if err := stateRows.Err(); err != nil {
+		stateRows.Close()
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取远程备份维护状态失败"))
+		return
+	}
+	stateRows.Close()
 
 	dbRows, err := db.Query(`SELECT id, site_id, filename, file_size, db_name, auto, transport_status, transport_message, created_at
 		FROM db_backups ORDER BY created_at DESC`)
@@ -88,6 +121,11 @@ func GetBackupOverview(c *gin.Context) {
 			sites[idx].DBBackups = append(sites[idx].DBBackups, b)
 		}
 	}
+	if err := dbRows.Err(); err != nil {
+		dbRows.Close()
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取数据库备份列表失败"))
+		return
+	}
 	dbRows.Close()
 
 	fileRows, err := db.Query(`SELECT id, site_id, filename, file_size, mode, transport_status, transport_message, created_at
@@ -108,6 +146,11 @@ func GetBackupOverview(c *gin.Context) {
 			sites[idx].FileBackups = append(sites[idx].FileBackups, b)
 		}
 	}
+	if err := fileRows.Err(); err != nil {
+		fileRows.Close()
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取文件备份列表失败"))
+		return
+	}
 	fileRows.Close()
 
 	panelBackupDir := filepath.Join(cfg.Panel.BackupDir, "panel-db")
@@ -122,12 +165,12 @@ func GetBackupOverview(c *gin.Context) {
 	}))
 }
 
-// ReconcileBackupStatus 由管理员在备份总览页面显式点击"核对远程状态"触发：核对历史备份记录
-// （transport_status 还停留在默认值 local）是否其实已经同步到远程，命中的回写为 synced。
+// ReconcileBackupStatus 由管理员在备份总览页面显式点击"核对远程状态"触发：把 local/synced
+// 备份记录与当前远程目标双向校准，并补传远端缺失但本地仍存在的文件。
 // 不放在 GetBackupOverview 里自动触发——远程慢或不可达时会拖慢一个本该只读、快速的列表接口，
-// 而且确实从未同步过远程的记录会一直停在 local，等于每次打开页面都重新发一次远程列表请求。
+// 大型全量重建只允许每天低峰后台任务执行，HTTP 请求不会触发压缩。
 func ReconcileBackupStatus(c *gin.Context) {
-	updated, err := executor.ReconcileBackupTransportStatus()
+	updated, err := executor.MaintainRemoteBackups(false)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(err.Error()))
 		return

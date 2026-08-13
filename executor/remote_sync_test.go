@@ -62,6 +62,17 @@ func TestLocalBackupRelPathRequiresBackupsRoot(t *testing.T) {
 	}
 }
 
+func TestValidateRemoteRelativePath(t *testing.T) {
+	if got, err := validateRemoteRelativePath("example.com/files/file_full_20260101.tar.gz"); err != nil || got != "example.com/files/file_full_20260101.tar.gz" {
+		t.Fatalf("safe path = %q, %v", got, err)
+	}
+	for _, unsafe := range []string{"", "/etc/passwd", "../file.tar.gz", "example.com/../file.tar.gz", "example.com/files/*.gz", "example.com/files/a b.tar.gz", "example.com//files/a.tar.gz"} {
+		if _, err := validateRemoteRelativePath(unsafe); err == nil {
+			t.Errorf("unsafe path %q accepted", unsafe)
+		}
+	}
+}
+
 func TestValidateS3BackupSettingsRejectsUnsafeValues(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -512,8 +523,8 @@ func TestApplyReconciledTransportStatusOnlyUpdatesMatchedLocalRows(t *testing.T)
 	}
 
 	pending := []pendingTransportStatusRow{
-		{table: "db_backups", id: 1, domain: "reconcile.example.com", filename: "a.sql.gz", subdir: "db"},
-		{table: "file_backups", id: 1, domain: "reconcile.example.com", filename: "file_full_c.tar.gz", subdir: "files"},
+		{table: "db_backups", id: 1, domain: "reconcile.example.com", filename: "a.sql.gz", subdir: "db", status: "local"},
+		{table: "file_backups", id: 1, domain: "reconcile.example.com", filename: "file_full_c.tar.gz", subdir: "files", status: "local"},
 	}
 	remoteKeys := map[string]bool{
 		"wp-panel/reconcile.example.com/db/a.sql.gz": true,
@@ -546,7 +557,7 @@ func TestApplyReconciledTransportStatusOnlyUpdatesMatchedLocalRows(t *testing.T)
 	}
 }
 
-func TestLoadPendingTransportStatusRowsOnlyReturnsLocalRows(t *testing.T) {
+func TestLoadPendingTransportStatusRowsReturnsLocalAndSyncedRows(t *testing.T) {
 	openTestDB(t)
 	insertMinimalWebsite(t, "pending.example.com")
 	db := database.GetDB()
@@ -564,20 +575,43 @@ func TestLoadPendingTransportStatusRowsOnlyReturnsLocalRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadPendingTransportStatusRows() error = %v", err)
 	}
-	if len(pending) != 2 {
-		t.Fatalf("pending = %+v, want 2 rows (only transport_status='local')", pending)
+	if len(pending) != 3 {
+		t.Fatalf("pending = %+v, want 3 local/synced rows", pending)
 	}
-	var sawDB, sawFile bool
+	var sawLocalDB, sawSyncedDB, sawFile bool
 	for _, p := range pending {
-		if p.table == "db_backups" && p.filename == "a.sql.gz" && p.domain == "pending.example.com" && p.subdir == "db" {
-			sawDB = true
+		if p.table == "db_backups" && p.filename == "a.sql.gz" && p.domain == "pending.example.com" && p.subdir == "db" && p.status == "local" {
+			sawLocalDB = true
 		}
-		if p.table == "file_backups" && p.filename == "file_full_c.tar.gz" && p.domain == "pending.example.com" && p.subdir == "files" {
+		if p.table == "db_backups" && p.filename == "b.sql.gz" && p.status == "synced" {
+			sawSyncedDB = true
+		}
+		if p.table == "file_backups" && p.filename == "file_full_c.tar.gz" && p.domain == "pending.example.com" && p.subdir == "files" && p.status == "local" {
 			sawFile = true
 		}
 	}
-	if !sawDB || !sawFile {
+	if !sawLocalDB || !sawSyncedDB || !sawFile {
 		t.Fatalf("pending = %+v, missing expected rows", pending)
+	}
+}
+
+func TestApplyReconciledTransportStatusClearsSyncedRowsForEmptyRemote(t *testing.T) {
+	openTestDB(t)
+	insertMinimalWebsite(t, "empty-remote.example.com")
+	db := database.GetDB()
+	if _, err := db.Exec(`INSERT INTO db_backups (id, site_id, filename, file_size, db_name, transport_status) VALUES (1, 1, 'old.sql.gz', 10, 'db1', 'synced')`); err != nil {
+		t.Fatal(err)
+	}
+	pending := []pendingTransportStatusRow{{table: "db_backups", id: 1, domain: "empty-remote.example.com", filename: "old.sql.gz", subdir: "db", status: "synced"}}
+	if updated := applyReconciledTransportStatus(pending, map[string]bool{}, "rsync", ""); updated != 1 {
+		t.Fatalf("updated = %d, want 1", updated)
+	}
+	var status string
+	if err := db.QueryRow(`SELECT transport_status FROM db_backups WHERE id=1`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "local" {
+		t.Fatalf("transport_status = %q, want local", status)
 	}
 }
 
@@ -596,7 +630,7 @@ func TestReconcileBackupTransportStatusSkipsRemoteCallWhenNothingPending(t *test
 	if _, err := db.Exec(`UPDATE remote_backup_settings SET enabled = 1, backup_type = 's3', s3_endpoint = 'https://invalid.example.invalid', s3_bucket = 'x', s3_access_key_id = 'k', s3_secret_key = 'secret' WHERE id = 1`); err != nil {
 		t.Fatalf("update remote_backup_settings: %v", err)
 	}
-	// 没有任何 transport_status='local' 的记录时，函数应该在发起任何远程请求之前就直接返回；
+	// 没有任何 transport_status 为 local/synced 的记录时，函数应该在发起任何远程请求之前就直接返回；
 	// 如果它真的尝试连了 https://invalid.example.invalid 就会报网络错误，err==nil 证明短路生效。
 	updated, err := ReconcileBackupTransportStatus()
 	if err != nil {
@@ -629,7 +663,7 @@ func TestApplyReconciledTransportStatusSkipsFailedUpdateWithoutCountingIt(t *tes
 	pending := []pendingTransportStatusRow{
 		// id=999 在 db_backups 里不存在，UPDATE 会成功执行但影响 0 行——这里改用一个真正会
 		// 报错的场景：table 名故意写错，触发 db.Exec 报错，验证不会被计入 updated。
-		{table: "db_backups", id: 1, domain: "update-fail.example.com", filename: "a.sql.gz", subdir: "db"},
+		{table: "db_backups", id: 1, domain: "update-fail.example.com", filename: "a.sql.gz", subdir: "db", status: "local"},
 	}
 	remoteKeys := map[string]bool{
 		"update-fail.example.com/db/a.sql.gz": true,

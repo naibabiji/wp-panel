@@ -507,6 +507,21 @@ var upgrades = []Upgrade{
 			`ALTER TABLE remote_backup_settings ADD COLUMN isolate_path INTEGER NOT NULL DEFAULT 0`,
 		},
 	},
+	{
+		Version:     "1.0.43",
+		Description: "新增远程备份自动核对、补传与文件基线重建状态",
+		SQL: []string{
+			`CREATE TABLE IF NOT EXISTS remote_backup_site_state (
+				site_id          INTEGER PRIMARY KEY,
+				status           TEXT NOT NULL DEFAULT 'unknown',
+				rebuild_required INTEGER NOT NULL DEFAULT 0,
+				message          TEXT NOT NULL DEFAULT '',
+				last_checked_at  DATETIME,
+				updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE
+			)`,
+		},
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

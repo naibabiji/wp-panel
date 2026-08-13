@@ -258,6 +258,8 @@ func main() {
 	log.Println("OOM 事故监控已启动")
 	executor.StartAutoBackupScheduler()
 	log.Println("自动备份调度器已启动")
+	executor.StartRemoteBackupMaintenanceScheduler()
+	log.Println("远程备份自动维护调度器已启动")
 	executor.StartDBBackupScheduler()
 	log.Println("面板数据库备份调度器已启动")
 	executor.StartSSLRenewalScheduler()

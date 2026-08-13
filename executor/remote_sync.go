@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -55,6 +56,7 @@ var (
 	s3RegionPattern       = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
 	s3AccessKeyPattern    = regexp.MustCompile(`^[A-Za-z0-9._/+=:@-]{3,256}$`)
 	s3PathPrefixPattern   = regexp.MustCompile(`^[A-Za-z0-9._~/-]*$`)
+	remoteRelPathPattern  = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 )
 
 func ValidateRemoteBackupSettings(host string, port int, username string, authType string, remotePath string) error {
@@ -178,10 +180,19 @@ func localBackupRelPath(localFile string) (string, error) {
 	return filepath.ToSlash(rel), nil
 }
 
+func validateRemoteRelativePath(relPath string) (string, error) {
+	relPath = filepath.ToSlash(strings.TrimSpace(relPath))
+	clean := path.Clean(relPath)
+	if clean == "." || clean != relPath || strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "../") || !remoteRelPathPattern.MatchString(clean) {
+		return "", fmt.Errorf("远程备份相对路径非法")
+	}
+	return clean, nil
+}
+
 // SyncBackupToRemote 将单个备份文件同步到远程服务器，保留 domain/db/ 或 domain/files/ 目录结构。
 // 若 keep_local=0，同步成功后删除本地文件。source/siteID/filename 用于同步完成后回写对应
 // 备份记录（db_backups 或 file_backups）的 transport_status/transport_message。
-func SyncBackupToRemote(localFile string, source BackupSource, siteID int, filename string) {
+func SyncBackupToRemote(localFile string, source BackupSource, siteID int, filename string) bool {
 	db := database.GetDB()
 	var enabled, keepLocal, port int
 	var backupType, host, username, authType, password, remotePath string
@@ -193,23 +204,22 @@ func SyncBackupToRemote(localFile string, source BackupSource, siteID int, filen
 		&s3Endpoint, &s3Bucket, &s3Region, &s3AccessKeyID, &s3SecretKey, &s3PathPrefix)
 	if err != nil {
 		syncLog("", fmt.Sprintf("读取远程备份设置失败: %v", err), "failed")
-		return
+		return false
 	}
 	if enabled == 0 {
-		return
+		return false
 	}
 	if backupType == "" {
 		backupType = "rsync"
 	}
 	if err := ValidateRemoteBackupType(backupType); err != nil {
 		syncLog("", err.Error(), "failed")
-		return
+		return false
 	}
 	if backupType == "s3" {
-		syncBackupToS3(localFile, source, siteID, filename, s3Endpoint, s3Bucket, s3Region, s3AccessKeyID, s3SecretKey, s3PathPrefix, keepLocal)
-		return
+		return syncBackupToS3(localFile, source, siteID, filename, s3Endpoint, s3Bucket, s3Region, s3AccessKeyID, s3SecretKey, s3PathPrefix, keepLocal)
 	}
-	syncBackupToRsync(localFile, source, siteID, filename, host, port, username, authType, password, remotePath, keepLocal)
+	return syncBackupToRsync(localFile, source, siteID, filename, host, port, username, authType, password, remotePath, keepLocal)
 }
 
 // updateBackupTransportStatus 把远程同步结果回写到对应备份记录表（db_backups 或 file_backups）。
@@ -262,32 +272,31 @@ func RemoteHasFullFileBackup(domain string) (bool, error) {
 	return remoteHasFullBackup(domain, host, port, username, authType, password, remotePath)
 }
 
-// pendingTransportStatusRow 是一条 transport_status 还停留在默认值 local、需要核对是否其实
-// 已经同步过远程的备份记录。
+// pendingTransportStatusRow 是一条需要和当前远程目标核对的备份记录。
 type pendingTransportStatusRow struct {
 	table    string // "db_backups" 或 "file_backups"
 	id       int
 	domain   string
 	filename string
 	subdir   string // "db" 或 "files"，用于拼出和 SyncBackupToRemote 一致的相对路径
+	status   string // "local" 或 "synced"
 }
 
-// loadPendingTransportStatusRows 查出 db_backups/file_backups 里 transport_status='local' 的记录，
-// JOIN websites 取 domain。这些是"还没被新回写机制确认过"的记录（要么真的没同步，要么是升级前
-// 用旧代码同步的历史数据，回写机制当时还不存在）。查询失败时返回 error，不静默丢弃结果。
+// loadPendingTransportStatusRows 查出 db_backups/file_backups 里 local/synced 的记录并 JOIN websites
+// 取 domain。failed 保留上次同步失败信息，不由远程枚举覆盖。查询失败时返回 error，不静默丢弃结果。
 func loadPendingTransportStatusRows() ([]pendingTransportStatusRow, error) {
 	db := database.GetDB()
 	var pending []pendingTransportStatusRow
 
-	rows, err := db.Query(`SELECT db_backups.id, websites.domain, db_backups.filename
+	rows, err := db.Query(`SELECT db_backups.id, websites.domain, db_backups.filename, db_backups.transport_status
 		FROM db_backups JOIN websites ON websites.id = db_backups.site_id
-		WHERE db_backups.transport_status = 'local'`)
+		WHERE db_backups.transport_status IN ('local', 'synced')`)
 	if err != nil {
 		return nil, fmt.Errorf("查询待核对的数据库备份失败: %w", err)
 	}
 	for rows.Next() {
 		var p pendingTransportStatusRow
-		if rows.Scan(&p.id, &p.domain, &p.filename) == nil {
+		if rows.Scan(&p.id, &p.domain, &p.filename, &p.status) == nil {
 			p.table = "db_backups"
 			p.subdir = "db"
 			pending = append(pending, p)
@@ -299,15 +308,15 @@ func loadPendingTransportStatusRows() ([]pendingTransportStatusRow, error) {
 	}
 	rows.Close()
 
-	fileRows, err := db.Query(`SELECT file_backups.id, websites.domain, file_backups.filename
+	fileRows, err := db.Query(`SELECT file_backups.id, websites.domain, file_backups.filename, file_backups.transport_status
 		FROM file_backups JOIN websites ON websites.id = file_backups.site_id
-		WHERE file_backups.transport_status = 'local'`)
+		WHERE file_backups.transport_status IN ('local', 'synced')`)
 	if err != nil {
 		return nil, fmt.Errorf("查询待核对的文件备份失败: %w", err)
 	}
 	for fileRows.Next() {
 		var p pendingTransportStatusRow
-		if fileRows.Scan(&p.id, &p.domain, &p.filename) == nil {
+		if fileRows.Scan(&p.id, &p.domain, &p.filename, &p.status) == nil {
 			p.table = "file_backups"
 			p.subdir = "files"
 			pending = append(pending, p)
@@ -322,10 +331,10 @@ func loadPendingTransportStatusRows() ([]pendingTransportStatusRow, error) {
 	return pending, nil
 }
 
-// applyReconciledTransportStatus 把 pending 记录逐条和远程已有的 key/文件集合比对，命中的
-// 回写为 synced，返回实际成功回写的条数。纯逻辑、不发网络请求，方便单独测试。
+// applyReconciledTransportStatus 把记录逐条和当前远程目标比对：存在则为 synced，不存在则为 local。
+// 只回写状态发生变化的记录，返回实际成功回写的条数。纯逻辑、不发网络请求，方便单独测试。
 func applyReconciledTransportStatus(pending []pendingTransportStatusRow, remoteKeys map[string]bool, backupType, s3PathPrefix string) int {
-	if len(pending) == 0 || len(remoteKeys) == 0 {
+	if len(pending) == 0 {
 		return 0
 	}
 	db := database.GetDB()
@@ -336,15 +345,19 @@ func applyReconciledTransportStatus(pending []pendingTransportStatusRow, remoteK
 		if backupType == "s3" {
 			key = s3ObjectKey(s3PathPrefix, relPath)
 		}
-		if !remoteKeys[key] {
+		targetStatus := "local"
+		if remoteKeys[key] {
+			targetStatus = "synced"
+		}
+		if p.status == targetStatus {
 			continue
 		}
 		var execErr error
 		switch p.table {
 		case "db_backups":
-			_, execErr = db.Exec(`UPDATE db_backups SET transport_status = 'synced' WHERE id = ?`, p.id)
+			_, execErr = db.Exec(`UPDATE db_backups SET transport_status = ? WHERE id = ?`, targetStatus, p.id)
 		case "file_backups":
-			_, execErr = db.Exec(`UPDATE file_backups SET transport_status = 'synced' WHERE id = ?`, p.id)
+			_, execErr = db.Exec(`UPDATE file_backups SET transport_status = ? WHERE id = ?`, targetStatus, p.id)
 		}
 		if execErr != nil {
 			log.Printf("核对远程备份状态: 回写记录失败 table=%s id=%d: %v", p.table, p.id, execErr)
@@ -355,12 +368,9 @@ func applyReconciledTransportStatus(pending []pendingTransportStatusRow, remoteK
 	return updated
 }
 
-// ReconcileBackupTransportStatus 核对历史备份记录（transport_status 停留在默认值 local）是否
-// 其实已经同步到远程，命中的回写为 synced，返回本次实际修正的条数。只在有 transport_status='local'
-// 的记录时才会真正发远程列表请求（一次，不是逐条查）。注意：如果确实存在从未同步过远程的记录
-// （比如远程备份本来就没启用过、或者同步一直失败），这些记录会一直停留在 local，每次调用都会
-// 重新发远程请求——所以这个函数只应该由用户显式触发（面板上的"核对远程状态"按钮），不要挂在
-// 页面加载路径上自动调用，否则慢/不可达的远程会拖慢一个本该是只读的列表接口。
+// ReconcileBackupTransportStatus 把 local/synced 记录与当前远程目标双向校准，返回实际修正条数。
+// 只在存在可核对记录时发起一次远程列表请求。该函数只应由管理员显式触发，不挂在页面加载路径上，
+// 避免慢或不可达的远端拖慢只读列表接口。
 func ReconcileBackupTransportStatus() (int, error) {
 	db := database.GetDB()
 	var enabled, port int
@@ -588,7 +598,7 @@ const (
 
 // listS3ObjectKeys 列出 S3 兼容存储里 pathPrefix 前缀下的全部对象 key，用于核对历史备份记录
 // （transport_status 还停留在默认值 local）是否其实已经同步到远程。翻页上限 s3ListMaxPages，
-// 超过后停止并返回已收集到的部分结果，不报错、不无限翻页。
+// 超过后返回错误，不能把不完整清单当成“远端文件不存在”，否则会错误触发补传或基线重建。
 func listS3ObjectKeys(ctx context.Context, endpoint, bucket, region, accessKeyID, secretKey, pathPrefix string) (map[string]bool, error) {
 	if region == "" {
 		region = "auto"
@@ -628,18 +638,18 @@ func listS3ObjectKeys(ctx context.Context, endpoint, bucket, region, accessKeyID
 			keys[c.Key] = true
 		}
 		if !out.IsTruncated || out.NextContinuationToken == "" {
-			break
+			return keys, nil
 		}
 		continuationToken = out.NextContinuationToken
 	}
-	return keys, nil
+	return keys, fmt.Errorf("S3 远程对象清单超过 %d 条安全核对上限，未修改备份状态", s3ListMaxPages*s3ListPageSize)
 }
 
-func syncBackupToRsync(localFile string, source BackupSource, siteID int, filename string, host string, port int, username string, authType string, password string, remotePath string, keepLocal int) {
+func syncBackupToRsync(localFile string, source BackupSource, siteID int, filename string, host string, port int, username string, authType string, password string, remotePath string, keepLocal int) bool {
 	if host == "" {
 		syncLog("", "远程备份已启用但未填写服务器地址", "failed")
 		updateBackupTransportStatus(source, siteID, filename, "failed", "远程备份已启用但未填写服务器地址")
-		return
+		return false
 	}
 	if port == 0 {
 		port = 22
@@ -654,13 +664,13 @@ func syncBackupToRsync(localFile string, source BackupSource, siteID int, filena
 	if err := ValidateRemoteBackupSettings(host, port, username, authType, remotePath); err != nil {
 		syncLog("", "远程备份设置无效: "+err.Error(), "failed")
 		updateBackupTransportStatus(source, siteID, filename, "failed", "远程备份设置无效: "+err.Error())
-		return
+		return false
 	}
 	relPath, err := localBackupRelPath(localFile)
 	if err != nil {
 		syncLog("", err.Error(), "failed")
 		updateBackupTransportStatus(source, siteID, filename, "failed", err.Error())
-		return
+		return false
 	}
 
 	// 用 /. 标记分离备份根目录和相对路径，rsync -R 保留 ./ 之后的结构
@@ -674,12 +684,12 @@ func syncBackupToRsync(localFile string, source BackupSource, siteID int, filena
 		if _, err := os.Stat(keyPath); err != nil {
 			syncLog("", "SSH 密钥不存在: "+keyPath, "failed")
 			updateBackupTransportStatus(source, siteID, filename, "failed", "SSH 密钥不存在: "+keyPath)
-			return
+			return false
 		}
 		if err := os.Chmod(keyPath, 0600); err != nil {
 			syncLog("", fmt.Sprintf("SSH 密钥权限设置失败: %v", err), "failed")
 			updateBackupTransportStatus(source, siteID, filename, "failed", fmt.Sprintf("SSH 密钥权限设置失败: %v", err))
-			return
+			return false
 		}
 		cmd = exec.Command("rsync", "-avzR",
 			"-e", fmt.Sprintf("ssh -i %s %s", keyPath, sshOpts),
@@ -688,7 +698,7 @@ func syncBackupToRsync(localFile string, source BackupSource, siteID int, filena
 		if _, err := exec.LookPath("sshpass"); err != nil {
 			syncLog("", "sshpass 未安装", "failed")
 			updateBackupTransportStatus(source, siteID, filename, "failed", "sshpass 未安装")
-			return
+			return false
 		}
 		cmd = exec.Command("sshpass", "-e", "rsync", "-avzR",
 			"-e", fmt.Sprintf("ssh %s", sshOpts),
@@ -702,7 +712,7 @@ func syncBackupToRsync(localFile string, source BackupSource, siteID int, filena
 		msg := fmt.Sprintf("远程同步失败: %s — %s", relPath, strings.TrimSpace(string(out)))
 		syncLog(domain, msg, "failed")
 		updateBackupTransportStatus(source, siteID, filename, "failed", msg)
-		return
+		return false
 	}
 	syncLog(domain, fmt.Sprintf("远程同步成功: %s", relPath), "success")
 	updateBackupTransportStatus(source, siteID, filename, "synced", "")
@@ -710,28 +720,29 @@ func syncBackupToRsync(localFile string, source BackupSource, siteID int, filena
 	if keepLocal == 0 {
 		os.Remove(localFile)
 	}
+	return true
 }
 
-func syncBackupToS3(localFile string, source BackupSource, siteID int, filename string, endpoint, bucket, region, accessKeyID, secretKey, pathPrefix string, keepLocal int) {
+func syncBackupToS3(localFile string, source BackupSource, siteID int, filename string, endpoint, bucket, region, accessKeyID, secretKey, pathPrefix string, keepLocal int) bool {
 	if region == "" {
 		region = "auto"
 	}
 	if err := ValidateS3BackupSettings(endpoint, bucket, region, accessKeyID, secretKey, pathPrefix); err != nil {
 		syncLog("", "S3 远程备份设置无效: "+err.Error(), "failed")
 		updateBackupTransportStatus(source, siteID, filename, "failed", "S3 远程备份设置无效: "+err.Error())
-		return
+		return false
 	}
 	relPath, err := localBackupRelPath(localFile)
 	if err != nil {
 		syncLog("", err.Error(), "failed")
 		updateBackupTransportStatus(source, siteID, filename, "failed", err.Error())
-		return
+		return false
 	}
 	objectKey := s3ObjectKey(pathPrefix, relPath)
 	if objectKey == "" {
 		syncLog("", "S3 对象路径无效", "failed")
 		updateBackupTransportStatus(source, siteID, filename, "failed", "S3 对象路径无效")
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), s3UploadTimeout)
 	defer cancel()
@@ -740,7 +751,7 @@ func syncBackupToS3(localFile string, source BackupSource, siteID int, filename 
 		msg := fmt.Sprintf("S3 远程同步失败: %s — %v", relPath, err)
 		syncLog(domain, msg, "failed")
 		updateBackupTransportStatus(source, siteID, filename, "failed", msg)
-		return
+		return false
 	}
 	domain, _, _ := strings.Cut(relPath, "/")
 	syncLog(domain, fmt.Sprintf("S3 远程同步成功: %s", objectKey), "success")
@@ -748,6 +759,92 @@ func syncBackupToS3(localFile string, source BackupSource, siteID int, filename 
 	if keepLocal == 0 {
 		os.Remove(localFile)
 	}
+	return true
+}
+
+// deleteRemoteBackupFile 删除当前远程目标中的一个已校验相对路径。调用方必须传入冻结的旧链名单，
+// 不接受通配符，也不递归删除目录。
+func deleteRemoteBackupFile(relPath string) error {
+	relPath, err := validateRemoteRelativePath(relPath)
+	if err != nil {
+		return err
+	}
+	db := database.GetDB()
+	var enabled, port int
+	var backupType, host, username, authType, password, remotePath string
+	var endpoint, bucket, region, accessKeyID, secretKey, pathPrefix string
+	if err := db.QueryRow(`SELECT enabled, backup_type, host, port, username, auth_type, password, remote_path,
+			s3_endpoint, s3_bucket, s3_region, s3_access_key_id, s3_secret_key, s3_path_prefix
+		FROM remote_backup_settings WHERE id=1`).Scan(
+		&enabled, &backupType, &host, &port, &username, &authType, &password, &remotePath,
+		&endpoint, &bucket, &region, &accessKeyID, &secretKey, &pathPrefix); err != nil {
+		return err
+	}
+	if enabled == 0 {
+		return fmt.Errorf("远程备份未启用")
+	}
+	if backupType == "" {
+		backupType = "rsync"
+	}
+	if err := ValidateRemoteBackupType(backupType); err != nil {
+		return err
+	}
+	if backupType == "s3" {
+		if region == "" {
+			region = "auto"
+		}
+		if err := ValidateS3BackupSettings(endpoint, bucket, region, accessKeyID, secretKey, pathPrefix); err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return deleteObjectFromS3(ctx, endpoint, bucket, region, accessKeyID, secretKey, s3ObjectKey(pathPrefix, relPath))
+	}
+	if port == 0 {
+		port = 22
+	}
+	if username == "" {
+		username = "root"
+	}
+	if authType == "" {
+		authType = "password"
+	}
+	remotePath = remoteBackupPath(username, remotePath)
+	if err := ValidateRemoteBackupSettings(host, port, username, authType, remotePath); err != nil {
+		return err
+	}
+	remoteFile := remotePath + "/" + relPath
+	remoteCommand := "rm -f -- '" + remoteFile + "'"
+	commonArgs := []string{
+		"-o", "UserKnownHostsFile=/www/server/panel/remote_backup_known_hosts",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ConnectTimeout=10",
+		"-p", fmt.Sprintf("%d", port),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var cmd *exec.Cmd
+	if authType == "key" {
+		keyPath := "/www/server/panel/remote_backup_key"
+		if _, err := os.Stat(keyPath); err != nil {
+			return fmt.Errorf("SSH 密钥不存在: %s", keyPath)
+		}
+		args := append([]string{"-i", keyPath}, commonArgs...)
+		args = append(args, username+"@"+host, remoteCommand)
+		cmd = exec.CommandContext(ctx, "ssh", args...)
+	} else {
+		if _, err := exec.LookPath("sshpass"); err != nil {
+			return fmt.Errorf("sshpass 未安装")
+		}
+		args := append([]string{"-e", "ssh"}, commonArgs...)
+		args = append(args, username+"@"+host, remoteCommand)
+		cmd = exec.CommandContext(ctx, "sshpass", args...)
+		cmd.Env = append(os.Environ(), "SSHPASS="+password)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("删除远程旧备份失败: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func ProbeS3BackupConnection(endpoint, bucket, region, accessKeyID, secretKey, pathPrefix string) error {
