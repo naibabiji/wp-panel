@@ -320,6 +320,15 @@
 
                     <div x-show="cfg.backup_type === 'rsync'" class="space-y-3">
                     <div>
+                        <label class="label">{{t .Lang "settings.connection_mode"}}</label>
+                        <select x-model="cfg.connection_mode" class="input-field text-sm">
+                            <option value="auto">{{t .Lang "settings.connection_mode_auto"}}</option>
+                            <option value="advanced">{{t .Lang "settings.connection_mode_advanced"}}</option>
+                            <option x-show="cfg.connection_mode === 'legacy'" value="legacy">{{t .Lang "settings.connection_mode_legacy"}}</option>
+                        </select>
+                        <p class="text-xs text-gray-500 mt-1" x-text="cfg.connection_mode === 'auto' ? t('settings.connection_mode_auto_help') : t('settings.connection_mode_advanced_help')"></p>
+                    </div>
+                    <div>
                         <label class="label">{{t .Lang "settings.remote_host"}}</label>
                         <input type="text" x-model="cfg.host" class="input-field text-sm" placeholder="{{t .Lang "settings.remote_host_placeholder"}}">
                     </div>
@@ -330,29 +339,41 @@
                         </div>
                         <div>
                             <label class="label">{{t .Lang "auth.username"}}</label>
-                            <input type="text" x-model="cfg.username" class="input-field text-sm" placeholder="wpbackup">
+                            <input type="text" x-model="cfg.username" :readonly="cfg.connection_mode === 'auto'" class="input-field text-sm" placeholder="wpbackup">
                         </div>
                     </div>
-                    <div>
+                    <div x-show="cfg.connection_mode !== 'auto'">
                         <label class="label">{{t .Lang "settings.auth_method"}}</label>
                         <select x-model="cfg.auth_type" class="input-field text-sm">
                             <option value="key">{{t .Lang "settings.ssh_key_recommended"}}</option>
                             <option value="password">{{t .Lang "auth.password"}}</option>
                         </select>
                     </div>
-                    <div x-show="cfg.auth_type === 'password'">
+                    <div x-show="cfg.connection_mode !== 'auto' && cfg.auth_type === 'password'">
                         <label class="label">{{t .Lang "settings.ssh_password"}}</label>
                         <div class="flex space-x-1">
                             <input type="password" x-model="cfg.password" class="input-field text-sm flex-1" placeholder="{{t .Lang "settings.ssh_password_placeholder"}}">
                             <button @click="genPassword()" class="text-xs py-1 px-2 rounded flex-shrink-0" style="background-color: #1e3a5f; color: #93c5fd;" title="{{t .Lang "settings.generate_password_title"}}">{{t .Lang "settings.generate_random"}}</button>
                         </div>
                     </div>
-                    <div x-show="cfg.auth_type === 'key'" class="text-xs text-gray-400">
+                    <div x-show="cfg.connection_mode !== 'auto' && cfg.auth_type === 'key'" class="text-xs text-gray-400">
                         <p>{{t .Lang "settings.ssh_key_generated_help"}}</p>
+                        <textarea readonly class="input-field text-xs font-mono mt-2" rows="3" x-model="publicKey" :placeholder="t('settings.save_before_copy_command')"></textarea>
                     </div>
-                    <div>
+                    <div x-show="cfg.connection_mode !== 'legacy'">
+                        <label class="label">{{t .Lang "settings.remote_backup_root_path"}}</label>
+                        <input type="text" x-model="cfg.remote_base_path" class="input-field text-sm" placeholder="/mnt/backup">
+                        <p class="text-xs text-gray-500 mt-1">{{t .Lang "settings.effective_backup_path"}} <code class="text-gray-300" x-text="effectiveRemotePath()"></code></p>
+                    </div>
+                    <label x-show="cfg.connection_mode === 'advanced'" class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                        <input type="checkbox" x-model="cfg.isolate_path">
+                        <span>{{t .Lang "settings.isolate_backup_path"}}</span>
+                    </label>
+                    <p x-show="cfg.connection_mode === 'advanced' && !cfg.isolate_path" class="text-xs text-yellow-500">{{t .Lang "settings.isolation_disabled_warning"}}</p>
+                    <div x-show="cfg.connection_mode === 'legacy'">
                         <label class="label">{{t .Lang "settings.remote_backup_path"}}</label>
-                        <input type="text" x-model="cfg.remote_path" class="input-field text-sm" :placeholder="'/home/' + cfg.username + '/backup'">
+                        <input type="text" x-model="cfg.remote_path" class="input-field text-sm">
+                        <p class="text-xs text-yellow-500 mt-1">{{t .Lang "settings.legacy_mode_warning"}}</p>
                     </div>
                     </div>
 
@@ -381,7 +402,10 @@
                     </div>
                     <div>
                         <label class="label">{{t .Lang "settings.backup_path_prefix"}}</label>
-                        <input type="text" x-model="cfg.s3_path_prefix" class="input-field text-sm" placeholder="wp-panel">
+                        <input x-show="cfg.connection_mode !== 'legacy'" type="text" x-model="cfg.s3_base_prefix" class="input-field text-sm" placeholder="wp-panel">
+                        <input x-show="cfg.connection_mode === 'legacy'" type="text" x-model="cfg.s3_path_prefix" class="input-field text-sm" placeholder="wp-panel">
+                        <p x-show="cfg.connection_mode !== 'legacy'" class="text-xs text-gray-500 mt-1">{{t .Lang "settings.effective_backup_path"}} <code class="text-gray-300" x-text="effectiveS3Prefix()"></code></p>
+                        <p x-show="cfg.connection_mode === 'legacy'" class="text-xs text-yellow-500 mt-1">{{t .Lang "settings.legacy_mode_warning"}} <button type="button" @click="cfg.connection_mode = 'auto'" class="text-blue-400 underline">{{t .Lang "settings.enable_path_isolation"}}</button></p>
                     </div>
                     </div>
 
@@ -405,7 +429,7 @@
             </div>
 
             <!-- 右侧：设置助手 -->
-            <div x-show="cfg.backup_type === 'rsync'" class="p-4 rounded" style="background-color: #0f172a; border: 1px solid #1e293b;">
+            <div x-show="cfg.backup_type === 'rsync' && cfg.connection_mode === 'auto'" class="p-4 rounded" style="background-color: #0f172a; border: 1px solid #1e293b;">
                 <div class="flex items-center justify-between mb-3">
                     <h4 class="text-sm font-medium text-gray-300">{{t .Lang "settings.remote_helper_title"}}</h4>
                     <div class="flex rounded overflow-hidden" style="border: 1px solid #334155;">
@@ -419,7 +443,7 @@
                 <div class="p-3 rounded" style="background-color: #020617; border: 1px solid #1e293b;">
                     <div class="flex items-center justify-between mb-2">
                         <span class="text-gray-500 text-xs">{{t .Lang "settings.copy_to_remote"}}</span>
-                        <button @click="copyCmd()" class="text-xs py-0.5 px-2 rounded" :style="helperMode === 'delete' ? 'background-color: #7f1d1d; color: #fca5a5' : 'background-color: #1e3a5f; color: #93c5fd'">{{t .Lang "settings.copy_command"}}</button>
+                        <button @click="copyCmd()" :disabled="!canCopyCmd()" class="text-xs py-0.5 px-2 rounded disabled:opacity-50 disabled:cursor-not-allowed" :style="helperMode === 'delete' ? 'background-color: #7f1d1d; color: #fca5a5' : 'background-color: #1e3a5f; color: #93c5fd'">{{t .Lang "settings.copy_command"}}</button>
                     </div>
                     <pre class="font-mono text-gray-300 whitespace-pre-wrap text-xs leading-relaxed" x-text="genCmd()" style="word-break: break-all;"></pre>
                 </div>
@@ -1095,7 +1119,7 @@ function operationLogs() {
 }
 function remoteBackup() {
     return {
-        cfg: { enabled: false, backup_type: 'rsync', host: '', port: 22, username: 'wpbackup', auth_type: 'key', password: '', remote_path: '', keep_local: true, s3_endpoint: '', s3_bucket: '', s3_region: 'auto', s3_access_key_id: '', s3_secret_key: '', s3_path_prefix: '' },
+        cfg: { enabled: false, backup_type: 'rsync', connection_mode: 'auto', server_id: '', host: '', port: 22, username: '', auth_type: 'key', password: '', remote_path: '', remote_base_path: '/mnt/backup', isolate_path: true, keep_local: true, s3_endpoint: '', s3_bucket: '', s3_region: 'auto', s3_access_key_id: '', s3_secret_key: '', s3_path_prefix: '', s3_base_prefix: 'wp-panel' },
         publicKey: '',
         testing: false,
         testResult: '',
@@ -1114,6 +1138,7 @@ function remoteBackup() {
                     this.publicKey = r.data?.ssh_key || '';
                 }
                 if (!this.cfg.backup_type) this.cfg.backup_type = 'rsync';
+                if (!this.cfg.connection_mode) this.cfg.connection_mode = 'auto';
                 if (!this.cfg.s3_region) this.cfg.s3_region = 'auto';
             } catch(e) {}
         },
@@ -1124,7 +1149,7 @@ function remoteBackup() {
                 const r = await api('/settings/remote-backup', { method: 'PUT', body: this.cfg });
                 this.saveOK = r.success;
                 this.saveMsg = r.data?.message || (r.success ? t('settings.saved') : t('settings.save_failed'));
-                if (r.success && this.cfg.backup_type === 'rsync' && this.cfg.auth_type === 'key') this.loadPublicKey();
+                if (r.success) await this.fetchRemote();
             } catch(e) { this.saveOK = false; this.saveMsg = e.message; }
             this.saving = false;
         },
@@ -1155,43 +1180,47 @@ function remoteBackup() {
                 this.helperPass = pw;
             }
         },
+        effectiveRemotePath() {
+            if (this.cfg.connection_mode === 'legacy') return this.cfg.remote_path || '';
+            var base = (this.cfg.remote_base_path || '/mnt/backup').replace(/\/+$/, '');
+            return (this.cfg.connection_mode === 'auto' || this.cfg.isolate_path) ? base + '/wp-panel/' + (this.cfg.server_id || '...') : base;
+        },
+        effectiveS3Prefix() {
+            var base = (this.cfg.s3_base_prefix || 'wp-panel').replace(/^\/+|\/+$/g, '');
+            return base + '/' + (this.cfg.server_id || '...');
+        },
+        canCopyCmd() {
+            if (this.helperMode === 'delete') return !!this.cfg.username;
+            return !!this.cfg.username && !!this.cfg.remote_path && !!this.publicKey && this.effectiveRemotePath() === this.cfg.remote_path;
+        },
         genCmd() {
-            var u = this.cfg.username || 'wpbackup';
-            var dir = this.cfg.remote_path || '/home/' + u + '/backup';
-
-            var authType = this.cfg.auth_type || 'key';
+            var u = this.cfg.username;
+            var dir = this.cfg.remote_path;
+            if (!this.canCopyCmd()) return t('settings.save_before_copy_command');
 
             if (this.helperMode === 'delete') {
-                return 'userdel -r ' + u + ' && rm -rf ' + dir;
-            }
-
-            var p;
-            if (authType === 'password') {
-                p = this.cfg.password;
-            } else {
-                if (!this.helperPass) this.genPassword();
-                p = this.helperPass;
+                return 'userdel ' + u;
             }
 
             var lines = [
-                'useradd -m -s /bin/bash ' + u,
-                "echo '" + u + ':' + p + "' | chpasswd",
-                'mkdir -p ' + dir
+                'id -u ' + u + ' >/dev/null 2>&1 || useradd -m -s /bin/bash ' + u,
+                'install -d -m 700 -o ' + u + ' -g ' + u + ' /home/' + u + '/.ssh',
+                'touch /home/' + u + '/.ssh/authorized_keys',
+                'chown ' + u + ':' + u + ' /home/' + u + '/.ssh/authorized_keys',
+                'chmod 600 /home/' + u + '/.ssh/authorized_keys',
+                "grep -qxF '" + this.publicKey.trim() + "' /home/" + u + "/.ssh/authorized_keys || echo '" + this.publicKey.trim() + "' >> /home/" + u + '/.ssh/authorized_keys',
+                'mkdir -p ' + dir,
+                'chown ' + u + ':' + u + ' ' + dir,
+                'chmod 750 ' + dir
             ];
-
-            if (authType === 'key' && this.publicKey) {
-                lines.push('mkdir -p /home/' + u + '/.ssh');
-                lines.push("echo '" + this.publicKey.trim() + "' >> /home/" + u + '/.ssh/authorized_keys');
-                lines.push('chmod 700 /home/' + u + '/.ssh');
-                lines.push('chmod 600 /home/' + u + '/.ssh/authorized_keys');
-            }
-
-            lines.push('chown -R ' + u + ':' + u + ' ' + dir + ' /home/' + u);
-            lines.push('chmod 755 ' + dir);
 
             return lines.join(' && ');
         },
         async copyCmd() {
+            if (!this.canCopyCmd()) {
+                showToast(t('settings.save_before_copy_command'), 'error');
+                return;
+            }
             var cmd = this.genCmd();
             if (!cmd) return;
             try {

@@ -496,6 +496,17 @@ var upgrades = []Upgrade{
 			`CREATE INDEX IF NOT EXISTS ix_site_wp_inventory_jobs_claim ON site_wp_inventory_jobs(status, priority, not_before, requested_at)`,
 		},
 	},
+	{
+		Version:     "1.0.42",
+		Description: "远程备份新增自动安全配置与服务器隔离路径",
+		SQL: []string{
+			`ALTER TABLE remote_backup_settings ADD COLUMN connection_mode TEXT NOT NULL DEFAULT 'legacy'`,
+			`ALTER TABLE remote_backup_settings ADD COLUMN server_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE remote_backup_settings ADD COLUMN remote_base_path TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE remote_backup_settings ADD COLUMN s3_base_prefix TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE remote_backup_settings ADD COLUMN isolate_path INTEGER NOT NULL DEFAULT 0`,
+		},
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

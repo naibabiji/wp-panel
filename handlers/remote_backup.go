@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
@@ -16,16 +18,25 @@ import (
 
 func GetRemoteBackup(c *gin.Context) {
 	db := database.GetDB()
+	serverID, err := ensureRemoteBackupIdentity()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("生成远程备份服务器标识失败"))
+		return
+	}
 	var s models.RemoteBackupSettings
-	var enabled, port, keepLocal int
-	db.QueryRow(`SELECT enabled, backup_type, host, port, username, auth_type, password, ssh_key, remote_path, keep_local,
-			s3_endpoint, s3_bucket, s3_region, s3_access_key_id, s3_secret_key, s3_path_prefix
+	var enabled, port, isolatePath, keepLocal int
+	db.QueryRow(`SELECT enabled, backup_type, host, port, username, auth_type, connection_mode, server_id, password, ssh_key, remote_path, remote_base_path, keep_local,
+			isolate_path, s3_endpoint, s3_bucket, s3_region, s3_access_key_id, s3_secret_key, s3_path_prefix, s3_base_prefix
 		FROM remote_backup_settings WHERE id = 1`).Scan(
-		&enabled, &s.BackupType, &s.Host, &port, &s.Username, &s.AuthType, &s.Password, &s.SSHKey, &s.RemotePath, &keepLocal,
-		&s.S3Endpoint, &s.S3Bucket, &s.S3Region, &s.S3AccessKeyID, &s.S3SecretKey, &s.S3PathPrefix)
+		&enabled, &s.BackupType, &s.Host, &port, &s.Username, &s.AuthType, &s.ConnectionMode, &s.ServerID, &s.Password, &s.SSHKey, &s.RemotePath, &s.RemoteBasePath, &keepLocal,
+		&isolatePath, &s.S3Endpoint, &s.S3Bucket, &s.S3Region, &s.S3AccessKeyID, &s.S3SecretKey, &s.S3PathPrefix, &s.S3BasePrefix)
+	if s.ServerID == "" {
+		s.ServerID = serverID
+	}
 	s.Enabled = enabled == 1
 	s.Port = port
 	s.KeepLocal = keepLocal == 1
+	s.IsolatePath = isolatePath == 1
 	if s.BackupType == "" {
 		s.BackupType = "rsync"
 	}
@@ -35,11 +46,25 @@ func GetRemoteBackup(c *gin.Context) {
 	if s.S3Region == "" {
 		s.S3Region = "auto"
 	}
+	if s.ConnectionMode == "auto" {
+		s.IsolatePath = true
+		s.Username = automaticBackupUsername(s.ServerID)
+		s.AuthType = "key"
+		if s.RemoteBasePath == "" {
+			s.RemoteBasePath = "/mnt/backup"
+		}
+	}
+	if s.ConnectionMode != "legacy" && s.S3BasePrefix == "" {
+		s.S3BasePrefix = "wp-panel"
+	}
 	// 读取公钥
 	if s.BackupType == "rsync" && s.AuthType == "key" {
 		keyData, err := os.ReadFile("/www/server/panel/remote_backup_key.pub")
 		if err == nil {
 			s.SSHKey = string(keyData)
+		} else if _, privateErr := os.Stat("/www/server/panel/remote_backup_key"); privateErr == nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取远程备份 SSH 公钥失败"))
+			return
 		}
 	}
 	if s.Password != "" {
@@ -60,6 +85,25 @@ func SaveRemoteBackup(c *gin.Context) {
 	if req.Port == 0 {
 		req.Port = 22
 	}
+	if req.ConnectionMode == "" {
+		req.ConnectionMode = "auto"
+	}
+	if req.ConnectionMode != "auto" && req.ConnectionMode != "advanced" && req.ConnectionMode != "legacy" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("远程备份连接模式无效"))
+		return
+	}
+	var err error
+	req.ServerID, err = ensureRemoteBackupIdentity()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("生成远程备份服务器标识失败"))
+		return
+	}
+	if req.ConnectionMode == "auto" {
+		req.IsolatePath = true
+		req.Username = automaticBackupUsername(req.ServerID)
+		req.AuthType = "key"
+		req.Password = ""
+	}
 	if req.Username == "" {
 		req.Username = "root"
 	}
@@ -69,10 +113,26 @@ func SaveRemoteBackup(c *gin.Context) {
 	if req.BackupType == "" {
 		req.BackupType = "rsync"
 	}
+	if req.BackupType == "s3" && req.ConnectionMode != "legacy" {
+		req.IsolatePath = true
+	}
 	if req.S3Region == "" {
 		req.S3Region = "auto"
 	}
-	if req.RemotePath == "" {
+	if req.ConnectionMode != "legacy" {
+		if req.RemoteBasePath == "" {
+			req.RemoteBasePath = "/mnt/backup"
+		}
+		req.RemotePath = strings.TrimRight(strings.TrimSpace(req.RemoteBasePath), "/")
+		if req.S3BasePrefix == "" {
+			req.S3BasePrefix = "wp-panel"
+		}
+		req.S3PathPrefix = strings.Trim(strings.TrimSpace(req.S3BasePrefix), "/")
+		if req.IsolatePath {
+			req.RemotePath = isolatedRemotePath(req.RemoteBasePath, req.ServerID)
+			req.S3PathPrefix = isolatedS3Prefix(req.S3BasePrefix, req.ServerID)
+		}
+	} else if req.RemotePath == "" {
 		req.RemotePath = "/home/" + req.Username + "/backup"
 	}
 	if err := executor.ValidateRemoteBackupType(req.BackupType); err != nil {
@@ -122,13 +182,59 @@ func SaveRemoteBackup(c *gin.Context) {
 	if req.KeepLocal {
 		keepLocalVal = 1
 	}
+	isolatePathVal := 0
+	if req.IsolatePath {
+		isolatePathVal = 1
+	}
 
-	db.Exec(`UPDATE remote_backup_settings SET enabled=?, backup_type=?, host=?, port=?, username=?, auth_type=?, password=?, remote_path=?, keep_local=?,
-			s3_endpoint=?, s3_bucket=?, s3_region=?, s3_access_key_id=?, s3_secret_key=?, s3_path_prefix=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`,
-		enabledVal, req.BackupType, req.Host, req.Port, req.Username, req.AuthType, req.Password, req.RemotePath, keepLocalVal,
-		req.S3Endpoint, req.S3Bucket, req.S3Region, req.S3AccessKeyID, req.S3SecretKey, strings.Trim(req.S3PathPrefix, "/"))
+	if _, err := db.Exec(`UPDATE remote_backup_settings SET enabled=?, backup_type=?, host=?, port=?, username=?, auth_type=?, connection_mode=?, server_id=?, password=?, remote_path=?, remote_base_path=?, isolate_path=?, keep_local=?,
+			s3_endpoint=?, s3_bucket=?, s3_region=?, s3_access_key_id=?, s3_secret_key=?, s3_path_prefix=?, s3_base_prefix=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`,
+		enabledVal, req.BackupType, req.Host, req.Port, req.Username, req.AuthType, req.ConnectionMode, req.ServerID, req.Password, req.RemotePath, req.RemoteBasePath, isolatePathVal, keepLocalVal,
+		req.S3Endpoint, req.S3Bucket, req.S3Region, req.S3AccessKeyID, req.S3SecretKey, strings.Trim(req.S3PathPrefix, "/"), strings.Trim(req.S3BasePrefix, "/")); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存远程备份设置失败"))
+		return
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "设置已保存"}))
+}
+
+func ensureRemoteBackupIdentity() (string, error) {
+	db := database.GetDB()
+	var serverID string
+	if err := db.QueryRow(`SELECT server_id FROM remote_backup_settings WHERE id = 1`).Scan(&serverID); err != nil {
+		return "", err
+	}
+	if serverID != "" {
+		return serverID, nil
+	}
+	random := make([]byte, 6)
+	if _, err := rand.Read(random); err != nil {
+		return "", err
+	}
+	serverID = hex.EncodeToString(random)
+	if _, err := db.Exec(`UPDATE remote_backup_settings SET server_id = ? WHERE id = 1 AND server_id = ''`, serverID); err != nil {
+		return "", err
+	}
+	if err := db.QueryRow(`SELECT server_id FROM remote_backup_settings WHERE id = 1`).Scan(&serverID); err != nil {
+		return "", err
+	}
+	return serverID, nil
+}
+
+func automaticBackupUsername(serverID string) string {
+	return "wpb_" + serverID
+}
+
+func isolatedRemotePath(basePath, serverID string) string {
+	return strings.TrimRight(strings.TrimSpace(basePath), "/") + "/wp-panel/" + serverID
+}
+
+func isolatedS3Prefix(basePrefix, serverID string) string {
+	basePrefix = strings.Trim(strings.TrimSpace(basePrefix), "/")
+	if basePrefix == "" {
+		return serverID
+	}
+	return basePrefix + "/" + serverID
 }
 
 func TestRemoteBackup(c *gin.Context) {

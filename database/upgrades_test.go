@@ -123,7 +123,7 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 			t.Fatalf("%s exists = %d, want 1", index, exists)
 		}
 	}
-	for _, col := range []string{"backup_type", "s3_endpoint", "s3_bucket", "s3_region", "s3_access_key_id", "s3_secret_key", "s3_path_prefix"} {
+	for _, col := range []string{"backup_type", "s3_endpoint", "s3_bucket", "s3_region", "s3_access_key_id", "s3_secret_key", "s3_path_prefix", "connection_mode", "server_id", "remote_base_path", "s3_base_prefix", "isolate_path"} {
 		var exists int
 		if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('remote_backup_settings') WHERE name = ?", col).Scan(&exists); err != nil {
 			t.Fatalf("query remote_backup_settings column %s: %v", col, err)
@@ -131,6 +131,14 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 		if exists != 1 {
 			t.Fatalf("remote_backup_settings.%s exists = %d, want 1", col, exists)
 		}
+	}
+	var connectionMode string
+	var isolatePath int
+	if err := DB.QueryRow(`SELECT connection_mode, isolate_path FROM remote_backup_settings WHERE id=1`).Scan(&connectionMode, &isolatePath); err != nil {
+		t.Fatal(err)
+	}
+	if connectionMode != "auto" || isolatePath != 1 {
+		t.Fatalf("fresh remote backup defaults = mode %q isolate %d, want auto/1", connectionMode, isolatePath)
 	}
 	for _, setting := range []struct {
 		key  string
@@ -252,7 +260,7 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.41" {
+	if got := LatestVersion(); got != "1.0.42" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
 	for _, column := range []string{"database_backup_mode", "database_backup_source_id", "auto_rollback", "batch_id"} {
@@ -260,6 +268,43 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 		if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('wp_update_tasks') WHERE name=?`, column).Scan(&exists); err != nil || exists != 1 {
 			t.Fatalf("column %s exists=%d err=%v", column, exists, err)
 		}
+	}
+}
+
+func TestUpgradeAddsRemoteBackupIsolationWithoutChangingLegacyTarget(t *testing.T) {
+	openTempDB(t)
+
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	if _, err := DB.Exec(`UPDATE remote_backup_settings SET username='wpbackup', auth_type='password', password='secret', remote_path='/mnt/backup/old', s3_path_prefix='legacy-prefix' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	for _, col := range []string{"connection_mode", "server_id", "remote_base_path", "s3_base_prefix", "isolate_path"} {
+		if _, err := DB.Exec("ALTER TABLE remote_backup_settings DROP COLUMN " + col); err != nil {
+			t.Fatalf("drop %s: %v", col, err)
+		}
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version(version) VALUES ('1.0.41')"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+
+	var mode, username, authType, password, remotePath, s3Prefix string
+	if err := DB.QueryRow(`SELECT connection_mode, username, auth_type, password, remote_path, s3_path_prefix FROM remote_backup_settings WHERE id=1`).Scan(&mode, &username, &authType, &password, &remotePath, &s3Prefix); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "legacy" || username != "wpbackup" || authType != "password" || password != "secret" || remotePath != "/mnt/backup/old" || s3Prefix != "legacy-prefix" {
+		t.Fatalf("legacy remote backup changed after upgrade: mode=%q username=%q auth=%q password=%q path=%q s3=%q", mode, username, authType, password, remotePath, s3Prefix)
 	}
 }
 
