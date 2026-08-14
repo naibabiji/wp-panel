@@ -115,10 +115,11 @@ func TestAnalyzeWebsiteLogDetailsFiltersAndPaginates(t *testing.T) {
 	}
 	defer db.Close()
 	if _, err := db.Exec(`CREATE TABLE security_settings(skey TEXT PRIMARY KEY,svalue TEXT);
-		CREATE TABLE firewall_bans(id INTEGER PRIMARY KEY,ip_address TEXT,reason TEXT,source_jail TEXT,banned_at DATETIME,expires_at DATETIME,unbanned_at DATETIME);
+		CREATE TABLE firewall_bans(id INTEGER PRIMARY KEY,ip_address TEXT,reason TEXT,source_jail TEXT,banned_at DATETIME,expires_at DATETIME,unbanned_at DATETIME,ban_count INTEGER);
 		CREATE TABLE wp_security_events(site_id INTEGER,ip_address TEXT,event_type TEXT,occurred_at DATETIME);
 		INSERT INTO security_settings VALUES ('googlebot_ips','66.249.64.0/19'),('bingbot_ips','40.77.167.0/24');
-		INSERT INTO firewall_bans VALUES (1,'1.2.3.4','repeated scan','wppanel-404',CURRENT_TIMESTAMP,NULL,NULL);
+		INSERT INTO firewall_bans VALUES (1,'1.2.3.4','login protection','wppanel',CURRENT_TIMESTAMP,NULL,NULL,2);
+		INSERT INTO firewall_bans VALUES (2,'1.2.3.4','historical scan','wppanel-404',datetime('now','+10 minutes'),datetime('now','+20 minutes'),datetime('now','+20 minutes'),3);
 		INSERT INTO wp_security_events VALUES (1,'1.2.3.4','sensitive_file_scan',CURRENT_TIMESTAMP)`); err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +139,11 @@ func TestAnalyzeWebsiteLogDetailsFiltersAndPaginates(t *testing.T) {
 	if err != nil || status.Total != 2 || len(status.Lines) != 1 || !strings.Contains(status.Lines[0], "/archives?a=1") {
 		t.Fatalf("status detail=%+v err=%v", status, err)
 	}
-	if status.UniqueIPs != 2 || status.UniquePaths != 1 || len(status.TopIPs) != 2 || !status.TopIPs[0].CurrentlyBanned || status.TopIPs[0].RetainedEventCount != 1 {
+	if status.UniqueIPs != 2 || status.UniquePaths != 1 || len(status.TopIPs) != 2 || !status.TopIPs[0].CurrentlyBanned || !status.TopIPs[0].BannedInRange || status.TopIPs[0].RetainedEventCount != 1 {
 		t.Fatalf("status summary=%+v", status)
+	}
+	if status.TopIPs[0].CurrentBanSource != "wppanel" || status.TopIPs[0].RangeBanSource != "wppanel-404" || status.TopIPs[0].RangeBanCount != 3 {
+		t.Fatalf("current and range ban details were not kept separate: %+v", status.TopIPs[0])
 	}
 	if len(status.IPPathPairs) != 2 || len(status.UserAgents) != 2 || len(status.Methods) != 1 {
 		t.Fatalf("status breakdowns=%+v", status)

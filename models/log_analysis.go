@@ -58,9 +58,16 @@ type LogAnalysisIPDetail struct {
 	IPAddress          string   `json:"ip_address"`
 	Count              int      `json:"count"`
 	CurrentlyBanned    bool     `json:"currently_banned"`
-	BanReason          string   `json:"ban_reason,omitempty"`
-	BanSource          string   `json:"ban_source,omitempty"`
-	BanExpiresAt       string   `json:"ban_expires_at,omitempty"`
+	BannedInRange      bool     `json:"banned_in_range"`
+	CurrentBanReason   string   `json:"current_ban_reason,omitempty"`
+	CurrentBanSource   string   `json:"current_ban_source,omitempty"`
+	CurrentBanExpires  string   `json:"current_ban_expires_at,omitempty"`
+	RangeBanReason     string   `json:"range_ban_reason,omitempty"`
+	RangeBanSource     string   `json:"range_ban_source,omitempty"`
+	RangeBanStartedAt  string   `json:"range_ban_started_at,omitempty"`
+	RangeBanExpiresAt  string   `json:"range_ban_expires_at,omitempty"`
+	RangeBanEndedAt    string   `json:"range_ban_ended_at,omitempty"`
+	RangeBanCount      int      `json:"range_ban_count,omitempty"`
 	RetainedEventCount int      `json:"retained_event_count"`
 	SecurityEventTypes []string `json:"security_event_types"`
 	LastSecurityEvent  string   `json:"last_security_event,omitempty"`

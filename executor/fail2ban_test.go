@@ -2,24 +2,225 @@ package executor
 
 import (
 	"errors"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/naibabiji/wp-panel/database"
 )
 
+func TestWriteFail2banLocalPreservesExistingSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fail2ban.local")
+	before := "[DEFAULT]\nloglevel = INFO\ndbpurgeage = 1d\n\n[Thread]\nstacksize = 0\n"
+	if err := os.WriteFile(path, []byte(before), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFail2banLocal(path); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "loglevel = INFO") || !strings.Contains(content, "stacksize = 0") {
+		t.Fatalf("existing settings were lost:\n%s", content)
+	}
+	if strings.Count(content, "dbpurgeage = 30d") != 1 {
+		t.Fatalf("dbpurgeage was not updated exactly once:\n%s", content)
+	}
+}
+
+func TestWriteFail2banLocalRemovesDuplicatePurgeSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fail2ban.local")
+	if err := os.WriteFile(path, []byte("[DEFAULT]\ndbpurgeage=1d\nloglevel=INFO\ndbpurgeage=2d\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFail2banLocal(path); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(data), "dbpurgeage") != 1 || !strings.Contains(string(data), "dbpurgeage = 30d") {
+		t.Fatalf("duplicate setting was not repaired:\n%s", data)
+	}
+}
+
+func TestFail2banLoginFilterAllowsQueriesAndIgnoresCoreNonLoginActions(t *testing.T) {
+	lines := strings.Split(fail2banFilterConfig, "\n")
+	var failPattern, ignorePattern string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "failregex = ") {
+			failPattern = strings.TrimPrefix(trimmed, "failregex = ")
+		}
+		if strings.HasPrefix(trimmed, "^<HOST>") && strings.Contains(trimmed, "action=(?:") {
+			ignorePattern = trimmed
+		}
+	}
+	failRE := regexp.MustCompile(strings.ReplaceAll(failPattern, "<HOST>", `\S+`))
+	ignorePattern = strings.ReplaceAll(ignorePattern, "<HOST>", `\S+`)
+	pythonMatch := func(pattern, value string) bool {
+		t.Helper()
+		if _, err := exec.LookPath("python3"); err != nil {
+			t.Skip("python3 is required to validate Fail2ban-compatible regex")
+		}
+		cmd := exec.Command("python3", "-c", `import re,sys;sys.exit(0 if re.search(sys.argv[1],sys.argv[2]) else 1)`, pattern, value)
+		return cmd.Run() == nil
+	}
+	line := func(target, status string) string {
+		return `203.0.113.9 - - [14/Aug/2026:12:00:00 +0800] "POST ` + target + ` HTTP/2.0" ` + status + ` 123 "-" "test"`
+	}
+	for _, target := range []string{"/wp-login.php", "/wp-login.php?x=1", "/wp-login.php?action=login", "/wp-login.php?x=1&action=unknown"} {
+		if !failRE.MatchString(line(target, "200")) || pythonMatch(ignorePattern, line(target, "200")) {
+			t.Fatalf("login failure should be counted: %s", target)
+		}
+	}
+	if failRE.MatchString(line("/wp-login.php?x=1", "302")) {
+		t.Fatal("successful login response matched failure rule")
+	}
+	for _, target := range []string{"/wp-login.php?action=lostpassword", "/wp-login.php?x=1&action=register", "/wp-login.php?action=rp&key=abc&login=user"} {
+		if !failRE.MatchString(line(target, "200")) || !pythonMatch(ignorePattern, line(target, "200")) {
+			t.Fatalf("core non-login action should be ignored: %s", target)
+		}
+	}
+	for _, target := range []string{
+		"/wp-login.php?action=lostpassword&action=login",
+		"/wp-login.php?action=lostpassword&%61ction=login",
+		"/wp-login.php?action=lostpassword&action%5B%5D=login",
+	} {
+		if pythonMatch(ignorePattern, line(target, "200")) {
+			t.Fatalf("ambiguous action parameters must not be ignored: %s", target)
+		}
+	}
+	if !pythonMatch(ignorePattern, line("/wp-login.php?action=login&action=lostpassword", "200")) {
+		t.Fatal("the final safe action should be ignored")
+	}
+	if strings.Contains(fail2banFilterConfig, " 444 ") {
+		t.Fatal("444 must not be included in Fail2ban filters")
+	}
+}
+
+func TestValidateGeneratedFail2banJailConfigRequiresFixedLadderForAllJails(t *testing.T) {
+	block := "bantime = 600\nbantime.increment = true\nbantime.multipliers = 1 6 36 144 1008\nbantime.maxtime = 7d\nbantime.overalljails = false\n"
+	valid := "[wppanel]\n" + block + "[wppanel-404]\n" + block + "[wppanel-sshd]\n" + block
+	if err := validateGeneratedFail2banJailConfig(valid); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateGeneratedFail2banJailConfig("[wppanel]\n" + block + "[wppanel-404]\n" + block); err == nil {
+		t.Fatal("config missing one jail ladder was accepted")
+	}
+	misplaced := "[wppanel]\n" + block + "bantime.increment = true\n[wppanel-404]\n" + block + "[wppanel-sshd]\n" + strings.Replace(block, "bantime.increment = true\n", "", 1)
+	if err := validateGeneratedFail2banJailConfig(misplaced); err == nil {
+		t.Fatal("globally balanced but misplaced directive was accepted")
+	}
+	for banTime, want := range map[int]int{600: 2, 3600: 3, 21600: 3, 86400: 3, 604800: 4} {
+		if got := fail2banBanLevel(banTime); got != want {
+			t.Fatalf("ban level for %d = %d, want %d", banTime, got, want)
+		}
+	}
+}
+
+func TestRecordFail2banRestoredDoesNotCreateHistory(t *testing.T) {
+	openTestDB(t)
+	if err := RecordFail2banBan("203.0.113.70", "wppanel", 600, 1, true); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM firewall_bans WHERE ip_address='203.0.113.70'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("restored ban created %d history rows", count)
+	}
+
+	ip := "203.0.113.71"
+	if err := RecordFail2banBan(ip, "wppanel", 3600, 2, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.GetDB().Exec(`UPDATE firewall_bans SET unbanned_at=datetime('now')
+		WHERE ip_address=? AND source_jail='wppanel'`, ip); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordFail2banBan(ip, "wppanel", 3600, 2, true); err != nil {
+		t.Fatal(err)
+	}
+	var rows, active, banCount int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*),
+		SUM(CASE WHEN unbanned_at IS NULL THEN 1 ELSE 0 END), MAX(ban_count)
+		FROM firewall_bans WHERE ip_address=? AND source_jail='wppanel'`, ip).Scan(&rows, &active, &banCount); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 || active != 1 || banCount != 2 {
+		t.Fatalf("restored ban was not reactivated in place: rows=%d active=%d count=%d", rows, active, banCount)
+	}
+}
+
+func TestRecordFail2banUnbanClosesOnlyMatchingJail(t *testing.T) {
+	openTestDB(t)
+	oldRemove := conditionalRemoveNginxBan
+	removeCalls := 0
+	conditionalRemoveNginxBan = func(string) error { removeCalls++; return nil }
+	t.Cleanup(func() { conditionalRemoveNginxBan = oldRemove })
+	ip := "203.0.113.71"
+	for _, jail := range []string{"wppanel", "wppanel-404"} {
+		if _, err := database.GetDB().Exec(`INSERT INTO firewall_bans
+			(ip_address,ban_level,reason,source_jail,ban_count,expires_at)
+			VALUES (?,2,'test',?,1,datetime('now','+600 seconds'))`, ip, jail); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := RecordFail2banUnban(ip, "wppanel"); err != nil {
+		t.Fatal(err)
+	}
+	var active404, activeWeb int
+	_ = database.GetDB().QueryRow(`SELECT COUNT(*) FROM firewall_bans WHERE ip_address=? AND source_jail='wppanel-404' AND unbanned_at IS NULL`, ip).Scan(&active404)
+	_ = database.GetDB().QueryRow(`SELECT COUNT(*) FROM firewall_bans WHERE ip_address=? AND source_jail='wppanel' AND unbanned_at IS NULL`, ip).Scan(&activeWeb)
+	if active404 != 1 || activeWeb != 0 {
+		t.Fatalf("unexpected active rows: wppanel=%d wppanel-404=%d", activeWeb, active404)
+	}
+	if removeCalls != 0 {
+		t.Fatal("nginx ban was removed while another web jail remained active")
+	}
+	if err := RecordFail2banUnban(ip, "wppanel-404"); err != nil {
+		t.Fatal(err)
+	}
+	if removeCalls != 1 {
+		t.Fatalf("nginx ban should be removed after the last web jail, calls=%d", removeCalls)
+	}
+}
+
+func TestRecordFail2banKeepsPerJailCountersSeparate(t *testing.T) {
+	openTestDB(t)
+	ip := "203.0.113.72"
+	if err := RecordFail2banBan(ip, "wppanel", 3600, 2, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordFail2banBan(ip, "wppanel-404", 600, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	var rows int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM firewall_bans WHERE ip_address=? AND unbanned_at IS NULL`, ip).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 2 {
+		t.Fatalf("expected one active receipt per jail, got %d", rows)
+	}
+}
+
 func TestRecordFail2banBanUpdatesActiveRecord(t *testing.T) {
 	openTestDB(t)
-	oldRecordPersistBan := recordPersistBan
-	recordPersistBan = func(string) {}
-	t.Cleanup(func() { recordPersistBan = oldRecordPersistBan })
 
 	ip := "203.0.113.77"
-	if err := RecordFail2banBan(ip, "wppanel-404"); err != nil {
+	if err := RecordFail2banBan(ip, "wppanel-404", 600, 1, false); err != nil {
 		t.Fatalf("first record failed: %v", err)
 	}
-	if err := RecordFail2banBan(ip, "wppanel-404"); err != nil {
+	if err := RecordFail2banBan(ip, "wppanel-404", 3600, 2, false); err != nil {
 		t.Fatalf("second record failed: %v", err)
 	}
 
@@ -38,7 +239,7 @@ func TestRecordFail2banBanUpdatesActiveRecord(t *testing.T) {
 		t.Fatalf("unexpected active record: level=%d jail=%q count=%d", level, jail, count)
 	}
 
-	if err := RecordFail2banBan(ip, "wppanel-404"); err != nil {
+	if err := RecordFail2banBan(ip, "wppanel-404", 21600, 3, false); err != nil {
 		t.Fatalf("third record failed: %v", err)
 	}
 	if err := database.GetDB().QueryRow(
@@ -47,16 +248,13 @@ func TestRecordFail2banBanUpdatesActiveRecord(t *testing.T) {
 	).Scan(&rows, &level, &jail, &count); err != nil {
 		t.Fatalf("query records after third event: %v", err)
 	}
-	if rows != 1 || level != 5 || jail != "wppanel-404" || count != 3 {
-		t.Fatalf("unexpected permanent active record: rows=%d level=%d jail=%q count=%d", rows, level, jail, count)
+	if rows != 1 || level != 3 || jail != "wppanel-404" || count != 3 {
+		t.Fatalf("unexpected incremental active record: rows=%d level=%d jail=%q count=%d", rows, level, jail, count)
 	}
 }
 
 func TestRecordFail2banBanKeepsExistingSourceWhenExistingLevelIsHigher(t *testing.T) {
 	openTestDB(t)
-	oldRecordPersistBan := recordPersistBan
-	recordPersistBan = func(string) {}
-	t.Cleanup(func() { recordPersistBan = oldRecordPersistBan })
 
 	ip := "203.0.113.78"
 	if _, err := database.GetDB().Exec(
@@ -66,7 +264,7 @@ func TestRecordFail2banBanKeepsExistingSourceWhenExistingLevelIsHigher(t *testin
 	); err != nil {
 		t.Fatalf("insert active ban: %v", err)
 	}
-	if err := RecordFail2banBan(ip, "wppanel-sshd"); err != nil {
+	if err := RecordFail2banBan(ip, "wppanel-sshd", 600, 1, false); err != nil {
 		t.Fatalf("record sshd event: %v", err)
 	}
 
@@ -78,7 +276,7 @@ func TestRecordFail2banBanKeepsExistingSourceWhenExistingLevelIsHigher(t *testin
 	).Scan(&rows, &level, &jail, &reason, &count); err != nil {
 		t.Fatalf("query active record: %v", err)
 	}
-	if rows != 1 || level != 5 || jail != "wppanel-404" || count != 4 {
+	if rows != 1 || level != 5 || jail != "wppanel-404" || count != 3 {
 		t.Fatalf("unexpected active record: rows=%d level=%d jail=%q count=%d", rows, level, jail, count)
 	}
 	if !strings.Contains(reason, "404 泛滥检测") {
@@ -88,9 +286,6 @@ func TestRecordFail2banBanKeepsExistingSourceWhenExistingLevelIsHigher(t *testin
 
 func TestRecordFail2banBanDoesNotReuseExpiredActiveRecord(t *testing.T) {
 	openTestDB(t)
-	oldRecordPersistBan := recordPersistBan
-	recordPersistBan = func(string) {}
-	t.Cleanup(func() { recordPersistBan = oldRecordPersistBan })
 
 	ip := "203.0.113.79"
 	if _, err := database.GetDB().Exec(
@@ -100,7 +295,7 @@ func TestRecordFail2banBanDoesNotReuseExpiredActiveRecord(t *testing.T) {
 	); err != nil {
 		t.Fatalf("insert expired ban: %v", err)
 	}
-	if err := RecordFail2banBan(ip, "wppanel-404"); err != nil {
+	if err := RecordFail2banBan(ip, "wppanel-404", 600, 1, false); err != nil {
 		t.Fatalf("record new event: %v", err)
 	}
 
@@ -179,6 +374,29 @@ func TestDeduplicateActiveFirewallBansKeepsMostSevereRecord(t *testing.T) {
 	}
 	if otherActiveRows != 1 {
 		t.Fatalf("expected unrelated active row to remain, got %d", otherActiveRows)
+	}
+}
+
+func TestDeduplicateActiveFirewallBansKeepsDifferentJails(t *testing.T) {
+	openTestDB(t)
+	db := database.GetDB()
+	ip := "203.0.113.13"
+	for _, jail := range []string{"wppanel", "wppanel-404"} {
+		if _, err := db.Exec(`INSERT INTO firewall_bans
+			(ip_address,ban_level,reason,source_jail,ban_count,expires_at)
+			VALUES (?,2,'test',?,1,datetime('now','+600 seconds'))`, ip, jail); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := deduplicateActiveFirewallBans(db); err != nil {
+		t.Fatal(err)
+	}
+	var active int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM firewall_bans WHERE ip_address=? AND unbanned_at IS NULL`, ip).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != 2 {
+		t.Fatalf("different jails were incorrectly merged: active=%d", active)
 	}
 }
 
@@ -293,11 +511,9 @@ func TestSyncFail2banBansKeepsActiveManualBan(t *testing.T) {
 
 	oldShellExec := shellExec
 	oldReplace := syncReplaceNginxBannedIPs
-	oldRecordPersistBan := recordPersistBan
 	t.Cleanup(func() {
 		shellExec = oldShellExec
 		syncReplaceNginxBannedIPs = oldReplace
-		recordPersistBan = oldRecordPersistBan
 	})
 
 	shellExec = func(binary string, args ...string) (string, error) {
@@ -306,7 +522,6 @@ func TestSyncFail2banBansKeepsActiveManualBan(t *testing.T) {
 		}
 		return "", errors.New("unexpected command")
 	}
-	recordPersistBan = func(string) {}
 
 	var synced map[string]bool
 	syncReplaceNginxBannedIPs = func(ips map[string]bool) error {
@@ -335,6 +550,48 @@ func TestSyncFail2banBansKeepsActiveManualBan(t *testing.T) {
 	}
 	if !synced["203.0.113.99"] {
 		t.Fatalf("active manual ban was not synced to nginx set: %v", synced)
+	}
+}
+
+func TestSyncFail2banBansPreservesFailedJailState(t *testing.T) {
+	openTestDB(t)
+	oldShellExec := shellExec
+	oldReplace := syncReplaceNginxBannedIPs
+	t.Cleanup(func() {
+		shellExec = oldShellExec
+		syncReplaceNginxBannedIPs = oldReplace
+	})
+
+	shellExec = func(binary string, args ...string) (string, error) {
+		if binary != "fail2ban-client" || len(args) != 2 || args[0] != "status" {
+			return "", errors.New("unexpected command")
+		}
+		if args[1] == "wppanel" {
+			return "", errors.New("temporary socket failure")
+		}
+		return "Status\n|- Currently banned: 0\n`- Banned IP list:", nil
+	}
+	var synced map[string]bool
+	syncReplaceNginxBannedIPs = func(ips map[string]bool) error {
+		synced = make(map[string]bool, len(ips))
+		for ip, active := range ips {
+			synced[ip] = active
+		}
+		return nil
+	}
+	ip := "203.0.113.98"
+	if _, err := database.GetDB().Exec(`INSERT INTO firewall_bans
+		(ip_address,ban_level,reason,source_jail,ban_count,expires_at)
+		VALUES (?,2,'test','wppanel',1,datetime('now','+600 seconds'))`, ip); err != nil {
+		t.Fatal(err)
+	}
+
+	SyncFail2banBans()
+
+	var active int
+	_ = database.GetDB().QueryRow(`SELECT COUNT(*) FROM firewall_bans WHERE ip_address=? AND unbanned_at IS NULL`, ip).Scan(&active)
+	if active != 1 || !synced[ip] {
+		t.Fatalf("failed jail state was not preserved: active=%d nginx=%v", active, synced)
 	}
 }
 

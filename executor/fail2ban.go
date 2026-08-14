@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -18,10 +19,21 @@ import (
 )
 
 var syncMu sync.Mutex
-var recordPersistBan = AddPersistBan
 var manualAddNginxBan = AddNginxBan
 var manualRemoveNginxBan = RemoveNginxBan
 var syncReplaceNginxBannedIPs = ReplaceNginxBannedIPs
+var conditionalRemoveNginxBan = RemoveNginxBan
+
+const fail2banFilterConfig = `# WP Panel Generated — DO NOT EDIT MANUALLY
+[Definition]
+failregex = ^<HOST> .* "POST /wp-login\.php[^"]*" 200 .*$
+            ^<HOST> .* "POST /xmlrpc\.php .*" 403 .*$
+            ^<HOST> .* "POST //xmlrpc\.php .*" 403 .*$
+            ^<HOST> .* ".*" 429 .*$
+            ^<HOST> - - \[.*\] "(GET|POST) .*(\.env|\.git|config\.bak|wp-config\.php|\.sql|\.tar|\.gz|\.zip|\.old|\.swp|\.save|\.DS_Store).*" 404 .*$
+ignoreregex =
+              ^<HOST> .* "POST /wp-login\.php\?(?:[A-Za-z0-9_.~-]+=[^&"]*&)*action=(?:confirm_admin_email|postpass|logout|lostpassword|retrievepassword|resetpass|rp|register|checkemail|confirmaction|entered_recovery_mode)(?:&(?!action=)[A-Za-z0-9_.~-]+=[^&"]*)* HTTP/[^"]+" 200 .*$
+`
 
 func init() {
 	database.RegisterUpgrade("1.0.26", cleanupDuplicateActiveFirewallBans)
@@ -48,10 +60,11 @@ func deployFail2ban(webWhitelistIPs, sshWhitelistIPs string, maxRetry, findTime,
 	ensureLogFiles()
 	_ = EnsureNginxBannedIPsConfig()
 	jailPath := filepath.Join(jailDir, "wppanel.conf")
+	localPath := "/etc/fail2ban/fail2ban.local"
 	actionPath := filepath.Join(actionDir, "wppanel-nginx.conf")
 	filterPath := filepath.Join(filterDir, "wppanel.conf")
 	filter404Path := filepath.Join(filterDir, "wppanel-404.conf")
-	backups, err := backupFail2banConfigFiles(jailPath, actionPath, filterPath, filter404Path)
+	backups, err := backupFail2banConfigFiles(jailPath, actionPath, filterPath, filter404Path, localPath)
 	if err != nil {
 		return err
 	}
@@ -95,6 +108,10 @@ logpath = /www/wwwlogs/*/access.log
 maxretry = %d
 findtime = %d
 bantime = %d
+bantime.increment = true
+bantime.multipliers = 1 6 36 144 1008
+bantime.maxtime = 7d
+bantime.overalljails = false
 ignoreip = %s
 
 [wppanel-404]
@@ -106,6 +123,10 @@ logpath = /www/wwwlogs/*/access.log
 maxretry = 30
 findtime = 60
 bantime = %d
+bantime.increment = true
+bantime.multipliers = 1 6 36 144 1008
+bantime.maxtime = 7d
+bantime.overalljails = false
 ignoreip = %s
 
 [wppanel-sshd]
@@ -116,34 +137,35 @@ logpath = /var/log/auth.log
 maxretry = %d
 findtime = %d
 bantime = %d
+bantime.increment = true
+bantime.multipliers = 1 6 36 144 1008
+bantime.maxtime = 7d
+bantime.overalljails = false
 ignoreip = %s
 `, maxRetry, findTime, banTime, webIgnoreIPs, banTime, webIgnoreIPs, maxRetry, findTime, banTime, sshIgnoreIPs)
+	if err := validateGeneratedFail2banJailConfig(jailConfig); err != nil {
+		return err
+	}
 
 	if err := os.WriteFile(jailPath, []byte(jailConfig), 0644); err != nil {
 		return rollbackDeploy(fmt.Errorf("写入 jail 配置失败: %w", err))
 	}
 
+	if err := writeFail2banLocal(localPath); err != nil {
+		return rollbackDeploy(fmt.Errorf("写入 fail2ban 本地配置失败: %w", err))
+	}
+
 	actionConfig := `# WP Panel Generated - DO NOT EDIT MANUALLY
 [Definition]
-actionban = /usr/local/bin/wp-panel --banip-nginx <ip> --record-fail2ban <ip> --ban-jail <name>
-actionunban = /usr/local/bin/wp-panel --unbanip-nginx <ip>
+actionban = /usr/local/bin/wp-panel --banip-nginx <ip> --record-fail2ban <ip> --ban-jail <name> --ban-bantime <bantime> --ban-count <bancount> --ban-restored=<restored>
+actionunban = /usr/local/bin/wp-panel --unban-fail2ban <ip> --ban-jail <name>
 `
 
 	if err := os.WriteFile(actionPath, []byte(actionConfig), 0644); err != nil {
 		return rollbackDeploy(fmt.Errorf("写入 nginx action 配置失败: %w", err))
 	}
 
-	filterConfig := `# WP Panel Generated — DO NOT EDIT MANUALLY
-[Definition]
-failregex = ^<HOST> .* "POST /wp-login\.php .*" .*$
-            ^<HOST> .* "POST /xmlrpc\.php .*" 403 .*$
-            ^<HOST> .* "POST //xmlrpc\.php .*" 403 .*$
-            ^<HOST> .* ".*" 429 .*$
-            ^<HOST> - - \[.*\] "(GET|POST) .*(\.env|\.git|config\.bak|wp-config\.php|\.sql|\.tar|\.gz|\.zip|\.old|\.swp|\.save|\.DS_Store).*" 404 .*$
-ignoreregex =
-`
-
-	if err := os.WriteFile(filterPath, []byte(filterConfig), 0644); err != nil {
+	if err := os.WriteFile(filterPath, []byte(fail2banFilterConfig), 0644); err != nil {
 		return rollbackDeploy(fmt.Errorf("写入 filter 配置失败: %w", err))
 	}
 
@@ -157,10 +179,86 @@ ignoreregex =
 		return rollbackDeploy(fmt.Errorf("写入 404 filter 配置失败: %w", err))
 	}
 
+	if _, err := executeCommand("fail2ban-client", "-t"); err != nil {
+		return rollbackDeploy(fmt.Errorf("Fail2ban 配置校验失败: %w", err))
+	}
 	if err := reloadOrStartFail2ban(); err != nil {
 		return rollbackDeploy(fmt.Errorf("重载 fail2ban 失败: %w", err))
 	}
 	return nil
+}
+
+func validateGeneratedFail2banJailConfig(config string) error {
+	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-sshd"} {
+		header := "[" + jail + "]"
+		start := strings.Index(config, header)
+		if start < 0 {
+			return fmt.Errorf("invalid generated Fail2ban jail config: missing %s", header)
+		}
+		section := config[start+len(header):]
+		if end := strings.Index(section, "\n["); end >= 0 {
+			section = section[:end]
+		}
+		for _, directive := range []string{
+			"bantime = 600",
+			"bantime.increment = true",
+			"bantime.multipliers = 1 6 36 144 1008",
+			"bantime.maxtime = 7d",
+			"bantime.overalljails = false",
+		} {
+			if strings.Count(section, directive) != 1 {
+				return fmt.Errorf("invalid generated Fail2ban jail config: %s: %s", jail, directive)
+			}
+		}
+	}
+	return nil
+}
+
+func writeFail2banLocal(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	out := make([]string, 0, len(lines)+3)
+	inDefault, foundDefault, wrotePurge := false, false, false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			if inDefault && !wrotePurge {
+				out = append(out, "dbpurgeage = 30d")
+				wrotePurge = true
+			}
+			if strings.EqualFold(trimmed, "[DEFAULT]") {
+				if foundDefault {
+					return fmt.Errorf("fail2ban.local contains multiple [DEFAULT] sections")
+				}
+				foundDefault, inDefault = true, true
+			} else {
+				inDefault = false
+			}
+			out = append(out, line)
+			continue
+		}
+		if inDefault {
+			key, _, found := strings.Cut(trimmed, "=")
+			if found && strings.EqualFold(strings.TrimSpace(key), "dbpurgeage") {
+				if !wrotePurge {
+					out = append(out, "dbpurgeage = 30d")
+					wrotePurge = true
+				}
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	if inDefault && !wrotePurge {
+		out = append(out, "dbpurgeage = 30d")
+	} else if !foundDefault {
+		out = append([]string{"[DEFAULT]", "dbpurgeage = 30d", ""}, out...)
+	}
+	content := strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n"
+	return os.WriteFile(path, []byte(content), 0644)
 }
 
 func backupFail2banConfigFiles(paths ...string) ([]fail2banConfigBackup, error) {
@@ -358,13 +456,12 @@ func ApplyFail2banSettings() error {
 	db := database.GetDB()
 
 	var officialIPs, customIPs, cdnRealIPIPs string
-	var maxRetry, findTime, banTime string
+	var maxRetry, findTime string
 	db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'official_whitelist_ips'`).Scan(&officialIPs)
 	db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'whitelist_ips'`).Scan(&customIPs)
 	cdnRealIPIPs = CombinedCDNRealIPRangesForFail2ban()
 	db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'fail2ban_maxretry'`).Scan(&maxRetry)
 	db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'fail2ban_findtime'`).Scan(&findTime)
-	db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'fail2ban_bantime'`).Scan(&banTime)
 
 	baseIPs := strings.TrimSpace(officialIPs)
 	if customIPs != "" {
@@ -383,7 +480,8 @@ func ApplyFail2banSettings() error {
 
 	mr := parseIntOr(maxRetry, 5)
 	ft := parseIntOr(findTime, 60)
-	bt := parseIntOr(banTime, 600)
+	// The incremental ladder is intentionally fixed at 10m, 1h, 6h, 24h and 7d.
+	bt := 600
 
 	if err := deployFail2ban(webIPs, baseIPs, mr, ft, bt); err != nil {
 		return err
@@ -404,47 +502,42 @@ func SyncFail2banBans() {
 	syncMu.Lock()
 	defer syncMu.Unlock()
 
-	ipJails := make(map[string]string)
+	type jailIP struct{ jail, ip string }
+	activeJailIPs := make(map[jailIP]bool)
+	jailStatusRead := make(map[string]bool)
 	webBannedSet := make(map[string]bool)
 	webJailStatusRead := false
 
 	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-sshd"} {
 		out, err := executeCommand("fail2ban-client", "status", jail)
 		if err != nil || out == "" {
+			log.Printf("Fail2ban 状态同步跳过 %s：无法读取 jail 状态", jail)
 			continue
 		}
+		jailStatusRead[jail] = true
 		isWebJail := jail == "wppanel" || jail == "wppanel-404"
 		if isWebJail {
 			webJailStatusRead = true
 		}
 		for _, ip := range parseBannedIPs(out) {
-			if _, exists := ipJails[ip]; !exists {
-				ipJails[ip] = jail
-			}
+			activeJailIPs[jailIP{jail: jail, ip: ip}] = true
 			if isWebJail {
 				webBannedSet[ip] = true
 			}
 		}
 	}
 
-	bannedSet := make(map[string]bool, len(ipJails))
-	for ip := range ipJails {
-		bannedSet[ip] = true
-	}
-
-	nftablesSet := getNftablesPersistIPs()
-
 	db := database.GetDB()
 
-	for ip, jail := range ipJails {
+	for pair := range activeJailIPs {
 		var count int
 		db.QueryRow(`SELECT COUNT(*) FROM firewall_bans
-			WHERE ip_address = ? AND unbanned_at IS NULL
-				AND (expires_at IS NULL OR expires_at > datetime('now'))`, ip).Scan(&count)
+			WHERE ip_address = ? AND source_jail = ? AND unbanned_at IS NULL
+				AND (expires_at IS NULL OR expires_at > datetime('now'))`, pair.ip, pair.jail).Scan(&count)
 		if count > 0 {
 			continue
 		}
-		_ = RecordFail2banBan(ip, jail)
+		_ = RecordFail2banBan(pair.ip, pair.jail, 600, 1, false)
 	}
 
 	now := time.Now()
@@ -462,7 +555,16 @@ func SyncFail2banBans() {
 		if rows.Scan(&id, &ip, &level, &expiresAt, &isManual, &jail) != nil {
 			continue
 		}
-		if bannedSet[ip] {
+		if isManual == 0 && normalizeFail2banJail(jail) != "" && !jailStatusRead[jail] {
+			if isWebBanSource(jail) {
+				webBannedSet[ip] = true
+			}
+			continue
+		}
+		if isManual == 0 && activeJailIPs[jailIP{jail: jail, ip: ip}] {
+			if isManual == 0 {
+				removeAutomaticPersistBan(db, ip)
+			}
 			if isWebBanSource(jail) {
 				webBannedSet[ip] = true
 			}
@@ -482,29 +584,7 @@ func SyncFail2banBans() {
 			}
 			continue
 		}
-		if level >= 3 {
-			if expiresAt == nil || expiresAt.After(now) {
-				if nftablesSet != nil && nftablesSet[ip] {
-					if isWebBanSource(jail) {
-						webBannedSet[ip] = true
-					}
-					continue
-				}
-				if nftablesSet != nil && !nftablesSet[ip] {
-					AddPersistBan(ip)
-					if isWebBanSource(jail) {
-						webBannedSet[ip] = true
-					}
-					continue
-				}
-				AddPersistBan(ip)
-				if isWebBanSource(jail) {
-					webBannedSet[ip] = true
-				}
-				continue
-			}
-			RemovePersistBan(ip)
-		}
+		removeAutomaticPersistBan(db, ip)
 		expiredIDs = append(expiredIDs, id)
 	}
 
@@ -516,7 +596,17 @@ func SyncFail2banBans() {
 	}
 }
 
-func RecordFail2banBan(ip, jail string) error {
+func removeAutomaticPersistBan(db *sql.DB, ip string) {
+	var manualCount int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM firewall_bans
+		WHERE ip_address=? AND is_manual=1 AND unbanned_at IS NULL
+		AND (expires_at IS NULL OR expires_at > datetime('now'))`, ip).Scan(&manualCount)
+	if manualCount == 0 {
+		RemovePersistBan(ip)
+	}
+}
+
+func RecordFail2banBan(ip, jail string, banTime, banCount int, restored bool) error {
 	db := database.GetDB()
 	if db == nil {
 		return fmt.Errorf("database not initialized")
@@ -526,6 +616,12 @@ func RecordFail2banBan(ip, jail string) error {
 	if net.ParseIP(ip) == nil {
 		return fmt.Errorf("invalid IP: %s", ip)
 	}
+	if banTime < 1 || banTime > 7*24*60*60 {
+		return fmt.Errorf("invalid Fail2ban ban time: %d", banTime)
+	}
+	if banCount < 1 || banCount > 1_000_000 {
+		return fmt.Errorf("invalid Fail2ban ban count: %d", banCount)
+	}
 
 	jail = normalizeFail2banJail(jail)
 	if jail == "" {
@@ -534,88 +630,57 @@ func RecordFail2banBan(ip, jail string) error {
 			jail = "wppanel"
 		}
 	}
+	if restored {
+		// Fail2ban restart runs actionunban while stopping, then restores active
+		// tickets with actionban. Reopen the existing receipt without creating a
+		// new history row or incrementing its counter.
+		_, err := db.Exec(`UPDATE firewall_bans SET unbanned_at=NULL
+			WHERE id = (
+				SELECT id FROM firewall_bans
+				WHERE ip_address=? AND source_jail=? AND is_manual=0
+				ORDER BY id DESC LIMIT 1
+			)`, ip, jail)
+		return err
+	}
 
-	now := time.Now()
-	prevBans, prevMaxLevel := countBanHistory(ip, now)
-
-	banLevel := 2
-	expiresVal := "datetime('now', '+600 seconds')"
+	banLevel := fail2banBanLevel(banTime)
 	reason := "Fail2ban 自动封禁"
 	if jail == "wppanel-404" {
 		reason = "404 泛滥检测"
+	} else if jail == "wppanel-sshd" {
+		reason = "SSH 暴力破解"
+	}
+	expiresModifier := fmt.Sprintf("+%d seconds", banTime)
+
+	var protectedCount int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM firewall_bans WHERE ip_address=? AND (is_manual=1 OR ban_level>=5)
+		AND unbanned_at IS NULL AND (expires_at IS NULL OR expires_at > datetime('now'))`, ip).Scan(&protectedCount)
+	if protectedCount > 0 {
+		return nil
 	}
 
-	if prevMaxLevel >= 2 || prevBans > 0 {
-		banLevel = 3
-		expiresVal = "datetime('now', '+86400 seconds')"
-		reason = "Fail2ban 自动封禁（24h内重复违规，升级至24小时）"
-		if jail == "wppanel-404" {
-			reason = "404 泛滥检测（24h内重复违规，升级至24小时）"
-		}
-
-		l3Count := countLevel3(ip)
-		if l3Count >= 2 {
-			banLevel = 5
-			expiresVal = "NULL"
-			reason = "Fail2ban 自动封禁（高危：累计3次严重违规，永久封禁）"
-			if jail == "wppanel-404" {
-				reason = "404 泛滥检测（高危：累计3次严重违规，永久封禁）"
-			}
-		}
-	}
-
-	var activeID, activeLevel, activeIsManual, activeBanCount int
-	var activeReason, activeJail string
+	var activeID, activeLevel int
 	err := db.QueryRow(
-		`SELECT id, ban_level, is_manual, ban_count, reason, source_jail
+		`SELECT id, ban_level
 		 FROM firewall_bans
-		 WHERE ip_address = ? AND unbanned_at IS NULL
+		 WHERE ip_address = ? AND source_jail = ? AND is_manual=0 AND unbanned_at IS NULL
 		   AND (expires_at IS NULL OR expires_at > datetime('now'))
 		 ORDER BY id DESC LIMIT 1`,
-		ip,
-	).Scan(&activeID, &activeLevel, &activeIsManual, &activeBanCount, &activeReason, &activeJail)
+		ip, jail,
+	).Scan(&activeID, &activeLevel)
 	if err == nil {
-		if activeIsManual == 1 {
-			_, err = db.Exec(`UPDATE firewall_bans SET ban_count = ban_count + 1 WHERE id = ?`, activeID)
-			if err == nil {
-				_ = deduplicateActiveFirewallBanIP(db, ip)
-			}
-			return err
-		}
-		if activeLevel >= 3 && activeBanCount+1 >= 3 {
-			banLevel = 5
-			expiresVal = "NULL"
-			reason = "Fail2ban 自动封禁（高危：累计3次严重违规，永久封禁）"
-			if jail == "wppanel-404" {
-				reason = "404 泛滥检测（高危：累计3次严重违规，永久封禁）"
-			}
-			if jail == "wppanel-sshd" {
-				reason = "SSH 暴力破解（高危：累计3次严重违规，永久封禁）"
-			}
-		}
-		if activeLevel >= banLevel {
-			banLevel = activeLevel
-			reason = activeReason
-			jail = activeJail
-			if banLevel >= 5 {
-				expiresVal = "NULL"
-			} else if banLevel >= 3 {
-				expiresVal = "datetime('now', '+86400 seconds')"
-			}
+		if activeLevel >= 5 {
+			return nil
 		}
 		if _, err := db.Exec(
 			`UPDATE firewall_bans
-			 SET ban_level = ?, reason = ?, source_jail = ?, ban_count = ban_count + 1,
-			     banned_at = CURRENT_TIMESTAMP, expires_at = `+expiresVal+`
+			 SET ban_level = ?, reason = ?, source_jail = ?, ban_count = ?,
+			     banned_at = CURRENT_TIMESTAMP, expires_at = datetime('now', ?)
 			 WHERE id = ?`,
-			banLevel, reason, jail, activeID,
+			banLevel, reason, jail, banCount, expiresModifier, activeID,
 		); err != nil {
 			return err
 		}
-		if banLevel >= 3 {
-			recordPersistBan(ip)
-		}
-		_ = deduplicateActiveFirewallBanIP(db, ip)
 		return nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
@@ -623,16 +688,73 @@ func RecordFail2banBan(ip, jail string) error {
 
 	if _, err := db.Exec(
 		`INSERT INTO firewall_bans (ip_address, ban_level, reason, source_jail, ban_count, expires_at)
-		 VALUES (?, ?, ?, ?, ?, `+expiresVal+`)`,
-		ip, banLevel, reason, jail, prevBans+1,
+		 VALUES (?, ?, ?, ?, ?, datetime('now', ?))`,
+		ip, banLevel, reason, jail, banCount, expiresModifier,
 	); err != nil {
 		return err
 	}
 
-	if banLevel >= 3 {
-		recordPersistBan(ip)
+	return nil
+}
+
+func fail2banBanLevel(banTime int) int {
+	if banTime <= 10*60 {
+		return 2
 	}
-	_ = deduplicateActiveFirewallBanIP(db, ip)
+	if banTime <= 24*60*60 {
+		return 3
+	}
+	return 4
+}
+
+func RecordFail2banUnban(ip, jail string) error {
+	ip = strings.TrimSpace(ip)
+	if net.ParseIP(ip) == nil {
+		return fmt.Errorf("invalid IP: %s", ip)
+	}
+	jail = normalizeFail2banJail(jail)
+	if jail == "" {
+		return fmt.Errorf("invalid Fail2ban jail")
+	}
+	_, err := database.GetDB().Exec(`UPDATE firewall_bans SET unbanned_at=datetime('now')
+		WHERE ip_address=? AND source_jail=? AND is_manual=0 AND unbanned_at IS NULL`, ip, jail)
+	if err != nil {
+		return err
+	}
+	if isWebBanSource(jail) {
+		return MaybeRemoveNginxBan(ip)
+	}
+	return nil
+}
+
+func MaybeRemoveNginxBan(ip string) error {
+	ip = strings.TrimSpace(ip)
+	if net.ParseIP(ip) == nil {
+		return fmt.Errorf("invalid IP: %s", ip)
+	}
+	var activeWebBans int
+	err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM firewall_bans
+		WHERE ip_address=? AND source_jail IN ('wppanel','wppanel-404','manual')
+		AND unbanned_at IS NULL AND (expires_at IS NULL OR expires_at > datetime('now'))`, ip).Scan(&activeWebBans)
+	if err != nil || activeWebBans > 0 {
+		return err
+	}
+	return conditionalRemoveNginxBan(ip)
+}
+
+func MaybeRemovePersistBan(ip string) error {
+	ip = strings.TrimSpace(ip)
+	if net.ParseIP(ip) == nil {
+		return fmt.Errorf("invalid IP: %s", ip)
+	}
+	var activePersistentBans int
+	err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM firewall_bans
+		WHERE ip_address=? AND (is_manual=1 OR ban_level>=5)
+		AND unbanned_at IS NULL AND (expires_at IS NULL OR expires_at > datetime('now'))`, ip).Scan(&activePersistentBans)
+	if err != nil || activePersistentBans > 0 {
+		return err
+	}
+	RemovePersistBan(ip)
 	return nil
 }
 
@@ -648,47 +770,48 @@ func deduplicateActiveFirewallBans(db *sql.DB) error {
 		return nil
 	}
 	rows, err := db.Query(`
-		SELECT ip_address
+		SELECT ip_address, source_jail
 		FROM firewall_bans
 		WHERE unbanned_at IS NULL
 			AND (expires_at IS NULL OR expires_at > datetime('now'))
-		GROUP BY ip_address
+		GROUP BY ip_address, source_jail
 		HAVING COUNT(*) > 1`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 
-	var ips []string
+	type duplicateGroup struct{ ip, jail string }
+	var groups []duplicateGroup
 	for rows.Next() {
-		var ip string
-		if err := rows.Scan(&ip); err != nil {
+		var group duplicateGroup
+		if err := rows.Scan(&group.ip, &group.jail); err != nil {
 			return err
 		}
-		ips = append(ips, ip)
+		groups = append(groups, group)
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
 
-	for _, ip := range ips {
-		if err := deduplicateActiveFirewallBanIP(db, ip); err != nil {
+	for _, group := range groups {
+		if err := deduplicateActiveFirewallBanIP(db, group.ip, group.jail); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func deduplicateActiveFirewallBanIP(db *sql.DB, ip string) error {
-	if db == nil || ip == "" {
+func deduplicateActiveFirewallBanIP(db *sql.DB, ip, jail string) error {
+	if db == nil || ip == "" || jail == "" {
 		return nil
 	}
 	rows, err := db.Query(`
 		SELECT id, ban_level, ban_count, banned_at
 		FROM firewall_bans
-		WHERE ip_address = ? AND unbanned_at IS NULL
+		WHERE ip_address = ? AND source_jail = ? AND unbanned_at IS NULL
 			AND (expires_at IS NULL OR expires_at > datetime('now'))
-		ORDER BY ban_level DESC, banned_at DESC, id DESC`, ip)
+		ORDER BY ban_level DESC, banned_at DESC, id DESC`, ip, jail)
 	if err != nil {
 		return err
 	}
@@ -757,24 +880,6 @@ func detectFail2banJail(ip string) string {
 	return ""
 }
 
-func countBanHistory(ip string, since time.Time) (count int, maxLevel int) {
-	db := database.GetDB()
-	cutoff := since.Add(-24 * time.Hour).Format("2006-01-02 15:04:05")
-	db.QueryRow(
-		"SELECT COUNT(*), COALESCE(MAX(ban_level), 0) FROM firewall_bans WHERE ip_address = ? AND banned_at > ?",
-		ip, cutoff,
-	).Scan(&count, &maxLevel)
-	return
-}
-
-func countLevel3(ip string) int {
-	db := database.GetDB()
-	cutoff := time.Now().Add(-30 * 24 * time.Hour).Format("2006-01-02 15:04:05")
-	var c int
-	db.QueryRow("SELECT COUNT(*) FROM firewall_bans WHERE ip_address = ? AND ban_level >= 3 AND banned_at > ?", ip, cutoff).Scan(&c)
-	return c
-}
-
 func EnsurePersistNftables() {
 	exec.Command("bash", "-c",
 		`nft add table ip wppanel_persist 2>/dev/null
@@ -806,20 +911,6 @@ func RemovePersistBan(ip string) {
 		return
 	}
 	exec.Command("nft", "delete", "element", "ip", "wppanel_persist", "banned_ips", "{", ip, "}").Run()
-}
-
-func getNftablesPersistIPs() map[string]bool {
-	outBytes, err := exec.Command("bash", "-c",
-		`nft list set ip wppanel_persist banned_ips 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}'`).CombinedOutput()
-	out := strings.TrimSpace(string(outBytes))
-	if err != nil || out == "" {
-		return nil
-	}
-	ips := make(map[string]bool)
-	for _, ip := range strings.Fields(out) {
-		ips[strings.TrimSpace(ip)] = true
-	}
-	return ips
 }
 
 func parseBannedIPs(status string) []string {
@@ -1064,13 +1155,28 @@ func CleanExpiredBans() {
 			continue
 		}
 
-		db.Exec("UPDATE firewall_bans SET unbanned_at = datetime('now') WHERE id = ?", id)
-
-		if jail == "panel_scan" || jail == "panel" || jail == "manual" {
-			RemovePersistBan(ip)
+		// Fail2ban-controlled bans are closed by actionunban or SyncFail2banBans.
+		// Do not expire them from the panel clock while Fail2ban may still enforce them.
+		if jail == "wppanel" || jail == "wppanel-404" || jail == "wppanel-sshd" {
+			continue
 		}
+		db.Exec("UPDATE firewall_bans SET unbanned_at = datetime('now') WHERE id = ?", id)
+		RemovePersistBan(ip)
 		if isWebBanSource(jail) {
 			_ = RemoveNginxBan(ip)
 		}
 	}
+}
+
+func StartFail2banSyncScheduler() {
+	GoSafe(func() {
+		SyncFail2banBans()
+		CleanExpiredBans()
+		ticker := time.NewTicker(2 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			SyncFail2banBans()
+			CleanExpiredBans()
+		}
+	})
 }

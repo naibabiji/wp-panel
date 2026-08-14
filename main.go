@@ -50,6 +50,10 @@ func main() {
 	unbanIPNginx := flag.String("unbanip-nginx", "", "从 Nginx 黑名单移除指定 IP")
 	recordFail2banIP := flag.String("record-fail2ban", "", "记录 Fail2ban 封禁 IP")
 	banJail := flag.String("ban-jail", "", "Fail2ban jail 名称")
+	banTime := flag.Int("ban-bantime", 0, "Fail2ban 本次封禁秒数")
+	banCount := flag.Int("ban-count", 0, "Fail2ban 累计封禁次数")
+	banRestored := flag.Bool("ban-restored", false, "Fail2ban 重启恢复事件")
+	unbanFail2banIP := flag.String("unban-fail2ban", "", "记录 Fail2ban 解封 IP")
 	fileBackup := flag.String("file-backup", "", "执行文件备份: siteID:mode")
 	runAutoBackup := flag.Bool("run-auto-backup", false, "手动触发自动备份（测试用）")
 	showInfo := flag.Bool("info", false, "查看面板信息")
@@ -70,8 +74,8 @@ func main() {
 		return
 	}
 
-	if *banIPNginx != "" || *unbanIPNginx != "" || *recordFail2banIP != "" {
-		handleFail2banCLI(*configPath, *banIPNginx, *unbanIPNginx, *recordFail2banIP, *banJail)
+	if *banIPNginx != "" || *unbanIPNginx != "" || *recordFail2banIP != "" || *unbanFail2banIP != "" {
+		handleFail2banCLI(*configPath, *banIPNginx, *unbanIPNginx, *recordFail2banIP, *unbanFail2banIP, *banJail, *banTime, *banCount, *banRestored)
 		return
 	}
 
@@ -266,6 +270,8 @@ func main() {
 	log.Println("SSL 自动续期调度器已启动")
 	executor.StartWPSecurityEventIngestor()
 	log.Println("WordPress 安全探测事件持久化调度器已启动")
+	executor.StartFail2banSyncScheduler()
+	log.Println("Fail2ban 封禁状态同步调度器已启动")
 	go func() {
 		for {
 			time.Sleep(30 * time.Minute)
@@ -341,7 +347,7 @@ func stopWPCoreUpdateWorker(worker wpCoreUpdateWorkerLifecycle, timeout time.Dur
 	return worker.Stop(ctx)
 }
 
-func handleFail2banCLI(configPath, banIP, unbanIP, recordIP, jail string) {
+func handleFail2banCLI(configPath, banIP, unbanIP, recordIP, unbanRecordIP, jail string, banTime, banCount int, restored bool) {
 	if banIP != "" {
 		if err := executor.AddNginxBan(banIP); err != nil {
 			log.Fatalf("Nginx 封禁失败: %v", err)
@@ -352,7 +358,7 @@ func handleFail2banCLI(configPath, banIP, unbanIP, recordIP, jail string) {
 			log.Fatalf("Nginx 解封失败: %v", err)
 		}
 	}
-	if recordIP == "" {
+	if recordIP == "" && unbanRecordIP == "" {
 		return
 	}
 
@@ -367,8 +373,15 @@ func handleFail2banCLI(configPath, banIP, unbanIP, recordIP, jail string) {
 	if err := database.RunMigrations(); err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
-	if err := executor.RecordFail2banBan(recordIP, jail); err != nil {
-		log.Fatalf("Fail2ban 封禁记录失败: %v", err)
+	if recordIP != "" {
+		if err := executor.RecordFail2banBan(recordIP, jail, banTime, banCount, restored); err != nil {
+			log.Fatalf("Fail2ban 封禁记录失败: %v", err)
+		}
+	}
+	if unbanRecordIP != "" {
+		if err := executor.RecordFail2banUnban(unbanRecordIP, jail); err != nil {
+			log.Fatalf("Fail2ban 解封记录失败: %v", err)
+		}
 	}
 }
 

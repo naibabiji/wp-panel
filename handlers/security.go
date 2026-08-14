@@ -38,6 +38,9 @@ func (h *SecurityHandler) GetSettings(c *gin.Context) {
 		if err := rows.Scan(&s.ID, &s.Key, &s.Value, &s.Description, &s.UpdatedAt); err != nil {
 			continue
 		}
+		if s.Key == "fail2ban_bantime" {
+			s.Value = "600"
+		}
 		settings = append(settings, s)
 	}
 	if settings == nil {
@@ -108,7 +111,7 @@ func (h *SecurityHandler) UpdateSettings(c *gin.Context) {
 }
 
 func needsFail2banApply(settings map[string]string) bool {
-	for _, key := range []string{"fail2ban_maxretry", "fail2ban_findtime", "fail2ban_bantime", "auto_whitelist_enabled", "whitelist_ips"} {
+	for _, key := range []string{"fail2ban_maxretry", "fail2ban_findtime", "auto_whitelist_enabled", "whitelist_ips"} {
 		if _, ok := settings[key]; ok {
 			return true
 		}
@@ -341,7 +344,12 @@ func normalizeSecuritySetting(key string, val interface{}) (string, bool, error)
 	case "fail2ban_findtime":
 		return normalizeRange(key, val, 10, 3600)
 	case "fail2ban_bantime":
-		return normalizeRange(key, val, 60, 86400)
+		fixed, _, err := normalizeRange(key, val, 600, 600)
+		if err != nil {
+			return "", false, fmt.Errorf("首次封禁时长已固定为600秒")
+		}
+		_ = fixed
+		return "", false, nil
 	case "rate_limit_rpm":
 		return normalizeRange(key, val, 10, 600)
 	case "rate_limit_burst":

@@ -140,7 +140,7 @@ func AnalyzeWebsiteLogDetails(site *models.Website, startAt, endAt time.Time, db
 	result.Methods = sortedCounts(methods, logAnalysisTopLimit)
 	result.Hourly = sortedNamedCounts(hourly)
 	result.IPPathPairs = sortedCounts(ipPathPairs, logAnalysisTopLimit)
-	result.TopIPs = buildLogAnalysisIPDetails(db, site.ID, ips)
+	result.TopIPs = buildLogAnalysisIPDetails(db, site.ID, ips, startAt, endAt)
 	return result, nil
 }
 
@@ -155,7 +155,7 @@ func normalizeUserAgent(value string) string {
 	return value
 }
 
-func buildLogAnalysisIPDetails(db *sql.DB, siteID int, counts map[string]int) []models.LogAnalysisIPDetail {
+func buildLogAnalysisIPDetails(db *sql.DB, siteID int, counts map[string]int, startAt, endAt time.Time) []models.LogAnalysisIPDetail {
 	ranked := sortedCounts(counts, logAnalysisTopLimit)
 	items := make([]models.LogAnalysisIPDetail, 0, len(ranked))
 	for _, rankedIP := range ranked {
@@ -164,10 +164,23 @@ func buildLogAnalysisIPDetails(db *sql.DB, siteID int, counts map[string]int) []
 			var expires sql.NullString
 			_ = db.QueryRow(`SELECT reason,source_jail,expires_at FROM firewall_bans
 				WHERE ip_address=? AND unbanned_at IS NULL AND (expires_at IS NULL OR expires_at > datetime('now'))
-				ORDER BY banned_at DESC,id DESC LIMIT 1`, rankedIP.Name).Scan(&item.BanReason, &item.BanSource, &expires)
-			if item.BanSource != "" || item.BanReason != "" || expires.Valid {
+				ORDER BY banned_at DESC,id DESC LIMIT 1`, rankedIP.Name).Scan(&item.CurrentBanReason, &item.CurrentBanSource, &expires)
+			if item.CurrentBanSource != "" || item.CurrentBanReason != "" || expires.Valid {
 				item.CurrentlyBanned = true
-				item.BanExpiresAt = expires.String
+				item.CurrentBanExpires = expires.String
+			}
+			var started, ended, historicalExpires sql.NullString
+			_ = db.QueryRow(`SELECT reason,source_jail,banned_at,expires_at,unbanned_at,ban_count
+				FROM firewall_bans WHERE ip_address=? AND banned_at <= ?
+				AND COALESCE(unbanned_at,expires_at,datetime('now')) >= ?
+				ORDER BY banned_at DESC,id DESC LIMIT 1`, rankedIP.Name,
+				endAt.UTC().Format("2006-01-02 15:04:05"), startAt.UTC().Format("2006-01-02 15:04:05")).
+				Scan(&item.RangeBanReason, &item.RangeBanSource, &started, &historicalExpires, &ended, &item.RangeBanCount)
+			if started.Valid {
+				item.BannedInRange = true
+				item.RangeBanStartedAt = started.String
+				item.RangeBanExpiresAt = historicalExpires.String
+				item.RangeBanEndedAt = ended.String
 			}
 			rows, err := db.Query(`SELECT event_type,COUNT(*),MAX(occurred_at) FROM wp_security_events
 				WHERE site_id=? AND ip_address=? GROUP BY event_type ORDER BY COUNT(*) DESC,event_type ASC`, siteID, rankedIP.Name)

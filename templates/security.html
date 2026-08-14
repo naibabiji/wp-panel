@@ -122,7 +122,8 @@
                 </div>
                 <div class="mb-4">
                     <label class="label">{{t .Lang "security.ban_time"}}</label>
-                    <input type="number" x-model="settings.fail2ban_bantime" class="input-field" min="60" max="86400">
+                    <div class="input-field text-gray-300">600</div>
+                    <p class="text-xs text-gray-500 mt-1">{{t .Lang "security.increment_ban_help"}}</p>
                 </div>
                 <div class="mb-6">
                     <label class="flex items-center space-x-2 cursor-pointer">
@@ -368,7 +369,8 @@ function securitySettings() {
         },
         async save() {
             try {
-                await api('/security/settings', { method: 'PUT', body: this.settings });
+                const { fail2ban_bantime, ...body } = this.settings;
+                await api('/security/settings', { method: 'PUT', body });
                 showToast(t('settings.saved'), 'success');
             } catch(e) { showToast(e.message, 'error'); }
         },

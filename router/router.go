@@ -377,6 +377,7 @@ var i18nKeys = []string{
 	"log_analysis.detail_load_failed",
 	"log_analysis.currently_banned",
 	"log_analysis.not_currently_banned",
+	"log_analysis.banned_in_range",
 	"log_analysis.security_event_sensitive_file_scan",
 	"log_analysis.security_event_sqli_probe",
 	"log_analysis.security_event_fake_search_bot",

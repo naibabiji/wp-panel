@@ -15,7 +15,7 @@ var allowedCommands = map[string][]string{
 	"systemctl":       {"start", "stop", "reload", "restart", "enable", "disable", "daemon-reload", "status"},
 	"nginx":           {"-t", "-s", "-c"},
 	"nft":             {"add", "delete", "list", "flush", "create", "insert", "set"},
-	"fail2ban-client": {"set", "unban", "reload", "status", "banip", "start", "stop", "add", "get"},
+	"fail2ban-client": {"-t", "set", "unban", "reload", "status", "banip", "start", "stop", "add", "get"},
 	"useradd":         {"-r", "-s", "-d", "-m", "-g", "-M", "-U"},
 	"userdel":         {"-r", "-f"},
 	"usermod":         {"-a", "-G", "-g"},

@@ -194,20 +194,23 @@ func (h *FirewallHandler) Unban(c *gin.Context) {
 		return
 	}
 
+	if jail == "wppanel" || jail == "wppanel-404" || jail == "wppanel-sshd" {
+		if _, err := executor.Execute("fail2ban-client", "set", jail, "unbanip", ip); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Fail2ban 解封失败"))
+			return
+		}
+	}
+
 	if _, err := db.Exec("UPDATE firewall_bans SET unbanned_at = datetime('now') WHERE id = ?", id); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("解封失败"))
 		return
 	}
 
 	executor.GoSafe(func() {
-		switch jail {
-		case "wppanel", "wppanel-404", "wppanel-sshd":
-			executor.Execute("fail2ban-client", "set", jail, "unbanip", ip)
-		}
 		if jail == "wppanel" || jail == "wppanel-404" || jail == "manual" {
-			executor.RemoveNginxBan(ip)
+			_ = executor.MaybeRemoveNginxBan(ip)
 		}
-		executor.RemovePersistBan(ip)
+		_ = executor.MaybeRemovePersistBan(ip)
 	})
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "IP " + ip + " 已解除封禁"}))
