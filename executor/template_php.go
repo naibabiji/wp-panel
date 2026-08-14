@@ -128,7 +128,16 @@ server {
 
     set $wp_cache_ver "{{.FCacheKey}}";
 
-    return 301 https://$host$request_uri;
+    root {{.WebRoot}};
+    add_header Cache-Control "no-store, no-cache, max-age=0, must-revalidate" always;
+
+    location ^~ /.well-known/acme-challenge/ {
+        try_files $uri =404;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
 }
 
 server {

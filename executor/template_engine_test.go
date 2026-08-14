@@ -137,6 +137,33 @@ func TestFastCGICacheTemplatesDoNotCacheRedirects(t *testing.T) {
 	}
 }
 
+func TestSSLTemplatesServeHTTPACMEChallengeWithoutRedirect(t *testing.T) {
+	for name, tmpl := range map[string]string{
+		"wordpress": nginxHTTPSTemplate,
+		"php":       phpHTTPSTemplate,
+	} {
+		firstServerEnd := strings.Index(tmpl, "\n}\n\nserver {")
+		if firstServerEnd < 0 {
+			t.Fatalf("%s SSL template missing separate HTTP and HTTPS servers", name)
+		}
+		httpServer := tmpl[:firstServerEnd]
+
+		for _, want := range []string{
+			"root {{.WebRoot}};",
+			`add_header Cache-Control "no-store, no-cache, max-age=0, must-revalidate" always;`,
+			"location ^~ /.well-known/acme-challenge/ {\n        try_files $uri =404;\n    }",
+			"location / {\n        return 301 https://$host$request_uri;\n    }",
+		} {
+			if !strings.Contains(httpServer, want) {
+				t.Fatalf("%s SSL template HTTP server missing %q", name, want)
+			}
+		}
+		if strings.Contains(httpServer, "\n    return 301 https://$host$request_uri;\n") {
+			t.Fatalf("%s SSL template must not redirect every HTTP request at server scope", name)
+		}
+	}
+}
+
 func TestWPSecurityLogMapRecordsRuntimePHPBeforeContentExclusion(t *testing.T) {
 	rule := "~*^/wp-content/(?!plugins/|themes/|mu-plugins/).*\\.(php|phtml|phar|php[0-9])$ 1;"
 	exclusion := "~^/wp-content/ 0;"
