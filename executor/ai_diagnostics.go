@@ -84,6 +84,11 @@ type aiChatRequest struct {
 	Messages    []aiChatMessage `json:"messages"`
 	Temperature float64         `json:"temperature"`
 	Stream      bool            `json:"stream"`
+	Thinking    *aiThinking     `json:"thinking,omitempty"`
+}
+
+type aiThinking struct {
+	Type string `json:"type"`
 }
 
 type aiChatResponse struct {
@@ -237,14 +242,14 @@ func BuildAIFollowupPromptWithTools(site *models.Website, session *models.AISess
 			"no_sql_execution": true,
 			"no_shell":         true,
 		},
-		"response_rules": []string{
+		"response_rules": append([]string{
 			"用中文直接回答用户本轮反馈，不要输出 JSON。",
 			"先说明重新检查到的当前状态是否与原诊断不同。",
 			"如果用户说已经完成某个操作，结合 current_site_context 判断是否有新证据；不能凭用户一句话声称已经修复。",
 			"只能建议 WP Panel 中真实存在的入口；没有入口时明确说明当前没有直接入口。",
 			"不要建议执行 shell 命令，不要声称你已经修改文件、数据库或服务。",
 			"给出下一步 1-3 个最具体的排查或处理建议。",
-		},
+		}, logDiagnosticRulesForSession(session, userMessage)...),
 	}
 	data, err := aiMarshalMap(ctx)
 	if err != nil {
@@ -284,6 +289,10 @@ func BuildAIFollowupPromptWithTools(site *models.Website, session *models.AISess
 			return "", "", nil, err
 		}
 		userPrompt = string(data)
+	}
+	userPrompt, err = AnonymizeAIText(session.ID, userPrompt)
+	if err != nil {
+		return "", "", nil, err
 	}
 	return aiFollowupSystemPrompt(), userPrompt, tools, nil
 }
@@ -502,22 +511,23 @@ func CallAIChat(ctx context.Context, settings *models.AISettings, systemPrompt, 
 	if reqBody.Model == "" {
 		return "", 0, &AIProviderError{Type: "bad_config", Message: "模型不能为空"}
 	}
-	body, _ := json.Marshal(reqBody)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return "", 0, &AIProviderError{Type: "bad_config", Message: err.Error()}
+	if aiIsDeepSeek(settings) {
+		reqBody.Thinking = &aiThinking{Type: "disabled"}
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if strings.TrimSpace(settings.APIKey) != "" {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(settings.APIKey))
-	}
-
 	timeout := AIRequestTimeout(settings, len(systemPrompt)+len(userPrompt))
 	client := &http.Client{Timeout: timeout}
 	start := time.Now()
 	var lastErr error
 	for attempt := 0; attempt <= aiProviderMaxRetries; attempt++ {
+		body, _ := json.Marshal(reqBody)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return "", time.Since(start).Milliseconds(), &AIProviderError{Type: "bad_config", Message: err.Error()}
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if strings.TrimSpace(settings.APIKey) != "" {
+			req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(settings.APIKey))
+		}
 		resp, err := client.Do(req)
 		elapsed := time.Since(start).Milliseconds()
 		if err != nil {
@@ -543,14 +553,6 @@ func CallAIChat(ctx context.Context, settings *models.AISettings, systemPrompt, 
 		if err != nil {
 			lastErr = err
 			if aiShouldRetryProviderResponse(err) && attempt < aiProviderMaxRetries && aiSleepWithContext(ctx, aiProviderRetryDelay) == nil {
-				req, err = http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-				if err != nil {
-					return "", elapsed, &AIProviderError{Type: "bad_config", Message: err.Error()}
-				}
-				req.Header.Set("Content-Type", "application/json")
-				if strings.TrimSpace(settings.APIKey) != "" {
-					req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(settings.APIKey))
-				}
 				continue
 			}
 			return "", elapsed, err
@@ -558,14 +560,6 @@ func CallAIChat(ctx context.Context, settings *models.AISettings, systemPrompt, 
 		if strings.TrimSpace(content) == "" {
 			lastErr = &AIProviderError{Type: "empty_response", Message: "AI 服务返回空内容"}
 			if attempt < aiProviderMaxRetries && aiSleepWithContext(ctx, aiProviderRetryDelay) == nil {
-				req, err = http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-				if err != nil {
-					return "", elapsed, &AIProviderError{Type: "bad_config", Message: err.Error()}
-				}
-				req.Header.Set("Content-Type", "application/json")
-				if strings.TrimSpace(settings.APIKey) != "" {
-					req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(settings.APIKey))
-				}
 				continue
 			}
 			return "", elapsed, lastErr
@@ -603,6 +597,13 @@ func aiShouldRetryProviderResponse(err error) bool {
 		return providerErr.Type == "bad_response" || providerErr.Type == "empty_response"
 	}
 	return false
+}
+
+func aiIsDeepSeek(settings *models.AISettings) bool {
+	if settings == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(settings.Provider), "deepseek") || strings.EqualFold(strings.TrimSpace(settings.BaseURL), "https://api.deepseek.com")
 }
 
 func aiSleepWithContext(ctx context.Context, d time.Duration) error {
@@ -919,10 +920,12 @@ func aiSystemPrompt() string {
 		"code_suspects 是面板只读扫描当前启用主题、启用插件和少量高价值文件得到的证据。若 code_suspects 中存在 high 且有文件行号，应优先作为可能原因；不要要求用户再手动查同一处证据。",
 		"code_suspects 中 context=conditional_block 的 die/wp_die/exit 表示位于条件代码块内，通常只作为低优先级线索；除非日志或请求条件能直接对应，不要把它写成主要原因。",
 		"当 diagnosis_profile.profile=performance 时，优先分析 performance_summary 中的服务器负载、站点 PHP-FPM 资源占用、WP Panel FastCGI 缓存状态、活跃插件结构和缓存插件冲突；不要把性能问题默认当成 500 或服务宕机。",
-		"如果 site_summary.fastcgi_cache_enabled=true，不能建议安装或启用 WordPress 页面缓存插件，例如 WP Super Cache、W3 Total Cache、WP Fastest Cache、Cache Enabler、WP Rocket 页面缓存等功能；应建议验证 FastCGI 缓存命中、清理机制、绕过规则，并排查对象缓存、主题插件、数据库查询、图片资源和外部请求。",
+		"如果 site_summary.fastcgi_cache_enabled=true，不能建议安装或启用 WordPress 页面缓存插件。当前上下文只证明 FastCGI 缓存开关与TTL配置，不包含真实命中率；没有探测证据时不得把缓存未命中列为原因，也不得要求使用 curl、浏览器开发者工具或“网站监控”查看命中率。可建议检查面板已有的缓存配置与清理功能，并排查对象缓存、主题插件、数据库查询、图片资源和外部请求。",
+		"软件管理只能确认服务状态和现有基础配置；当前面板没有 PHP-FPM max_children 饱和历史、慢请求趋势或进程池压力监控。没有相应证据时不得断言进程池耗尽，也不要把调整 max_children 作为直接操作建议。",
 		"recent_panel_operations 是面板操作审计线索，不是故障原因结论。只有操作类型、时间和日志证据能直接对应时，才可作为可能原因；不要把 CDN 真实 IP、SSL、备份等无直接证据的近期操作表述为原因。",
 		"不要声称已经修改服务器。不要建议任意 shell 命令。不要输出需要 root 权限的操作。",
 		"不要要求用户提供密码、API Key、SSL 私钥或面板数据库。",
+		"输入中的 IP-01、IP-02 等是 WP Panel 在当前会话内生成的稳定脱敏别名；可用它们关联行为，但不得猜测真实IP或要求用户提供映射，面板会在本地恢复显示。",
 		"对每个结论给出证据，不确定时降低置信度。",
 		"请用中文返回 JSON 对象，字段必须包含 summary、risk_level、likely_causes、recommended_actions、needs_more_info、user_friendly_explanation。",
 		"不要包含 Markdown 代码块，不要输出 JSON 以外的文字。",
@@ -1091,11 +1094,12 @@ func aiCacheRecommendationPolicy(site *models.Website) map[string]interface{} {
 				"任何额外的 WordPress 全页/静态 HTML 页面缓存",
 			},
 			"prefer_recommending": []string{
-				"验证 X-FastCGI-Cache 是否命中",
-				"检查 FastCGI 缓存 TTL、清理机制和绕过规则",
+				"核对 WP Panel 当前显示的 FastCGI 缓存开关与 TTL 配置",
+				"在需要时使用 WP Panel 已有的缓存清理功能后复测页面表现",
 				"检查登录态、后台、购物车、结账页等动态路径是否绕过缓存",
 				"排查对象缓存、慢查询、重型插件、主题代码、图片资源、CDN 和外部 HTTP 请求",
 			},
+			"evidence_limit": "当前诊断没有 FastCGI 缓存命中率数据；不得建议通过 curl、浏览器开发者工具或网站监控查看命中率，也不得把未命中当作已证实原因。",
 		}
 	}
 	return map[string]interface{}{

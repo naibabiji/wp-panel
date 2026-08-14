@@ -384,6 +384,8 @@ var i18nKeys = []string{
 	"log_analysis.detail_ai",
 	"log_analysis.detail_ai_failed",
 	"log_analysis.detail_ai_running",
+	"log_analysis.ai_session_wait_help",
+	"log_analysis.continue_diagnosis",
 	"log_analysis.detail_load_failed",
 	"log_analysis.currently_banned",
 	"log_analysis.not_currently_banned",

@@ -3,6 +3,7 @@ package executor
 import (
 	"compress/gzip"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -163,5 +164,40 @@ func TestAnalyzeWebsiteLogDetailsFiltersAndPaginates(t *testing.T) {
 	ipDetail, err := AnalyzeWebsiteLogDetails(site, now.Add(-time.Hour), now.Add(time.Hour), db, "ip", "1.2.3.4", 1, 20)
 	if err != nil || ipDetail.Total != 1 || len(ipDetail.Lines) != 1 || !strings.Contains(ipDetail.Lines[0], "/archives?a=1") {
 		t.Fatalf("ip detail=%+v err=%v", ipDetail, err)
+	}
+}
+
+func TestOtherBotDetailSplitsUserAgentsForBehaviorAnalysis(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, _ = db.Exec(`CREATE TABLE security_settings(skey TEXT PRIMARY KEY,svalue TEXT)`)
+	dir := t.TempDir()
+	now := time.Now().Truncate(time.Second)
+	line := func(ip, path, status, ua string) string {
+		return fmt.Sprintf(`%s - - [%s] "GET %s HTTP/1.1" %s 123 "-" "%s"`, ip, now.Format("02/Jan/2006:15:04:05 -0700"), path, status, ua)
+	}
+	content := strings.Join([]string{
+		line("192.0.2.1", "/post-a", "200", "Amazonbot/0.1"),
+		line("192.0.2.2", "/post-b", "200", "PetalBot/1.0"),
+		line("192.0.2.3", "/wp-login.php", "404", "SuspiciousCrawler/2.0"),
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "access.log"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := AnalyzeWebsiteLogDetails(&models.Website{ID: 1, LogDir: dir}, now.Add(-time.Hour), now.Add(time.Hour), db, "bot", "Other bot:unverified", 1, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Total != 3 || len(detail.UserAgents) != 3 || detail.UniqueIPs != 3 || len(detail.StatusCodes) != 2 {
+		t.Fatalf("Other bot behavior breakdown incomplete: %+v", detail)
+	}
+	joined, _ := json.Marshal(detail.UserAgents)
+	for _, name := range []string{"Amazonbot", "PetalBot", "SuspiciousCrawler"} {
+		if !strings.Contains(string(joined), name) {
+			t.Fatalf("missing %s in user-agent breakdown: %s", name, joined)
+		}
 	}
 }

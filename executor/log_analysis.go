@@ -443,8 +443,13 @@ func BuildLogAnalysisPrompt(report *models.LogAnalysisReport) (string, string, e
 }
 
 func sanitizeLogAnalysisAIText(value string) string {
+	value = sanitizeLogAnalysisAITextKeepingIPs(value)
+	value = logAnalysisIPv4Pattern.ReplaceAllStringFunc(value, maskIP)
+	return value
+}
+
+func sanitizeLogAnalysisAITextKeepingIPs(value string) string {
 	value = logAnalysisSecretPattern.ReplaceAllString(value, "$1$2[redacted]")
 	value = logAnalysisWebRootPattern.ReplaceAllString(value, "/site")
-	value = logAnalysisIPv4Pattern.ReplaceAllStringFunc(value, maskIP)
 	return value
 }

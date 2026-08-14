@@ -935,6 +935,27 @@ func TestLegacyLogDetailAIEndpointIsRemoved(t *testing.T) {
 	}
 }
 
+func TestLogAnalysisUsesManualAIEntryWithPersistentProgress(t *testing.T) {
+	template, err := os.ReadFile("../templates/log_analysis.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range [][]byte{
+		[]byte(`x-show="detailAILoading"`),
+		[]byte(`log_analysis.ai_session_wait_help`),
+		[]byte(`detailAILoading ? t('log_analysis.detail_ai_running') : t('log_analysis.continue_diagnosis')`),
+	} {
+		if !bytes.Contains(template, required) {
+			t.Fatalf("log analysis AI progress UI missing %q", required)
+		}
+	}
+	for _, forbidden := range [][]byte{[]byte(`x-model="useAI"`), []byte(`autoOpenAI`), []byte(`use_ai: this.useAI`)} {
+		if bytes.Contains(template, forbidden) {
+			t.Fatalf("log analysis still contains automatic AI entry %q", forbidden)
+		}
+	}
+}
+
 func TestWPInventoryPanelAPIContract(t *testing.T) {
 	panel, err := os.ReadFile("../templates/wp_inventory_panel.html")
 	if err != nil {

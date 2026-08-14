@@ -68,7 +68,7 @@ func (h *LogAnalysisHandler) CreateDiagnosticSession(c *gin.Context) {
 		return
 	}
 	updateAISessionStatus(sessionID, models.AISessionRunning, "")
-	systemPrompt, userPrompt, toolEvents, err := executor.BuildAILogDiagnosticPrompt(site, job, req.Kind, req.Value)
+	systemPrompt, userPrompt, toolEvents, err := executor.BuildAILogDiagnosticPrompt(site, job, sessionID, req.Kind, req.Value)
 	if err != nil {
 		failAISession(sessionID, err.Error(), len(userPrompt), 0)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.build_context_failed")))
@@ -84,6 +84,12 @@ func (h *LogAnalysisHandler) CreateDiagnosticSession(c *gin.Context) {
 		message := aiUserErrorWithContext(i18n.LangFromRequest(c.Request), err, len(systemPrompt)+len(userPrompt), true)
 		failAISession(sessionID, message, len(userPrompt), 0)
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"session_id": sessionID, "site_id": site.ID, "status": models.AISessionFailed, "error_message": message}))
+		return
+	}
+	content, err = executor.RestoreAIIPAliases(sessionID, content)
+	if err != nil {
+		failAISession(sessionID, err.Error(), len(userPrompt), 0)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.save_result_failed")))
 		return
 	}
 	report, rawText, parsed := executor.ParseAIReport(content)
@@ -125,16 +131,6 @@ func (h *LogAnalysisHandler) Start(c *gin.Context) {
 		return
 	}
 
-	var settings *models.AISettings
-	if req.UseAI {
-		var err error
-		settings, err = loadAISettings()
-		if err != nil || !settings.Enabled || strings.TrimSpace(settings.APIKey) == "" {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "log_analysis.ai_not_ready")))
-			return
-		}
-	}
-
 	db := database.GetDB()
 	_, _ = db.Exec(`UPDATE log_analysis_jobs SET status=?, error_message=?, updated_at=CURRENT_TIMESTAMP
 		WHERE status=? AND updated_at <= datetime('now','-30 minutes')`, models.LogAnalysisFailed, "analysis interrupted", models.LogAnalysisRunning)
@@ -146,7 +142,7 @@ func (h *LogAnalysisHandler) Start(c *gin.Context) {
 	}
 
 	result, err := db.Exec(`INSERT INTO log_analysis_jobs(site_id,status,start_at,end_at,use_ai) VALUES(?,?,?,?,?)`,
-		site.ID, models.LogAnalysisPending, req.StartAt, req.EndAt, req.UseAI)
+		site.ID, models.LogAnalysisPending, req.StartAt, req.EndAt, false)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "log_analysis.create_failed")))
 		return

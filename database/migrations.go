@@ -536,6 +536,17 @@ var migrations = append([]string{
 		FOREIGN KEY (session_id) REFERENCES ai_sessions(id) ON DELETE CASCADE
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_ai_tool_events_session ON ai_tool_events(session_id, created_at)`,
+	`CREATE TABLE IF NOT EXISTS ai_ip_aliases (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id INTEGER NOT NULL,
+		alias TEXT NOT NULL,
+		ip_address TEXT NOT NULL,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (session_id) REFERENCES ai_sessions(id) ON DELETE CASCADE,
+		UNIQUE (session_id, alias),
+		UNIQUE (session_id, ip_address)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_ai_ip_aliases_session ON ai_ip_aliases(session_id, alias)`,
 
 	// ============================================================
 	// log_analysis_jobs

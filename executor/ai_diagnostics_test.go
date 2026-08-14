@@ -49,6 +49,37 @@ func TestSelectLogDiagnosticFocusUsesQuestionEntities(t *testing.T) {
 	}
 }
 
+func TestLogDiagnosticResponseRulesAreFocusSpecific(t *testing.T) {
+	tests := []struct {
+		kind, value string
+		required    []string
+		forbidden   []string
+	}{
+		{"", "", []string{"整站日志总览", "未验证爬虫是中性统计"}, nil},
+		{"path", "/wp-login.php", []string{"高频页面专项分析", "HTTP 200 不等于正常用户", "为什么访问量高"}, nil},
+		{"status", "444", []string{"HTTP状态码专项分析", "已经被面板安全规则拒绝", "不是服务器错误"}, nil},
+		{"status", "404", []string{"正常旧链接", "随机路径"}, nil},
+		{"bot", "Other bot:unverified", []string{"Other bot 是多个", "身份状态本身是中性的", "不能仅凭IP断言真实身份"}, nil},
+	}
+	for _, tt := range tests {
+		joined := strings.Join(logDiagnosticResponseRules(tt.kind, tt.value), "\n")
+		for _, required := range tt.required {
+			if !strings.Contains(joined, required) {
+				t.Fatalf("rules(%s,%s) missing %q: %s", tt.kind, tt.value, required, joined)
+			}
+		}
+		for _, forbidden := range tt.forbidden {
+			if strings.Contains(joined, forbidden) {
+				t.Fatalf("rules(%s,%s) contain forbidden %q: %s", tt.kind, tt.value, forbidden, joined)
+			}
+		}
+	}
+	session := &models.AISessionDetail{ContextType: "log_analysis", FocusKind: "bot", FocusValue: "Other bot:unverified"}
+	if joined := strings.Join(logDiagnosticRulesForSession(session, "这些爬虫正常吗"), "\n"); !strings.Contains(joined, "身份状态本身是中性的") {
+		t.Fatalf("follow-up did not retain bot rules: %s", joined)
+	}
+}
+
 func TestAISafeConfigDirectivesOnlyReturnsAllowlist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pool.conf")
 	content := "pm = dynamic\npm.max_children = 12\nuser = private-user\nphp_admin_value[memory_limit] = 256M\nenv[SECRET] = hidden\n"
@@ -265,6 +296,56 @@ func TestCallAIChatRetriesBadResponse(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
 		t.Fatalf("calls = %d, want 2", got)
+	}
+}
+
+func TestCallAIChatDisablesDeepSeekThinking(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Thinking *aiThinking `json:"thinking"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		if body.Thinking == nil || body.Thinking.Type != "disabled" {
+			t.Fatalf("thinking = %+v, want disabled", body.Thinking)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"final answer"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	settings := &models.AISettings{Provider: "deepseek", BaseURL: server.URL, Model: "deepseek-test", TimeoutSeconds: 30}
+	content, _, err := CallAIChat(context.Background(), settings, "system", "user")
+	if err != nil {
+		t.Fatalf("CallAIChat() error = %v", err)
+	}
+	if content != "final answer" {
+		t.Fatalf("content = %q, want final answer", content)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("calls = %d, want 1", got)
+	}
+}
+
+func TestCallAIChatDoesNotSendDeepSeekThinkingToOtherProviders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if _, exists := body["thinking"]; exists {
+			t.Fatalf("non-DeepSeek request contains thinking: %s", body["thinking"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	settings := &models.AISettings{Provider: "custom", BaseURL: server.URL, Model: "custom-model", TimeoutSeconds: 30}
+	if _, _, err := CallAIChat(context.Background(), settings, "system", "user"); err != nil {
+		t.Fatalf("CallAIChat() error = %v", err)
 	}
 }
 
@@ -745,8 +826,8 @@ func TestBuildAIDiagnosticPromptForbidsPageCachePluginWhenFastCGIEnabled(t *test
 	}
 	for _, want := range []string{
 		"不能建议安装或启用 WordPress 页面缓存插件",
-		"例如 WP Super Cache",
-		"验证 FastCGI 缓存命中",
+		"当前上下文只证明 FastCGI 缓存开关与TTL配置",
+		"不得要求使用 curl、浏览器开发者工具或“网站监控”查看命中率",
 	} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
@@ -757,8 +838,8 @@ func TestBuildAIDiagnosticPromptForbidsPageCachePluginWhenFastCGIEnabled(t *test
 		"cache_recommendation_policy",
 		"WP Panel FastCGI 缓存已开启时，不要建议安装或启用 WordPress 页面缓存插件。",
 		"WP Super Cache 页面缓存",
-		"验证 X-FastCGI-Cache 是否命中",
-		"检查 FastCGI 缓存 TTL、清理机制和绕过规则",
+		"核对 WP Panel 当前显示的 FastCGI 缓存开关与 TTL 配置",
+		"当前诊断没有 FastCGI 缓存命中率数据",
 	} {
 		if !strings.Contains(userPrompt, want) {
 			t.Fatalf("user prompt missing %q:\n%s", want, userPrompt)

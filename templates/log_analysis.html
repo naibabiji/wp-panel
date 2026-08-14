@@ -33,10 +33,6 @@
                     <div><label class="label">{{t .Lang "log_analysis.start_time"}}</label><input type="datetime-local" x-model="customStart" class="input-field w-full"></div>
                     <div><label class="label">{{t .Lang "log_analysis.end_time"}}</label><input type="datetime-local" x-model="customEnd" class="input-field w-full"></div>
                 </div>
-                <label class="flex items-start gap-3 text-sm text-gray-300">
-                    <input type="checkbox" x-model="useAI" :disabled="!aiReady" class="mt-1 w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600">
-                    <span><span>{{t .Lang "log_analysis.use_ai"}}</span><span class="block text-xs text-gray-500 mt-1" x-text="aiReady ? '{{t .Lang "log_analysis.ai_help"}}' : '{{t .Lang "log_analysis.ai_unavailable"}}'"></span></span>
-                </label>
                 <button @click="startAnalysis()" :disabled="running || !siteID" class="btn-primary w-full" x-text="running ? t('log_analysis.analysis_running') : '{{t .Lang "log_analysis.start"}}'"></button>
                 <p class="text-xs text-gray-500">{{t .Lang "log_analysis.scan_help"}}</p>
             </div>
@@ -47,7 +43,7 @@
                     <template x-for="item in history" :key="item.id">
                         <button @click="loadJob(item.id)" class="w-full text-left p-3 rounded border border-gray-800 hover:border-blue-800" style="background-color:#0f172a">
                             <div class="flex justify-between gap-2 text-xs"><span class="text-gray-300" x-text="formatTime(item.start_at) + ' — ' + formatTime(item.end_at)"></span><span class="text-gray-500" x-text="statusText(item.status)"></span></div>
-                            <p class="text-xs text-gray-600 mt-1" x-text="item.use_ai ? 'Local + AI' : 'Local'"></p>
+                            <p class="text-xs text-gray-600 mt-1">{{t .Lang "log_analysis.local_analysis"}}</p>
                         </button>
                     </template>
                     <p x-show="siteID && history.length === 0" class="text-xs text-gray-500 py-4 text-center">{{t .Lang "log_analysis.no_history"}}</p>
@@ -96,7 +92,7 @@
                     </template>
 
                     <div x-show="job?.ai_analysis" class="border-t border-gray-800 pt-5"><h4 class="text-sm font-semibold text-white mb-3">{{t .Lang "log_analysis.ai_result"}}</h4><div class="text-sm text-gray-300 leading-relaxed space-y-2" x-html="renderSafeMarkdown(job?.ai_analysis)"></div></div>
-                    <div x-show="job?.status === 'completed' && aiReady" class="border-t border-gray-800 pt-5 flex items-center justify-between gap-3"><p class="text-xs text-gray-500">{{t .Lang "log_analysis.continue_diagnosis_help"}}</p><button @click="openDiagnostic('', '')" :disabled="detailAILoading" class="btn-primary text-sm">{{t .Lang "log_analysis.continue_diagnosis"}}</button></div>
+                    <div x-show="job?.status === 'completed' && aiReady" class="border-t border-gray-800 pt-5 flex items-center justify-between gap-3"><div><p class="text-xs text-gray-500">{{t .Lang "log_analysis.continue_diagnosis_help"}}</p><p class="text-xs text-blue-300 mt-1">{{t .Lang "log_analysis.ai_privacy_help"}}</p></div><button @click="openDiagnostic('', '')" :disabled="detailAILoading" class="btn-primary text-sm" x-text="detailAILoading ? t('log_analysis.detail_ai_running') : t('log_analysis.continue_diagnosis')"></button></div>
                 </div>
             </div>
         </div>
@@ -107,7 +103,7 @@
             <div class="flex justify-between gap-4 items-start mb-5"><div><h3 class="text-xl font-semibold text-white" x-text="detailTitle"></h3><p class="text-xs text-gray-500 mt-1">{{t .Lang "log_analysis.detail_current_logs_help"}}</p></div><button @click="detailOpen = false" class="text-gray-400 hover:text-white text-2xl">&times;</button></div>
             <div x-show="detailLoading" class="py-16 text-center text-gray-400">{{t .Lang "log_analysis.detail_loading"}}</div>
             <template x-if="detail && !detailLoading"><div>
-                <div class="flex flex-wrap justify-between items-center gap-3 mb-5"><div class="flex gap-2"><button @click="detailView = 'overview'" class="btn-secondary text-xs" :class="detailView === 'overview' ? 'bg-blue-600' : ''">{{t .Lang "log_analysis.detail_overview"}}</button><button @click="detailView = 'logs'" class="btn-secondary text-xs" :class="detailView === 'logs' ? 'bg-blue-600' : ''">{{t .Lang "log_analysis.detail_raw_logs"}}</button></div><button x-show="aiReady" @click="analyzeDetail()" :disabled="detailAILoading" class="btn-primary text-xs" x-text="detailAILoading ? t('log_analysis.detail_ai_running') : t('log_analysis.detail_ai')"></button></div>
+                <div class="flex flex-wrap justify-between items-center gap-3 mb-5"><div class="flex gap-2"><button @click="detailView = 'overview'" class="btn-secondary text-xs" :class="detailView === 'overview' ? 'bg-blue-600' : ''">{{t .Lang "log_analysis.detail_overview"}}</button><button @click="detailView = 'logs'" class="btn-secondary text-xs" :class="detailView === 'logs' ? 'bg-blue-600' : ''">{{t .Lang "log_analysis.detail_raw_logs"}}</button></div><div x-show="aiReady" class="text-right"><button @click="analyzeDetail()" :disabled="detailAILoading" class="btn-primary text-xs" x-text="detailAILoading ? t('log_analysis.detail_ai_running') : t('log_analysis.detail_ai')"></button><p class="text-xs text-blue-300 mt-1">{{t .Lang "log_analysis.ai_privacy_help"}}</p></div></div>
 
                 <div x-show="detailView === 'overview'" class="space-y-6">
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-3"><div class="card"><p class="text-xs text-gray-500">{{t .Lang "log_analysis.detail_total"}}</p><p class="text-xl text-white mt-1" x-text="detail.total"></p></div><div class="card"><p class="text-xs text-gray-500">{{t .Lang "log_analysis.unique_ips"}}</p><p class="text-xl text-white mt-1" x-text="detail.unique_ips"></p></div><div class="card"><p class="text-xs text-gray-500">{{t .Lang "log_analysis.detail_unique_paths"}}</p><p class="text-xl text-white mt-1" x-text="detail.unique_paths"></p></div><div class="card"><p class="text-xs text-gray-500">{{t .Lang "log_analysis.detail_top_share"}}</p><p class="text-xl text-white mt-1" x-text="detail.top_ips?.length && detail.total ? Math.round(detail.top_ips[0].count * 100 / detail.total) + '%' : '0%'"></p></div></div>
@@ -122,13 +118,21 @@
             </div></template>
         </div>
     </div>
+
+    <div x-show="detailAILoading" x-cloak class="fixed inset-0 bg-gray-950/80 flex items-center justify-center p-4" style="z-index: 60">
+        <div class="card max-w-md w-full text-center">
+            <div class="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto"></div>
+            <p class="text-sm text-white mt-4">{{t .Lang "log_analysis.detail_ai_running"}}</p>
+            <p class="text-xs text-gray-500 mt-2">{{t .Lang "log_analysis.ai_session_wait_help"}}</p>
+        </div>
+    </div>
 </div>
 
 <script>
 function logAnalysisPage() {
     return {
-        websites: [], siteID: '', range: '24h', customStart: '', customEnd: '', useAI: false, aiReady: false,
-        running: false, job: null, report: null, history: [], pollTimer: null, autoOpenAI: false,
+        websites: [], siteID: '', range: '24h', customStart: '', customEnd: '', aiReady: false,
+        running: false, job: null, report: null, history: [], pollTimer: null,
         detailOpen: false, detailLoading: false, detailKind: '', detailValue: '', detailTitle: '', detail: null, detailView: 'overview', detailAILoading: false,
         async init() {
             try {
@@ -152,9 +156,9 @@ function logAnalysisPage() {
         async startAnalysis() {
             const values = this.rangeValues();
             if (!values.start || !values.end || isNaN(values.start) || isNaN(values.end)) { showToast('{{t .Lang "log_analysis.invalid_range"}}', 'error'); return; }
-            this.running = true; this.job = null; this.report = null; this.autoOpenAI = this.useAI;
+            this.running = true; this.job = null; this.report = null;
             try {
-                const r = await api('/log-analysis', { method: 'POST', body: { site_id: Number(this.siteID), start_at: values.start.toISOString(), end_at: values.end.toISOString(), use_ai: this.useAI } });
+                const r = await api('/log-analysis', { method: 'POST', body: { site_id: Number(this.siteID), start_at: values.start.toISOString(), end_at: values.end.toISOString() } });
                 await this.pollJob(r.data.id);
             } catch (e) { this.running = false; showToast(e.message || t('log_analysis.start_failed'), 'error'); }
         },
@@ -165,7 +169,6 @@ function logAnalysisPage() {
                 if (['pending','running'].includes(r.data.status)) { this.running = true; this.pollTimer = setTimeout(() => this.pollJob(id), 1500); return; }
                 this.running = false; await this.loadHistory();
                 showToast(r.data.status === 'completed' ? t('log_analysis.analysis_finished') : t('log_analysis.analysis_failed'), r.data.status === 'completed' ? 'success' : 'error');
-                if (r.data.status === 'completed' && this.autoOpenAI) { this.autoOpenAI = false; await this.openDiagnostic('', ''); }
             } catch (e) { this.running = false; showToast(t('log_analysis.load_failed'), 'error'); }
         },
         async loadHistory() { if (!this.siteID) { this.history = []; return; } try { const r = await api('/log-analysis?site_id=' + encodeURIComponent(this.siteID)); this.history = r.data || []; } catch (_) {} },

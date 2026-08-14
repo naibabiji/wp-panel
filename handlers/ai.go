@@ -404,6 +404,12 @@ func (h *AIHandler) SendMessage(c *gin.Context) {
 		}))
 		return
 	}
+	reply, err = executor.RestoreAIIPAliases(sessionID, reply)
+	if err != nil {
+		_, _ = createAIMessage(sessionID, "assistant", "", len(userPrompt), 0, err.Error())
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.save_reply_failed")))
+		return
+	}
 	if _, err := createAIMessage(sessionID, "assistant", reply, len(userPrompt), len(reply), ""); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.save_reply_failed")))
 		return
