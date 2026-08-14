@@ -17,7 +17,7 @@
                 <div>
                     <p class="text-white font-semibold mb-1">触发条件 — 来源标注为「Web防护」（命中以下任一规则计为 1 次违规）</p>
                     <ul class="list-disc list-inside space-y-1 ml-2">
-                        <li><code class="text-gray-300">POST /wp-login.php</code> — WordPress 登录暴力破解</li>
+                        <li><code class="text-gray-300">POST /wp-login.php</code> 返回 <span class="text-gray-300">HTTP 200</span> — WordPress 登录失败；成功登录返回的 302，以及找回密码、重置密码、注册等明确合法动作不计入</li>
                         <li><code class="text-gray-300">POST /xmlrpc.php</code> 返回 <span class="text-gray-300">HTTP 403</span> — 禁用 XML-RPC 后仍被请求（含 <code class="text-gray-300">//xmlrpc.php</code> 变体）</li>
                         <li>返回 <span class="text-gray-300">HTTP 429</span> — 超出请求频率限制</li>
                         <li>敏感文件扫描返回 <span class="text-gray-300">404</span> — 如 <code class="text-gray-300">.env</code>、<code class="text-gray-300">.git</code>、<code class="text-gray-300">wp-config.php</code>、<code class="text-gray-300">.sql</code>、压缩包等</li>
@@ -35,23 +35,24 @@
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">封禁阈值</p>
-                    <p>「Web防护」的 4 条触发条件默认 <span class="text-blue-400">60 秒</span>内累计 <span class="text-blue-400">5 次</span>违规 → 自动封禁（可在「安全设置」页面自定义阈值、窗口和封禁时长）。</p>
+                    <p>「Web防护」的 4 条触发条件默认 <span class="text-blue-400">60 秒</span>内累计 <span class="text-blue-400">5 次</span>违规 → 自动封禁（可在「安全设置」页面自定义阈值和统计窗口；自动封禁阶梯固定）。</p>
                     <p>「404防御」固定为 <span class="text-blue-400">30 次/60 秒</span>，不开放自定义。</p>
                 </div>
                 <div>
-                    <p class="text-white font-semibold mb-1">多级渐进封禁</p>
+                    <p class="text-white font-semibold mb-1">重复违规递增封禁</p>
                     <ul class="space-y-1 ml-2">
-                        <li>首次违规 → Fail2ban 封禁 <span class="text-blue-400">10 分钟</span>，到期自动解除</li>
-                        <li>24 小时内再次违规 → 升级为 <span class="text-blue-400">24 小时</span> 封禁，同时写入 Nftables 持久规则</li>
-                        <li>累计 3 次 24 小时封禁 → 自动转为<span class="text-red-400">永久封禁</span>，仅通过 Nftables 持久规则封锁</li>
+                        <li>同一 IP 在同一 jail 重复触发时，按 <span class="text-blue-400">10 分钟 → 1 小时 → 6 小时 → 24 小时 → 7 天</span> 递增，到期由 Fail2ban 自动解除</li>
+                        <li>「Web防护」「404防御」「SSH防护」分别计数；一个规则中的次数不会叠加到另一个规则</li>
+                        <li>违规历史由 Fail2ban 保留 30 天；超过保留期后，后续触发可能重新从首档计算</li>
+                        <li>自动规则最长封禁 7 天，<span class="text-red-400">不会自动升级为永久封禁</span>；永久封禁仅由管理员手动执行</li>
                     </ul>
-                    <p class="text-gray-500 mt-1">封禁列表可通过「来源」列区分 Fail2ban 临时封禁 与 Nftables 持久封禁。</p>
+                    <p class="text-gray-500 mt-1">封禁列表记录 Fail2ban 实际给出的本次时长和累计次数；服务重启时恢复原有封禁，不会额外增加违规次数。</p>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">封禁机制</p>
                     <ul class="space-y-1 ml-2">
                         <li><span class="text-blue-400">Fail2ban</span> — 管理来源「Web防护」封禁（jail: <code class="text-gray-300">wppanel</code>）、来源「404防御」封禁（jail: <code class="text-gray-300">wppanel-404</code>）和来源「SSH防护」封禁（jail: <code class="text-gray-300">wppanel-sshd</code>，复用与 Web防护相同的阈值，检测 <code class="text-gray-300">/var/log/auth.log</code> 中的 SSH 登录失败），到期自动释放</li>
-                        <li><span class="text-purple-400">Nftables 持久</span> — 管理永久封禁、来源「扫描防御」封禁（jail: <code class="text-gray-300">panel_scan</code>）和来源「面板」封禁（jail: <code class="text-gray-300">panel</code>），独立于 Fail2ban，到期自动解除</li>
+                        <li><span class="text-purple-400">Nftables 持久</span> — 管理管理员手动永久封禁、来源「扫描防御」封禁（jail: <code class="text-gray-300">panel_scan</code>）和来源「面板」封禁（jail: <code class="text-gray-300">panel</code>），独立于 Fail2ban；有期限的记录到期解除，手动永久封禁需管理员解封</li>
                         <li><span class="text-green-400">Nginx 黑名单</span> — 与 Fail2ban 联动，Web 防护 jail 封禁时同步写入 Nginx geo 黑名单，被禁 IP 直接返回 <code class="text-gray-300">444</code>（关闭连接），确保 Cloudflare 代理场景下也能有效拦截</li>
                     </ul>
                     <p class="text-gray-500 mt-1">三条通道同时生效：Nftables 拦截直连源站的请求，Nginx 拦截经 Cloudflare 转发的请求，Fail2ban 到期自动释放。</p>

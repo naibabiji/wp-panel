@@ -1093,7 +1093,7 @@
     "max_retry": "触发阈值 (次)",
     "find_time": "统计窗口 (秒)",
     "ban_time": "首次封禁时长 (秒)",
-    "increment_ban_help": "同一 IP 重复违规时会自动延长为 1 小时、6 小时、24 小时，最长 7 天。",
+    "increment_ban_help": "同一 IP 在同一规则中重复违规时按 10 分钟、1 小时、6 小时、24 小时、7 天递增；自动封禁不会升级为永久封禁。",
     "auto_update_official_whitelist": "每周自动更新官方白名单",
     "save_settings": "保存设置",
     "rate_limit": "请求频率限制",

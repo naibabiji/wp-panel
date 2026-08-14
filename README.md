@@ -79,7 +79,7 @@ apt-get update && apt-get install -y wget ca-certificates && wget -qO- https://g
 - 第二层：BasicAuth — 浏览器弹窗要求输入账号密码
 - 第三层：Web 登录 — 网页表单要求输入面板登录密码
 
-四层全通过的人才能进入面板。任何一层失败 5 次即被封禁。
+四层全通过的人才能进入面板。扫描防御命中特征后直接封禁；BasicAuth 或网页登录在 5 分钟内累计认证失败 5 次后封禁 24 小时。
 
 ---
 
@@ -94,7 +94,7 @@ apt-get update && apt-get install -y wget ca-certificates && wget -qO- https://g
 
 **防爆破**
 - 任一认证层连续 5 次失败 → Nftables 网络层封禁 24 小时
-- 多级渐进封禁：10分钟 → 24小时 → 30天 → 永久
+- 网站与 SSH 的 Fail2ban 自动封禁按各自规则独立递增：10 分钟 → 1 小时 → 6 小时 → 24 小时 → 7 天；自动规则不会升级为永久封禁
 
 **站点隔离**
 - 每个网站运行在独立的系统用户和 PHP-FPM Pool 下
@@ -102,7 +102,7 @@ apt-get update && apt-get install -y wget ca-certificates && wget -qO- https://g
 - 一个网站出问题不影响其他网站
 
 **WordPress 专项防护**
-- 自动检测并封禁 wp-login.php 暴力破解和 xmlrpc.php 恶意请求
+- 自动检测 `wp-login.php` 登录失败（HTTP 200）并封禁；成功登录（HTTP 302）及找回密码、重置密码等明确的 WordPress 合法动作不计入
 - 敏感文件扫描检测（.env、.git、压缩包等） → 自动封禁
 - 404 泛滥检测：30 次/60 秒判定为目录扫描
 - Nginx 拒绝未知域名的 HTTPS 连接，避免证书信息泄露

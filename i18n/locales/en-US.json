@@ -1093,7 +1093,7 @@
     "max_retry": "Trigger Threshold (times)",
     "find_time": "Tracking Window (seconds)",
     "ban_time": "Initial Ban Duration (seconds)",
-    "increment_ban_help": "Repeated violations from the same IP increase the ban to 1 hour, 6 hours, 24 hours, and up to 7 days.",
+    "increment_ban_help": "For repeated violations by the same IP in the same jail, bans increase through 10 minutes, 1 hour, 6 hours, 24 hours, and 7 days. Automatic bans never become permanent.",
     "auto_update_official_whitelist": "Update official whitelist weekly",
     "save_settings": "Save Settings",
     "rate_limit": "Request Rate Limit",
