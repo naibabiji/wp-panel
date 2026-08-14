@@ -521,6 +521,26 @@ var migrations = append([]string{
 	`CREATE INDEX IF NOT EXISTS idx_ai_messages_session ON ai_messages(session_id, created_at)`,
 
 	// ============================================================
+	// log_analysis_jobs
+	// ============================================================
+	`CREATE TABLE IF NOT EXISTS log_analysis_jobs (
+		id                INTEGER PRIMARY KEY AUTOINCREMENT,
+		site_id           INTEGER NOT NULL,
+		status            TEXT    NOT NULL DEFAULT 'pending',
+		start_at          DATETIME NOT NULL,
+		end_at            DATETIME NOT NULL,
+		use_ai            INTEGER NOT NULL DEFAULT 0,
+		local_report_json TEXT    NOT NULL DEFAULT '',
+		ai_analysis       TEXT    NOT NULL DEFAULT '',
+		error_message     TEXT    NOT NULL DEFAULT '',
+		created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_log_analysis_jobs_site ON log_analysis_jobs(site_id, created_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_log_analysis_jobs_status ON log_analysis_jobs(status, updated_at)`,
+
+	// ============================================================
 	// wp_security_events — 方案 D 阶段三：持久化 WordPress 安全探测事件，
 	// 避免仅依赖日志尾部读取导致 logrotate 跨天后历史丢失
 	// ============================================================

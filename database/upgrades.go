@@ -522,6 +522,28 @@ var upgrades = []Upgrade{
 			)`,
 		},
 	},
+	{
+		Version:     "1.0.44",
+		Description: "新增网站日志分析任务与报告",
+		SQL: []string{
+			`CREATE TABLE IF NOT EXISTS log_analysis_jobs (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				site_id INTEGER NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending',
+				start_at DATETIME NOT NULL,
+				end_at DATETIME NOT NULL,
+				use_ai INTEGER NOT NULL DEFAULT 0,
+				local_report_json TEXT NOT NULL DEFAULT '',
+				ai_analysis TEXT NOT NULL DEFAULT '',
+				error_message TEXT NOT NULL DEFAULT '',
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_log_analysis_jobs_site ON log_analysis_jobs(site_id, created_at)`,
+			`CREATE INDEX IF NOT EXISTS idx_log_analysis_jobs_status ON log_analysis_jobs(status, updated_at)`,
+		},
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

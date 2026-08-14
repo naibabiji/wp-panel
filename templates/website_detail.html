@@ -353,6 +353,7 @@ location ^~ /api/ {
                 <button @click="clearLogs()" class="text-sm py-1 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">{{t .Lang "website.clear"}}</button>
                 <button @click="logFullscreen = true" class="text-sm py-1 px-3 rounded text-gray-400 hover:text-white" style="background-color: #1e293b; border: 1px solid #334155;">{{t .Lang "website.fullscreen"}}</button>
                 <button @click="downloadLogFile(currentLogFilename())" class="text-sm py-1 px-3 rounded text-gray-400 hover:text-white" style="background-color: #1e293b; border: 1px solid #334155;">{{t .Lang "website.download_current_full_log"}}</button>
+				<a :href="(document.body.dataset.panelPrefix || '') + '/log-analysis?site_id=' + site.id" class="text-sm py-1 px-3 rounded inline-block" style="background-color: #14532d; color: #86efac;">{{t .Lang "website.analyze_logs"}}</a>
                 <select @change="setAccessLogMode($event.target.value)" x-model="accessLogMode" x-show="logType === 'access'" class="input-field w-28 text-sm py-1">
                     <option value="off">{{t .Lang "website.access_log_off"}}</option>
                     <option value="error_only">{{t .Lang "website.access_log_error_only"}}</option>

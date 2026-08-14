@@ -363,6 +363,24 @@ var i18nKeys = []string{
 	"ai_diagnostics.waiting_analysis",
 	"ai_diagnostics.waiting_collect",
 	"ai_diagnostics.waiting_long",
+	"log_analysis.analysis_failed",
+	"log_analysis.analysis_finished",
+	"log_analysis.analysis_running",
+	"log_analysis.load_failed",
+	"log_analysis.risk_high",
+	"log_analysis.risk_low",
+	"log_analysis.risk_medium",
+	"log_analysis.start_failed",
+	"log_analysis.detail_ai",
+	"log_analysis.detail_ai_failed",
+	"log_analysis.detail_ai_running",
+	"log_analysis.detail_load_failed",
+	"log_analysis.currently_banned",
+	"log_analysis.not_currently_banned",
+	"log_analysis.security_event_sensitive_file_scan",
+	"log_analysis.security_event_sqli_probe",
+	"log_analysis.security_event_fake_search_bot",
+	"log_analysis.security_event_suspicious_php",
 	"security.cdn_mode_cloudflare_auto",
 	"security.cdn_mode_compatible_missing_origin_ips",
 	"security.cdn_mode_compatible_no_origin_ips",
@@ -1264,6 +1282,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	}
 	settingsHandler := &handlers.SettingsHandler{WPPackageService: wpPackageService}
 	aiHandler := &handlers.AIHandler{}
+	logAnalysisHandler := &handlers.LogAnalysisHandler{}
 	protected.GET("/api/settings", settingsHandler.GetSettings)
 	protected.PUT("/api/settings", settingsHandler.UpdateSettings)
 	protected.GET("/api/settings/logs", settingsHandler.GetOperationLogs)
@@ -1288,6 +1307,11 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/websites/:id/ai/sessions/:session_id", aiHandler.GetSession)
 	protected.GET("/api/websites/:id/ai/sessions/:session_id/messages", aiHandler.ListMessages)
 	protected.POST("/api/websites/:id/ai/sessions/:session_id/messages", aiHandler.SendMessage)
+	protected.POST("/api/log-analysis", logAnalysisHandler.Start)
+	protected.GET("/api/log-analysis", logAnalysisHandler.List)
+	protected.GET("/api/log-analysis/:id", logAnalysisHandler.Get)
+	protected.GET("/api/log-analysis/:id/details", logAnalysisHandler.Details)
+	protected.POST("/api/log-analysis/:id/details/ai", logAnalysisHandler.AnalyzeDetails)
 
 	extensionHandler := &handlers.ExtensionHandler{}
 	protected.GET("/api/extensions", extensionHandler.List)
@@ -1321,6 +1345,9 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	})
 	protected.GET("/ai-diagnostics", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "ai_diagnostics.html", pageData(suffix, "ai-diagnostics", "ai_diagnostics_content", c))
+	})
+	protected.GET("/log-analysis", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "log_analysis.html", pageData(suffix, "log-analysis", "log_analysis_content", c))
 	})
 	protected.GET("/cron", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "cron.html", pageData(suffix, "cron", "cron_content", c))
@@ -1424,6 +1451,7 @@ var pageTitleKeys = map[string]string{
 	"wordpress_overview": "nav.wordpress_overview",
 	"databases":          "nav.databases",
 	"ai-diagnostics":     "nav.ai_diagnostics",
+	"log-analysis":       "nav.log_analysis",
 	"cron":               "nav.cron",
 	"backups":            "nav.backups",
 	"firewall":           "nav.firewall",

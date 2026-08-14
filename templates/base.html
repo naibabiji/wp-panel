@@ -131,6 +131,12 @@
                         </svg>
                         {{t .Lang "nav.ai_diagnostics"}}
                     </a>
+					<a href="/{{$.RandomSuffix}}/log-analysis" class="sidebar-link {{if eq .Active "log-analysis"}}active{{end}}">
+						<svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m4 8H5a2 2 0 01-2-2V7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2z"/>
+						</svg>
+						{{t .Lang "nav.log_analysis"}}
+					</a>
                     <a href="/{{$.RandomSuffix}}/extensions" class="sidebar-link {{if eq .Active "extensions"}}active{{end}}">
                         <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/>
@@ -181,6 +187,7 @@
                 {{if eq .ContentTemplate "databases_content"}}{{template "databases_content" .}}{{end}}
                 {{if eq .ContentTemplate "database_detail_content"}}{{template "database_detail_content" .}}{{end}}
                 {{if eq .ContentTemplate "ai_diagnostics_content"}}{{template "ai_diagnostics_content" .}}{{end}}
+                {{if eq .ContentTemplate "log_analysis_content"}}{{template "log_analysis_content" .}}{{end}}
                 {{if eq .ContentTemplate "cron_content"}}{{template "cron_content" .}}{{end}}
                 {{if eq .ContentTemplate "backups_content"}}{{template "backups_content" .}}{{end}}
                 {{if eq .ContentTemplate "firewall_content"}}{{template "firewall_content" .}}{{end}}

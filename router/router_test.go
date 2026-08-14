@@ -26,6 +26,7 @@ var pageTemplates = map[string]string{
 	"databases.html":             "databases_content",
 	"database_detail.html":       "database_detail_content",
 	"ai_diagnostics.html":        "ai_diagnostics_content",
+	"log_analysis.html":          "log_analysis_content",
 	"cron.html":                  "cron_content",
 	"backups.html":               "backups_content",
 	"firewall.html":              "firewall_content",
@@ -48,10 +49,17 @@ func TestPageTemplatesRender(t *testing.T) {
 	}
 }
 
+func TestLogAnalysisPageIncludesContent(t *testing.T) {
+	output := renderPage(t, "log_analysis.html", "log_analysis_content")
+	if !bytes.Contains(output, []byte(`x-data="logAnalysisPage()"`)) {
+		t.Fatal("rendered log analysis page is missing its content template")
+	}
+}
+
 func TestContentTemplatesRender(t *testing.T) {
 	contents := []string{
 		"dashboard_content", "websites_content", "wordpress_overview_content", "websites_new_content",
-		"websites_detail_content", "wordpress_site_detail_content", "databases_content", "database_detail_content", "ai_diagnostics_content", "cron_content", "backups_content", "firewall_content",
+		"websites_detail_content", "wordpress_site_detail_content", "databases_content", "database_detail_content", "ai_diagnostics_content", "log_analysis_content", "cron_content", "backups_content", "firewall_content",
 		"files_content", "security_content", "settings_content",
 		"alert_content", "extensions_content", "software_content", "help_content",
 	}
