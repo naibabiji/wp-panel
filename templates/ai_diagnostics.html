@@ -111,6 +111,13 @@
                 </div>
 
                 <div x-show="report || rawText" class="space-y-5">
+                    <div x-show="sessionDetail?.context_type" class="p-4 rounded border border-blue-900/60 bg-blue-950/20">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                            <div><p class="text-sm text-blue-200">{{t .Lang "ai_diagnostics.linked_context"}}</p><p class="text-xs text-gray-400 mt-1" x-text="contextDescription()"></p></div>
+                            <a x-show="sessionDetail?.context_type === 'log_analysis'" :href="(document.body.dataset.panelPrefix || '') + '/log-analysis?site_id=' + selectedSiteID" class="btn-secondary text-xs">{{t .Lang "ai_diagnostics.back_to_log_analysis"}}</a>
+                        </div>
+                        <details x-show="toolEvents.length" class="mt-3"><summary class="text-xs text-blue-300 cursor-pointer" x-text="t('ai_diagnostics.data_read_count', { count: toolEvents.length })"></summary><div class="mt-2 space-y-2"><template x-for="event in toolEvents" :key="event.id"><div class="text-xs text-gray-400 border-l-2 border-blue-900 pl-2"><span class="text-gray-300" x-text="toolLabel(event.tool_name)"></span><span class="block mt-1" x-text="event.result_summary"></span></div></template></div></details>
+                    </div>
                     <div class="p-4 rounded" style="background-color: #0f172a; border: 1px solid #334155;">
                         <p class="text-base font-semibold text-white" x-text="report?.summary || t('ai_diagnostics.report_title')"></p>
                         <p class="text-sm text-gray-400 mt-2" x-show="report?.user_friendly_explanation" x-text="report?.user_friendly_explanation"></p>
@@ -180,7 +187,7 @@
                                             <span class="text-xs" :class="msg.role === 'user' ? 'text-blue-300' : 'text-green-300'" x-text="msg.role === 'user' ? t('ai_diagnostics.chat_role_user') : t('ai_diagnostics.chat_role_ai')"></span>
                                             <span class="text-xs text-gray-600" x-text="formatTime(msg.created_at)"></span>
                                         </div>
-                                        <p x-show="msg.content" class="text-sm text-gray-300 whitespace-pre-wrap" x-text="msg.content"></p>
+                                        <div x-show="msg.content" class="text-sm text-gray-300 space-y-2" x-html="renderSafeMarkdown(msg.content)"></div>
                                         <p x-show="msg.error_message" class="text-sm text-red-300" x-text="msg.error_message"></p>
                                     </div>
                                 </template>
@@ -218,6 +225,8 @@ function aiDiagnosticsPage() {
         sessions: [],
         report: null,
         rawText: '',
+        sessionDetail: null,
+        toolEvents: [],
         currentSessionID: null,
         messages: [],
         followupText: '',
@@ -230,6 +239,7 @@ function aiDiagnosticsPage() {
         async init() {
             const params = new URLSearchParams(window.location.search);
             this.selectedSiteID = params.get('site_id') || '';
+            const requestedSessionID = params.get('session_id') || '';
             this.symptom = params.get('symptom') || 'site_500';
             await this.fetchWebsites();
             if (this.selectedSiteID && !this.selectedSite()) {
@@ -239,6 +249,7 @@ function aiDiagnosticsPage() {
                 this.selectedSiteID = String(this.websites[0].id);
             }
             await this.fetchSessions();
+            if (requestedSessionID && this.selectedSiteID) await this.loadSession(Number(requestedSessionID));
         },
         async fetchWebsites() {
             try {
@@ -255,6 +266,8 @@ function aiDiagnosticsPage() {
             this.report = null;
             this.rawText = '';
             this.currentSessionID = null;
+            this.sessionDetail = null;
+            this.toolEvents = [];
             this.messages = [];
             this.followupText = '';
             this.diagnosisCollapsed = false;
@@ -262,6 +275,7 @@ function aiDiagnosticsPage() {
             await this.fetchSessions();
         },
         symptomLabel(value) {
+            if (value === 'log_analysis') return t('ai_diagnostics.symptom_log_analysis');
             const found = this.symptoms.find(item => item.value === value);
             return found ? found.label : value;
         },
@@ -317,6 +331,8 @@ function aiDiagnosticsPage() {
             this.report = null;
             this.rawText = '';
             this.currentSessionID = null;
+            this.sessionDetail = null;
+            this.toolEvents = [];
             this.messages = [];
             this.followupText = '';
             this.diagnosisCollapsed = false;
@@ -338,7 +354,7 @@ function aiDiagnosticsPage() {
                     this.report = d.report || null;
                     this.rawText = d.raw_text || '';
                     this.diagnosisCollapsed = false;
-                    await this.fetchMessages();
+                    await this.loadSession(this.currentSessionID);
                     showToast(t('ai_diagnostics.diagnosis_completed'), 'success');
                 }
                 await this.fetchSessions();
@@ -372,6 +388,8 @@ function aiDiagnosticsPage() {
                 const r = await api('/websites/' + this.selectedSiteID + '/ai/sessions/' + sessionID);
                 if (r.success) {
                     this.currentSessionID = sessionID;
+                    this.sessionDetail = r.data;
+                    this.toolEvents = r.data.tool_events || [];
                     this.report = r.data.report || null;
                     this.rawText = r.data.raw_text || '';
                     this.error = r.data.error_message || '';
@@ -397,6 +415,27 @@ function aiDiagnosticsPage() {
                     this.scrollMessagesToBottom();
                 }
             } catch(e) {}
+        },
+        contextDescription() {
+            if (!this.sessionDetail?.context_type) return '';
+            if (this.sessionDetail.context_type === 'log_analysis') {
+                let text = t('ai_diagnostics.log_context_description', { id: this.sessionDetail.context_id });
+                if (this.sessionDetail.focus_kind && this.sessionDetail.focus_value) text += ' · ' + this.sessionDetail.focus_kind + ': ' + this.sessionDetail.focus_value;
+                return text;
+            }
+            return this.sessionDetail.context_type;
+        },
+        toolLabel(name) {
+            const labels = {
+                read_site_runtime_configuration: t('ai_diagnostics.tool_runtime_config'),
+                read_security_configuration: t('ai_diagnostics.tool_security_config'),
+                read_log_analysis_overview: t('ai_diagnostics.tool_log_overview'),
+                read_log_detail_status: t('ai_diagnostics.tool_log_status'),
+                read_log_detail_path: t('ai_diagnostics.tool_log_path'),
+                read_log_detail_bot: t('ai_diagnostics.tool_log_bot'),
+                read_log_detail_ip: t('ai_diagnostics.tool_log_ip')
+            };
+            return labels[name] || name;
         },
         scrollMessagesToBottom() {
             this.$nextTick(() => {
@@ -428,6 +467,7 @@ function aiDiagnosticsPage() {
                 } else {
                     this.messages = d.messages || [];
                     if (this.messages.length > 0) this.diagnosisCollapsed = true;
+                    await this.loadSession(this.currentSessionID);
                     this.scrollMessagesToBottom();
                     showToast(t('ai_diagnostics.reply_ready'), 'success');
                 }

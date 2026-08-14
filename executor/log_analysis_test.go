@@ -160,27 +160,8 @@ func TestAnalyzeWebsiteLogDetailsFiltersAndPaginates(t *testing.T) {
 	if err != nil || bot.Total != 1 || !strings.Contains(bot.Lines[0], "CustomCrawler") {
 		t.Fatalf("bot detail=%+v err=%v", bot, err)
 	}
-}
-
-func TestBuildLogAnalysisDetailPromptRedactsLines(t *testing.T) {
-	detail := &models.LogAnalysisDetail{Kind: "path", Value: "/private", Total: 1, Lines: []string{"192.0.2.10 token=secret /www/wwwroot/example.com/wp.php"}}
-	report := &models.LogAnalysisReport{Domain: "example.com", AccessRequests: 12, Samples: []string{"must not be copied"}}
-	startAt, endAt := time.Now().Add(-time.Hour), time.Now()
-	_, prompt, err := BuildLogAnalysisDetailPrompt(detail, report, "example.com", startAt, endAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, forbidden := range []string{"192.0.2.10", "token=secret", "/www/wwwroot/example.com"} {
-		if strings.Contains(prompt, forbidden) {
-			t.Fatalf("detail prompt leaked %q: %s", forbidden, prompt)
-		}
-	}
-	for _, required := range []string{"example.com", "overall_report", "selected_group", "HTTP 444", "最多 100 条"} {
-		if !strings.Contains(prompt, required) {
-			t.Fatalf("detail prompt missing context %q: %s", required, prompt)
-		}
-	}
-	if strings.Contains(prompt, "must not be copied") {
-		t.Fatalf("overall raw samples should not be duplicated into detail prompt: %s", prompt)
+	ipDetail, err := AnalyzeWebsiteLogDetails(site, now.Add(-time.Hour), now.Add(time.Hour), db, "ip", "1.2.3.4", 1, 20)
+	if err != nil || ipDetail.Total != 1 || len(ipDetail.Lines) != 1 || !strings.Contains(ipDetail.Lines[0], "/archives?a=1") {
+		t.Fatalf("ip detail=%+v err=%v", ipDetail, err)
 	}
 }

@@ -9,6 +9,7 @@ const (
 	AIDiagnosisDBConnection = "db_connection"
 	AIDiagnosisCacheIssue   = "cache_issue"
 	AIDiagnosisPerformance  = "performance"
+	AIDiagnosisLogAnalysis  = "log_analysis"
 
 	AISessionPending   = "pending"
 	AISessionRunning   = "running"
@@ -39,6 +40,13 @@ type AISettingsRequest struct {
 
 type AIDiagnoseRequest struct {
 	Symptom string `json:"symptom"`
+}
+
+type AIDiagnosticContextRef struct {
+	Type       string `json:"type"`
+	ID         int    `json:"id"`
+	FocusKind  string `json:"focus_kind,omitempty"`
+	FocusValue string `json:"focus_value,omitempty"`
 }
 
 type AIMessageRequest struct {
@@ -84,6 +92,10 @@ type AISessionSummary struct {
 	Status         string    `json:"status"`
 	RiskLevel      string    `json:"risk_level"`
 	SummaryExcerpt string    `json:"summary_excerpt"`
+	ContextType    string    `json:"context_type,omitempty"`
+	ContextID      int       `json:"context_id,omitempty"`
+	FocusKind      string    `json:"focus_kind,omitempty"`
+	FocusValue     string    `json:"focus_value,omitempty"`
 	ErrorMessage   string    `json:"error_message"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
@@ -101,8 +113,22 @@ type AISessionDetail struct {
 	ErrorMessage  string              `json:"error_message"`
 	PromptChars   int                 `json:"prompt_chars"`
 	ResponseChars int                 `json:"response_chars"`
+	ContextType   string              `json:"context_type,omitempty"`
+	ContextID     int                 `json:"context_id,omitempty"`
+	ContextJSON   string              `json:"-"`
+	FocusKind     string              `json:"focus_kind,omitempty"`
+	FocusValue    string              `json:"focus_value,omitempty"`
+	ToolEvents    []AIToolEvent       `json:"tool_events,omitempty"`
 	CreatedAt     time.Time           `json:"created_at"`
 	UpdatedAt     time.Time           `json:"updated_at"`
+}
+
+type AIToolEvent struct {
+	ID            int       `json:"id"`
+	SessionID     int       `json:"session_id"`
+	ToolName      string    `json:"tool_name"`
+	ResultSummary string    `json:"result_summary"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type AIMessage struct {
@@ -119,7 +145,7 @@ type AIMessage struct {
 func IsValidAIDiagnosisSymptom(symptom string) bool {
 	switch symptom {
 	case AIDiagnosisSite500, AIDiagnosisWPAdminDown, AIDiagnosisSSLFailure,
-		AIDiagnosisDBConnection, AIDiagnosisCacheIssue, AIDiagnosisPerformance:
+		AIDiagnosisDBConnection, AIDiagnosisCacheIssue, AIDiagnosisPerformance, AIDiagnosisLogAnalysis:
 		return true
 	default:
 		return false

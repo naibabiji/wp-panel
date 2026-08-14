@@ -894,6 +894,47 @@ api('/missing', { suppressToast: true }).then(
 	}
 }
 
+func TestRenderSafeMarkdownSupportsAIOutputWithoutHTMLInjection(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available")
+	}
+	app, err := os.ReadFile("../static/js/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness := []byte(`
+const fence = String.fromCharCode(96, 96, 96);
+const markdown = '# 标题\n\n| 项目 | 结果 |\n| --- | --- |\n| 状态 | **正常** |\n\n> 证据\n\n' + fence + '\n<unsafe>\n' + fence + '\n[安全链接](https://example.com) [危险链接](javascript:alert(1)) [反斜杠链接](/\\attacker.example/path) <img src=x onerror=alert(1)>';
+const rendered = renderSafeMarkdown(markdown);
+for (const expected of ['<h1', '<table', '<blockquote', '<pre', 'href="https://example.com"', '&lt;unsafe&gt;']) {
+    if (!rendered.includes(expected)) throw new Error('missing Markdown output: ' + expected + '\n' + rendered);
+}
+
+for (const forbidden of ['href="javascript:', 'href="/\\attacker', '<img']) {
+    if (rendered.includes(forbidden)) throw new Error('unsafe output retained: ' + forbidden + '\n' + rendered);
+}
+`)
+	testScript := append(append([]byte{}, app...), harness...)
+	scriptPath := filepath.Join(t.TempDir(), "safe-markdown.js")
+	if err := os.WriteFile(scriptPath, testScript, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, scriptPath).CombinedOutput(); err != nil {
+		t.Fatalf("safe Markdown behavior failed: %v\n%s", err, output)
+	}
+}
+
+func TestLegacyLogDetailAIEndpointIsRemoved(t *testing.T) {
+	source, err := os.ReadFile("router.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(source, []byte(`/api/log-analysis/:id/details/ai`)) {
+		t.Fatal("legacy log detail AI endpoint is still registered")
+	}
+}
+
 func TestWPInventoryPanelAPIContract(t *testing.T) {
 	panel, err := os.ReadFile("../templates/wp_inventory_panel.html")
 	if err != nil {

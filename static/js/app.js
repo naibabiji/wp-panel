@@ -11,6 +11,72 @@ function t(key, params = {}) {
     return message;
 }
 
+// Render the small Markdown subset used by AI responses. All source text is
+// escaped before controlled tags are added, so callers may safely use x-html.
+function renderSafeMarkdown(value) {
+    const escaped = String(value || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const inline = text => text
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (all, label, href) => {
+            const normalized = href.replace(/&amp;/g, '&').trim();
+            if (normalized.includes('\\') || !/^(https?:\/\/|\/)/i.test(normalized)) return label;
+            return `<a class="text-blue-400 hover:underline" href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+        })
+        .replace(/`([^`]+)`/g, '<code class="font-mono text-blue-200 bg-gray-950 px-1 py-0.5">$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-white font-semibold">$1</strong>')
+        .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
+    const lines = escaped.split(/\r?\n/), html = [];
+    let list = '', inCode = false, codeLines = [];
+    const closeList = () => { if (list) { html.push(`</${list}>`); list = ''; } };
+    const closeCode = () => {
+        if (!inCode) return;
+        html.push(`<pre class="font-mono text-xs text-gray-300 bg-gray-950 p-3 rounded overflow-auto whitespace-pre"><code>${codeLines.join('\n')}</code></pre>`);
+        inCode = false; codeLines = [];
+    };
+    const tableCells = line => line.replace(/^\||\|$/g, '').split('|').map(cell => cell.trim());
+    for (let index = 0; index < lines.length; index++) {
+        const raw = lines[index];
+        const line = raw.trim();
+        let match;
+        if (/^```/.test(line)) {
+            closeList();
+            if (inCode) closeCode(); else inCode = true;
+            continue;
+        }
+        if (inCode) { codeLines.push(raw); continue; }
+        if (!line) { closeList(); continue; }
+        if ((match = line.match(/^(#{1,3})\s+(.+)$/))) {
+            closeList();
+            const size = match[1].length === 1 ? 'text-lg' : (match[1].length === 2 ? 'text-base' : 'text-sm');
+            html.push(`<h${match[1].length} class="${size} text-white font-semibold mt-4 mb-2">${inline(match[2])}</h${match[1].length}>`);
+        } else if (line.includes('|') && index + 1 < lines.length && /^\s*\|?\s*:?-{3,}/.test(lines[index + 1])) {
+            closeList();
+            const headers = tableCells(line);
+            index += 2;
+            const rows = [];
+            while (index < lines.length && lines[index].includes('|') && lines[index].trim()) {
+                rows.push(tableCells(lines[index])); index++;
+            }
+            index--;
+            html.push('<div class="overflow-x-auto"><table class="w-full text-xs border-collapse"><thead><tr>' + headers.map(cell => `<th class="text-left text-gray-200 border border-gray-700 p-2">${inline(cell)}</th>`).join('') + '</tr></thead><tbody>' + rows.map(row => '<tr>' + row.map(cell => `<td class="text-gray-400 border border-gray-800 p-2">${inline(cell)}</td>`).join('') + '</tr>').join('') + '</tbody></table></div>');
+        } else if ((match = line.match(/^[-*]\s+(.+)$/))) {
+            if (list !== 'ul') { closeList(); list = 'ul'; html.push('<ul class="list-disc pl-5 space-y-1">'); }
+            html.push(`<li>${inline(match[1])}</li>`);
+        } else if ((match = line.match(/^\d+[.)]\s+(.+)$/))) {
+            if (list !== 'ol') { closeList(); list = 'ol'; html.push('<ol class="list-decimal pl-5 space-y-1">'); }
+            html.push(`<li>${inline(match[1])}</li>`);
+        } else if ((match = line.match(/^&gt;\s*(.+)$/))) {
+            closeList(); html.push(`<blockquote class="border-l-2 border-blue-800 pl-3 text-gray-400">${inline(match[1])}</blockquote>`);
+        } else if (/^([-*_])\1\1+$/.test(line)) {
+            closeList(); html.push('<hr class="border-gray-800 my-3">');
+        } else { closeList(); html.push(`<p>${inline(line)}</p>`); }
+    }
+    closeCode();
+    closeList();
+    return html.join('');
+}
+
 function api(path, options = {}) {
     const prefix = document.body.dataset.panelPrefix || '';
     const url = prefix + '/api' + path;

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,6 +19,91 @@ import (
 const logAnalysisKeepPerSite = 20
 
 type LogAnalysisHandler struct{}
+
+func (h *LogAnalysisHandler) CreateDiagnosticSession(c *gin.Context) {
+	job, site, ok := loadLogAnalysisDetailContext(c)
+	if !ok {
+		return
+	}
+	var req models.LogAnalysisDetailAIRequest
+	if c.Request.ContentLength > 0 && c.ShouldBindJSON(&req) != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "common.invalid_params")))
+		return
+	}
+	if req.Kind != "" {
+		if _, err := executor.AnalyzeWebsiteLogDetails(site, job.StartAt, job.EndAt, database.GetDB(), req.Kind, req.Value, 1, 1); err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "log_analysis.invalid_detail")))
+			return
+		}
+	}
+	settings, err := loadAISettings()
+	if err != nil || !settings.Enabled || strings.TrimSpace(settings.APIKey) == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "log_analysis.ai_not_ready")))
+		return
+	}
+	var existingID int
+	if database.GetDB().QueryRow(`SELECT id FROM ai_sessions WHERE site_id=? AND context_type='log_analysis' AND context_id=?
+		AND focus_kind=? AND focus_value=? AND status<>? ORDER BY id DESC LIMIT 1`, site.ID, job.ID, req.Kind, req.Value, models.AISessionFailed).Scan(&existingID) == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"session_id": existingID, "site_id": site.ID, "reused": true}))
+		return
+	}
+	if _, loaded := aiDiagnosisMu.LoadOrStore(site.ID, struct{}{}); loaded {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.already_running")))
+		return
+	}
+	defer aiDiagnosisMu.Delete(site.ID)
+	if _, running := activeAISession(site.ID); running {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.already_running")))
+		return
+	}
+	contextJSON, err := executor.EncodeAILogSessionSnapshot(job)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.build_context_failed")))
+		return
+	}
+	ref := models.AIDiagnosticContextRef{Type: "log_analysis", ID: job.ID, FocusKind: req.Kind, FocusValue: req.Value}
+	sessionID, err := createAISessionWithContext(site.ID, models.AIDiagnosisLogAnalysis, ref, contextJSON)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.create_session_failed")))
+		return
+	}
+	updateAISessionStatus(sessionID, models.AISessionRunning, "")
+	systemPrompt, userPrompt, toolEvents, err := executor.BuildAILogDiagnosticPrompt(site, job, req.Kind, req.Value)
+	if err != nil {
+		failAISession(sessionID, err.Error(), len(userPrompt), 0)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.build_context_failed")))
+		return
+	}
+	for _, event := range toolEvents {
+		recordAIToolEvent(sessionID, event.ToolName, event.ResultSummary)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), executor.AIRequestTimeout(settings, len(systemPrompt)+len(userPrompt)))
+	defer cancel()
+	content, _, err := executor.CallAIChat(ctx, settings, systemPrompt, userPrompt)
+	if err != nil {
+		message := aiUserErrorWithContext(i18n.LangFromRequest(c.Request), err, len(systemPrompt)+len(userPrompt), true)
+		failAISession(sessionID, message, len(userPrompt), 0)
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"session_id": sessionID, "site_id": site.ID, "status": models.AISessionFailed, "error_message": message}))
+		return
+	}
+	report, rawText, parsed := executor.ParseAIReport(content)
+	reportJSON, summary, risk := "", excerpt(content, 500), ""
+	if parsed && report != nil {
+		data, _ := json.Marshal(report)
+		reportJSON, summary, risk = string(data), strings.TrimSpace(report.Summary), strings.TrimSpace(report.RiskLevel)
+	} else {
+		rawText = content
+	}
+	if summary == "" {
+		summary = i18n.TE(c.Request, "ai_diagnostics.result_ready")
+	}
+	if err := completeAISession(sessionID, risk, summary, reportJSON, rawText, len(userPrompt), len(content)); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.save_result_failed")))
+		return
+	}
+	pruneAISessions(site.ID, aiSessionKeepLimit)
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"session_id": sessionID, "site_id": site.ID, "status": models.AISessionCompleted}))
+}
 
 func (h *LogAnalysisHandler) Start(c *gin.Context) {
 	var req models.LogAnalysisRequest
@@ -71,7 +155,7 @@ func (h *LogAnalysisHandler) Start(c *gin.Context) {
 	siteCopy := *site
 	lang := i18n.LangFromRequest(c.Request)
 	executor.GoSafe(func() {
-		runLogAnalysis(int(jobID), &siteCopy, req.StartAt, req.EndAt, settings, lang)
+		runLogAnalysis(int(jobID), &siteCopy, req.StartAt, req.EndAt, lang)
 	})
 	c.JSON(http.StatusAccepted, models.SuccessResponse(gin.H{"id": jobID, "status": models.LogAnalysisPending}))
 }
@@ -107,45 +191,6 @@ func (h *LogAnalysisHandler) Details(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(detail))
-}
-
-func (h *LogAnalysisHandler) AnalyzeDetails(c *gin.Context) {
-	job, site, ok := loadLogAnalysisDetailContext(c)
-	if !ok {
-		return
-	}
-	var req models.LogAnalysisDetailAIRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "common.invalid_params")))
-		return
-	}
-	settings, err := loadAISettings()
-	if err != nil || !settings.Enabled || strings.TrimSpace(settings.APIKey) == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "log_analysis.ai_not_ready")))
-		return
-	}
-	detail, err := executor.AnalyzeWebsiteLogDetails(site, job.StartAt, job.EndAt, database.GetDB(), req.Kind, req.Value, 1, 100)
-	if err != nil || detail.Total == 0 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "log_analysis.invalid_detail")))
-		return
-	}
-	systemPrompt, userPrompt, err := executor.BuildLogAnalysisDetailPrompt(detail, job.LocalReport, job.Domain, job.StartAt, job.EndAt)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "log_analysis.invalid_detail")))
-		return
-	}
-	timeout := time.Duration(settings.TimeoutSeconds) * time.Second
-	if timeout <= 0 {
-		timeout = 60 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
-	defer cancel()
-	analysis, _, err := executor.CallAIChat(ctx, settings, systemPrompt, userPrompt)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, models.ErrorResponse(i18n.TE(c.Request, "log_analysis.detail_ai_failed")))
-		return
-	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"analysis": analysis}))
 }
 
 func loadLogAnalysisDetailContext(c *gin.Context) (*models.LogAnalysisJob, *models.Website, bool) {
@@ -195,7 +240,7 @@ func (h *LogAnalysisHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(jobs))
 }
 
-func runLogAnalysis(jobID int, site *models.Website, startAt, endAt time.Time, settings *models.AISettings, lang string) {
+func runLogAnalysis(jobID int, site *models.Website, startAt, endAt time.Time, lang string) {
 	db := database.GetDB()
 	_, _ = db.Exec(`UPDATE log_analysis_jobs SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`, models.LogAnalysisRunning, jobID)
 	report, err := executor.AnalyzeWebsiteLogs(site, startAt, endAt, db, lang)
@@ -208,26 +253,8 @@ func runLogAnalysis(jobID int, site *models.Website, startAt, endAt time.Time, s
 		_, _ = db.Exec(`UPDATE log_analysis_jobs SET status=?,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`, models.LogAnalysisFailed, err.Error(), jobID)
 		return
 	}
-	aiAnalysis, aiError := "", ""
-	if settings != nil {
-		systemPrompt, userPrompt, promptErr := executor.BuildLogAnalysisPrompt(report)
-		if promptErr != nil {
-			aiError = promptErr.Error()
-		} else {
-			timeout := time.Duration(settings.TimeoutSeconds) * time.Second
-			if timeout <= 0 {
-				timeout = 60 * time.Second
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), timeout)
-			aiAnalysis, _, err = executor.CallAIChat(ctx, settings, systemPrompt, userPrompt)
-			cancel()
-			if err != nil {
-				aiError = fmt.Sprintf("AI analysis failed: %v", err)
-			}
-		}
-	}
 	_, _ = db.Exec(`UPDATE log_analysis_jobs SET status=?,local_report_json=?,ai_analysis=?,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		models.LogAnalysisCompleted, string(reportJSON), aiAnalysis, aiError, jobID)
+		models.LogAnalysisCompleted, string(reportJSON), "", "", jobID)
 	_, _ = db.Exec(`DELETE FROM log_analysis_jobs WHERE site_id=? AND id NOT IN (
 		SELECT id FROM log_analysis_jobs WHERE site_id=? ORDER BY id DESC LIMIT ?)`, site.ID, site.ID, logAnalysisKeepPerSite)
 }

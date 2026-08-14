@@ -479,7 +479,7 @@ var migrations = append([]string{
 		base_url        TEXT    NOT NULL DEFAULT 'https://api.deepseek.com',
 		model           TEXT    NOT NULL DEFAULT 'deepseek-v4-pro',
 		api_key         TEXT    NOT NULL DEFAULT '',
-		timeout_seconds INTEGER NOT NULL DEFAULT 60,
+		timeout_seconds INTEGER NOT NULL DEFAULT 180,
 		created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
@@ -500,6 +500,11 @@ var migrations = append([]string{
 		prompt_chars   INTEGER NOT NULL DEFAULT 0,
 		response_chars INTEGER NOT NULL DEFAULT 0,
 		error_message  TEXT    NOT NULL DEFAULT '',
+		context_type   TEXT    NOT NULL DEFAULT '',
+		context_id     INTEGER NOT NULL DEFAULT 0,
+		context_json   TEXT    NOT NULL DEFAULT '',
+		focus_kind     TEXT    NOT NULL DEFAULT '',
+		focus_value    TEXT    NOT NULL DEFAULT '',
 		created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE
@@ -522,6 +527,15 @@ var migrations = append([]string{
 		FOREIGN KEY (session_id) REFERENCES ai_sessions(id) ON DELETE CASCADE
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_ai_messages_session ON ai_messages(session_id, created_at)`,
+	`CREATE TABLE IF NOT EXISTS ai_tool_events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id INTEGER NOT NULL,
+		tool_name TEXT NOT NULL DEFAULT '',
+		result_summary TEXT NOT NULL DEFAULT '',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (session_id) REFERENCES ai_sessions(id) ON DELETE CASCADE
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_ai_tool_events_session ON ai_tool_events(session_id, created_at)`,
 
 	// ============================================================
 	// log_analysis_jobs

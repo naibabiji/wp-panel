@@ -29,6 +29,61 @@ func TestParseAIReportJSON(t *testing.T) {
 	}
 }
 
+func TestSelectLogDiagnosticFocusUsesQuestionEntities(t *testing.T) {
+	tests := []struct {
+		question string
+		kind     string
+		value    string
+	}{
+		{"这个 IP 192.0.2.10 为什么访问很多", "ip", "192.0.2.10"},
+		{"分析 HTTP 444", "status", "444"},
+		{"为什么一直访问 /wp-admin/index.php", "path", "/wp-admin/index.php"},
+		{"这些假冒 Googlebot 做了什么", "bot", "Googlebot:fake"},
+		{"Googlebot 暂时无法验证的日志", "bot", "Googlebot:unknown"},
+	}
+	for _, tt := range tests {
+		kind, value := selectLogDiagnosticFocus("", "", tt.question)
+		if kind != tt.kind || value != tt.value {
+			t.Fatalf("selectLogDiagnosticFocus(%q) = %q, %q; want %q, %q", tt.question, kind, value, tt.kind, tt.value)
+		}
+	}
+}
+
+func TestAISafeConfigDirectivesOnlyReturnsAllowlist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pool.conf")
+	content := "pm = dynamic\npm.max_children = 12\nuser = private-user\nphp_admin_value[memory_limit] = 256M\nenv[SECRET] = hidden\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got := aiSafeConfigDirectives(path, map[string]bool{"pm": true, "pm.max_children": true, "php_admin_value[memory_limit]": true})
+	data, _ := json.Marshal(got)
+	text := string(data)
+	for _, want := range []string{"dynamic", "12", "256M"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("safe directives missing %q: %s", want, text)
+		}
+	}
+	for _, forbidden := range []string{"private-user", "SECRET", "hidden"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("safe directives leaked %q: %s", forbidden, text)
+		}
+	}
+}
+
+func TestAICompactFollowupContextRemovesBulkyEvidence(t *testing.T) {
+	raw := `{"site_summary":{"domain":"example.com"},"db_check":{"ok":true},"logs":{"access":{"lines":["large"]}},"code_suspects":{"items":["large"]}}`
+	got := aiCompactFollowupSiteContext(raw)
+	if _, ok := got["logs"]; ok {
+		t.Fatal("logs were not removed")
+	}
+	if _, ok := got["code_suspects"]; ok {
+		t.Fatal("code suspects were not removed")
+	}
+	if _, ok := got["db_check"]; !ok {
+		t.Fatal("database summary must be retained")
+	}
+}
+
 func TestAIPanelContextUsesCurrentDatabaseAndFileManagerCapabilities(t *testing.T) {
 	entries, ok := aiPanelContext()["known_panel_entries"].([]map[string]string)
 	if !ok {
@@ -210,6 +265,56 @@ func TestCallAIChatRetriesBadResponse(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
 		t.Fatalf("calls = %d, want 2", got)
+	}
+}
+
+func TestCallAIChatReportsResponseBodyTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		time.Sleep(1500 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"late"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	settings := &models.AISettings{BaseURL: server.URL, Model: "test-model", TimeoutSeconds: 180}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, _, err := CallAIChat(ctx, settings, "system", "user")
+	var providerErr *AIProviderError
+	if !errors.As(err, &providerErr) || providerErr.Type != "timeout" || !strings.Contains(providerErr.Message, "响应读取超时") {
+		t.Fatalf("expected response body timeout, got %#v", err)
+	}
+}
+
+func TestAIRequestTimeoutUsesPromptSizeAndConfiguredCeiling(t *testing.T) {
+	settings := &models.AISettings{TimeoutSeconds: 180}
+	for _, tt := range []struct {
+		chars int
+		want  time.Duration
+	}{
+		{8000, 60 * time.Second},
+		{8001, 120 * time.Second},
+		{20000, 120 * time.Second},
+		{20001, 180 * time.Second},
+	} {
+		if got := AIRequestTimeout(settings, tt.chars); got != tt.want {
+			t.Fatalf("AIRequestTimeout(%d)=%v, want %v", tt.chars, got, tt.want)
+		}
+	}
+	settings.TimeoutSeconds = 90
+	if got := AIRequestTimeout(settings, 30000); got != 90*time.Second {
+		t.Fatalf("configured ceiling not applied: %v", got)
+	}
+	settings.TimeoutSeconds = 1
+	if got := AIRequestTimeout(settings, 1000); got != 15*time.Second {
+		t.Fatalf("minimum timeout not applied: %v", got)
+	}
+	settings.TimeoutSeconds = 500
+	if got := AIRequestTimeout(settings, 30000); got != 180*time.Second {
+		t.Fatalf("maximum timeout not applied: %v", got)
 	}
 }
 

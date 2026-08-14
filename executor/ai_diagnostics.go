@@ -37,7 +37,7 @@ const (
 	aiCodeContextLines    = 3
 	aiMaxCodeSnippetChars = 900
 	aiMaxFollowupMessages = 10
-	aiMaxFollowupChars    = 6000
+	aiMaxFollowupChars    = 20000
 )
 
 var aiRunPHPLint = func(path string) (*ExecResult, error) {
@@ -113,6 +113,7 @@ type aiDiagnosticContext struct {
 	CurrentHTTPChecks     map[string]interface{}  `json:"current_http_checks"`
 	CodeSuspects          map[string]interface{}  `json:"code_suspects"`
 	PerformanceSummary    map[string]interface{}  `json:"performance_summary,omitempty"`
+	SecuritySummary       map[string]interface{}  `json:"security_summary,omitempty"`
 	Constraints           map[string]interface{}  `json:"constraints"`
 	OutputSchema          map[string]interface{}  `json:"output_schema"`
 	PromptNotes           []string                `json:"prompt_notes,omitempty"`
@@ -164,6 +165,7 @@ func BuildAIDiagnosticPrompt(site *models.Website, symptom string) (systemPrompt
 		ServiceChecks:         aiServiceChecks(site),
 		CurrentHTTPChecks:     aiCurrentHTTPChecks(site),
 		CodeSuspects:          aiCodeSuspects(site),
+		SecuritySummary:       aiSecuritySummary(site),
 		RecentPanelOperations: aiRecentPanelOperations(site.Domain, 20),
 		Constraints: map[string]interface{}{
 			"phase":                       "readonly_diagnosis",
@@ -188,19 +190,28 @@ func BuildAIDiagnosticPrompt(site *models.Website, symptom string) (systemPrompt
 }
 
 func BuildAIFollowupPrompt(site *models.Website, session *models.AISessionDetail, messages []models.AIMessage, userMessage string) (systemPrompt, userPrompt string, err error) {
+	systemPrompt, userPrompt, _, err = BuildAIFollowupPromptWithTools(site, session, messages, userMessage)
+	return
+}
+
+func BuildAIFollowupPromptWithTools(site *models.Website, session *models.AISessionDetail, messages []models.AIMessage, userMessage string) (systemPrompt, userPrompt string, tools []models.AIToolEvent, err error) {
 	if site == nil {
-		return "", "", fmt.Errorf("网站不存在")
+		return "", "", nil, fmt.Errorf("网站不存在")
 	}
 	if session == nil || session.ID <= 0 {
-		return "", "", fmt.Errorf("诊断会话不存在")
+		return "", "", nil, fmt.Errorf("诊断会话不存在")
 	}
 	userMessage = strings.TrimSpace(userMessage)
 	if userMessage == "" {
-		return "", "", fmt.Errorf("追问内容不能为空")
+		return "", "", nil, fmt.Errorf("追问内容不能为空")
 	}
 	_, currentContext, err := BuildAIDiagnosticPrompt(site, session.Symptom)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
+	}
+	toolContext, tools, toolErr := collectAIDiagnosticToolContext(site, session, userMessage)
+	if toolErr != nil {
+		toolContext = map[string]interface{}{"error": toolErr.Error()}
 	}
 	ctx := map[string]interface{}{
 		"mode":          "followup_diagnosis",
@@ -216,9 +227,10 @@ func BuildAIFollowupPrompt(site *models.Website, session *models.AISessionDetail
 			"report":        session.Report,
 			"raw_text":      aiTruncateRunes(session.RawText, 1800),
 		},
-		"recent_conversation":  aiFollowupMessagesForPrompt(messages),
-		"latest_user_message":  userMessage,
-		"current_site_context": json.RawMessage(currentContext),
+		"recent_conversation":   aiFollowupMessagesForPrompt(messages),
+		"latest_user_message":   userMessage,
+		"current_site_context":  json.RawMessage(currentContext),
+		"readonly_tool_context": toolContext,
 		"constraints": map[string]interface{}{
 			"phase":            "readonly_followup",
 			"no_write_actions": true,
@@ -236,25 +248,94 @@ func BuildAIFollowupPrompt(site *models.Website, session *models.AISessionDetail
 	}
 	data, err := aiMarshalMap(ctx)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	userPrompt = string(data)
 	if len(userPrompt) > aiMaxFollowupChars {
 		ctx["recent_conversation"] = aiFollowupMessagesForPrompt(aiLimitAIMessages(messages, 4))
 		ctx["original_session"].(map[string]interface{})["raw_text"] = ""
+		ctx["current_site_context"] = aiCompactFollowupSiteContext(currentContext)
+		ctx["readonly_tool_context"] = aiCompactFollowupToolContext(toolContext)
 		data, err = aiMarshalMap(ctx)
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 		userPrompt = string(data)
 	}
-	return aiFollowupSystemPrompt(), userPrompt, nil
+	if len(userPrompt) > aiMaxFollowupChars {
+		ctx["recent_conversation"] = aiFollowupMessagesForPrompt(aiLimitAIMessages(messages, 2))
+		ctx["original_session"].(map[string]interface{})["report"] = nil
+		data, err = aiMarshalMap(ctx)
+		if err != nil {
+			return "", "", nil, err
+		}
+		userPrompt = string(data)
+	}
+	if len(userPrompt) > aiMaxFollowupChars {
+		ctx["panel_context"] = map[string]interface{}{
+			"product_name": "WP Panel",
+			"scope":        "WordPress 专用服务器管理面板；只能建议当前上下文明确列出的面板能力。",
+		}
+		ctx["current_site_context"] = map[string]interface{}{
+			"context_note": "站点核心运行配置、数据库、HTTP 与安全状态已收敛到 readonly_tool_context，省略重复副本。",
+		}
+		data, err = aiMarshalMap(ctx)
+		if err != nil {
+			return "", "", nil, err
+		}
+		userPrompt = string(data)
+	}
+	return aiFollowupSystemPrompt(), userPrompt, tools, nil
+}
+
+func aiCompactFollowupSiteContext(raw string) map[string]interface{} {
+	var value map[string]interface{}
+	if json.Unmarshal([]byte(raw), &value) != nil {
+		return map[string]interface{}{"message": "当前站点上下文无法压缩"}
+	}
+	for _, key := range []string{"logs", "code_suspects", "recent_panel_operations", "output_schema", "prompt_notes", "local_checks", "panel_context"} {
+		delete(value, key)
+	}
+	value["context_note"] = "为控制追问长度，已移除重复日志样本、代码片段和面板操作历史；核心站点、数据库、服务、HTTP、WordPress及安全摘要仍保留。"
+	return value
+}
+
+func aiCompactFollowupToolContext(value map[string]interface{}) map[string]interface{} {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	var compact map[string]interface{}
+	if json.Unmarshal(data, &compact) != nil {
+		return value
+	}
+	if detail, ok := compact["focused_log_detail"].(map[string]interface{}); ok {
+		delete(detail, "lines")
+		detail["sample_note"] = "原始日志样本因上下文长度限制已省略，统计聚合仍保留。"
+		aiLimitJSONMapSlices(detail, 8)
+	}
+	if overview, ok := compact["log_overview"].(map[string]interface{}); ok {
+		if report, ok := overview["report"].(map[string]interface{}); ok {
+			aiLimitJSONMapSlices(report, 8)
+		}
+	}
+	return compact
+}
+
+func aiLimitJSONMapSlices(value map[string]interface{}, max int) {
+	for key, item := range value {
+		items, ok := item.([]interface{})
+		if ok && len(items) > max {
+			value[key] = items[:max]
+		}
+	}
 }
 
 func aiFollowupSystemPrompt() string {
 	return strings.Join([]string{
 		"你是 WP Panel 的 WordPress 诊断追问助手，正在同一个 AI 诊断会话中继续排查。",
 		"你必须基于 original_session、recent_conversation、latest_user_message 和 current_site_context 回答。",
+		"readonly_tool_context 是面板本轮按问题重新读取的日志、网站运行配置和安全状态；引用结论时说明证据来自哪一部分。",
 		"current_site_context 是本轮重新采集的当前状态，优先级高于 original_session 中的旧结论和历史日志。",
 		"不要编造 WP Panel 不存在的入口；只能使用 panel_context.known_panel_entries 中的真实入口，且避开 forbidden_panel_entries。",
 		"不要建议 shell 命令，不要声称已执行修复，不要要求用户提供密码、API Key、SSL 私钥或数据库密码。",
@@ -432,10 +513,7 @@ func CallAIChat(ctx context.Context, settings *models.AISettings, systemPrompt, 
 		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(settings.APIKey))
 	}
 
-	timeout := time.Duration(settings.TimeoutSeconds) * time.Second
-	if timeout <= 0 {
-		timeout = 60 * time.Second
-	}
+	timeout := AIRequestTimeout(settings, len(systemPrompt)+len(userPrompt))
 	client := &http.Client{Timeout: timeout}
 	start := time.Now()
 	var lastErr error
@@ -449,8 +527,14 @@ func CallAIChat(ctx context.Context, settings *models.AISettings, systemPrompt, 
 			return "", elapsed, &AIProviderError{Type: "network_error", Message: "无法连接 AI 服务: " + err.Error()}
 		}
 
-		respData, _ := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+		respData, readErr := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
 		_ = resp.Body.Close()
+		if readErr != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(readErr, context.DeadlineExceeded) || strings.Contains(strings.ToLower(readErr.Error()), "timeout") {
+				return "", elapsed, &AIProviderError{Type: "timeout", Message: "AI 服务响应读取超时"}
+			}
+			return "", elapsed, &AIProviderError{Type: "network_error", Message: "读取 AI 服务响应失败: " + readErr.Error()}
+		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return "", elapsed, aiHTTPError(resp.StatusCode, respData)
 		}
@@ -491,6 +575,28 @@ func CallAIChat(ctx context.Context, settings *models.AISettings, systemPrompt, 
 	return "", time.Since(start).Milliseconds(), lastErr
 }
 
+// AIRequestTimeout chooses a bounded total request timeout from the actual
+// prompt size. TimeoutSeconds is the administrator's ceiling, not a fixed wait
+// applied to every request.
+func AIRequestTimeout(settings *models.AISettings, promptChars int) time.Duration {
+	seconds := 60
+	if promptChars > 20000 {
+		seconds = 180
+	} else if promptChars > 8000 {
+		seconds = 120
+	}
+	if settings != nil && settings.TimeoutSeconds > 0 && settings.TimeoutSeconds < seconds {
+		seconds = settings.TimeoutSeconds
+	}
+	if seconds < 15 {
+		seconds = 15
+	}
+	if seconds > 180 {
+		seconds = 180
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 func aiShouldRetryProviderResponse(err error) bool {
 	var providerErr *AIProviderError
 	if errors.As(err, &providerErr) {
@@ -513,7 +619,15 @@ func aiSleepWithContext(ctx context.Context, d time.Duration) error {
 func TestAISettings(ctx context.Context, settings *models.AISettings) (int64, string, error) {
 	system := "你是 WP Panel 的 AI 连接测试助手。"
 	user := `请只返回 JSON：{"ok":true}`
-	content, elapsed, err := CallAIChat(ctx, settings, system, user)
+	if settings == nil {
+		content, elapsed, err := CallAIChat(ctx, nil, system, user)
+		return elapsed, content, err
+	}
+	testSettings := *settings
+	if testSettings.TimeoutSeconds <= 0 || testSettings.TimeoutSeconds > 30 {
+		testSettings.TimeoutSeconds = 30
+	}
+	content, elapsed, err := CallAIChat(ctx, &testSettings, system, user)
 	if err != nil {
 		return elapsed, "", err
 	}
@@ -917,12 +1031,21 @@ func aiDiagnosisLabel(symptom string) string {
 		return "缓存异常"
 	case models.AIDiagnosisPerformance:
 		return "网站速度慢"
+	case models.AIDiagnosisLogAnalysis:
+		return "网站日志深入诊断"
 	default:
 		return symptom
 	}
 }
 
 func aiDiagnosisProfile(symptom string) map[string]interface{} {
+	if symptom == models.AIDiagnosisLogAnalysis {
+		return map[string]interface{}{
+			"profile":      "log_analysis",
+			"focus":        []string{"日志总体趋势与异常占比", "状态码、页面、IP和爬虫之间有证据的关联", "现有安全规则是否已经处理", "网站、PHP、Nginx和安全配置是否需要优化"},
+			"answer_rules": []string{"区分事实、推断和建议", "444是已拦截结果", "排行榜之间没有关联证据时不得强行关联"},
+		}
+	}
 	if aiIsPerformanceSymptom(symptom) {
 		return map[string]interface{}{
 			"profile": "performance",

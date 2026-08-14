@@ -694,7 +694,7 @@ function panelSettings() {
             model: 'deepseek-v4-pro',
             api_key: '',
             api_key_masked: '',
-            timeout_seconds: 60
+            timeout_seconds: 180
         },
         aiSaving: false,
         aiTesting: false,
@@ -856,7 +856,7 @@ function panelSettings() {
                     this.ai.model = r.data.model || 'deepseek-v4-pro';
                     this.ai.api_key = '';
                     this.ai.api_key_masked = r.data.api_key_masked || '';
-                    this.ai.timeout_seconds = r.data.timeout_seconds || 60;
+                    this.ai.timeout_seconds = r.data.timeout_seconds || 180;
                 }
             } catch(e) {}
         },
@@ -876,7 +876,7 @@ function panelSettings() {
                 base_url: this.ai.base_url,
                 model: this.ai.model,
                 api_key: this.ai.api_key,
-                timeout_seconds: parseInt(this.ai.timeout_seconds) || 60
+                timeout_seconds: parseInt(this.ai.timeout_seconds) || 180
             };
         },
         async saveAI() {
@@ -895,7 +895,7 @@ function panelSettings() {
             this.aiTesting = true;
             this.aiTestResult = '';
             try {
-                const timeoutMs = Math.min((parseInt(this.ai.timeout_seconds) || 60) * 1000 + 30000, 210000);
+                const timeoutMs = 60000;
                 const r = await api('/ai/test', { method: 'POST', body: this.aiPayload(), timeout: timeoutMs });
                 const d = r.data || {};
                 this.aiTestOK = !!d.ok;

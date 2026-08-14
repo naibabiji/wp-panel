@@ -87,13 +87,23 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 	if aiModel != "deepseek-v4-pro" {
 		t.Fatalf("ai default model = %q, want deepseek-v4-pro", aiModel)
 	}
-	for _, table := range []string{"ai_settings", "ai_sessions", "ai_messages"} {
+	var aiTimeout int
+	if err := DB.QueryRow("SELECT timeout_seconds FROM ai_settings WHERE id = 1").Scan(&aiTimeout); err != nil || aiTimeout != 180 {
+		t.Fatalf("ai default timeout = %d, want 180, err=%v", aiTimeout, err)
+	}
+	for _, table := range []string{"ai_settings", "ai_sessions", "ai_messages", "ai_tool_events"} {
 		var exists int
 		if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&exists); err != nil {
 			t.Fatalf("query %s table: %v", table, err)
 		}
 		if exists != 1 {
 			t.Fatalf("%s exists = %d, want 1", table, exists)
+		}
+	}
+	for _, column := range []string{"context_type", "context_id", "context_json", "focus_kind", "focus_value"} {
+		var exists int
+		if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('ai_sessions') WHERE name = ?", column).Scan(&exists); err != nil || exists != 1 {
+			t.Fatalf("ai_sessions.%s exists=%d err=%v", column, exists, err)
 		}
 	}
 	var fileSecurityEventsTable int
@@ -165,6 +175,63 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 		if got != setting.want {
 			t.Fatalf("%s = %q, want %q", setting.key, got, setting.want)
 		}
+	}
+}
+
+func TestUpgrade1046AddsUnifiedAIDiagnosticContext(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`DROP TABLE ai_tool_events`); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"focus_value", "focus_kind", "context_json", "context_id", "context_type"} {
+		if _, err := DB.Exec("ALTER TABLE ai_sessions DROP COLUMN " + column); err != nil {
+			t.Fatalf("drop %s: %v", column, err)
+		}
+	}
+	if _, err := DB.Exec(`DELETE FROM schema_version`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`INSERT INTO schema_version(version) VALUES ('1.0.45')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"context_type", "context_id", "context_json", "focus_kind", "focus_value"} {
+		var exists int
+		if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('ai_sessions') WHERE name=?", column).Scan(&exists); err != nil || exists != 1 {
+			t.Fatalf("column %s exists=%d err=%v", column, exists, err)
+		}
+	}
+	var tableExists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_tool_events'`).Scan(&tableExists); err != nil || tableExists != 1 {
+		t.Fatalf("ai_tool_events exists=%d err=%v", tableExists, err)
+	}
+}
+
+func TestUpgrade1047RaisesLegacyDefaultAITimeout(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`UPDATE ai_settings SET timeout_seconds=60 WHERE id=1; DELETE FROM schema_version; INSERT INTO schema_version(version) VALUES ('1.0.46')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	var timeout int
+	if err := DB.QueryRow(`SELECT timeout_seconds FROM ai_settings WHERE id=1`).Scan(&timeout); err != nil || timeout != 180 {
+		t.Fatalf("upgraded timeout=%d, want 180, err=%v", timeout, err)
 	}
 }
 
@@ -267,7 +334,7 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.45" {
+	if got := LatestVersion(); got != "1.0.47" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
 	for _, column := range []string{"database_backup_mode", "database_backup_source_id", "auto_rollback", "batch_id"} {

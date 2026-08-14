@@ -553,6 +553,26 @@ var upgrades = []Upgrade{
 			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('googlebot_ips_last_error', '', 'Googlebot IP段最近刷新错误')`,
 		},
 	},
+	{
+		Version:     "1.0.46",
+		Description: "统一 AI 诊断会话与日志分析上下文",
+		SQL: []string{
+			`ALTER TABLE ai_sessions ADD COLUMN context_type TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE ai_sessions ADD COLUMN context_id INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE ai_sessions ADD COLUMN context_json TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE ai_sessions ADD COLUMN focus_kind TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE ai_sessions ADD COLUMN focus_value TEXT NOT NULL DEFAULT ''`,
+			`CREATE TABLE IF NOT EXISTS ai_tool_events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, tool_name TEXT NOT NULL DEFAULT '', result_summary TEXT NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (session_id) REFERENCES ai_sessions(id) ON DELETE CASCADE)`,
+			`CREATE INDEX IF NOT EXISTS idx_ai_tool_events_session ON ai_tool_events(session_id, created_at)`,
+		},
+	},
+	{
+		Version:     "1.0.47",
+		Description: "AI 诊断使用动态超时并提高默认最长等待时间",
+		SQL: []string{
+			`UPDATE ai_settings SET timeout_seconds=180 WHERE timeout_seconds=60`,
+		},
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

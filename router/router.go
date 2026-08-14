@@ -358,6 +358,16 @@ var i18nKeys = []string{
 	"ai_diagnostics.symptom_site_500",
 	"ai_diagnostics.symptom_ssl_failure",
 	"ai_diagnostics.symptom_wp_admin_down",
+	"ai_diagnostics.symptom_log_analysis",
+	"ai_diagnostics.log_context_description",
+	"ai_diagnostics.data_read_count",
+	"ai_diagnostics.tool_runtime_config",
+	"ai_diagnostics.tool_security_config",
+	"ai_diagnostics.tool_log_overview",
+	"ai_diagnostics.tool_log_status",
+	"ai_diagnostics.tool_log_path",
+	"ai_diagnostics.tool_log_bot",
+	"ai_diagnostics.tool_log_ip",
 	"ai_diagnostics.waiting",
 	"ai_diagnostics.waiting_ai_request",
 	"ai_diagnostics.waiting_analysis",
@@ -1319,7 +1329,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/log-analysis", logAnalysisHandler.List)
 	protected.GET("/api/log-analysis/:id", logAnalysisHandler.Get)
 	protected.GET("/api/log-analysis/:id/details", logAnalysisHandler.Details)
-	protected.POST("/api/log-analysis/:id/details/ai", logAnalysisHandler.AnalyzeDetails)
+	protected.POST("/api/log-analysis/:id/diagnostic-session", logAnalysisHandler.CreateDiagnosticSession)
 
 	extensionHandler := &handlers.ExtensionHandler{}
 	protected.GET("/api/extensions", extensionHandler.List)

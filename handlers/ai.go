@@ -82,7 +82,7 @@ func (h *AIHandler) Test(c *gin.Context) {
 			APIKey:         req.APIKey,
 			TimeoutSeconds: req.TimeoutSeconds,
 		}
-			normalized, err := normalizeAISettingsRequest(tmp, false, i18n.LangFromRequest(c.Request))
+		normalized, err := normalizeAISettingsRequest(tmp, false, i18n.LangFromRequest(c.Request))
 		if err != nil {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
 			return
@@ -92,7 +92,7 @@ func (h *AIHandler) Test(c *gin.Context) {
 		}
 		settings = normalized
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(settings.TimeoutSeconds)*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 	elapsed, msg, err := executor.TestAISettings(ctx, settings)
 	if err != nil {
@@ -125,6 +125,10 @@ func (h *AIHandler) Diagnose(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.invalid_symptom")))
 		return
 	}
+	if req.Symptom == models.AIDiagnosisLogAnalysis {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.log_analysis_entry_required")))
+		return
+	}
 
 	site := getWebsiteByID(id)
 	if site == nil {
@@ -150,28 +154,28 @@ func (h *AIHandler) Diagnose(c *gin.Context) {
 	_, _ = database.GetDB().Exec(
 		`UPDATE ai_sessions SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
 			 WHERE site_id = ? AND status = ? AND updated_at <= datetime('now', '-10 minutes')`,
-			models.AISessionFailed, i18n.TE(c.Request, "ai_diagnostics.session_interrupted"), site.ID, models.AISessionRunning,
-		)
+		models.AISessionFailed, i18n.TE(c.Request, "ai_diagnostics.session_interrupted"), site.ID, models.AISessionRunning,
+	)
 
 	// Prevent concurrent diagnoses for the same site within this process.
-		if _, loaded := aiDiagnosisMu.LoadOrStore(site.ID, struct{}{}); loaded {
-			c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-				"status":  models.AISessionRunning,
-				"message": i18n.TE(c.Request, "ai_diagnostics.already_running"),
-			}))
-			return
-		}
+	if _, loaded := aiDiagnosisMu.LoadOrStore(site.ID, struct{}{}); loaded {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+			"status":  models.AISessionRunning,
+			"message": i18n.TE(c.Request, "ai_diagnostics.already_running"),
+		}))
+		return
+	}
 	defer aiDiagnosisMu.Delete(site.ID)
 
 	// Also block if a running session exists from a different process.
-		if running, ok := activeAISession(site.ID); ok {
-			c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-				"session_id": running.ID,
-				"status":     running.Status,
-				"message":    i18n.TE(c.Request, "ai_diagnostics.already_running"),
-			}))
-			return
-		}
+	if running, ok := activeAISession(site.ID); ok {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+			"session_id": running.ID,
+			"status":     running.Status,
+			"message":    i18n.TE(c.Request, "ai_diagnostics.already_running"),
+		}))
+		return
+	}
 
 	sessionID, err := createAISession(site.ID, req.Symptom)
 	if err != nil {
@@ -189,11 +193,11 @@ func (h *AIHandler) Diagnose(c *gin.Context) {
 
 	// Keep the diagnosis running even if the browser request is aborted. The
 	// result is persisted to ai_sessions and can be loaded from history later.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(settings.TimeoutSeconds)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), executor.AIRequestTimeout(settings, len(systemPrompt)+len(userPrompt)))
 	defer cancel()
 	content, _, err := executor.CallAIChat(ctx, settings, systemPrompt, userPrompt)
 	if err != nil {
-			msg := aiUserError(i18n.LangFromRequest(c.Request), err)
+		msg := aiUserErrorWithContext(i18n.LangFromRequest(c.Request), err, len(systemPrompt)+len(userPrompt), req.Symptom == models.AIDiagnosisLogAnalysis)
 		failAISession(sessionID, msg, len(userPrompt), 0)
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"session_id":    sessionID,
@@ -243,7 +247,8 @@ func (h *AIHandler) ListSessions(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "website.not_found")))
 		return
 	}
-	rows, err := database.GetDB().Query(`SELECT id, site_id, symptom, status, risk_level, summary, error_message, created_at, updated_at
+	rows, err := database.GetDB().Query(`SELECT id, site_id, symptom, status, risk_level, summary, error_message,
+		context_type,context_id,focus_kind,focus_value,created_at,updated_at
 			FROM ai_sessions WHERE site_id = ? ORDER BY created_at DESC LIMIT ?`, id, aiSessionKeepLimit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.load_sessions_failed")))
@@ -254,7 +259,8 @@ func (h *AIHandler) ListSessions(c *gin.Context) {
 	for rows.Next() {
 		var item models.AISessionSummary
 		var summary string
-		if err := rows.Scan(&item.ID, &item.SiteID, &item.Symptom, &item.Status, &item.RiskLevel, &summary, &item.ErrorMessage, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.SiteID, &item.Symptom, &item.Status, &item.RiskLevel, &summary, &item.ErrorMessage,
+			&item.ContextType, &item.ContextID, &item.FocusKind, &item.FocusValue, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			continue
 		}
 		item.SummaryExcerpt = excerpt(summary, 160)
@@ -360,13 +366,13 @@ func (h *AIHandler) SendMessage(c *gin.Context) {
 		return
 	}
 
-		if _, loaded := aiDiagnosisMu.LoadOrStore(site.ID, struct{}{}); loaded {
-			c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-				"status":  models.AISessionRunning,
-				"message": i18n.TE(c.Request, "ai_diagnostics.already_running_followup"),
-			}))
-			return
-		}
+	if _, loaded := aiDiagnosisMu.LoadOrStore(site.ID, struct{}{}); loaded {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+			"status":  models.AISessionRunning,
+			"message": i18n.TE(c.Request, "ai_diagnostics.already_running_followup"),
+		}))
+		return
+	}
 	defer aiDiagnosisMu.Delete(site.ID)
 
 	if _, err := createAIMessage(sessionID, "user", content, 0, 0, ""); err != nil {
@@ -378,16 +384,19 @@ func (h *AIHandler) SendMessage(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.load_context_failed")))
 		return
 	}
-	systemPrompt, userPrompt, err := executor.BuildAIFollowupPrompt(site, &session, messages, content)
+	systemPrompt, userPrompt, toolEvents, err := executor.BuildAIFollowupPromptWithTools(site, &session, messages, content)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.build_context_failed")))
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(settings.TimeoutSeconds)*time.Second)
+	for _, event := range toolEvents {
+		recordAIToolEvent(sessionID, event.ToolName, event.ResultSummary)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), executor.AIRequestTimeout(settings, len(systemPrompt)+len(userPrompt)))
 	defer cancel()
 	reply, _, err := executor.CallAIChat(ctx, settings, systemPrompt, userPrompt)
 	if err != nil {
-			msg := aiUserError(i18n.LangFromRequest(c.Request), err)
+		msg := aiUserErrorWithContext(i18n.LangFromRequest(c.Request), err, len(systemPrompt)+len(userPrompt), session.ContextType == "log_analysis")
 		_, _ = createAIMessage(sessionID, "assistant", "", len(userPrompt), 0, msg)
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"status":        models.AISessionFailed,
@@ -495,7 +504,7 @@ func normalizeAISettingsRequest(req models.AISettingsRequest, preserveExistingKe
 	}
 	timeout := req.TimeoutSeconds
 	if timeout <= 0 {
-		timeout = 60
+		timeout = 180
 	}
 	if timeout < 15 {
 		timeout = 15
@@ -544,8 +553,14 @@ func saveAISettings(settings *models.AISettings) error {
 }
 
 func createAISession(siteID int, symptom string) (int, error) {
-	res, err := database.GetDB().Exec(`INSERT INTO ai_sessions (site_id, symptom, status) VALUES (?, ?, ?)`,
-		siteID, symptom, models.AISessionPending)
+	return createAISessionWithContext(siteID, symptom, models.AIDiagnosticContextRef{}, "")
+}
+
+func createAISessionWithContext(siteID int, symptom string, ref models.AIDiagnosticContextRef, contextJSON string) (int, error) {
+	res, err := database.GetDB().Exec(`INSERT INTO ai_sessions
+		(site_id, symptom, status, context_type, context_id, context_json, focus_kind, focus_value)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, siteID, symptom, models.AISessionPending,
+		strings.TrimSpace(ref.Type), ref.ID, contextJSON, strings.TrimSpace(ref.FocusKind), strings.TrimSpace(ref.FocusValue))
 	if err != nil {
 		return 0, err
 	}
@@ -556,11 +571,13 @@ func createAISession(siteID int, symptom string) (int, error) {
 func loadAISessionDetail(siteID, sessionID int) (models.AISessionDetail, error) {
 	var detail models.AISessionDetail
 	var reportJSON string
-	err := database.GetDB().QueryRow(`SELECT id, site_id, symptom, status, risk_level, summary, report_json, raw_text, error_message, prompt_chars, response_chars, created_at, updated_at
+	err := database.GetDB().QueryRow(`SELECT id, site_id, symptom, status, risk_level, summary, report_json, raw_text, error_message, prompt_chars, response_chars,
+		context_type, context_id, context_json, focus_kind, focus_value, created_at, updated_at
 		FROM ai_sessions WHERE id = ? AND site_id = ?`, sessionID, siteID).Scan(
 		&detail.ID, &detail.SiteID, &detail.Symptom, &detail.Status, &detail.RiskLevel,
 		&detail.Summary, &reportJSON, &detail.RawText, &detail.ErrorMessage,
-		&detail.PromptChars, &detail.ResponseChars, &detail.CreatedAt, &detail.UpdatedAt,
+		&detail.PromptChars, &detail.ResponseChars, &detail.ContextType, &detail.ContextID, &detail.ContextJSON,
+		&detail.FocusKind, &detail.FocusValue, &detail.CreatedAt, &detail.UpdatedAt,
 	)
 	if err != nil {
 		return detail, err
@@ -571,6 +588,7 @@ func loadAISessionDetail(siteID, sessionID int) (models.AISessionDetail, error) 
 			detail.Report = &report
 		}
 	}
+	detail.ToolEvents, _ = listAIToolEvents(sessionID, 20)
 	return detail, nil
 }
 
@@ -594,6 +612,29 @@ func createAIMessage(sessionID int, role, content string, promptChars, responseC
 	}
 	id, err := res.LastInsertId()
 	return int(id), err
+}
+
+func recordAIToolEvent(sessionID int, toolName, summary string) {
+	_, _ = database.GetDB().Exec(`INSERT INTO ai_tool_events(session_id,tool_name,result_summary) VALUES(?,?,?)`,
+		sessionID, strings.TrimSpace(toolName), excerpt(summary, 500))
+}
+
+func listAIToolEvents(sessionID, limit int) ([]models.AIToolEvent, error) {
+	rows, err := database.GetDB().Query(`SELECT id,session_id,tool_name,result_summary,created_at FROM (
+		SELECT id,session_id,tool_name,result_summary,created_at FROM ai_tool_events WHERE session_id=? ORDER BY id DESC LIMIT ?
+	) ORDER BY id ASC`, sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []models.AIToolEvent{}
+	for rows.Next() {
+		var item models.AIToolEvent
+		if rows.Scan(&item.ID, &item.SessionID, &item.ToolName, &item.ResultSummary, &item.CreatedAt) == nil {
+			items = append(items, item)
+		}
+	}
+	return items, rows.Err()
 }
 
 func listAIMessages(sessionID, limit int) ([]models.AIMessage, error) {
@@ -679,6 +720,10 @@ func excerpt(s string, max int) string {
 }
 
 func aiUserError(lang string, err error) string {
+	return aiUserErrorWithContext(lang, err, 0, false)
+}
+
+func aiUserErrorWithContext(lang string, err error, promptChars int, logContext bool) string {
 	var providerErr *executor.AIProviderError
 	if errors.As(err, &providerErr) {
 		switch providerErr.Type {
@@ -687,6 +732,9 @@ func aiUserError(lang string, err error) string {
 		case "rate_limited":
 			return i18n.T(lang, "ai_diagnostics.user_error_rate_limited")
 		case "timeout":
+			if logContext && promptChars > 8000 {
+				return i18n.T(lang, "ai_diagnostics.user_error_timeout_large_log")
+			}
 			return i18n.T(lang, "ai_diagnostics.user_error_timeout")
 		case "network_error":
 			return i18n.T(lang, "ai_diagnostics.user_error_network")
