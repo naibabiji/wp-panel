@@ -229,7 +229,7 @@ func scanLogAnalysisDetailFile(path string, consume func(string) bool) error {
 	return scanner.Err()
 }
 
-func BuildLogAnalysisDetailPrompt(detail *models.LogAnalysisDetail) (string, string, error) {
+func BuildLogAnalysisDetailPrompt(detail *models.LogAnalysisDetail, report *models.LogAnalysisReport, domain string, startAt, endAt time.Time) (string, string, error) {
 	if detail == nil || detail.Total < 1 {
 		return "", "", fmt.Errorf("log analysis detail is empty")
 	}
@@ -247,10 +247,40 @@ func BuildLogAnalysisDetailPrompt(detail *models.LogAnalysisDetail) (string, str
 	for i := range copyDetail.Lines {
 		copyDetail.Lines[i] = sanitizeLogAnalysisAIText(copyDetail.Lines[i])
 	}
-	data, err := json.Marshal(copyDetail)
+	contextData := struct {
+		Domain        string                    `json:"domain"`
+		StartAt       time.Time                 `json:"start_at"`
+		EndAt         time.Time                 `json:"end_at"`
+		OverallReport *models.LogAnalysisReport `json:"overall_report,omitempty"`
+		SelectedGroup *models.LogAnalysisDetail `json:"selected_group"`
+		Notes         []string                  `json:"interpretation_notes"`
+	}{
+		Domain: domain, StartAt: startAt, EndAt: endAt, OverallReport: report, SelectedGroup: &copyDetail,
+		Notes: []string{
+			"selected_group 的统计覆盖该时间段内全部匹配项，lines 最多 100 条且均为脱敏样本",
+			"Top 列表最多保留 12 项，不能视为完整枚举",
+			"HTTP 444 表示请求已被面板安全规则拒绝，不是新的违规",
+			"verified 表示命中已缓存的 Google/Bing 官方 IP 段；fake 表示未命中对应官方段；unknown 表示对应官方 IP 段尚未成功缓存；unverified 表示仅按 User-Agent 识别",
+			"封禁和关联安全事件只反映面板当前仍保留的记录，显示 0 不代表历史上从未发生",
+		},
+	}
+	if report != nil {
+		redacted := *report
+		redacted.TopIPs = append([]models.LogAnalysisCount(nil), report.TopIPs...)
+		for i := range redacted.TopIPs {
+			redacted.TopIPs[i].Name = maskIP(redacted.TopIPs[i].Name)
+		}
+		redacted.Samples = nil
+		redacted.Findings = append([]models.LogAnalysisFinding(nil), report.Findings...)
+		for i := range redacted.Findings {
+			redacted.Findings[i].Evidence = nil
+		}
+		contextData.OverallReport = &redacted
+	}
+	data, err := json.Marshal(contextData)
 	if err != nil {
 		return "", "", err
 	}
-	system := "你是 WP Panel 的网站日志分析助手。请只分析给定筛选组的请求特征、可能成因、是否需要处理和具体建议。样本可能只是全部匹配日志的一部分，不要编造未提供的事实，不要建议执行 shell 命令。使用简洁中文。"
-	return system, "以下是某一类日志的统计与最多 100 条脱敏样本：\n" + string(data), nil
+	system := "你是 WP Panel 的网站日志分析助手。请结合总体报告，只分析当前筛选组的请求特征、主要来源、路径和状态码关系、可能成因、现有安全防护是否已经处理，以及管理员是否还需操作。统计汇总覆盖全部匹配日志，但原始行只是最多 100 条样本；不得用样本比例冒充总体比例。不要编造未提供的 IP 与路径关联，不要建议执行 shell 命令，不要重复建议已经明确生效的防护。使用简洁 Markdown，按结论、证据、判断、建议四部分回答。"
+	return system, "以下是站点总体报告、当前筛选组统计和脱敏样本：\n" + string(data), nil
 }

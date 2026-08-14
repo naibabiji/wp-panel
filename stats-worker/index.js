@@ -1,6 +1,10 @@
 // WP Panel 匿名安装统计 Worker
 // POST /api/heartbeat — 面板匿名心跳上报
 // GET  /api/stats     — 公开统计（total + 精确 active_24h 滚动窗口）
+// GET  /api/ip-ranges/googlebot — Google 官方爬虫 IP 的最后有效缓存
+
+const GOOGLEBOT_UPSTREAM = 'https://developers.google.com/crawling/ipranges/common-crawlers.json';
+const GOOGLEBOT_CACHE_KEY = 'ip-ranges:googlebot:v1';
 
 export default {
   async fetch(request, env) {
@@ -23,6 +27,25 @@ export default {
           ...corsHeaders,
           'Content-Type': 'application/json',
           'Cache-Control': 'public, max-age=300',
+        },
+      });
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/ip-ranges/googlebot') {
+      let snapshot = await env.STATS_KV.get(GOOGLEBOT_CACHE_KEY, { type: 'json' });
+      if (!snapshot) {
+        try {
+          snapshot = await refreshGooglebotRanges(env);
+        } catch (error) {
+          return jsonResponse({ error: 'googlebot ranges are not cached yet' }, 503, corsHeaders);
+        }
+      }
+      return new Response(JSON.stringify(snapshot.payload), {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=3600, stale-while-revalidate=86400',
+          'X-WP-Panel-Fetched-At': snapshot.fetched_at,
         },
       });
     }
@@ -61,7 +84,49 @@ export default {
 
     return new Response('Not Found', { status: 404 });
   },
+
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(refreshGooglebotRanges(env));
+  },
 };
+
+function jsonResponse(body, status, headers) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...headers, 'Content-Type': 'application/json' },
+  });
+}
+
+async function refreshGooglebotRanges(env) {
+  const response = await fetch(GOOGLEBOT_UPSTREAM, {
+    headers: { 'User-Agent': 'WP-Panel-Googlebot-Range-Relay/1.0' },
+    cf: { cacheTtl: 3600, cacheEverything: true },
+  });
+  if (!response.ok) {
+    throw new Error(`Google returned HTTP ${response.status}`);
+  }
+  const payload = await response.json();
+  validateGooglebotPayload(payload);
+  const snapshot = { fetched_at: new Date().toISOString(), payload };
+  await env.STATS_KV.put(GOOGLEBOT_CACHE_KEY, JSON.stringify(snapshot));
+  return snapshot;
+}
+
+function validateGooglebotPayload(payload) {
+  if (!payload || !Array.isArray(payload.prefixes) || payload.prefixes.length === 0 || payload.prefixes.length > 512) {
+    throw new Error('invalid Googlebot prefix list');
+  }
+  for (const prefix of payload.prefixes) {
+    const keys = Object.keys(prefix || {});
+    if (keys.length !== 1 || !['ipv4Prefix', 'ipv6Prefix'].includes(keys[0])) {
+      throw new Error('invalid Googlebot prefix entry');
+    }
+    const value = prefix[keys[0]];
+    if (typeof value !== 'string' || !value.includes('/') || value.length > 80) {
+      throw new Error('invalid Googlebot CIDR');
+    }
+  }
+}
 
 async function getStats(env) {
   let total = 0;

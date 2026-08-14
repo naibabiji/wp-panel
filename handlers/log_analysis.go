@@ -129,7 +129,7 @@ func (h *LogAnalysisHandler) AnalyzeDetails(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "log_analysis.invalid_detail")))
 		return
 	}
-	systemPrompt, userPrompt, err := executor.BuildLogAnalysisDetailPrompt(detail)
+	systemPrompt, userPrompt, err := executor.BuildLogAnalysisDetailPrompt(detail, job.LocalReport, job.Domain, job.StartAt, job.EndAt)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "log_analysis.invalid_detail")))
 		return

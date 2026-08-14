@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/executor"
@@ -132,6 +133,66 @@ func (h *SecurityHandler) RefreshWhitelist(c *gin.Context) {
 	executor.GoSafe(refreshOfficialWhitelist)
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "白名单刷新任务已提交"}))
+}
+
+func (h *SecurityHandler) ImportGooglebotRanges(c *gin.Context) {
+	var req struct {
+		IPRanges string `json:"ip_ranges"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		return
+	}
+	ips, err := executor.NormalizeOfficialIPRanges(req.IPRanges)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Googlebot IP 段格式不正确: "+err.Error()))
+		return
+	}
+	db := database.GetDB()
+	keys := []string{"googlebot_ips", "googlebot_ips_source", "googlebot_ips_last_success_at", "googlebot_ips_last_error", "official_whitelist_ips"}
+	old := make(map[string]string, len(keys))
+	for _, key := range keys {
+		var value string
+		_ = db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = ?`, key).Scan(&value)
+		old[key] = value
+	}
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	googleRaw := strings.Join(ips, "\n")
+	var cloudflareRaw, bingRaw string
+	_ = db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'cloudflare_realip_ips'`).Scan(&cloudflareRaw)
+	_ = db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'bingbot_ips'`).Scan(&bingRaw)
+	official := strings.TrimSpace(strings.Join([]string{cloudflareRaw, googleRaw, bingRaw}, "\n"))
+	updates := map[string]string{
+		"googlebot_ips":                 googleRaw,
+		"googlebot_ips_source":          "manual",
+		"googlebot_ips_last_success_at": now,
+		"googlebot_ips_last_error":      "",
+		"official_whitelist_ips":        official,
+	}
+	for key, value := range updates {
+		if _, err := db.Exec(`INSERT INTO security_settings (skey, svalue, description, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(skey) DO UPDATE SET svalue = excluded.svalue, updated_at = excluded.updated_at`, key, value, "Googlebot 手动导入与状态"); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败"))
+			return
+		}
+	}
+	rollback := func() {
+		for key, value := range old {
+			_, _ = db.Exec(`UPDATE security_settings SET svalue = ?, updated_at = CURRENT_TIMESTAMP WHERE skey = ?`, value, key)
+		}
+	}
+	if err := applyFail2banSettings(); err != nil {
+		rollback()
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Fail2ban 白名单应用失败，已回滚: "+err.Error()))
+		return
+	}
+	if err := executor.EnsureLogMap(); err != nil {
+		rollback()
+		_ = applyFail2banSettings()
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("搜索引擎验证规则应用失败，已回滚: "+err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": fmt.Sprintf("已导入 %d 条 Googlebot 官方 IP 段", len(ips))}))
 }
 
 func (h *SecurityHandler) ListCDNRealIPGroups(c *gin.Context) {

@@ -95,7 +95,7 @@
                         </div>
                     </template>
 
-                    <div x-show="job?.ai_analysis" class="border-t border-gray-800 pt-5"><h4 class="text-sm font-semibold text-white mb-3">{{t .Lang "log_analysis.ai_result"}}</h4><div class="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed" x-text="job?.ai_analysis"></div></div>
+                    <div x-show="job?.ai_analysis" class="border-t border-gray-800 pt-5"><h4 class="text-sm font-semibold text-white mb-3">{{t .Lang "log_analysis.ai_result"}}</h4><div class="text-sm text-gray-300 leading-relaxed space-y-2" x-html="renderMarkdown(job?.ai_analysis)"></div></div>
                 </div>
             </div>
         </div>
@@ -118,18 +118,53 @@
                 </div>
 
                 <div x-show="detailView === 'logs'"><div class="space-y-2"><template x-for="(line, index) in detail.lines" :key="index"><pre class="text-xs text-gray-300 bg-gray-950 p-3 overflow-auto whitespace-pre-wrap" x-text="line"></pre></template></div><p x-show="detail.lines.length === 0" class="py-8 text-center text-gray-500">{{t .Lang "log_analysis.detail_empty"}}</p><div x-show="detail.total > detail.page_size" class="flex justify-between items-center mt-4"><button @click="loadDetailPage(detail.page - 1)" :disabled="detail.page <= 1" class="btn-secondary text-xs">{{t .Lang "log_analysis.previous"}}</button><span class="text-xs text-gray-500" x-text="detail.page + ' / ' + Math.ceil(detail.total / detail.page_size)"></span><button @click="loadDetailPage(detail.page + 1)" :disabled="detail.page >= Math.ceil(detail.total / detail.page_size)" class="btn-secondary text-xs">{{t .Lang "log_analysis.next"}}</button></div></div>
-                <div x-show="detailAI" class="mt-5 border-t border-gray-800 pt-4"><h4 class="text-sm font-semibold text-white mb-2">{{t .Lang "log_analysis.detail_ai_result"}}</h4><div class="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed" x-text="detailAI"></div></div>
+                <div x-show="detailAI" class="mt-5 border-t border-gray-800 pt-4"><h4 class="text-sm font-semibold text-white mb-2">{{t .Lang "log_analysis.detail_ai_result"}}</h4><div class="text-sm text-gray-300 leading-relaxed space-y-2" x-html="renderMarkdown(detailAI)"></div></div>
             </div></template>
         </div>
     </div>
 </div>
 
 <script>
+// 仅渲染日志 AI 输出需要的 Markdown 子集。先转义全部 HTML，再添加受控标签，避免 x-html 注入。
+function renderMarkdown(value) {
+    const escaped = String(value || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const inline = text => text
+        .replace(/`([^`]+)`/g, '<code class="font-mono text-blue-200 bg-gray-950 px-1 py-0.5">$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-white font-semibold">$1</strong>');
+    const lines = escaped.split(/\r?\n/);
+    const html = [];
+    let list = '';
+    const closeList = () => { if (list) { html.push(`</${list}>`); list = ''; } };
+    for (const raw of lines) {
+        const line = raw.trim();
+        let match;
+        if (!line) { closeList(); continue; }
+        if ((match = line.match(/^(#{1,3})\s+(.+)$/))) {
+            closeList();
+            const size = match[1].length === 1 ? 'text-lg' : (match[1].length === 2 ? 'text-base' : 'text-sm');
+            html.push(`<h${match[1].length} class="${size} text-white font-semibold mt-4 mb-2">${inline(match[2])}</h${match[1].length}>`);
+        } else if ((match = line.match(/^[-*]\s+(.+)$/))) {
+            if (list !== 'ul') { closeList(); list = 'ul'; html.push('<ul class="list-disc pl-5 space-y-1">'); }
+            html.push(`<li>${inline(match[1])}</li>`);
+        } else if ((match = line.match(/^\d+[.)]\s+(.+)$/))) {
+            if (list !== 'ol') { closeList(); list = 'ol'; html.push('<ol class="list-decimal pl-5 space-y-1">'); }
+            html.push(`<li>${inline(match[1])}</li>`);
+        } else {
+            closeList(); html.push(`<p>${inline(line)}</p>`);
+        }
+    }
+    closeList();
+    return html.join('');
+}
+
 function logAnalysisPage() {
     return {
         websites: [], siteID: '', range: '24h', customStart: '', customEnd: '', useAI: false, aiReady: false,
         running: false, job: null, report: null, history: [], pollTimer: null,
         detailOpen: false, detailLoading: false, detailKind: '', detailValue: '', detailTitle: '', detail: null, detailView: 'overview', detailAI: '', detailAILoading: false,
+        renderMarkdown,
         async init() {
             try {
                 const sites = await api('/websites');

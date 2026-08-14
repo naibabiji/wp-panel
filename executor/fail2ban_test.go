@@ -2,6 +2,8 @@ package executor
 
 import (
 	"errors"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,42 @@ import (
 
 	"github.com/naibabiji/wp-panel/database"
 )
+
+func TestGooglebotFetchFallsBackToRelay(t *testing.T) {
+	oldClient := googlebotHTTPClient
+	t.Cleanup(func() { googlebotHTTPClient = oldClient })
+	googlebotHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() == googlebotOfficialURL {
+			return nil, errors.New("blocked")
+		}
+		body := `{"creationTime":"2026-08-14T00:00:00.000000Z","prefixes":[{"ipv4Prefix":"66.249.64.0/19"},{"ipv6Prefix":"2001:4860:4801::/48"}]}`
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	ips, source, err := fetchGooglebotIPsWithFallback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source != "relay" || strings.Join(ips, ",") != "66.249.64.0/19,2001:4860:4801::/48" {
+		t.Fatalf("source=%q ips=%v", source, ips)
+	}
+}
+
+func TestNormalizeOfficialIPRangesRejectsUnsafeInput(t *testing.T) {
+	if _, err := NormalizeOfficialIPRanges("0.0.0.0/0"); err == nil {
+		t.Fatal("expected overly broad range to be rejected")
+	}
+	if _, err := NormalizeOfficialIPRanges("127.0.0.1/32"); err == nil {
+		t.Fatal("expected loopback range to be rejected")
+	}
+	ips, err := NormalizeOfficialIPRanges("66.249.64.0/19\n66.249.64.0/19")
+	if err != nil || len(ips) != 1 {
+		t.Fatalf("ips=%v err=%v", ips, err)
+	}
+	ips, err = NormalizeOfficialIPRanges(`{"prefixes":[{"ipv4Prefix":"66.249.64.0/19"}]}`)
+	if err != nil || len(ips) != 1 || ips[0] != "66.249.64.0/19" {
+		t.Fatalf("JSON import ips=%v err=%v", ips, err)
+	}
+}
 
 func TestWriteFail2banLocalPreservesExistingSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fail2ban.local")

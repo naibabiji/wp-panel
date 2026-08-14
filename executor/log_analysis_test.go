@@ -164,7 +164,9 @@ func TestAnalyzeWebsiteLogDetailsFiltersAndPaginates(t *testing.T) {
 
 func TestBuildLogAnalysisDetailPromptRedactsLines(t *testing.T) {
 	detail := &models.LogAnalysisDetail{Kind: "path", Value: "/private", Total: 1, Lines: []string{"192.0.2.10 token=secret /www/wwwroot/example.com/wp.php"}}
-	_, prompt, err := BuildLogAnalysisDetailPrompt(detail)
+	report := &models.LogAnalysisReport{Domain: "example.com", AccessRequests: 12, Samples: []string{"must not be copied"}}
+	startAt, endAt := time.Now().Add(-time.Hour), time.Now()
+	_, prompt, err := BuildLogAnalysisDetailPrompt(detail, report, "example.com", startAt, endAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,5 +174,13 @@ func TestBuildLogAnalysisDetailPromptRedactsLines(t *testing.T) {
 		if strings.Contains(prompt, forbidden) {
 			t.Fatalf("detail prompt leaked %q: %s", forbidden, prompt)
 		}
+	}
+	for _, required := range []string{"example.com", "overall_report", "selected_group", "HTTP 444", "最多 100 条"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("detail prompt missing context %q: %s", required, prompt)
+		}
+	}
+	if strings.Contains(prompt, "must not be copied") {
+		t.Fatalf("overall raw samples should not be duplicated into detail prompt: %s", prompt)
 	}
 }

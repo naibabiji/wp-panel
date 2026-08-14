@@ -55,7 +55,7 @@
                     <ul class="space-y-3 ml-2">
                         <li>
                             <p class="text-blue-400 font-medium">工作原理：令牌桶算法</p>
-                            <p>系统为每个 IP 维护一个容量等于「突发缓冲」的令牌桶，每秒自动补充 1 个令牌（由请求频率决定）。请求到达时消耗令牌，耗尽后返回 429。<span class="text-green-400">人类浏览有自然停顿（阅读页面），停顿期间桶自动回满</span>；机器人持续不断请求，令牌耗尽后被限制在每秒仅 1 次请求。</p>
+                            <p>系统为每个 IP 维护一个容量等于「突发缓冲」的令牌桶，并按设置的「请求频率」持续补充令牌。请求到达时消耗令牌，耗尽后超出持续速率的请求返回 429。默认 60 次/分钟时，耗尽后的长期速率约为 1 次/秒。</p>
                         </li>
                         <li>
                             <p class="text-blue-400 font-medium">请求频率（次/分钟）</p>
@@ -64,15 +64,15 @@
                         <li>
                             <p class="text-blue-400 font-medium">突发缓冲（次）</p>
                             <p>控制令牌桶容量，即页面打开瞬间允许的最大并发请求数。默认 <span class="text-blue-400">300</span> 次，可覆盖 Elementor + 多插件站点（单页 100+ 请求）同时打开 2-3 个标签页的场景。如需同时打开更多标签页，请设置更大值（如 500-600）。非 Elementor / 轻量站点可适当调低至 30-120。</p>
-                            <p class="text-green-400 mt-1">增大此值<span class="text-green-300 font-semibold">不会</span>延迟拦截机器人——机器人被持续速率（1 次/秒）压制，与突发缓冲大小无关，安全防护不削弱。</p>
+                            <p class="text-green-400 mt-1">增大此值可减少正常页面并发请求误触发 429，但会增加初始可用令牌，使持续高频请求更晚进入限速；令牌耗尽后的长期速率不变。</p>
                         </li>
                         <li>
                             <p class="text-red-400 font-semibold">⚠ 警告：多次返回 429 的 IP 将被 Fail2ban 自动封禁</p>
                             <p class="text-red-400">429 响应会被 Fail2ban 规则捕获并计入违规次数（与 wp-login 暴力破解等同级处理）。累计触发阈值后将导致该 IP 被防火墙封锁。请确保突发缓冲足够日常使用，避免正常访客误触发 429 而被拉黑。</p>
                         </li>
                         <li>
-                            <p class="text-green-400 font-semibold">✓ 提高突发缓冲不影响拦截机器人</p>
-                            <p>机器人的特征是持续不断发请求（无人类浏览停顿），会被「请求频率」死死限制在 1 次/秒，令牌桶耗尽后几乎所有请求都返回 429。提高突发缓冲只会给人类访客更宽松的首屏加载空间，<span class="text-green-400">安全防护能力完全不受影响</span>。真正的限制来自持续速率，而非突发上限。</p>
+                            <p class="text-green-400 font-semibold">✓ 请求频率与突发缓冲的取舍</p>
+                            <p>「请求频率」决定令牌耗尽后的长期允许速率；「突发缓冲」决定进入限速前可承受的短时请求量。缓冲越大，正常复杂页面越不容易误触发，但持续高频请求开始收到 429 的时间也会相应延后。</p>
                         </li>
                         <li>
                             <p class="text-blue-400 font-medium">如何测试配置是否合适</p>
@@ -192,6 +192,19 @@
             </div>
             <textarea x-model="settings.official_whitelist_ips" class="input-field font-mono text-sm" rows="5" readonly disabled style="opacity: 0.6;"></textarea>
             <p class="text-gray-500 text-xs mt-1" x-text="t('security.last_update_label') + (settings.last_whitelist_update || t('settings.no_data'))"></p>
+        </div>
+        <div class="mb-4 rounded border border-gray-700 p-3">
+            <div class="flex items-center justify-between gap-3 mb-2">
+                <label class="label mb-0">{{t .Lang "security.googlebot_ranges"}}</label>
+                <span class="text-xs text-blue-300" x-text="googlebotSourceLabel()"></span>
+            </div>
+            <p class="text-xs text-gray-400 mb-2">{{t .Lang "security.googlebot_ranges_help"}}</p>
+            <textarea x-model="settings.googlebot_ips" class="input-field font-mono text-sm" rows="5" placeholder="66.249.64.0/19"></textarea>
+            <div class="text-xs text-gray-500 mt-2">
+                <span x-text="t('security.googlebot_last_success') + (settings.googlebot_ips_last_success_at || t('settings.no_data'))"></span>
+                <p x-show="settings.googlebot_ips_last_error" class="text-yellow-400 mt-1" x-text="t('security.googlebot_last_error') + settings.googlebot_ips_last_error"></p>
+            </div>
+            <button @click="saveGooglebotRanges" class="btn-secondary mt-3 text-sm">{{t .Lang "security.import_googlebot_ranges"}}</button>
         </div>
         <div class="mb-4">
             <label class="label">{{t .Lang "security.custom_whitelist"}}</label>
@@ -415,6 +428,20 @@ function securitySettings() {
             try {
                 await api('/security/settings', { method: 'PUT', body: { whitelist_ips: this.settings.whitelist_ips || '' } });
                 showToast(t('settings.saved'), 'success');
+            } catch(e) { showToast(e.message, 'error'); }
+        },
+        googlebotSourceLabel() {
+            const source = this.settings.googlebot_ips_source || '';
+            if (source === 'official') return t('security.googlebot_source_official');
+            if (source === 'relay') return t('security.googlebot_source_relay');
+            if (source === 'manual') return t('security.googlebot_source_manual');
+            return t('security.googlebot_source_unknown');
+        },
+        async saveGooglebotRanges() {
+            try {
+                const r = await api('/security/whitelist/googlebot', { method: 'PUT', body: { ip_ranges: this.settings.googlebot_ips || '' } });
+                showToast(r.data?.message || t('settings.saved'), 'success');
+                await this.fetchSettings();
             } catch(e) { showToast(e.message, 'error'); }
         },
         async saveWPSecurityLogWhitelist() {

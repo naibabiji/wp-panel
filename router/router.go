@@ -391,6 +391,12 @@ var i18nKeys = []string{
 	"security.help_title",
 	"security.last_update_label",
 	"security.refresh_triggered",
+	"security.googlebot_last_success",
+	"security.googlebot_last_error",
+	"security.googlebot_source_official",
+	"security.googlebot_source_relay",
+	"security.googlebot_source_manual",
+	"security.googlebot_source_unknown",
 	"security.telemetry_disable_confirm",
 	"security.telemetry_disabled",
 	"security.telemetry_enabled",
@@ -1235,6 +1241,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/security/settings", securityHandler.GetSettings)
 	protected.PUT("/api/security/settings", securityHandler.UpdateSettings)
 	protected.POST("/api/security/whitelist/refresh", securityHandler.RefreshWhitelist)
+	protected.PUT("/api/security/whitelist/googlebot", securityHandler.ImportGooglebotRanges)
 	protected.GET("/api/security/cdn-realip-groups", securityHandler.ListCDNRealIPGroups)
 	protected.POST("/api/security/cdn-realip-groups", securityHandler.CreateCDNRealIPGroup)
 	protected.PUT("/api/security/cdn-realip-groups/:id", securityHandler.UpdateCDNRealIPGroup)

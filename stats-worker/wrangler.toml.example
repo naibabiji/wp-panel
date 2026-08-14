@@ -11,3 +11,7 @@ compatibility_date = "2025-01-01"
 binding = "STATS_KV"
 id = "YOUR_KV_NAMESPACE_ID"
 preview_id = "YOUR_KV_NAMESPACE_ID"
+
+# 每 6 小时刷新一次；刷新失败时 KV 中的最后有效快照不会被覆盖。
+[triggers]
+crons = ["17 */6 * * *"]

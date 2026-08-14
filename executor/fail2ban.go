@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +24,13 @@ var manualAddNginxBan = AddNginxBan
 var manualRemoveNginxBan = RemoveNginxBan
 var syncReplaceNginxBannedIPs = ReplaceNginxBannedIPs
 var conditionalRemoveNginxBan = RemoveNginxBan
+
+const (
+	googlebotOfficialURL = "https://developers.google.com/crawling/ipranges/common-crawlers.json"
+	googlebotRelayURL    = "https://stats.wp-panel.org/api/ip-ranges/googlebot"
+)
+
+var googlebotHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 const fail2banFilterConfig = `# WP Panel Generated — DO NOT EDIT MANUALLY
 [Definition]
@@ -387,6 +395,7 @@ func ReloadFail2ban() error {
 func executeRefreshWhitelist(task *Task) TaskResult {
 	var allIPs []string
 	var details []string
+	db := database.GetDB()
 
 	if cfIPs, err := fetchCloudflareIPs(); err == nil {
 		allIPs = append(allIPs, cfIPs...)
@@ -398,26 +407,41 @@ func executeRefreshWhitelist(task *Task) TaskResult {
 			details = append(details, "Cloudflare Real IP: 已更新")
 		}
 	} else {
-		details = append(details, "Cloudflare: 获取失败")
+		cfRaw := cachedCloudflareRealIPRanges()
+		cfIPs := strings.Fields(cfRaw)
+		allIPs = append(allIPs, cfIPs...)
+		details = append(details, fmt.Sprintf("Cloudflare: 获取失败，沿用缓存 %d 条", len(cfIPs)))
 	}
-	if googleIPs, err := fetchGooglebotIPs(); err == nil {
+	googleIPs, googleSource, googleErr := fetchGooglebotIPsWithFallback()
+	if googleErr == nil {
 		allIPs = append(allIPs, googleIPs...)
-		details = append(details, fmt.Sprintf("Googlebot: %d 条", len(googleIPs)))
+		details = append(details, fmt.Sprintf("Googlebot: %d 条（%s）", len(googleIPs), googlebotSourceLabel(googleSource)))
 		cacheSearchBotIPRanges("googlebot_ips", googleIPs)
+		upsertSecuritySetting("googlebot_ips_source", googleSource, "Googlebot IP段当前来源")
+		upsertSecuritySetting("googlebot_ips_last_success_at", time.Now().UTC().Format("2006-01-02 15:04:05"), "Googlebot IP段最近成功更新时间")
+		upsertSecuritySetting("googlebot_ips_last_error", "", "Googlebot IP段最近刷新错误")
 	} else {
-		details = append(details, "Googlebot: 获取失败")
+		cached := cachedSecurityIPRanges("googlebot_ips")
+		allIPs = append(allIPs, cached...)
+		upsertSecuritySetting("googlebot_ips_last_error", googleErr.Error(), "Googlebot IP段最近刷新错误")
+		if len(cached) > 0 {
+			details = append(details, fmt.Sprintf("Googlebot: 官方与中转均失败，沿用缓存 %d 条", len(cached)))
+		} else {
+			details = append(details, "Googlebot: 官方与中转均失败，暂无有效缓存，可手动导入")
+		}
 	}
 	if bingIPs, err := fetchBingbotIPs(); err == nil {
 		allIPs = append(allIPs, bingIPs...)
 		details = append(details, fmt.Sprintf("Bingbot: %d 条", len(bingIPs)))
 		cacheSearchBotIPRanges("bingbot_ips", bingIPs)
 	} else {
-		details = append(details, "Bingbot: 获取失败")
+		cached := cachedSecurityIPRanges("bingbot_ips")
+		allIPs = append(allIPs, cached...)
+		details = append(details, fmt.Sprintf("Bingbot: 获取失败，沿用缓存 %d 条", len(cached)))
 	}
 
-	db := database.GetDB()
 	db.Exec(`UPDATE security_settings SET svalue = ?, updated_at = CURRENT_TIMESTAMP WHERE skey = 'official_whitelist_ips'`,
-		strings.Join(allIPs, "\n"))
+		strings.Join(uniqueStrings(allIPs), "\n"))
 	db.Exec(`UPDATE security_settings SET svalue = datetime('now'), updated_at = CURRENT_TIMESTAMP WHERE skey = 'last_whitelist_update'`)
 
 	if err := ApplyFail2banSettings(); err != nil {
@@ -437,6 +461,35 @@ func executeRefreshWhitelist(task *Task) TaskResult {
 		Success: true,
 		Message: fmt.Sprintf("共获取 %d 条（%s）", len(allIPs), strings.Join(details, "；")),
 	}
+}
+
+func googlebotSourceLabel(source string) string {
+	if source == "relay" {
+		return "WP Panel 中转"
+	}
+	if source == "manual" {
+		return "手动导入"
+	}
+	return "Google 官方"
+}
+
+func upsertSecuritySetting(key, value, description string) {
+	if database.GetDB() == nil {
+		return
+	}
+	_, _ = database.GetDB().Exec(`INSERT INTO security_settings (skey, svalue, description, updated_at)
+		VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(skey) DO UPDATE SET svalue = excluded.svalue, updated_at = excluded.updated_at`, key, value, description)
+}
+
+func cachedSecurityIPRanges(key string) []string {
+	if database.GetDB() == nil {
+		return nil
+	}
+	var raw string
+	_ = database.GetDB().QueryRow(`SELECT svalue FROM security_settings WHERE skey = ?`, key).Scan(&raw)
+	ips, _ := NormalizeOfficialIPRanges(raw)
+	return ips
 }
 
 func cacheSearchBotIPRanges(key string, ips []string) {
@@ -954,9 +1007,30 @@ func fetchCloudflareIPs() ([]string, error) {
 }
 
 func fetchGooglebotIPs() ([]string, error) {
-	out, err := executeCommand("curl", "-s", "-f", "-L", "https://developers.google.com/search/apis/ipranges/googlebot.json")
+	return fetchGooglebotIPsFromURL(googlebotOfficialURL)
+}
+
+func fetchGooglebotIPsWithFallback() ([]string, string, error) {
+	ips, err := fetchGooglebotIPs()
+	if err == nil {
+		return ips, "official", nil
+	}
+	officialErr := err
+	ips, err = fetchGooglebotIPsFromURL(googlebotRelayURL)
+	if err == nil {
+		return ips, "relay", nil
+	}
+	return nil, "", fmt.Errorf("官方源: %v；WP Panel 中转: %v", officialErr, err)
+}
+
+func fetchGooglebotIPsFromURL(url string) ([]string, error) {
+	resp, err := googlebotHTTPClient.Get(url)
 	if err != nil {
 		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	var data struct {
 		Prefixes []struct {
@@ -964,7 +1038,7 @@ func fetchGooglebotIPs() ([]string, error) {
 			IPv6Prefix string `json:"ipv6Prefix"`
 		} `json:"prefixes"`
 	}
-	if err := json.Unmarshal([]byte(out), &data); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, err
 	}
 	var ips []string
@@ -976,7 +1050,84 @@ func fetchGooglebotIPs() ([]string, error) {
 			ips = append(ips, p.IPv6Prefix)
 		}
 	}
-	return ips, nil
+	return validateOfficialIPRanges(ips)
+}
+
+// NormalizeOfficialIPRanges 接受一行一个 IP/CIDR，返回可安全用于官方爬虫验证的公网网段。
+func NormalizeOfficialIPRanges(raw string) ([]string, error) {
+	if strings.HasPrefix(strings.TrimSpace(raw), "{") {
+		var data struct {
+			Prefixes []struct {
+				IPv4Prefix string `json:"ipv4Prefix"`
+				IPv6Prefix string `json:"ipv6Prefix"`
+			} `json:"prefixes"`
+		}
+		if err := json.Unmarshal([]byte(raw), &data); err != nil {
+			return nil, fmt.Errorf("JSON 格式不正确: %w", err)
+		}
+		var values []string
+		for _, prefix := range data.Prefixes {
+			values = append(values, prefix.IPv4Prefix, prefix.IPv6Prefix)
+		}
+		return validateOfficialIPRanges(values)
+	}
+	var ips []string
+	for _, field := range strings.FieldsFunc(raw, func(r rune) bool { return r == '\n' || r == '\r' || r == ',' || r == ' ' || r == '\t' }) {
+		ips = append(ips, strings.TrimSpace(field))
+	}
+	return validateOfficialIPRanges(ips)
+}
+
+func validateOfficialIPRanges(ips []string) ([]string, error) {
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("IP 段为空")
+	}
+	if len(ips) > 512 {
+		return nil, fmt.Errorf("IP 段数量超过 512 条")
+	}
+	var normalized []string
+	for _, value := range uniqueStrings(ips) {
+		ip, network, err := net.ParseCIDR(value)
+		if err != nil {
+			ip = net.ParseIP(value)
+			if ip == nil {
+				return nil, fmt.Errorf("无效 IP/CIDR: %s", value)
+			}
+			if ip.To4() != nil {
+				value += "/32"
+			} else {
+				value += "/128"
+			}
+			_, network, _ = net.ParseCIDR(value)
+		}
+		ones, bits := network.Mask.Size()
+		if (bits == 32 && ones < 16) || (bits == 128 && ones < 32) || !isPublicOfficialIP(ip) {
+			return nil, fmt.Errorf("不允许过宽或非公网 IP 段: %s", value)
+		}
+		normalized = append(normalized, network.String())
+	}
+	return uniqueStrings(normalized), nil
+}
+
+func isPublicOfficialIP(ip net.IP) bool {
+	return !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() && !ip.IsMulticast() && !ip.IsUnspecified()
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func fetchBingbotIPs() ([]string, error) {

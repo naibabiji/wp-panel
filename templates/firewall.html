@@ -17,7 +17,7 @@
                 <div>
                     <p class="text-white font-semibold mb-1">触发条件 — 来源标注为「Web防护」（命中以下任一规则计为 1 次违规）</p>
                     <ul class="list-disc list-inside space-y-1 ml-2">
-                        <li><code class="text-gray-300">POST /wp-login.php</code> 返回 <span class="text-gray-300">HTTP 200</span> — WordPress 登录失败；成功登录返回的 302，以及找回密码、重置密码、注册等明确合法动作不计入</li>
+                        <li><code class="text-gray-300">POST /wp-login.php</code> 返回 <span class="text-gray-300">HTTP 200</span> — 作为疑似登录失败计数；成功登录返回的 302，以及找回密码、重置密码、注册等明确合法动作不计入。部分二次验证或安全插件流程也可能返回 200，设置阈值时需考虑此类场景</li>
                         <li><code class="text-gray-300">POST /xmlrpc.php</code> 返回 <span class="text-gray-300">HTTP 403</span> — 禁用 XML-RPC 后仍被请求（含 <code class="text-gray-300">//xmlrpc.php</code> 变体）</li>
                         <li>返回 <span class="text-gray-300">HTTP 429</span> — 超出请求频率限制</li>
                         <li>敏感文件扫描返回 <span class="text-gray-300">404</span> — 如 <code class="text-gray-300">.env</code>、<code class="text-gray-300">.git</code>、<code class="text-gray-300">wp-config.php</code>、<code class="text-gray-300">.sql</code>、压缩包等</li>
@@ -94,9 +94,9 @@
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">请求频率限制原理</p>
-                    <p>采用令牌桶算法：每 IP 一个桶，容量 = 突发缓冲（默认 300），每秒补充 1 个令牌。请求到达消耗令牌，耗尽后返回 429。人类浏览有自然停顿，停顿期间桶自动回满；机器人持续请求则被压制在 1 次/秒。</p>
+                    <p>采用令牌桶算法：每 IP 一个桶，容量 = 突发缓冲（默认 300），按设置的「请求频率」持续补充令牌。请求到达消耗令牌，耗尽后超出持续速率的请求返回 429。默认 60 次/分钟时，长期速率约为 1 次/秒。</p>
                     <p class="text-red-400 mt-1">⚠ 多次 429 会被 Fail2ban 自动封禁。请确保突发缓冲足够日常使用。</p>
-                    <p class="text-green-400">✓ 提高突发缓冲不影响拦截机器人，不削弱安全防护。</p>
+                    <p class="text-green-400">✓ 较大的突发缓冲可减少正常页面并发请求误触发 429，但也会延后持续高频请求首次进入限速的时间；耗尽后的长期速率仍由「请求频率」决定。</p>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">服务器验证命令</p>

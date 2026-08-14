@@ -544,6 +544,15 @@ var upgrades = []Upgrade{
 			`CREATE INDEX IF NOT EXISTS idx_log_analysis_jobs_status ON log_analysis_jobs(status, updated_at)`,
 		},
 	},
+	{
+		Version:     "1.0.45",
+		Description: "新增 Googlebot IP 中转与手动导入状态",
+		SQL: []string{
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('googlebot_ips_source', '', 'Googlebot IP段当前来源')`,
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('googlebot_ips_last_success_at', '', 'Googlebot IP段最近成功更新时间')`,
+			`INSERT OR IGNORE INTO security_settings (skey, svalue, description) VALUES ('googlebot_ips_last_error', '', 'Googlebot IP段最近刷新错误')`,
+		},
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {
