@@ -142,6 +142,7 @@ func ResolveCDNRealIPRuntime(site *models.Website) (*CDNRealIPRuntime, error) {
 	}
 	header := ""
 	compatible := false
+	enabledGroups := 0
 	seen := map[string]bool{}
 	var ranges []string
 
@@ -149,6 +150,7 @@ func ResolveCDNRealIPRuntime(site *models.Website) (*CDNRealIPRuntime, error) {
 		if !group.Enabled {
 			continue
 		}
+		enabledGroups++
 		groupHeader, err := NormalizeCDNRealIPHeader(group.HeaderName)
 		if err != nil {
 			return nil, err
@@ -180,6 +182,9 @@ func ResolveCDNRealIPRuntime(site *models.Website) (*CDNRealIPRuntime, error) {
 				ranges = append(ranges, item)
 			}
 		}
+	}
+	if compatible && enabledGroups > 1 {
+		return nil, fmt.Errorf("兼容模式会信任所有来源，不能与其他 CDN 配置组同时启用")
 	}
 
 	if header == "" {

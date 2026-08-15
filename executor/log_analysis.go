@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -26,6 +27,7 @@ const (
 )
 
 var combinedLogPattern = regexp.MustCompile(`^(\S+) \S+ \S+ \[([^]]+)\] "(\S+) ([^ ]+) [^"]+" (\d{3}) \S+ "[^"]*" "([^"]*)"`)
+var accessLogPeerPattern = regexp.MustCompile(`(?:^|\s)peer=(\S+)\s*$`)
 var bracketTimePattern = regexp.MustCompile(`^\[([^]]+)\]`)
 var nginxTimePattern = regexp.MustCompile(`^(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})`)
 var logAnalysisIPv4Pattern = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
@@ -33,20 +35,21 @@ var logAnalysisSecretPattern = regexp.MustCompile(`(?i)(password|passwd|token|ap
 var logAnalysisWebRootPattern = regexp.MustCompile(`/www/wwwroot/[^/\s]+`)
 
 type logAnalysisAccumulator struct {
-	report       *models.LogAnalysisReport
-	status       map[string]int
-	hourly       map[string]int
-	paths        map[string]int
-	ips          map[string]int
-	uniqueIPs    map[string]struct{}
-	bots         map[string]*models.LogAnalysisBotCount
-	botChecker   *searchBotIPChecker
-	botRequests  map[string]struct{}
-	fiveXX       int
-	fiveXXLines  []string
-	notFound     int
-	lastLineTime time.Time
-	lang         string
+	report                *models.LogAnalysisReport
+	status                map[string]int
+	hourly                map[string]int
+	paths                 map[string]int
+	ips                   map[string]int
+	uniqueIPs             map[string]struct{}
+	bots                  map[string]*models.LogAnalysisBotCount
+	botChecker            *searchBotIPChecker
+	botRequests           map[string]struct{}
+	ipAttributionRequests map[string]struct{}
+	fiveXX                int
+	fiveXXLines           []string
+	notFound              int
+	lastLineTime          time.Time
+	lang                  string
 }
 
 // AnalyzeWebsiteLogs scans all current and rotated site logs and keeps only
@@ -75,7 +78,7 @@ func AnalyzeWebsiteLogs(site *models.Website, startAt, endAt time.Time, db *sql.
 		report: report, status: map[string]int{}, hourly: map[string]int{},
 		paths: map[string]int{}, ips: map[string]int{}, uniqueIPs: map[string]struct{}{},
 		bots:       map[string]*models.LogAnalysisBotCount{},
-		botChecker: newSearchBotIPChecker(db), botRequests: map[string]struct{}{}, lang: lang,
+		botChecker: newSearchBotIPChecker(db), botRequests: map[string]struct{}{}, ipAttributionRequests: map[string]struct{}{}, lang: lang,
 	}
 	if db != nil {
 		_ = db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'last_whitelist_update'`).Scan(&report.CrawlerRangesUpdatedAt)
@@ -191,6 +194,7 @@ func (a *logAnalysisAccumulator) consumeAccess(line string, security bool, start
 		return
 	}
 	a.report.LinesInRange++
+	a.recordSuspiciousClientIP(line, m, stamp)
 	if security {
 		a.report.SecurityRequestCount++
 		a.classifyBot(m[6], m[1], m[2]+"|"+m[1]+"|"+m[4]+"|"+m[6])
@@ -214,6 +218,20 @@ func (a *logAnalysisAccumulator) consumeAccess(line string, security bool, start
 		a.notFound++
 	}
 	a.classifyBot(ua, ip, m[2]+"|"+ip+"|"+m[4]+"|"+ua)
+}
+
+func (a *logAnalysisAccumulator) recordSuspiciousClientIP(line string, match []string, stamp time.Time) {
+	peer := accessLogPeer(line)
+	if len(match) != 7 || !suspiciousClientIPAttribution(match[1], peer) {
+		return
+	}
+	key := match[2] + "|" + match[1] + "|" + match[4] + "|" + match[6] + "|" + peer
+	if _, exists := a.ipAttributionRequests[key]; exists {
+		return
+	}
+	a.ipAttributionRequests[key] = struct{}{}
+	a.report.SuspiciousClientIPCount++
+	a.addSample(fmt.Sprintf("%s client=%s peer=%s %s", stamp.Format(time.RFC3339), maskIP(match[1]), maskIP(peer), normalizeLogPath(match[4])))
 }
 
 func (a *logAnalysisAccumulator) consumeError(line, base string, startAt, endAt time.Time) {
@@ -342,6 +360,9 @@ func (a *logAnalysisAccumulator) addSample(sample string) {
 
 func (a *logAnalysisAccumulator) buildFindings() {
 	r := a.report
+	if r.SuspiciousClientIPCount > 0 {
+		r.Findings = append(r.Findings, models.LogAnalysisFinding{Severity: "high", Title: i18n.T(a.lang, "log_analysis.finding_untrusted_ip_title"), Detail: i18n.T(a.lang, "log_analysis.finding_untrusted_ip_detail", i18n.P{"count": fmt.Sprint(r.SuspiciousClientIPCount)})})
+	}
 	if a.fiveXX > 0 {
 		r.Findings = append(r.Findings, models.LogAnalysisFinding{Severity: "high", Title: i18n.T(a.lang, "log_analysis.finding_5xx_title"), Detail: i18n.T(a.lang, "log_analysis.finding_5xx_detail", i18n.P{"count": fmt.Sprint(a.fiveXX)}), Evidence: append([]string(nil), a.fiveXXLines...)})
 	}
@@ -357,6 +378,25 @@ func (a *logAnalysisAccumulator) buildFindings() {
 	if len(r.Findings) == 0 {
 		r.Findings = append(r.Findings, models.LogAnalysisFinding{Severity: "low", Title: i18n.T(a.lang, "log_analysis.finding_normal_title"), Detail: i18n.T(a.lang, "log_analysis.finding_normal_detail")})
 	}
+}
+
+func accessLogPeer(line string) string {
+	m := accessLogPeerPattern.FindStringSubmatch(line)
+	if len(m) != 2 {
+		return ""
+	}
+	return strings.TrimSpace(m[1])
+}
+
+func suspiciousClientIPAttribution(clientIP, peerIP string) bool {
+	client := net.ParseIP(strings.TrimSpace(clientIP))
+	peer := net.ParseIP(strings.TrimSpace(peerIP))
+	if client == nil || peer == nil || client.Equal(peer) {
+		return false
+	}
+	clientNonPublic := client.IsLoopback() || client.IsPrivate() || client.IsLinkLocalUnicast() || client.IsLinkLocalMulticast() || client.IsUnspecified() || client.IsMulticast()
+	peerPublic := !peer.IsLoopback() && !peer.IsPrivate() && !peer.IsLinkLocalUnicast() && !peer.IsLinkLocalMulticast() && !peer.IsUnspecified() && !peer.IsMulticast()
+	return clientNonPublic && peerPublic
 }
 
 func sortedCounts(values map[string]int, limit int) []models.LogAnalysisCount {
@@ -437,7 +477,7 @@ func BuildLogAnalysisPrompt(report *models.LogAnalysisReport) (string, string, e
 	if err != nil {
 		return "", "", err
 	}
-	system := "你是 WP Panel 的网站日志分析助手。请只依据本地分析报告解释正常流量、异常流量、错误和爬虫行为。报告中的高频路径与高频 IP 是彼此独立的排行榜，除非证据明确关联，否则不得声称某 IP 访问了某路径。HTTP 444 表示请求已被面板安全规则拒绝，是拦截结果，不是新的违规。verified 表示命中 Google/Bing 官方 IP 段；fake 表示 UA 冒充但 IP 未命中已缓存的对应官方段；unknown 表示对应官方 IP 段尚未成功缓存；unverified 表示其他爬虫仅按 User-Agent 识别。不要单独将 fake、unknown 或 unverified 视为高风险，也不要仅因身份状态建议封禁。样本和排行榜有数量上限，不能当作全部原始日志。不要编造日志中没有的事实，不要建议执行 shell 命令，不要重复建议报告中已明确生效的防护。使用简洁 Markdown，按总体结论、主要异常、正常活动、处理建议四部分回答，每项结论尽量引用对应数字。"
+	system := "你是 WP Panel 的网站日志分析助手。请只依据本地分析报告解释正常流量、异常流量、错误和爬虫行为。报告中的高频路径与高频 IP 是彼此独立的排行榜，除非证据明确关联，否则不得声称某 IP 访问了某路径。suspicious_client_ip_count 大于 0 表示日志声明的客户端地址为回环或私网地址、实际连接源却是其他公网地址；不得把声明地址当成真实攻击者或建议封禁，应优先建议检查 CDN 可信回源范围。HTTP 444 表示请求已被面板安全规则拒绝，是拦截结果，不是新的违规。verified 表示命中 Google/Bing 官方 IP 段；fake 表示 UA 冒充但 IP 未命中已缓存的对应官方段；unknown 表示对应官方 IP 段尚未成功缓存；unverified 表示其他爬虫仅按 User-Agent 识别。不要单独将 fake、unknown 或 unverified 视为高风险，也不要仅因身份状态建议封禁。样本和排行榜有数量上限，不能当作全部原始日志。不要编造日志中没有的事实，不要建议执行 shell 命令，不要重复建议报告中已明确生效的防护。使用简洁 Markdown，按总体结论、主要异常、正常活动、处理建议四部分回答，每项结论尽量引用对应数字。"
 	user := "以下是服务器本地完整扫描指定时间段后生成的结构化报告：\n" + string(data)
 	return system, user, nil
 }

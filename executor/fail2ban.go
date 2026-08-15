@@ -1113,6 +1113,14 @@ func isPublicOfficialIP(ip net.IP) bool {
 	return !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() && !ip.IsMulticast() && !ip.IsUnspecified()
 }
 
+// IsPublicIPAddress reports whether value is a single globally routable IP.
+// Security middleware uses this before persisting automatic bans so spoofed
+// loopback/private addresses cannot pollute ban history.
+func IsPublicIPAddress(value string) bool {
+	ip := net.ParseIP(strings.TrimSpace(value))
+	return ip != nil && isPublicOfficialIP(ip)
+}
+
 func uniqueStrings(values []string) []string {
 	seen := make(map[string]struct{}, len(values))
 	result := make([]string, 0, len(values))

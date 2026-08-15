@@ -394,6 +394,7 @@ var i18nKeys = []string{
 	"log_analysis.security_event_sqli_probe",
 	"log_analysis.security_event_fake_search_bot",
 	"log_analysis.security_event_suspicious_php",
+	"log_analysis.security_event_client_ip_spoof",
 	"security.cdn_mode_cloudflare_auto",
 	"security.cdn_mode_compatible_missing_origin_ips",
 	"security.cdn_mode_compatible_no_origin_ips",

@@ -60,6 +60,14 @@ func TestScanDefenseBansNonBrowserProbeAndRecordsRequestSummary(t *testing.T) {
 	}
 }
 
+func TestBanScanIPIgnoresNonPublicAddress(t *testing.T) {
+	db := newScanDefenseTestDB(t)
+	banScanIP(db, "127.0.0.1", "spoofed", 720)
+	if count := scanDefenseBanCount(t, db); count != 0 {
+		t.Fatalf("non-public ban count = %d, want 0", count)
+	}
+}
+
 func newScanDefenseTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")

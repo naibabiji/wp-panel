@@ -36,9 +36,9 @@ server {
     index index.php index.html index.htm;
 
     {{if eq .AccessLogMode "full"}}
-	    access_log /www/wwwlogs/{{.Domain}}/access.log combined if=$wp_hc_loggable;
+	    access_log /www/wwwlogs/{{.Domain}}/access.log wppanel_combined if=$wp_hc_loggable;
 	    {{else if eq .AccessLogMode "error_only"}}
-	    access_log /www/wwwlogs/{{.Domain}}/access.log combined if=$wp_loggable;
+	    access_log /www/wwwlogs/{{.Domain}}/access.log wppanel_combined if=$wp_loggable;
 	    {{else}}
 	    access_log off;
 	    {{end}}
@@ -185,9 +185,9 @@ server {
     index index.php index.html index.htm;
 
     {{if eq .AccessLogMode "full"}}
-	    access_log /www/wwwlogs/{{.Domain}}/access.log combined if=$wp_hc_loggable;
+	    access_log /www/wwwlogs/{{.Domain}}/access.log wppanel_combined if=$wp_hc_loggable;
 	    {{else if eq .AccessLogMode "error_only"}}
-	    access_log /www/wwwlogs/{{.Domain}}/access.log combined if=$wp_loggable;
+	    access_log /www/wwwlogs/{{.Domain}}/access.log wppanel_combined if=$wp_loggable;
 	    {{else}}
 	    access_log off;
 	    {{end}}

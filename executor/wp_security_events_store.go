@@ -142,7 +142,12 @@ func ingestSecurityLogLine(db *sql.DB, site wpSecuritySite, line string, checker
 	ip := strings.TrimSpace(m[1])
 	method := m[3]
 
-	eventType, risk, message := classifySecurityEvent(method, uri, ua, ip, status, checker)
+	eventType, risk, message := "", "", ""
+	if peer := accessLogPeer(line); suspiciousClientIPAttribution(ip, peer) {
+		eventType, risk, message = "client_ip_spoof", "high", "客户端 IP Header 归属异常"
+	} else {
+		eventType, risk, message = classifySecurityEvent(method, uri, ua, ip, status, checker)
+	}
 	if eventType == "" {
 		return false, nil
 	}

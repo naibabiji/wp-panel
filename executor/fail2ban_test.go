@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/naibabiji/wp-panel/database"
+	"github.com/naibabiji/wp-panel/models"
 )
 
 func TestGooglebotFetchFallsBackToRelay(t *testing.T) {
@@ -726,7 +727,7 @@ func TestNginxTemplateErrorOnlyAccessLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render nginx config: %v", err)
 	}
-	if !strings.Contains(config, `access_log /www/wwwlogs/example.com/access.log combined if=$wp_loggable;`) {
+	if !strings.Contains(config, `access_log /www/wwwlogs/example.com/access.log wppanel_combined if=$wp_loggable;`) {
 		t.Fatalf("expected error-only access log in config:\n%s", config)
 	}
 	if strings.Contains(config, "access_log off;") {
@@ -773,7 +774,7 @@ func TestWordPressTemplateIncludesSecurityLogAndTryFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render nginx config: %v", err)
 	}
-	if !strings.Contains(config, `access_log /www/wwwlogs/example.com/wp-security.log combined if=$wp_security_loggable;`) {
+	if !strings.Contains(config, `access_log /www/wwwlogs/example.com/wp-security.log wppanel_combined if=$wp_security_loggable;`) {
 		t.Fatalf("expected WordPress security log in config:\n%s", config)
 	}
 	if !strings.Contains(config, "try_files $uri =404;") {
@@ -801,10 +802,10 @@ func TestWordPressTemplateKeepsSecurityLogWhenAccessLogIsOff(t *testing.T) {
 	if strings.Contains(config, "access_log off;") {
 		t.Fatalf("wordpress config must not disable security logs with access_log off:\n%s", config)
 	}
-	if !strings.Contains(config, `access_log /www/wwwlogs/example.com/access.log combined if=$wp_access_log_disabled;`) {
+	if !strings.Contains(config, `access_log /www/wwwlogs/example.com/access.log wppanel_combined if=$wp_access_log_disabled;`) {
 		t.Fatalf("expected ordinary access log to be disabled by condition:\n%s", config)
 	}
-	if !strings.Contains(config, `access_log /www/wwwlogs/example.com/wp-security.log combined if=$wp_security_loggable;`) {
+	if !strings.Contains(config, `access_log /www/wwwlogs/example.com/wp-security.log wppanel_combined if=$wp_security_loggable;`) {
 		t.Fatalf("expected WordPress security log to remain enabled:\n%s", config)
 	}
 }
@@ -1089,6 +1090,16 @@ func TestNginxTemplateIncludesCDNRealIPCompatibleMode(t *testing.T) {
 		if !strings.Contains(config, want) {
 			t.Fatalf("missing %q in config:\n%s", want, config)
 		}
+	}
+}
+
+func TestResolveCDNRealIPRuntimeRejectsCompatibleMixedWithStrictGroup(t *testing.T) {
+	site := &models.Website{CDNRealIPEnabled: true, CDNRealIPGroups: []models.CDNRealIPGroup{
+		{ID: 1, Name: "Compatible", Provider: CDNProviderCompatible, HeaderName: CDNHeaderXForwardedFor, Enabled: true},
+		{ID: 2, Name: "ESA", Provider: CDNProviderCustom, HeaderName: CDNHeaderXForwardedFor, IPRanges: "203.0.113.0/24", Enabled: true},
+	}}
+	if _, err := ResolveCDNRealIPRuntime(site); err == nil || !strings.Contains(err.Error(), "不能与其他") {
+		t.Fatalf("ResolveCDNRealIPRuntime error = %v", err)
 	}
 }
 

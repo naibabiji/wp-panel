@@ -120,6 +120,27 @@ func TestIngestWPSecurityEventsSkipsUnclassifiedEvents(t *testing.T) {
 	}
 }
 
+func TestIngestWPSecurityEventsClassifiesSpoofedClientIP(t *testing.T) {
+	openTestDB(t)
+	logDir := t.TempDir()
+	seedWPSecurityEventSite(t, logDir)
+
+	line := `127.0.0.1 - - [15/Jan/2026:10:00:00 +0800] "GET /.env HTTP/1.1" 404 0 "-" "curl/8.0" peer=198.51.100.20` + "\n"
+	if err := os.WriteFile(filepath.Join(logDir, "wp-security.log"), []byte(line), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := IngestWPSecurityEvents(); err != nil || n != 1 {
+		t.Fatalf("IngestWPSecurityEvents() = %d, %v; want 1, nil", n, err)
+	}
+	var eventType, risk string
+	if err := database.GetDB().QueryRow(`SELECT event_type,risk_level FROM wp_security_events LIMIT 1`).Scan(&eventType, &risk); err != nil {
+		t.Fatal(err)
+	}
+	if eventType != "client_ip_spoof" || risk != "high" {
+		t.Fatalf("event = %s/%s, want client_ip_spoof/high", eventType, risk)
+	}
+}
+
 func TestIngestWPSecurityEventsHandlesPartialTrailingLine(t *testing.T) {
 	openTestDB(t)
 	logDir := t.TempDir()

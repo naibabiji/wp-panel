@@ -92,6 +92,25 @@ func TestAnalyzeWebsiteLogsRejectsUnsafeRangeAndNames(t *testing.T) {
 	}
 }
 
+func TestAnalyzeWebsiteLogsFlagsSpoofedNonPublicClientIP(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().Truncate(time.Second)
+	line := fmt.Sprintf(`127.0.0.1 - - [%s] "GET /.env HTTP/1.1" 404 10 "-" "curl/8" peer=198.51.100.20`, now.Format("02/Jan/2006:15:04:05 -0700"))
+	if err := os.WriteFile(filepath.Join(dir, "access.log"), []byte(line+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	report, err := AnalyzeWebsiteLogs(&models.Website{ID: 1, Domain: "example.com", LogDir: dir}, now.Add(-time.Minute), now.Add(time.Minute), nil, "zh-CN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.SuspiciousClientIPCount != 1 {
+		t.Fatalf("suspicious client IP count = %d, want 1", report.SuspiciousClientIPCount)
+	}
+	if len(report.Findings) == 0 || report.Findings[0].Title != "客户端 IP 归属不可信" {
+		t.Fatalf("missing untrusted attribution finding: %+v", report.Findings)
+	}
+}
+
 func TestBuildLogAnalysisPromptRedactsSensitiveSamples(t *testing.T) {
 	report := &models.LogAnalysisReport{
 		TopIPs:   []models.LogAnalysisCount{{Name: "192.0.2.10", Count: 4}},

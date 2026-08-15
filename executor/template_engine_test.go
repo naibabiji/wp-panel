@@ -10,6 +10,15 @@ import (
 	"github.com/naibabiji/wp-panel/database"
 )
 
+func TestNginxGlobalLogMapConfigPreservesConnectionPeer(t *testing.T) {
+	config := nginxGlobalLogMapConfig()
+	for _, want := range []string{"log_format wppanel_combined", "$remote_addr", "peer=$realip_remote_addr';"} {
+		if !strings.Contains(config, want) {
+			t.Fatalf("nginxGlobalLogMapConfig() missing %q", want)
+		}
+	}
+}
+
 func TestCleanupNginxConfigBackupsKeepsNewestForTargetOnly(t *testing.T) {
 	dir := t.TempDir()
 	files := []string{

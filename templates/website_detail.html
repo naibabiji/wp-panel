@@ -41,7 +41,7 @@
                     <div x-show="cdnRealIPEnabled" class="space-y-2">
                         <template x-for="g in selectableCDNGroups()" :key="g.id">
                             <label class="flex items-start space-x-2 text-sm text-gray-300">
-                                <input type="checkbox" class="mt-1" :value="g.id" x-model="cdnRealIPGroupIDs" :disabled="!g.enabled">
+                                <input type="checkbox" class="mt-1" :value="g.id" x-model="cdnRealIPGroupIDs" @change="normalizeCDNRealIPCompatibility(g)" :disabled="!g.enabled">
                                 <span>
                                     <span class="text-white" x-text="g.name"></span>
                                     <span class="text-xs text-gray-500" x-text="' · ' + g.header_name"></span>
@@ -628,6 +628,15 @@ function websiteDetail() {
                 this.cdnRealIPEnabled = false;
             }
             this.cdnRealIPGroupIDs = selectedNonCloudflareIDs;
+        },
+        normalizeCDNRealIPCompatibility(changedGroup) {
+            if (!this.cdnRealIPGroupIDs.map(Number).includes(changedGroup.id)) return;
+            const changedCompatible = !(changedGroup.ip_ranges || '').trim();
+            this.cdnRealIPGroupIDs = this.cdnRealIPGroupIDs.filter(id => {
+                const group = this.cdnGroups.find(g => g.id === Number(id));
+                if (!group) return false;
+                return changedCompatible ? group.id === changedGroup.id : (group.ip_ranges || '').trim();
+            });
         },
         cdnRealIPModeText() {
             if (!this.cdnRealIPEnabled) return '';

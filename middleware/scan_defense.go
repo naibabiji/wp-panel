@@ -89,6 +89,10 @@ func scanReason(c *gin.Context) string {
 }
 
 func banScanIP(db *sql.DB, ip string, reason string, hours int) {
+	if !executor.IsPublicIPAddress(ip) {
+		log.Printf("扫描封禁已忽略非公网 IP %s", ip)
+		return
+	}
 	var count int
 	db.QueryRow(`SELECT COUNT(*) FROM firewall_bans WHERE ip_address = ? AND unbanned_at IS NULL`, ip).Scan(&count)
 	if count > 0 {

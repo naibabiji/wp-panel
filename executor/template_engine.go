@@ -97,6 +97,10 @@ func EnsureLogMap() error {
 
 func nginxGlobalLogMapConfig() string {
 	return `# WP Panel — 日志条件变量 (勿手动修改)
+log_format wppanel_combined '$remote_addr - $remote_user [$time_local] "$request" '
+                             '$status $body_bytes_sent "$http_referer" '
+                             '"$http_user_agent" peer=$realip_remote_addr';
+
 map $status $wp_loggable {
     ~^[45]  1;
     default 0;
@@ -650,13 +654,13 @@ server {
     index index.php index.html index.htm;
 
     {{if eq .AccessLogMode "full"}}
-	    access_log /www/wwwlogs/{{.Domain}}/access.log combined if=$wp_hc_loggable;
+	    access_log /www/wwwlogs/{{.Domain}}/access.log wppanel_combined if=$wp_hc_loggable;
 	    {{else if eq .AccessLogMode "error_only"}}
-	    access_log /www/wwwlogs/{{.Domain}}/access.log combined if=$wp_loggable;
+	    access_log /www/wwwlogs/{{.Domain}}/access.log wppanel_combined if=$wp_loggable;
 	    {{else}}
-	    access_log /www/wwwlogs/{{.Domain}}/access.log combined if=$wp_access_log_disabled;
+	    access_log /www/wwwlogs/{{.Domain}}/access.log wppanel_combined if=$wp_access_log_disabled;
 	    {{end}}
-    access_log /www/wwwlogs/{{.Domain}}/wp-security.log combined if=$wp_security_loggable;
+    access_log /www/wwwlogs/{{.Domain}}/wp-security.log wppanel_combined if=$wp_security_loggable;
 
     {{if .FCacheEnabled}}
     set $wp_skip_cache 0;
@@ -850,13 +854,13 @@ server {
     index index.php index.html index.htm;
 
     {{if eq .AccessLogMode "full"}}
-	    access_log /www/wwwlogs/{{.Domain}}/access.log combined if=$wp_hc_loggable;
+	    access_log /www/wwwlogs/{{.Domain}}/access.log wppanel_combined if=$wp_hc_loggable;
 	    {{else if eq .AccessLogMode "error_only"}}
-	    access_log /www/wwwlogs/{{.Domain}}/access.log combined if=$wp_loggable;
+	    access_log /www/wwwlogs/{{.Domain}}/access.log wppanel_combined if=$wp_loggable;
 	    {{else}}
-	    access_log /www/wwwlogs/{{.Domain}}/access.log combined if=$wp_access_log_disabled;
+	    access_log /www/wwwlogs/{{.Domain}}/access.log wppanel_combined if=$wp_access_log_disabled;
 	    {{end}}
-    access_log /www/wwwlogs/{{.Domain}}/wp-security.log combined if=$wp_security_loggable;
+    access_log /www/wwwlogs/{{.Domain}}/wp-security.log wppanel_combined if=$wp_security_loggable;
 
     {{if .FCacheEnabled}}
     set $wp_skip_cache 0;
