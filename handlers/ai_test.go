@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -27,6 +28,70 @@ func TestDiagnoseRejectsLogAnalysisWithoutLogContext(t *testing.T) {
 	(&AIHandler{}).Diagnose(c)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "日志分析页面") {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDiagnoseSendsPreparedPromptAndRestoresAliases(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDB := database.DB
+	database.DB = db
+	t.Cleanup(func() {
+		database.DB = oldDB
+		db.Close()
+	})
+	if err := database.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	result, err := db.Exec(`INSERT INTO websites (name,domain,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path)
+		VALUES ('AI Privacy','privacy.example','wp_privacy','/www/wwwroot/privacy.example','/tmp/privacy-logs','wp_privacy','wp_privacy','/tmp/privacy-pool.conf','/tmp/privacy-nginx.conf')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	siteID, _ := result.LastInsertId()
+	if _, err := db.Exec(`UPDATE ai_settings SET enabled=1,api_key='test-key' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+
+	oldBuild, oldCall := buildAIDiagnosticPrompt, callAIChat
+	t.Cleanup(func() { buildAIDiagnosticPrompt, callAIChat = oldBuild, oldCall })
+	buildAIDiagnosticPrompt = func(*models.Website, string) (string, string, error) {
+		return "system", `198.51.100.8 token=secret /www/wwwroot/privacy.example/error.log 2001:db8::8`, nil
+	}
+	var sentPrompt string
+	callAIChat = func(_ context.Context, _ *models.AISettings, _, userPrompt string) (string, int64, error) {
+		sentPrompt = userPrompt
+		return "IP-01 diagnosis", 1, nil
+	}
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(siteID)}}
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/websites/1/ai/diagnose", bytes.NewBufferString(`{"symptom":"site_500"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	(&AIHandler{}).Diagnose(c)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	for _, forbidden := range []string{"198.51.100.8", "2001:db8::8", "token=secret", "/www/wwwroot/privacy.example"} {
+		if strings.Contains(sentPrompt, forbidden) {
+			t.Fatalf("CallAIChat received sensitive value %q: %s", forbidden, sentPrompt)
+		}
+	}
+	for _, want := range []string{"IP-01", "IP-02", "token=[redacted]", "/site/error.log"} {
+		if !strings.Contains(sentPrompt, want) {
+			t.Fatalf("CallAIChat prompt missing %q: %s", want, sentPrompt)
+		}
+	}
+	var rawText string
+	if err := db.QueryRow(`SELECT raw_text FROM ai_sessions ORDER BY id DESC LIMIT 1`).Scan(&rawText); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rawText, "198.51.100.8") || strings.Contains(rawText, "IP-01") {
+		t.Fatalf("stored response did not restore local IP alias: %s", rawText)
 	}
 }
 

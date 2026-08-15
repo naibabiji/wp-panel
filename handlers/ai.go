@@ -21,6 +21,9 @@ import (
 // aiDiagnosisMu prevents concurrent diagnoses for the same site within one process.
 var aiDiagnosisMu sync.Map
 
+var buildAIDiagnosticPrompt = executor.BuildAIDiagnosticPrompt
+var callAIChat = executor.CallAIChat
+
 const (
 	aiSessionKeepLimit          = 20
 	aiMessageKeepLimit          = 40
@@ -184,7 +187,13 @@ func (h *AIHandler) Diagnose(c *gin.Context) {
 	}
 	updateAISessionStatus(sessionID, models.AISessionRunning, "")
 
-	systemPrompt, userPrompt, err := executor.BuildAIDiagnosticPrompt(site, req.Symptom)
+	systemPrompt, userPrompt, err := buildAIDiagnosticPrompt(site, req.Symptom)
+	if err != nil {
+		failAISession(sessionID, err.Error(), len(userPrompt), 0)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.collect_context_failed")))
+		return
+	}
+	userPrompt, err = executor.PrepareAIDiagnosticPrompt(sessionID, userPrompt)
 	if err != nil {
 		failAISession(sessionID, err.Error(), len(userPrompt), 0)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.collect_context_failed")))
@@ -195,7 +204,7 @@ func (h *AIHandler) Diagnose(c *gin.Context) {
 	// result is persisted to ai_sessions and can be loaded from history later.
 	ctx, cancel := context.WithTimeout(context.Background(), executor.AIRequestTimeout(settings, len(systemPrompt)+len(userPrompt)))
 	defer cancel()
-	content, _, err := executor.CallAIChat(ctx, settings, systemPrompt, userPrompt)
+	content, _, err := callAIChat(ctx, settings, systemPrompt, userPrompt)
 	if err != nil {
 		msg := aiUserErrorWithContext(i18n.LangFromRequest(c.Request), err, len(systemPrompt)+len(userPrompt), req.Symptom == models.AIDiagnosisLogAnalysis)
 		failAISession(sessionID, msg, len(userPrompt), 0)
@@ -204,6 +213,12 @@ func (h *AIHandler) Diagnose(c *gin.Context) {
 			"status":        models.AISessionFailed,
 			"error_message": msg,
 		}))
+		return
+	}
+	content, err = executor.RestoreAIIPAliases(sessionID, content)
+	if err != nil {
+		failAISession(sessionID, err.Error(), len(userPrompt), 0)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.save_result_failed")))
 		return
 	}
 

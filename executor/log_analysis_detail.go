@@ -9,7 +9,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -68,7 +67,7 @@ func AnalyzeWebsiteLogDetails(site *models.Website, startAt, endAt time.Time, db
 			files = append(files, resolved)
 		}
 	}
-	sort.Strings(files)
+	sortLogFilesNewestFirst(files)
 
 	result := &models.LogAnalysisDetail{Kind: kind, Value: value, Page: page, PageSize: pageSize, Lines: []string{}, SecurityEventRetentionDays: 30, BanHistoryLimit: 300}
 	ips := map[string]int{}

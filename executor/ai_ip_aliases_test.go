@@ -66,6 +66,26 @@ func TestAIIPAliasesAreIsolatedBySession(t *testing.T) {
 	}
 }
 
+func TestPrepareAIDiagnosticPromptRedactsSensitiveContext(t *testing.T) {
+	openTestDB(t)
+	sessionID := insertAIIPAliasTestSession(t, "diagnostic-privacy.example")
+
+	prompt, err := PrepareAIDiagnosticPrompt(sessionID, `198.51.100.8 requested /wp-json?token=secret from 2001:db8::8 at /www/wwwroot/example.com/wp-content/error.log`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"198.51.100.8", "2001:db8::8", "token=secret", "/www/wwwroot/example.com"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("diagnostic prompt leaked %q: %s", forbidden, prompt)
+		}
+	}
+	for _, want := range []string{"IP-01", "IP-02", "token=[redacted]", "/site/wp-content/error.log"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("diagnostic prompt missing %q: %s", want, prompt)
+		}
+	}
+}
+
 func insertAIIPAliasTestSession(t *testing.T, domain string) int {
 	t.Helper()
 	result, err := database.DB.Exec(`INSERT INTO websites (name, domain, system_user, web_root, log_dir, db_name, db_user, php_pool_path, nginx_conf_path) VALUES (?, ?, 'wp_test', '/srv/test', '/var/log/test', 'wp_test', 'wp_test', '/etc/php/pool.conf', '/etc/nginx/site.conf')`, domain, domain)

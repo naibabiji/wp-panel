@@ -891,6 +891,7 @@ func TestBuildAIDiagnosticPromptIncludesCurrentHTTPChecksOverHistorical5xx(t *te
 }
 
 func TestBuildAIFollowupPromptIncludesConversationAndCurrentContext(t *testing.T) {
+	openTestDB(t)
 	stubAIHTTPProbe(t, 200, 302)
 
 	root := t.TempDir()
