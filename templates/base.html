@@ -190,6 +190,7 @@
                 {{if eq .ContentTemplate "log_analysis_content"}}{{template "log_analysis_content" .}}{{end}}
                 {{if eq .ContentTemplate "cron_content"}}{{template "cron_content" .}}{{end}}
                 {{if eq .ContentTemplate "backups_content"}}{{template "backups_content" .}}{{end}}
+                {{if eq .ContentTemplate "remote_backup_settings_content"}}{{template "remote_backup_settings_content" .}}{{end}}
                 {{if eq .ContentTemplate "firewall_content"}}{{template "firewall_content" .}}{{end}}
                 {{if eq .ContentTemplate "files_content"}}{{template "files_content" .}}{{end}}
                 {{if eq .ContentTemplate "security_content"}}{{template "security_content" .}}{{end}}

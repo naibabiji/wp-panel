@@ -16,27 +16,28 @@ import (
 )
 
 var pageTemplates = map[string]string{
-	"login.html":                 "",
-	"dashboard.html":             "dashboard_content",
-	"websites.html":              "websites_content",
-	"wordpress_overview.html":    "wordpress_overview_content",
-	"website_new.html":           "websites_new_content",
-	"website_detail.html":        "websites_detail_content",
-	"wordpress_site_detail.html": "wordpress_site_detail_content",
-	"databases.html":             "databases_content",
-	"database_detail.html":       "database_detail_content",
-	"ai_diagnostics.html":        "ai_diagnostics_content",
-	"log_analysis.html":          "log_analysis_content",
-	"cron.html":                  "cron_content",
-	"backups.html":               "backups_content",
-	"firewall.html":              "firewall_content",
-	"files.html":                 "files_content",
-	"security.html":              "security_content",
-	"settings.html":              "settings_content",
-	"alert.html":                 "alert_content",
-	"extension.html":             "extensions_content",
-	"software.html":              "software_content",
-	"help.html":                  "help_content",
+	"login.html":                  "",
+	"dashboard.html":              "dashboard_content",
+	"websites.html":               "websites_content",
+	"wordpress_overview.html":     "wordpress_overview_content",
+	"website_new.html":            "websites_new_content",
+	"website_detail.html":         "websites_detail_content",
+	"wordpress_site_detail.html":  "wordpress_site_detail_content",
+	"databases.html":              "databases_content",
+	"database_detail.html":        "database_detail_content",
+	"ai_diagnostics.html":         "ai_diagnostics_content",
+	"log_analysis.html":           "log_analysis_content",
+	"cron.html":                   "cron_content",
+	"backups.html":                "backups_content",
+	"remote_backup_settings.html": "remote_backup_settings_content",
+	"firewall.html":               "firewall_content",
+	"files.html":                  "files_content",
+	"security.html":               "security_content",
+	"settings.html":               "settings_content",
+	"alert.html":                  "alert_content",
+	"extension.html":              "extensions_content",
+	"software.html":               "software_content",
+	"help.html":                   "help_content",
 }
 
 func TestPageTemplatesRender(t *testing.T) {
@@ -56,10 +57,40 @@ func TestLogAnalysisPageIncludesContent(t *testing.T) {
 	}
 }
 
+func TestFeatureSettingsAreSeparatedFromPanelSettings(t *testing.T) {
+	settings, err := os.ReadFile("../templates/settings.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unexpected := range [][]byte{[]byte(`api('/ai/settings`), []byte(`remoteBackup()`)} {
+		if bytes.Contains(settings, unexpected) {
+			t.Fatalf("settings page still contains separated feature settings %q", unexpected)
+		}
+	}
+
+	aiPage, err := os.ReadFile("../templates/ai_diagnostics.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range [][]byte{[]byte(`@click="openAISettings()"`), []byte(`api('/ai/settings`), []byte(`api('/ai/test`)} {
+		if !bytes.Contains(aiPage, expected) {
+			t.Fatalf("AI diagnostics settings modal is missing %q", expected)
+		}
+	}
+
+	backups, err := os.ReadFile("../templates/backups.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(backups, []byte(`/backups/remote-settings`)) {
+		t.Fatal("backup overview is missing the remote settings entry")
+	}
+}
+
 func TestContentTemplatesRender(t *testing.T) {
 	contents := []string{
 		"dashboard_content", "websites_content", "wordpress_overview_content", "websites_new_content",
-		"websites_detail_content", "wordpress_site_detail_content", "databases_content", "database_detail_content", "ai_diagnostics_content", "log_analysis_content", "cron_content", "backups_content", "firewall_content",
+		"websites_detail_content", "wordpress_site_detail_content", "databases_content", "database_detail_content", "ai_diagnostics_content", "log_analysis_content", "cron_content", "backups_content", "remote_backup_settings_content", "firewall_content",
 		"files_content", "security_content", "settings_content",
 		"alert_content", "extensions_content", "software_content", "help_content",
 	}

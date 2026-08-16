@@ -6,7 +6,40 @@
             <h2 class="text-xl font-bold text-white">{{t .Lang "nav.ai_diagnostics"}}</h2>
             <p class="text-xs text-gray-500 mt-1">{{t .Lang "ai_diagnostics.description"}}</p>
         </div>
-        <a href="/{{.RandomSuffix}}/settings" class="btn-secondary text-sm">{{t .Lang "ai_diagnostics.ai_settings"}}</a>
+        <button type="button" @click="openAISettings()" class="btn-secondary text-sm">{{t .Lang "ai_diagnostics.ai_settings"}}</button>
+    </div>
+
+    <div x-show="showAISettings" x-cloak @keydown.escape.window="closeAISettings()" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 p-4" @click.self="closeAISettings()">
+        <div class="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg p-6 shadow-xl" style="background-color: #1e293b; border: 1px solid #334155;">
+            <div class="flex items-start justify-between gap-4 mb-5">
+                <div>
+                    <h3 class="text-lg font-semibold text-white">{{t .Lang "settings.ai_settings"}}</h3>
+                    <p class="text-xs text-gray-500 mt-1">{{t .Lang "settings.ai_settings_help"}}</p>
+                </div>
+                <button type="button" @click="closeAISettings()" class="text-gray-400 hover:text-white text-xl" aria-label="{{t .Lang "common.close"}}">&times;</button>
+            </div>
+
+            <div x-show="aiSettingsLoading" class="py-12 text-center text-sm text-gray-400">{{t .Lang "common.loading"}}</div>
+            <div x-show="!aiSettingsLoading" class="space-y-4">
+                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" x-model="ai.enabled">
+                    <span x-text="ai.enabled ? t('settings.enabled') : t('settings.disabled')"></span>
+                </label>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div><label class="label">{{t .Lang "settings.provider"}}</label><select x-model="ai.provider" @change="applyAIProviderDefaults()" class="input-field text-sm"><option value="deepseek">DeepSeek</option><option value="openai">OpenAI</option><option value="openai_compatible">OpenAI Compatible</option></select></div>
+                    <div><label class="label">{{t .Lang "settings.model"}}</label><input type="text" x-model="ai.model" class="input-field text-sm" placeholder="deepseek-v4-pro"></div>
+                    <div><label class="label">Base URL</label><input type="text" x-model="ai.base_url" class="input-field text-sm" placeholder="https://api.deepseek.com"></div>
+                    <div><label class="label">API Key</label><input type="password" x-model="ai.api_key" class="input-field text-sm" :placeholder="ai.api_key_masked || t('settings.api_key_placeholder')"></div>
+                    <div><label class="label">{{t .Lang "settings.timeout_seconds"}}</label><input type="number" x-model.number="ai.timeout_seconds" min="15" max="180" class="input-field text-sm"><p class="text-xs text-gray-500 mt-1">{{t .Lang "settings.ai_timeout_help"}}</p></div>
+                </div>
+                <div class="p-3 rounded text-xs text-yellow-200" style="background-color: #422006; border: 1px solid #854d0e;">{{t .Lang "settings.ai_privacy_notice"}}</div>
+                <div class="flex flex-wrap items-center gap-3">
+                    <button type="button" @click="testAI()" :disabled="aiTesting || aiSaving" class="btn-secondary text-sm" x-text="aiTesting ? t('settings.testing') : t('settings.test_connection')"></button>
+                    <button type="button" @click="saveAI()" :disabled="aiSaving || aiTesting" class="btn-primary text-sm" x-text="aiSaving ? t('settings.saving') : t('settings.save_ai_settings')"></button>
+                </div>
+                <p x-show="aiTestResult" class="text-xs" :class="aiTestOK ? 'text-green-400' : 'text-red-400'" x-text="aiTestResult"></p>
+            </div>
+        </div>
     </div>
 
     <div class="p-3 rounded text-xs text-yellow-200 mb-6" style="background-color: #422006; border: 1px solid #854d0e;">
@@ -236,6 +269,59 @@ function aiDiagnosticsPage() {
         diagnosing: false,
         elapsedSeconds: 0,
         waitTimer: null,
+        showAISettings: false,
+        aiSettingsLoading: false,
+        ai: { enabled: false, provider: 'deepseek', base_url: 'https://api.deepseek.com', model: 'deepseek-v4-pro', api_key: '', api_key_masked: '', timeout_seconds: 180 },
+        aiSaving: false,
+        aiTesting: false,
+        aiTestResult: '',
+        aiTestOK: false,
+        async openAISettings() {
+            this.showAISettings = true;
+            this.aiSettingsLoading = true;
+            this.aiTestResult = '';
+            try {
+                const r = await api('/ai/settings', { silent: true });
+                if (r.success && r.data) {
+                    this.ai = { enabled: !!r.data.enabled, provider: r.data.provider || 'deepseek', base_url: r.data.base_url || 'https://api.deepseek.com', model: r.data.model || 'deepseek-v4-pro', api_key: '', api_key_masked: r.data.api_key_masked || '', timeout_seconds: r.data.timeout_seconds || 180 };
+                }
+            } catch (e) { showToast(e.message, 'error'); }
+            this.aiSettingsLoading = false;
+        },
+        closeAISettings() {
+            if (this.aiSettingsLoading || this.aiSaving || this.aiTesting) return;
+            this.showAISettings = false;
+        },
+        applyAIProviderDefaults() {
+            if (this.ai.provider === 'deepseek') {
+                this.ai.base_url = 'https://api.deepseek.com';
+                if (!this.ai.model || this.ai.model === 'gpt-4.1-mini') this.ai.model = 'deepseek-v4-pro';
+            } else if (this.ai.provider === 'openai') {
+                this.ai.base_url = 'https://api.openai.com/v1';
+                if (!this.ai.model || this.ai.model.startsWith('deepseek-')) this.ai.model = 'gpt-4.1-mini';
+            }
+        },
+        aiPayload() { return { enabled: this.ai.enabled, provider: this.ai.provider, base_url: this.ai.base_url, model: this.ai.model, api_key: this.ai.api_key, timeout_seconds: parseInt(this.ai.timeout_seconds) || 180 }; },
+        async saveAI() {
+            this.aiSaving = true;
+            try {
+                const r = await api('/ai/settings', { method: 'PUT', body: this.aiPayload() });
+                if (r.success && r.data) { this.ai.api_key = ''; this.ai.api_key_masked = r.data.api_key_masked || this.ai.api_key_masked; }
+                showToast(t('settings.ai_settings_saved'), 'success');
+            } catch (e) { showToast(e.message, 'error'); }
+            this.aiSaving = false;
+        },
+        async testAI() {
+            this.aiTesting = true;
+            this.aiTestResult = '';
+            try {
+                const r = await api('/ai/test', { method: 'POST', body: this.aiPayload(), timeout: 60000 });
+                const d = r.data || {};
+                this.aiTestOK = !!d.ok;
+                this.aiTestResult = d.ok ? t('settings.connection_ok_with_latency', { latency: d.latency_ms }) : (d.message || t('settings.connection_failed'));
+            } catch (e) { this.aiTestOK = false; this.aiTestResult = e.message; }
+            this.aiTesting = false;
+        },
         async init() {
             const params = new URLSearchParams(window.location.search);
             this.selectedSiteID = params.get('site_id') || '';

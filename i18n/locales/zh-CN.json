@@ -21,6 +21,8 @@
   },
   "common": {
     "cancel": "取消",
+    "close": "关闭",
+    "loading": "加载中...",
     "confirm": "确认",
     "save": "保存",
     "saved": "已保存",
@@ -848,7 +850,7 @@
   "ai_diagnostics": {
     "description": "选择网站和问题类型后发起只读诊断；不会自动修改文件、数据库或服务器配置。",
     "ai_settings": "AI 设置",
-    "privacy_notice": "诊断上下文会发送给面板设置中配置的 AI 服务商，可能包含域名、日志摘要、配置摘要和最近操作；不会发送数据库密码、AI Key、SSL 私钥、面板密码或面板数据库内容。",
+    "privacy_notice": "诊断上下文会发送给 AI 设置中配置的服务商，可能包含域名、日志摘要、配置摘要和最近操作；不会发送数据库密码、AI Key、SSL 私钥、面板密码或面板数据库内容。",
     "start_diagnosis": "发起诊断",
     "website": "网站",
     "select_website": "请选择网站",
@@ -1864,6 +1866,7 @@
     "deleting": "删除中...",
     "refresh": "刷新",
     "remote_backup": "远程备份",
+    "remote_test_saved_config_help": "连接测试使用最近一次保存的配置；修改连接信息后请先保存再测试。",
     "help": "使用说明",
     "enable_remote_backup": "启用远程备份",
     "backup_target": "备份目标",
@@ -2015,6 +2018,9 @@
   },
   "session_username": "会话用户名",
   "backups": {
+    "remote_settings": "远程备份设置",
+    "remote_settings_description": "配置 rsync 或 S3 远程存储、路径隔离和本地保留策略",
+    "back_to_overview": "返回备份总览",
     "panel_section_title": "面板自身数据库备份",
     "db_section_title": "数据库备份",
     "file_section_title": "文件备份",

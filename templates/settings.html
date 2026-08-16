@@ -202,60 +202,7 @@
         </div>
     </div>
 
-    <div class="card mb-6">
-        <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4">
-            <div>
-                <h3 class="text-lg font-semibold text-white">{{t .Lang "settings.ai_settings"}}</h3>
-                <p class="text-xs text-gray-500 mt-1">{{t .Lang "settings.ai_settings_help"}}</p>
-            </div>
-            <div class="flex items-center gap-3">
-                <a href="/{{.RandomSuffix}}/ai-diagnostics" class="btn-secondary text-sm">{{t .Lang "settings.go_ai_diagnostics"}}</a>
-                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-                    <input type="checkbox" x-model="ai.enabled">
-                <span x-text="ai.enabled ? t('settings.enabled') : t('settings.disabled')"></span>
-                </label>
-            </div>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-                <label class="label">{{t .Lang "settings.provider"}}</label>
-                <select x-model="ai.provider" @change="applyAIProviderDefaults()" class="input-field text-sm">
-                    <option value="deepseek">DeepSeek</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="openai_compatible">OpenAI Compatible</option>
-                </select>
-            </div>
-            <div>
-                <label class="label">{{t .Lang "settings.model"}}</label>
-                <input type="text" x-model="ai.model" class="input-field text-sm" placeholder="deepseek-v4-pro">
-            </div>
-            <div>
-                <label class="label">Base URL</label>
-                <input type="text" x-model="ai.base_url" class="input-field text-sm" placeholder="https://api.deepseek.com">
-            </div>
-            <div>
-                <label class="label">API Key</label>
-                <input type="password" x-model="ai.api_key" class="input-field text-sm" :placeholder="ai.api_key_masked || t('settings.api_key_placeholder')">
-            </div>
-            <div>
-                <label class="label">{{t .Lang "settings.timeout_seconds"}}</label>
-                <input type="number" x-model.number="ai.timeout_seconds" min="15" max="180" class="input-field text-sm">
-                <p class="text-xs text-gray-500 mt-1">{{t .Lang "settings.ai_timeout_help"}}</p>
-            </div>
-        </div>
-
-        <div class="mt-4 p-3 rounded text-xs text-yellow-200" style="background-color: #422006; border: 1px solid #854d0e;">
-            {{t .Lang "settings.ai_privacy_notice"}}
-        </div>
-        <div class="flex items-center space-x-3 mt-4">
-            <button @click="testAI()" :disabled="aiTesting" class="btn-secondary text-sm" x-text="aiTesting ? t('settings.testing') : t('settings.test_connection')"></button>
-            <button @click="saveAI()" :disabled="aiSaving" class="btn-primary text-sm" x-text="aiSaving ? t('settings.saving') : t('settings.save_ai_settings')"></button>
-        </div>
-        <p x-show="aiTestResult" class="text-xs mt-2" :class="aiTestOK ? 'text-green-400' : 'text-red-400'" x-text="aiTestResult"></p>
-    </div>
-
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-6">
+    <div class="mb-6">
         <div class="card" x-data="wpPackage()" x-init="fetchStatus()">
             <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "settings.wp_package"}}</h3>
             <p class="text-xs text-gray-500 mb-4">{{t .Lang "settings.wp_package_help"}}</p>
@@ -294,228 +241,9 @@
                 </div>
                 <p x-show="msg" class="text-xs mt-2" :class="msgOk ? 'text-green-400' : 'text-red-400'" x-text="msg"></p>
             </div>
-        </div>
+		</div>
 
-        <div class="card" x-data="remoteBackup()" x-init="fetchRemote()">
-            <div class="flex items-center justify-between mb-4"><h3 class="text-lg font-semibold text-white">{{t .Lang "settings.remote_backup"}}</h3><button @click="showHelp = true" class="text-xs py-1 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">{{t .Lang "settings.help"}}</button></div>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <!-- 左侧：备份设置 -->
-            <div>
-                <div class="flex items-center space-x-3 mb-4">
-                    <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-                        <input type="checkbox" x-model="cfg.enabled">
-                        <span>{{t .Lang "settings.enable_remote_backup"}}</span>
-                    </label>
-                </div>
-
-                <div x-show="cfg.enabled" class="space-y-3">
-                    <div>
-                        <label class="label">{{t .Lang "settings.backup_target"}}</label>
-                        <select x-model="cfg.backup_type" class="input-field text-sm">
-                            <option value="rsync">{{t .Lang "settings.backup_target_rsync"}}</option>
-                            <option value="s3">{{t .Lang "settings.backup_target_s3"}}</option>
-                        </select>
-                    </div>
-
-                    <div x-show="cfg.backup_type === 'rsync'" class="space-y-3">
-                    <div>
-                        <label class="label">{{t .Lang "settings.connection_mode"}}</label>
-                        <select x-model="cfg.connection_mode" class="input-field text-sm">
-                            <option value="auto">{{t .Lang "settings.connection_mode_auto"}}</option>
-                            <option value="advanced">{{t .Lang "settings.connection_mode_advanced"}}</option>
-                            <option x-show="cfg.connection_mode === 'legacy'" value="legacy">{{t .Lang "settings.connection_mode_legacy"}}</option>
-                        </select>
-                        <p class="text-xs text-gray-500 mt-1" x-text="cfg.connection_mode === 'auto' ? t('settings.connection_mode_auto_help') : t('settings.connection_mode_advanced_help')"></p>
-                    </div>
-                    <div>
-                        <label class="label">{{t .Lang "settings.remote_host"}}</label>
-                        <input type="text" x-model="cfg.host" class="input-field text-sm" placeholder="{{t .Lang "settings.remote_host_placeholder"}}">
-                    </div>
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="label">{{t .Lang "settings.ssh_port"}}</label>
-                            <input type="number" x-model="cfg.port" class="input-field text-sm" placeholder="22">
-                        </div>
-                        <div>
-                            <label class="label">{{t .Lang "auth.username"}}</label>
-                            <input type="text" x-model="cfg.username" :readonly="cfg.connection_mode === 'auto'" class="input-field text-sm" placeholder="wpbackup">
-                        </div>
-                    </div>
-                    <div x-show="cfg.connection_mode !== 'auto'">
-                        <label class="label">{{t .Lang "settings.auth_method"}}</label>
-                        <select x-model="cfg.auth_type" class="input-field text-sm">
-                            <option value="key">{{t .Lang "settings.ssh_key_recommended"}}</option>
-                            <option value="password">{{t .Lang "auth.password"}}</option>
-                        </select>
-                    </div>
-                    <div x-show="cfg.connection_mode !== 'auto' && cfg.auth_type === 'password'">
-                        <label class="label">{{t .Lang "settings.ssh_password"}}</label>
-                        <div class="flex space-x-1">
-                            <input type="password" x-model="cfg.password" class="input-field text-sm flex-1" placeholder="{{t .Lang "settings.ssh_password_placeholder"}}">
-                            <button @click="genPassword()" class="text-xs py-1 px-2 rounded flex-shrink-0" style="background-color: #1e3a5f; color: #93c5fd;" title="{{t .Lang "settings.generate_password_title"}}">{{t .Lang "settings.generate_random"}}</button>
-                        </div>
-                    </div>
-                    <div x-show="cfg.connection_mode !== 'auto' && cfg.auth_type === 'key'" class="text-xs text-gray-400">
-                        <p>{{t .Lang "settings.ssh_key_generated_help"}}</p>
-                        <textarea readonly class="input-field text-xs font-mono mt-2" rows="3" x-model="publicKey" :placeholder="t('settings.save_before_copy_command')"></textarea>
-                    </div>
-                    <div x-show="cfg.connection_mode !== 'legacy'">
-                        <label class="label">{{t .Lang "settings.remote_backup_root_path"}}</label>
-                        <input type="text" x-model="cfg.remote_base_path" class="input-field text-sm" placeholder="/mnt/backup">
-                        <p class="text-xs text-gray-500 mt-1">{{t .Lang "settings.effective_backup_path"}} <code class="text-gray-300" x-text="effectiveRemotePath()"></code></p>
-                    </div>
-                    <label x-show="cfg.connection_mode === 'advanced'" class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-                        <input type="checkbox" x-model="cfg.isolate_path">
-                        <span>{{t .Lang "settings.isolate_backup_path"}}</span>
-                    </label>
-                    <p x-show="cfg.connection_mode === 'advanced' && !cfg.isolate_path" class="text-xs text-yellow-500">{{t .Lang "settings.isolation_disabled_warning"}}</p>
-                    <div x-show="cfg.connection_mode === 'legacy'">
-                        <label class="label">{{t .Lang "settings.remote_backup_path"}}</label>
-                        <input type="text" x-model="cfg.remote_path" class="input-field text-sm">
-                        <p class="text-xs text-yellow-500 mt-1">{{t .Lang "settings.legacy_mode_warning"}}</p>
-                    </div>
-                    </div>
-
-                    <div x-show="cfg.backup_type === 's3'" class="space-y-3">
-                    <div>
-                        <label class="label">S3 Endpoint</label>
-                        <input type="text" x-model="cfg.s3_endpoint" class="input-field text-sm" placeholder="{{t .Lang "settings.s3_endpoint_placeholder"}}">
-                    </div>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div>
-                            <label class="label">Bucket</label>
-                            <input type="text" x-model="cfg.s3_bucket" class="input-field text-sm" placeholder="wp-panel-backups">
-                        </div>
-                        <div>
-                            <label class="label">Region</label>
-                            <input type="text" x-model="cfg.s3_region" class="input-field text-sm" placeholder="auto">
-                        </div>
-                    </div>
-                    <div>
-                        <label class="label">Access Key ID</label>
-                        <input type="text" x-model="cfg.s3_access_key_id" class="input-field text-sm" placeholder="Access Key ID">
-                    </div>
-                    <div>
-                        <label class="label">Secret Access Key</label>
-                        <input type="password" x-model="cfg.s3_secret_key" class="input-field text-sm" placeholder="Secret Access Key">
-                    </div>
-                    <div>
-                        <label class="label">{{t .Lang "settings.backup_path_prefix"}}</label>
-                        <input x-show="cfg.connection_mode !== 'legacy'" type="text" x-model="cfg.s3_base_prefix" class="input-field text-sm" placeholder="wp-panel">
-                        <input x-show="cfg.connection_mode === 'legacy'" type="text" x-model="cfg.s3_path_prefix" class="input-field text-sm" placeholder="wp-panel">
-                        <p x-show="cfg.connection_mode !== 'legacy'" class="text-xs text-gray-500 mt-1">{{t .Lang "settings.effective_backup_path"}} <code class="text-gray-300" x-text="effectiveS3Prefix()"></code></p>
-                        <p x-show="cfg.connection_mode === 'legacy'" class="text-xs text-yellow-500 mt-1">{{t .Lang "settings.legacy_mode_warning"}} <button type="button" @click="cfg.connection_mode = 'auto'" class="text-blue-400 underline">{{t .Lang "settings.enable_path_isolation"}}</button></p>
-                    </div>
-                    </div>
-
-                    <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-                        <input type="checkbox" x-model="cfg.keep_local">
-                        <span>{{t .Lang "settings.keep_local_backup"}}</span>
-                    </label>
-
-                </div>
-
-                <div class="flex items-center space-x-3 pt-2">
-                    <button @click="testConnection()" :disabled="testing || !cfg.enabled" class="btn-secondary text-sm" x-text="testing ? t('settings.testing') : t('settings.test_connection')"></button>
-                    <button @click="saveRemote()" :disabled="saving" class="btn-primary text-sm" x-text="saving ? t('settings.saving') : t('settings.save_settings')"></button>
-                </div>
-                <p x-show="saveMsg" class="text-sm" :class="saveOK ? 'text-green-400' : 'text-red-400'" x-text="saveMsg"></p>
-                <p x-show="testResult" class="text-sm" :class="testOK ? 'text-green-400' : 'text-red-400'" x-text="testResult"></p>
-
-                <div x-show="!cfg.enabled" class="text-xs text-gray-600 py-4 text-center">
-                    {{t .Lang "settings.remote_disabled_help"}}
-                </div>
-            </div>
-
-            <!-- 右侧：设置助手 -->
-            <div x-show="cfg.backup_type === 'rsync' && cfg.connection_mode === 'auto'" class="p-4 rounded" style="background-color: #0f172a; border: 1px solid #1e293b;">
-                <div class="flex items-center justify-between mb-3">
-                    <h4 class="text-sm font-medium text-gray-300">{{t .Lang "settings.remote_helper_title"}}</h4>
-                    <div class="flex rounded overflow-hidden" style="border: 1px solid #334155;">
-                        <button @click="helperMode = 'create'" :class="helperMode === 'create' ? 'text-white' : 'text-gray-500'" class="text-xs py-1 px-2" :style="helperMode === 'create' ? 'backgroundColor: #1e3a5f' : 'backgroundColor: #0f172a'">{{t .Lang "settings.create"}}</button>
-                        <button @click="helperMode = 'delete'" :class="helperMode === 'delete' ? 'text-white' : 'text-gray-500'" class="text-xs py-1 px-2" :style="helperMode === 'delete' ? 'backgroundColor: #b91c1c' : 'backgroundColor: #0f172a'">{{t .Lang "settings.delete"}}</button>
-                    </div>
-                </div>
-                <p x-show="helperMode === 'create'" class="text-xs text-gray-500 mb-3">{{t .Lang "settings.remote_helper_create_help"}}</p>
-                <p x-show="helperMode === 'delete'" class="text-xs text-red-400 mb-3"><strong>{{t .Lang "settings.remote_helper_delete_strong"}}</strong>{{t .Lang "settings.remote_helper_delete_help"}}</p>
-
-                <div class="p-3 rounded" style="background-color: #020617; border: 1px solid #1e293b;">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-gray-500 text-xs">{{t .Lang "settings.copy_to_remote"}}</span>
-                        <button @click="copyCmd()" :disabled="!canCopyCmd()" class="text-xs py-0.5 px-2 rounded disabled:opacity-50 disabled:cursor-not-allowed" :style="helperMode === 'delete' ? 'background-color: #7f1d1d; color: #fca5a5' : 'background-color: #1e3a5f; color: #93c5fd'">{{t .Lang "settings.copy_command"}}</button>
-                    </div>
-                    <pre class="font-mono text-gray-300 whitespace-pre-wrap text-xs leading-relaxed" x-text="genCmd()" style="word-break: break-all;"></pre>
-                </div>
-
-                <ul class="space-y-1 text-gray-500 text-xs mt-3">
-                    <li>{{t .Lang "settings.remote_helper_key_mode"}}</li>
-                    <li>{{t .Lang "settings.remote_helper_password_mode"}}</li>
-                    <li>{{t .Lang "settings.remote_helper_dedicated_user"}}</li>
-                    <li>{{t .Lang "settings.remote_helper_permission"}}</li>
-                </ul>
-            </div>
-            <div x-show="cfg.backup_type === 's3'" class="p-4 rounded text-xs text-gray-400" style="background-color: #0f172a; border: 1px solid #1e293b;">
-                <h4 class="text-sm font-medium text-gray-300 mb-3">{{t .Lang "settings.s3_help_title"}}</h4>
-                <ul class="space-y-2">
-                    <li>{{t .Lang "settings.s3_help_supported"}}</li>
-                    <li>{{t .Lang "settings.s3_help_bucket"}}</li>
-                    <li>{{t .Lang "settings.s3_help_endpoint"}} <code class="text-gray-300">https://account-id.r2.cloudflarestorage.com</code></li>
-                    <li>{{t .Lang "settings.s3_help_region"}} <code class="text-gray-300">auto</code></li>
-                    <li>{{t .Lang "settings.s3_help_prefix"}} <code class="text-gray-300">wp-panel/server-1</code></li>
-                    <li>{{t .Lang "settings.s3_help_multipart"}}</li>
-                </ul>
-            </div>
-        </div>
-
-            <!-- 使用说明弹窗 -->
-            <div x-show="showHelp" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50" @click.self="showHelp = false">
-                <div class="rounded-lg shadow-xl w-full max-w-xl p-6 max-h-80vh overflow-y-auto" style="background-color: #1e293b; border: 1px solid #334155;">
-                    <div class="flex items-center justify-between mb-4">
-                        <h3 class="text-lg font-semibold text-white">{{t .Lang "settings.remote_help_title"}}</h3>
-                        <button @click="showHelp = false" class="text-gray-400 hover:text-white text-xl">&times;</button>
-                    </div>
-                    <div class="text-sm text-gray-300 space-y-4">
-                        <div>
-                            <p class="font-medium text-blue-400 mb-1">{{t .Lang "settings.workflow"}}</p>
-                            <ol class="text-gray-400 list-decimal list-inside space-y-1">
-                                <li>{{t .Lang "settings.workflow_local_backup"}}</li>
-                                <li>{{t .Lang "settings.workflow_transfer"}}</li>
-                                <li>{{t .Lang "settings.workflow_delete_local"}}</li>
-                            </ol>
-                        </div>
-                        <div>
-                            <p class="font-medium text-blue-400 mb-1">{{t .Lang "settings.remote_server_requirements"}}</p>
-                            <ul class="text-gray-400 list-disc list-inside space-y-1">
-                                <li>{{t .Lang "settings.remote_req_ssh"}}</li>
-                                <li>{{t .Lang "settings.remote_req_path"}}</li>
-                                <li>{{t .Lang "settings.remote_req_firewall"}}</li>
-                            </ul>
-                        </div>
-                        <div>
-                            <p class="font-medium text-blue-400 mb-1">{{t .Lang "settings.auth_methods"}}</p>
-                            <ul class="text-gray-400 list-disc list-inside space-y-1">
-                                <li>{{t .Lang "settings.auth_key_detail"}}</li>
-                                <li>{{t .Lang "settings.auth_password_detail"}}</li>
-                                <li>{{t .Lang "settings.auth_s3_detail"}}</li>
-                            </ul>
-                        </div>
-                        <div>
-                            <p class="font-medium text-blue-400 mb-1">{{t .Lang "settings.security_advice"}}</p>
-                            <ul class="text-gray-400 list-disc list-inside space-y-1">
-                                <li>{{t .Lang "settings.security_dedicated"}}</li>
-                                <li>{{t .Lang "settings.security_cleanup"}}</li>
-                                <li>{{t .Lang "settings.security_key_path"}} <code class="text-gray-500">/www/server/panel/remote_backup_key</code></li>
-                            </ul>
-                        </div>
-                        <div class="p-3 rounded" style="background-color: #0f172a; border: 1px solid #334155;">
-                            <p class="text-gray-400 text-xs">{{t .Lang "settings.remote_help_tip"}}</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-    </div>
-    </div>
+	</div>
 
     <div class="card mb-6" x-data="dbBackup()" x-init="fetchBackups()">
         <div class="flex items-center justify-between mb-4">
@@ -687,19 +415,6 @@ function panelSettings() {
         proxyTesting: false,
         proxyResult: '',
         proxyOk: false,
-        ai: {
-            enabled: false,
-            provider: 'deepseek',
-            base_url: 'https://api.deepseek.com',
-            model: 'deepseek-v4-pro',
-            api_key: '',
-            api_key_masked: '',
-            timeout_seconds: 180
-        },
-        aiSaving: false,
-        aiTesting: false,
-        aiTestResult: '',
-        aiTestOK: false,
         accountSaving: false,
         accountSaved: false,
         autoUpdate: {
@@ -717,7 +432,6 @@ function panelSettings() {
         },
         pw: { old: '', new1: '', new2: '', basic: '' },
         async fetchSettings() {
-            const aiSettings = this.fetchAISettings();
             try {
                 const r = await api('/settings');
                 if (r.success) {
@@ -746,7 +460,6 @@ function panelSettings() {
                     this.autoUpdate.lastSuccessVersion = au.panel_auto_update_last_success_version || '';
                 }
             } catch(e) {}
-            await aiSettings.catch(() => {});
             this.tickTime();
             setInterval(() => this.tickTime(), 1000);
         },
@@ -846,66 +559,6 @@ function panelSettings() {
             }
             this.proxyTesting = false;
         },
-        async fetchAISettings() {
-            try {
-                const r = await api('/ai/settings', { silent: true });
-                if (r.success && r.data) {
-                    this.ai.enabled = r.data.enabled || false;
-                    this.ai.provider = r.data.provider || 'deepseek';
-                    this.ai.base_url = r.data.base_url || 'https://api.deepseek.com';
-                    this.ai.model = r.data.model || 'deepseek-v4-pro';
-                    this.ai.api_key = '';
-                    this.ai.api_key_masked = r.data.api_key_masked || '';
-                    this.ai.timeout_seconds = r.data.timeout_seconds || 180;
-                }
-            } catch(e) {}
-        },
-        applyAIProviderDefaults() {
-            if (this.ai.provider === 'deepseek') {
-                this.ai.base_url = 'https://api.deepseek.com';
-                if (!this.ai.model || this.ai.model === 'gpt-4.1-mini') this.ai.model = 'deepseek-v4-pro';
-            } else if (this.ai.provider === 'openai') {
-                this.ai.base_url = 'https://api.openai.com/v1';
-                if (!this.ai.model || this.ai.model.startsWith('deepseek-')) this.ai.model = 'gpt-4.1-mini';
-            }
-        },
-        aiPayload() {
-            return {
-                enabled: this.ai.enabled,
-                provider: this.ai.provider,
-                base_url: this.ai.base_url,
-                model: this.ai.model,
-                api_key: this.ai.api_key,
-                timeout_seconds: parseInt(this.ai.timeout_seconds) || 180
-            };
-        },
-        async saveAI() {
-            this.aiSaving = true;
-            try {
-                const r = await api('/ai/settings', { method: 'PUT', body: this.aiPayload() });
-                if (r.success && r.data) {
-                    this.ai.api_key = '';
-                    this.ai.api_key_masked = r.data.api_key_masked || this.ai.api_key_masked;
-                }
-                showToast(t('settings.ai_settings_saved'), 'success');
-            } catch(e) { showToast(e.message, 'error'); }
-            this.aiSaving = false;
-        },
-        async testAI() {
-            this.aiTesting = true;
-            this.aiTestResult = '';
-            try {
-                const timeoutMs = 60000;
-                const r = await api('/ai/test', { method: 'POST', body: this.aiPayload(), timeout: timeoutMs });
-                const d = r.data || {};
-                this.aiTestOK = !!d.ok;
-                this.aiTestResult = d.ok ? t('settings.connection_ok_with_latency', { latency: d.latency_ms }) : (d.message || t('settings.connection_failed'));
-            } catch(e) {
-                this.aiTestOK = false;
-                this.aiTestResult = e.message;
-            }
-            this.aiTesting = false;
-        }
     }
 }
 function versionCheck() {
@@ -1114,127 +767,6 @@ function operationLogs() {
             if (end - start < 4) start = Math.max(1, end - 4);
             for (let i = start; i <= end; i++) pages.push(i);
             return pages;
-        }
-    }
-}
-function remoteBackup() {
-    return {
-        cfg: { enabled: false, backup_type: 'rsync', connection_mode: 'auto', server_id: '', host: '', port: 22, username: '', auth_type: 'key', password: '', remote_path: '', remote_base_path: '/mnt/backup', isolate_path: true, keep_local: true, s3_endpoint: '', s3_bucket: '', s3_region: 'auto', s3_access_key_id: '', s3_secret_key: '', s3_path_prefix: '', s3_base_prefix: 'wp-panel' },
-        publicKey: '',
-        testing: false,
-        testResult: '',
-        testOK: false,
-        saving: false,
-        saveMsg: '',
-        saveOK: false,
-        showHelp: false,
-        helperPass: '',
-        helperMode: 'create',
-        async fetchRemote() {
-            try {
-                const r = await api('/settings/remote-backup');
-                if (r.success) {
-                    Object.assign(this.cfg, r.data);
-                    this.publicKey = r.data?.ssh_key || '';
-                }
-                if (!this.cfg.backup_type) this.cfg.backup_type = 'rsync';
-                if (!this.cfg.connection_mode) this.cfg.connection_mode = 'auto';
-                if (!this.cfg.s3_region) this.cfg.s3_region = 'auto';
-            } catch(e) {}
-        },
-        async saveRemote() {
-            this.saving = true;
-            this.saveMsg = '';
-            try {
-                const r = await api('/settings/remote-backup', { method: 'PUT', body: this.cfg });
-                this.saveOK = r.success;
-                this.saveMsg = r.data?.message || (r.success ? t('settings.saved') : t('settings.save_failed'));
-                if (r.success) await this.fetchRemote();
-            } catch(e) { this.saveOK = false; this.saveMsg = e.message; }
-            this.saving = false;
-        },
-        async loadPublicKey() {
-            try {
-                const r = await api('/settings/remote-backup');
-                if (r.success && r.data.ssh_key) this.publicKey = r.data.ssh_key;
-            } catch(e) {}
-        },
-        async testConnection() {
-            this.testing = true;
-            this.testResult = '';
-            this.testOK = false;
-            try {
-                const r = await api('/settings/remote-backup/test', { method: 'POST' });
-                this.testOK = r.success;
-                this.testResult = r.data?.message || (r.success ? t('settings.connection_ok') : t('settings.connection_failed'));
-            } catch(e) { this.testResult = e.message; }
-            this.testing = false;
-        },
-        genPassword() {
-            const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-            let pw = '';
-            for (let i = 0; i < 20; i++) pw += chars[Math.floor(Math.random() * chars.length)];
-            if (this.cfg.auth_type === 'password') {
-                this.cfg.password = pw;
-            } else {
-                this.helperPass = pw;
-            }
-        },
-        effectiveRemotePath() {
-            if (this.cfg.connection_mode === 'legacy') return this.cfg.remote_path || '';
-            var base = (this.cfg.remote_base_path || '/mnt/backup').replace(/\/+$/, '');
-            return (this.cfg.connection_mode === 'auto' || this.cfg.isolate_path) ? base + '/wp-panel/' + (this.cfg.server_id || '...') : base;
-        },
-        effectiveS3Prefix() {
-            var base = (this.cfg.s3_base_prefix || 'wp-panel').replace(/^\/+|\/+$/g, '');
-            return base + '/' + (this.cfg.server_id || '...');
-        },
-        canCopyCmd() {
-            if (this.helperMode === 'delete') return !!this.cfg.username;
-            return !!this.cfg.username && !!this.cfg.remote_path && !!this.publicKey && this.effectiveRemotePath() === this.cfg.remote_path;
-        },
-        genCmd() {
-            var u = this.cfg.username;
-            var dir = this.cfg.remote_path;
-            if (!this.canCopyCmd()) return t('settings.save_before_copy_command');
-
-            if (this.helperMode === 'delete') {
-                return 'userdel ' + u;
-            }
-
-            var lines = [
-                'id -u ' + u + ' >/dev/null 2>&1 || useradd -m -s /bin/bash ' + u,
-                'install -d -m 700 -o ' + u + ' -g ' + u + ' /home/' + u + '/.ssh',
-                'touch /home/' + u + '/.ssh/authorized_keys',
-                'chown ' + u + ':' + u + ' /home/' + u + '/.ssh/authorized_keys',
-                'chmod 600 /home/' + u + '/.ssh/authorized_keys',
-                "grep -qxF '" + this.publicKey.trim() + "' /home/" + u + "/.ssh/authorized_keys || echo '" + this.publicKey.trim() + "' >> /home/" + u + '/.ssh/authorized_keys',
-                'mkdir -p ' + dir,
-                'chown ' + u + ':' + u + ' ' + dir,
-                'chmod 750 ' + dir
-            ];
-
-            return lines.join(' && ');
-        },
-        async copyCmd() {
-            if (!this.canCopyCmd()) {
-                showToast(t('settings.save_before_copy_command'), 'error');
-                return;
-            }
-            var cmd = this.genCmd();
-            if (!cmd) return;
-            try {
-                await navigator.clipboard.writeText(cmd);
-                showToast(t('settings.command_copied'), 'success');
-            } catch(e) {
-                var ta = document.createElement('textarea');
-                ta.value = cmd;
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand('copy');
-                document.body.removeChild(ta);
-                showToast(t('settings.command_copied_short'), 'success');
-            }
         }
     }
 }

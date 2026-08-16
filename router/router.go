@@ -1376,6 +1376,11 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/backups", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "backups.html", pageData(suffix, "backups", "backups_content", c))
 	})
+	protected.GET("/backups/remote-settings", func(c *gin.Context) {
+		data := pageData(suffix, "backups", "remote_backup_settings_content", c)
+		data["Title"] = i18n.T(i18n.LangFromRequest(c.Request), "backups.remote_settings")
+		c.HTML(http.StatusOK, "remote_backup_settings.html", data)
+	})
 	protected.GET("/firewall", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "firewall.html", pageData(suffix, "firewall", "firewall_content", c))
 	})

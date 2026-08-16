@@ -21,6 +21,8 @@
   },
   "common": {
     "cancel": "Cancel",
+    "close": "Close",
+    "loading": "Loading...",
     "confirm": "Confirm",
     "save": "Save",
     "saved": "Saved",
@@ -848,7 +850,7 @@
   "ai_diagnostics": {
     "description": "Select a website and issue type to run a read-only diagnosis. Files, databases, and server configuration are not modified automatically.",
     "ai_settings": "AI Settings",
-    "privacy_notice": "The diagnostic context is sent to the AI provider configured in panel settings. It may include the domain, log summary, configuration summary, and recent operations. It does not send database passwords, AI keys, SSL private keys, panel passwords, or panel database contents.",
+    "privacy_notice": "The diagnostic context is sent to the provider configured in AI Settings. It may include the domain, log summary, configuration summary, and recent operations. It does not send database passwords, AI keys, SSL private keys, panel passwords, or panel database contents.",
     "start_diagnosis": "Start Diagnosis",
     "website": "Website",
     "select_website": "Select a website",
@@ -1831,6 +1833,7 @@
     "local_package_missing": "No local package is installed. Site creation will try to download it online, which may fail due to network issues.",
     "refresh": "Refresh",
     "remote_backup": "Remote Backup",
+    "remote_test_saved_config_help": "The connection test uses the most recently saved configuration. Save connection changes before testing.",
     "help": "Help",
     "enable_remote_backup": "Enable Remote Backup",
     "backup_target": "Backup Target",
@@ -2015,6 +2018,9 @@
   },
   "session_username": "Session username",
   "backups": {
+    "remote_settings": "Remote Backup Settings",
+    "remote_settings_description": "Configure rsync or S3 storage, path isolation, and local retention",
+    "back_to_overview": "Back to Backups",
     "panel_section_title": "Panel database backups",
     "db_section_title": "Database backups",
     "file_section_title": "File backups",

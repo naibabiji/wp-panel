@@ -42,7 +42,7 @@ func TestRemoteBackupIsolationToggleIsOnlyInRsyncSection(t *testing.T) {
 
 func readRemoteBackupTemplate(t *testing.T) string {
 	t.Helper()
-	content, err := os.ReadFile("../templates/settings.html")
+	content, err := os.ReadFile("../templates/remote_backup_settings.html")
 	if err != nil {
 		t.Fatal(err)
 	}

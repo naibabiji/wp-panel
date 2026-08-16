@@ -1,9 +1,10 @@
 {{template "base" .}}
 {{define "backups_content"}}
 <div x-data="backupsOverview()" x-init="fetchOverview()">
-    <div class="flex items-center justify-between mb-6">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
         <h2 class="text-xl font-bold text-white">{{t .Lang "nav.backups"}}</h2>
-        <div class="flex space-x-3">
+        <div class="flex flex-wrap gap-3">
+            <a href="/{{.RandomSuffix}}/backups/remote-settings" class="btn-secondary text-xs py-1 px-3">{{t .Lang "backups.remote_settings"}}</a>
             <button @click="reconcileRemoteStatus()" :disabled="reconciling" class="btn-secondary text-xs py-1 px-3" x-text="reconciling ? t('backups.reconciling') : t('backups.reconcile_remote_status')"></button>
             <button @click="expandAll()" class="btn-secondary text-xs py-1 px-3">{{t .Lang "backups.expand_all"}}</button>
             <button @click="collapseAll()" class="btn-secondary text-xs py-1 px-3">{{t .Lang "backups.collapse_all"}}</button>
