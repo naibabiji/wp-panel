@@ -15,6 +15,11 @@ import (
 
 type SystemUpdateHandler struct{}
 
+const (
+	systemUpdateSourceSSHMessage = "系统软件源刷新失败，请通过 SSH 登录服务器检查并处理。"
+	systemUpdateManualSSHMessage = "系统更新遇到需要交互确认或人工处理的项目，请通过 SSH 登录服务器完成更新。"
+)
+
 type systemPackage struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
@@ -54,15 +59,15 @@ func (h *SystemUpdateHandler) Check(c *gin.Context) {
 }
 
 func (h *SystemUpdateHandler) Update(c *gin.Context) {
-	out1, err := exec.Command("bash", "-c", "apt update 2>&1").CombinedOutput()
+	_, err := exec.Command("bash", "-c", "apt update 2>&1").CombinedOutput()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("apt update 失败: "+string(out1)))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(systemUpdateSourceSSHMessage))
 		return
 	}
 
 	out2, err := exec.Command("bash", "-c", "apt upgrade -y 2>&1").CombinedOutput()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("apt upgrade 失败: "+string(out2)))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(systemUpdateManualSSHMessage))
 		return
 	}
 
