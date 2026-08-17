@@ -83,6 +83,10 @@ add_action('init', ['WP_Panel_Optimizer', 'init']);
 
 add_action('wp_ajax_wpp_optimizer_verify', function() {
     check_ajax_referer('wpp_optimizer_settings');
+    if (!current_user_can('manage_options')) {
+        wp_send_json(['success' => false, 'data' => ['message' => '权限不足']]);
+        return;
+    }
     $domain = wp_parse_url(home_url(), PHP_URL_HOST);
     $resp = WP_Panel_Optimizer::api_request_public('GET', '/api/sites/find?domain=' . urlencode($domain));
     if (!$resp || is_wp_error($resp)) {
