@@ -56,57 +56,62 @@ func binaryForMime(mime string) string {
 // optimizeImageFile 对站点 wp-content/uploads/ 下的一个文件做原地无损重编码。
 // 结构照抄 wp_core_update_runner.go 的降权范式：root 解析 system_user → 校验
 // 二进制路径和属主 → runuser 降权执行 → 返回处理前后的真实文件大小。
-func optimizeImageFile(ctx context.Context, webRoot, systemUser, relativePath, mime string) (before, after int64, err error) {
+//
+// 返回值里的 modUnix 是重编码*之后*的文件修改时间——jpegoptim/optipng 原地
+// 重写文件必然会把 mtime 刷新成处理时刻，调用方拿这个值（而不是扫描阶段读到
+// 的旧 mtime）存进幂等指纹表，否则下次扫描读到的 mtime 永远对不上存的值，
+// 指纹形同虚设，每次都会把整个媒体库重新处理一遍。
+func optimizeImageFile(ctx context.Context, webRoot, systemUser, relativePath, mime string) (before, after, modUnix int64, err error) {
 	binaryName := binaryForMime(mime)
 	if binaryName == "" {
-		return 0, 0, fmt.Errorf("不支持的图片类型: %s", mime)
+		return 0, 0, 0, fmt.Errorf("不支持的图片类型: %s", mime)
 	}
 	fixedArgs, ok := imageBatchBinaryArgs[binaryName]
 	if !ok {
-		return 0, 0, fmt.Errorf("未登记的二进制: %s", binaryName)
+		return 0, 0, 0, fmt.Errorf("未登记的二进制: %s", binaryName)
 	}
 
 	if os.Geteuid() != 0 {
-		return 0, 0, errors.New("图片优化 runner 需要 root 权限")
+		return 0, 0, 0, errors.New("图片优化 runner 需要 root 权限")
 	}
 	if !wpInventoryUserPattern.MatchString(systemUser) {
-		return 0, 0, errors.New("站点系统用户格式非法")
+		return 0, 0, 0, errors.New("站点系统用户格式非法")
 	}
 
 	wwwRoot := config.AppConfig.Paths.WWWRoot
 	siteRoot, err := validateInventorySitePath(wwwRoot, webRoot)
 	if err != nil {
-		return 0, 0, fmt.Errorf("站点目录校验失败: %w", err)
+		return 0, 0, 0, fmt.Errorf("站点目录校验失败: %w", err)
 	}
 
 	absPath, err := validateImageBatchFilePath(siteRoot, relativePath)
 	if err != nil {
-		return 0, 0, fmt.Errorf("文件路径校验失败: %w", err)
+		return 0, 0, 0, fmt.Errorf("文件路径校验失败: %w", err)
 	}
 
 	beforeInfo, err := os.Stat(absPath)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	before = beforeInfo.Size()
 
 	u, err := user.Lookup(systemUser)
 	if err != nil {
-		return 0, 0, fmt.Errorf("查找站点系统用户失败: %w", err)
+		return 0, 0, 0, fmt.Errorf("查找站点系统用户失败: %w", err)
 	}
 	uid, err1 := strconv.Atoi(u.Uid)
 	gid, err2 := strconv.Atoi(u.Gid)
 	if err1 != nil || err2 != nil || uid <= 0 || gid <= 0 || u.Username != systemUser {
-		return 0, 0, errors.New("站点系统用户身份异常")
+		return 0, 0, 0, errors.New("站点系统用户身份异常")
 	}
 
 	binaryPath, err := validateInventoryBinary("/usr/bin/"+binaryName, "/usr/bin", 0, 0)
 	if err != nil {
-		return 0, 0, fmt.Errorf("%s 二进制校验失败: %w", binaryName, err)
+		return 0, 0, 0, fmt.Errorf("%s 二进制校验失败: %w", binaryName, err)
 	}
 	runuserPath, err := validateInventoryBinary(wpInventoryRunuserPath, "/usr/sbin", 0, 0)
 	if err != nil {
-		return 0, 0, fmt.Errorf("runuser 校验失败: %w", err)
+		return 0, 0, 0, fmt.Errorf("runuser 校验失败: %w", err)
 	}
 
 	args := append([]string{"-u", u.Username, "--", binaryPath}, fixedArgs...)
@@ -118,17 +123,17 @@ func optimizeImageFile(ctx context.Context, webRoot, systemUser, relativePath, m
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"}
 	out, runErr := cmd.CombinedOutput()
 	if runErr != nil {
-		return before, before, fmt.Errorf("%s 执行失败: %w\n%s", binaryName, runErr, string(out))
+		return before, before, beforeInfo.ModTime().Unix(), fmt.Errorf("%s 执行失败: %w\n%s", binaryName, runErr, string(out))
 	}
 
 	afterInfo, err := os.Stat(absPath)
 	if err != nil {
-		return before, before, err
+		return before, before, beforeInfo.ModTime().Unix(), err
 	}
 	after = afterInfo.Size()
 	// 安全网：如果重编码后文件反而变大，理论上 jpegoptim/optipng 不应该发生，
 	// 但不假设"无损重编码一定更小"，让调用方决定要不要按失败处理。
-	return before, after, nil
+	return before, after, afterInfo.ModTime().Unix(), nil
 }
 
 func validateImageBatchFilePath(siteRoot, relativePath string) (string, error) {

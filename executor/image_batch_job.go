@@ -165,7 +165,7 @@ func runImageOptimizationJob(ctx context.Context, jobID int64, siteID int, webRo
 			break
 		}
 
-		before, after, optErr := optimizeImageFile(ctx, webRoot, systemUser, c.RelativePath, c.Mime)
+		before, after, newModUnix, optErr := optimizeImageFile(ctx, webRoot, systemUser, c.RelativePath, c.Mime)
 		processed++
 		if optErr != nil {
 			failed++
@@ -177,12 +177,15 @@ func runImageOptimizationJob(ctx context.Context, jobID int64, siteID int, webRo
 			if after < before {
 				manifest[c.RelativePath] = after
 			}
+			// 存重编码*之后*的 mtime（newModUnix），不是扫描阶段读到的旧值
+			// （c.ModUnix）——jpegoptim/optipng 原地重写文件必然会刷新 mtime，
+			// 存旧值会导致下次扫描永远对不上指纹，整个媒体库每次都被重新处理。
 			db.Exec(`INSERT INTO site_image_optimization_files (site_id, relative_path, original_size, optimized_size, mtime_unix, processed_at)
 				VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)
 				ON CONFLICT(site_id, relative_path) DO UPDATE SET
 					original_size=excluded.original_size, optimized_size=excluded.optimized_size,
 					mtime_unix=excluded.mtime_unix, processed_at=CURRENT_TIMESTAMP`,
-				siteID, c.RelativePath, before, after, c.ModUnix)
+				siteID, c.RelativePath, before, after, newModUnix)
 		}
 
 		db.Exec(`UPDATE site_image_optimization_jobs
