@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -18,6 +19,8 @@ import (
 	"github.com/naibabiji/wp-panel/models"
 )
 
+const pluginDirName = "wp-panel-optimizer"
+
 const cacheConfPath = "/etc/nginx/conf.d/wppanel-cache.conf"
 
 func EnsureFastCGICacheConfig() {
@@ -28,35 +31,54 @@ fastcgi_cache_path /var/cache/nginx/fastcgi levels=1:2 keys_zone=WP_CACHE:200m i
 	os.WriteFile(cacheConfPath, []byte(content), 0644)
 }
 
+// EnsureCacheHelperPlugin 把面板内嵌的配套插件目录同步到本地参照副本
+// （/www/server/panel/packages/wp-panel-optimizer/），仅用于版本比对，不直接服务任何站点，
+// 所以不需要 AutoDeployPluginUpdates 那套原子切换，按文件内容比对同步即可。
 func EnsureCacheHelperPlugin(pluginFS embed.FS) {
 	pkgDir := "/www/server/panel/packages"
+	refDir := filepath.Join(pkgDir, pluginDirName)
 	os.MkdirAll(pkgDir, 0755)
-	dst := filepath.Join(pkgDir, "wp-panel-optimizer.php")
 
-	data, err := pluginFS.ReadFile("wp-panel-optimizer/wp-panel-optimizer.php")
-	if err != nil {
+	// 清理旧版本面板遗留的单文件参照副本
+	os.Remove(filepath.Join(pkgDir, pluginDirName+".php"))
+
+	srcFiles, err := readEmbeddedPluginFiles(pluginFS)
+	if err != nil || len(srcFiles) == 0 {
 		return
 	}
 
-	// 仅在内容发生变更时才写入文件，避免每次启动都重写文件导致修改时间被更新
-	if existing, err := os.ReadFile(dst); err == nil && bytes.Equal(existing, data) {
-		return
+	seen := make(map[string]bool, len(srcFiles))
+	for rel, data := range srcFiles {
+		seen[rel] = true
+		dst := filepath.Join(refDir, filepath.FromSlash(rel))
+		if existing, err := os.ReadFile(dst); err == nil && bytes.Equal(existing, data) {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			continue
+		}
+		os.WriteFile(dst, data, 0644)
 	}
 
-	os.WriteFile(dst, data, 0644)
+	// 清理参照目录里源码已经不存在的旧文件（比如本次重构删除的老单文件模块）
+	filepath.WalkDir(refDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(refDir, path)
+		if relErr == nil && !seen[filepath.ToSlash(rel)] {
+			os.Remove(path)
+		}
+		return nil
+	})
 }
 
 // AutoDeployPluginUpdates 扫描所有已安装配套插件的 WordPress 站点，
-// 若 plugin_api_key 非空且站点上的插件版本落后于面板内置版本（通过内容/修改时间比对判断），则自动更新。
+// 若 plugin_api_key 非空且站点上的插件目录内容落后于面板内置版本，则自动更新。
 // 每次面板启动时调用，实现插件无感自动升级。
 func AutoDeployPluginUpdates(pluginFS embed.FS) {
-	srcData, err := pluginFS.ReadFile("wp-panel-optimizer/wp-panel-optimizer.php")
-	if err != nil {
-		return
-	}
-	srcPath := "/www/server/panel/packages/wp-panel-optimizer.php"
-	srcInfo, srcErr := os.Stat(srcPath)
-	if srcErr != nil {
+	srcFiles, err := readEmbeddedPluginFiles(pluginFS)
+	if err != nil || len(srcFiles) == 0 {
 		return
 	}
 
@@ -79,25 +101,16 @@ func AutoDeployPluginUpdates(pluginFS embed.FS) {
 			continue
 		}
 
-		pluginDir := filepath.Join(webRoot, "wp-content", "plugins", "wp-panel-optimizer")
-		dstPath := filepath.Join(pluginDir, "wp-panel-optimizer.php")
+		pluginsDir := filepath.Join(webRoot, "wp-content", "plugins")
+		pluginDir := filepath.Join(pluginsDir, pluginDirName)
 
-		// 优先对比内容，内容一致直接跳过，最安全且避免多余的系统权限调用（chown/chmod）
-		if dstData, err := os.ReadFile(dstPath); err == nil && bytes.Equal(dstData, srcData) {
+		// 优先对比目录内容，完全一致直接跳过，避免多余的系统权限调用（chown）
+		if pluginDirMatches(pluginDir, srcFiles) {
 			continue
 		}
 
-		// 兜底比对修改时间（以防有其他判断逻辑依赖）
-		if dstInfo, err := os.Stat(dstPath); err == nil && !dstInfo.ModTime().Before(srcInfo.ModTime()) {
-			continue
-		}
-
-		if err := os.MkdirAll(pluginDir, 0755); err != nil {
-			log.Printf("[插件自动更新] 创建目录失败 site=%d: %v", id, err)
-			continue
-		}
-		if err := os.WriteFile(dstPath, srcData, 0644); err != nil {
-			log.Printf("[插件自动更新] 写入失败 site=%d: %v", id, err)
+		if err := deployPluginDirectory(pluginsDir, pluginDir, srcFiles); err != nil {
+			log.Printf("[插件自动更新] 部署失败 site=%d: %v", id, err)
 			continue
 		}
 		InstallPluginPermissions(domain, systemUser, pluginDir)
@@ -106,6 +119,156 @@ func AutoDeployPluginUpdates(pluginFS embed.FS) {
 	if updated > 0 {
 		log.Printf("[插件自动更新] 已更新 %d 个站点的配套插件", updated)
 	}
+}
+
+// readEmbeddedPluginFiles 把内嵌的 wp-panel-optimizer 目录展开为「相对路径 -> 文件内容」的映射。
+func readEmbeddedPluginFiles(pluginFS embed.FS) (map[string][]byte, error) {
+	const root = "wp-panel-optimizer"
+	files := make(map[string][]byte)
+	err := fs.WalkDir(pluginFS, root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		data, err := pluginFS.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		files[filepath.ToSlash(rel)] = data
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+// pluginDirMatches 判断站点上已部署的插件目录是否和内嵌源码逐文件内容一致，
+// 且没有源码里已经不存在、但站点目录里还残留的多余文件。
+func pluginDirMatches(pluginDir string, srcFiles map[string][]byte) bool {
+	for rel, data := range srcFiles {
+		existing, err := os.ReadFile(filepath.Join(pluginDir, filepath.FromSlash(rel)))
+		if err != nil || !bytes.Equal(existing, data) {
+			return false
+		}
+	}
+	matches := true
+	filepath.WalkDir(pluginDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !matches {
+			return nil
+		}
+		rel, relErr := filepath.Rel(pluginDir, path)
+		if relErr != nil {
+			return nil
+		}
+		if _, ok := srcFiles[filepath.ToSlash(rel)]; !ok {
+			matches = false
+		}
+		return nil
+	})
+	return matches
+}
+
+// deployPluginDirectory 把 srcFiles 部署到 pluginDir。目标目录常态下已存在且非空
+// （插件更新场景），Linux rename(2) 无法用单次调用原子覆盖这种目标，因此按五步走：
+// ① 清理上次部署遗留的临时/备份目录残留；② 新版本整体构建在与目标同一文件系统的临时
+// 目录里；③ 当前生效目录挪到备份路径；④ 新目录挪到最终路径，失败必须回滚到步骤③之前
+// 的状态；⑤ 成功后删除备份目录。临时/备份目录名以 "." 开头，WordPress 的 get_plugins()
+// 会跳过这类条目，不会被误当成一个插件出现在后台插件列表里。
+func deployPluginDirectory(pluginsDir, pluginDir string, srcFiles map[string][]byte) error {
+	recoverOrCleanupStalePluginDirs(pluginsDir, pluginDir)
+
+	suffix := NewCacheKey()
+	stagingDir := filepath.Join(pluginsDir, "."+pluginDirName+".staging-"+suffix)
+	backupDir := filepath.Join(pluginsDir, "."+pluginDirName+".backup-"+suffix)
+
+	if err := writePluginFiles(stagingDir, srcFiles); err != nil {
+		os.RemoveAll(stagingDir)
+		return fmt.Errorf("构建临时目录失败: %w", err)
+	}
+
+	targetExists := false
+	if _, err := os.Stat(pluginDir); err == nil {
+		targetExists = true
+	}
+
+	if targetExists {
+		if err := os.Rename(pluginDir, backupDir); err != nil {
+			os.RemoveAll(stagingDir)
+			return fmt.Errorf("移走旧目录失败: %w", err)
+		}
+	}
+
+	if err := os.Rename(stagingDir, pluginDir); err != nil {
+		if targetExists {
+			if rollbackErr := os.Rename(backupDir, pluginDir); rollbackErr != nil {
+				return fmt.Errorf("部署失败且回滚失败，插件目录可能已丢失，需人工检查 %s: 回滚错误=%v 原始错误=%v", pluginDir, rollbackErr, err)
+			}
+		}
+		os.RemoveAll(stagingDir)
+		return fmt.Errorf("替换插件目录失败（已回滚到部署前状态）: %w", err)
+	}
+
+	if targetExists {
+		os.RemoveAll(backupDir)
+	}
+	return nil
+}
+
+// recoverOrCleanupStalePluginDirs 处理上一次部署可能遗留的临时/备份目录（例如面板恰好
+// 在步骤③和④之间被强制重启）。如果插件目录缺失但存在备份目录，说明上次部署卡在
+// "旧目录已挪走、新目录还没就位"的中间状态，直接把备份挪回来恢复站点原有插件，
+// 而不是把这份还完好的内容当垃圾删掉；处理完之后再清理所有残留的临时/备份目录。
+func recoverOrCleanupStalePluginDirs(pluginsDir, pluginDir string) {
+	stagingPrefix := "." + pluginDirName + ".staging-"
+	backupPrefix := "." + pluginDirName + ".backup-"
+
+	if _, statErr := os.Stat(pluginDir); os.IsNotExist(statErr) {
+		if entries, err := os.ReadDir(pluginsDir); err == nil {
+			for _, entry := range entries {
+				if !entry.IsDir() || !strings.HasPrefix(entry.Name(), backupPrefix) {
+					continue
+				}
+				backupPath := filepath.Join(pluginsDir, entry.Name())
+				if renameErr := os.Rename(backupPath, pluginDir); renameErr == nil {
+					log.Printf("[插件自动更新] 检测到上次部署中断，已从备份目录恢复插件: %s", pluginDir)
+					break
+				}
+			}
+		}
+	}
+
+	entries, err := os.ReadDir(pluginsDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && (strings.HasPrefix(entry.Name(), stagingPrefix) || strings.HasPrefix(entry.Name(), backupPrefix)) {
+			os.RemoveAll(filepath.Join(pluginsDir, entry.Name()))
+		}
+	}
+}
+
+func writePluginFiles(dir string, files map[string][]byte) error {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	for rel, data := range files {
+		dst := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, data, 0644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func NewCacheKey() string {
