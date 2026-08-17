@@ -303,6 +303,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("正在关闭面板...")
+	executor.GlobalAdminer.DisableAll()
 	if coreUpdateWorker != nil {
 		if err := stopWPCoreUpdateWorker(coreUpdateWorker, wpCoreUpdateWorkerShutdownTimeout); err != nil {
 			log.Println("WordPress 核心更新后台任务关闭超时")

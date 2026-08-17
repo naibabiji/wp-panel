@@ -68,6 +68,24 @@ var i18nKeys = []string{
 	"common.saving",
 	"common.service_busy",
 	"common.service_exception",
+	"database.adminer_active_for",
+	"database.adminer_database_password",
+	"database.adminer_database_password_help",
+	"database.adminer_disable",
+	"database.adminer_disabled",
+	"database.adminer_duration",
+	"database.adminer_enable",
+	"database.adminer_enable_failed",
+	"database.adminer_enabled",
+	"database.adminer_expires_at",
+	"database.adminer_help",
+	"database.adminer_indefinite",
+	"database.adminer_minutes",
+	"database.adminer_open",
+	"database.adminer_starting",
+	"database.adminer_stopping",
+	"database.adminer_title",
+	"database.adminer_warning",
 	"dashboard.chart_load",
 	"dashboard.chart_memory",
 	"dashboard.close",
@@ -1134,6 +1152,14 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	})
 	protected.Use(middleware.CSRF())
 
+	// Adminer has its own CSRF tokens. Keep it behind both panel authentication
+	// layers, but do not apply the panel API CSRF header requirement to its HTML forms.
+	adminerTool := panelGroup.Group("")
+	adminerTool.Use(middleware.SessionRequired())
+	adminerHandler := &handlers.AdminerHandler{}
+	adminerTool.Any("/tools/adminer/:id", adminerHandler.Proxy)
+	adminerTool.Any("/tools/adminer/:id/*path", adminerHandler.Proxy)
+
 	authHandler := &handlers.AuthHandler{DB: db, Prefix: suffix, Tracker: attemptTracker}
 	protected.POST("/api/auth/logout", authHandler.Logout)
 	protected.GET("/api/auth/check", authHandler.Check)
@@ -1232,6 +1258,9 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/websites/:id/backups/clear-database", backupHandler.ClearDatabase)
 	databaseManagerHandler := &handlers.DatabaseManagerHandler{}
 	protected.GET("/api/databases", databaseManagerHandler.List)
+	protected.GET("/api/websites/:id/adminer/status", adminerHandler.Status)
+	protected.POST("/api/websites/:id/adminer/enable", adminerHandler.Enable)
+	protected.POST("/api/websites/:id/adminer/disable", adminerHandler.Disable)
 	protected.GET("/api/backups/overview", handlers.GetBackupOverview)
 	protected.POST("/api/backups/reconcile-status", handlers.ReconcileBackupStatus)
 
