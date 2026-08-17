@@ -60,6 +60,63 @@ trait WPP_Optimizer_Image_Trait {
         // 重量级的 GD 解码。
         add_filter('wp_handle_upload_prefilter', [__CLASS__, 'convert_uploaded_image'], PHP_INT_MAX);
         add_filter('wp_handle_sideload_prefilter', [__CLASS__, 'convert_uploaded_image'], PHP_INT_MAX);
+
+        // 历史图库批量优化的实际扫描/执行都在面板侧（需要降权 runuser 调用系统
+        // 二进制，插件的 PHP-FPM 环境做不到），插件这边只是把设置页的按钮转发成
+        // 对面板 /api/sites/image-optimizer/* 的请求——跟 fetch_panel_state() 等
+        // 现有面板通信一样走 X-WP-Panel-Key 认证，不需要插件自己维护任务状态。
+        add_action('wp_ajax_wpp_optimizer_image_batch_start', [__CLASS__, 'ajax_image_batch_start']);
+        add_action('wp_ajax_wpp_optimizer_image_batch_status', [__CLASS__, 'ajax_image_batch_status']);
+        add_action('wp_ajax_wpp_optimizer_image_batch_stop', [__CLASS__, 'ajax_image_batch_stop']);
+    }
+
+    public static function ajax_image_batch_start() {
+        check_ajax_referer('wpp_optimizer_settings');
+        if (!current_user_can('manage_options')) {
+            wp_send_json(['success' => false, 'data' => ['message' => '权限不足']]);
+            return;
+        }
+        $domain = wp_parse_url(home_url(), PHP_URL_HOST);
+        self::relay_image_batch_response(
+            self::api_request_public('POST', '/api/sites/image-optimizer/start', ['domain' => $domain])
+        );
+    }
+
+    public static function ajax_image_batch_status() {
+        check_ajax_referer('wpp_optimizer_settings');
+        if (!current_user_can('manage_options')) {
+            wp_send_json(['success' => false, 'data' => ['message' => '权限不足']]);
+            return;
+        }
+        $domain = wp_parse_url(home_url(), PHP_URL_HOST);
+        self::relay_image_batch_response(
+            self::api_request_public('GET', '/api/sites/image-optimizer/status?domain=' . urlencode($domain))
+        );
+    }
+
+    public static function ajax_image_batch_stop() {
+        check_ajax_referer('wpp_optimizer_settings');
+        if (!current_user_can('manage_options')) {
+            wp_send_json(['success' => false, 'data' => ['message' => '权限不足']]);
+            return;
+        }
+        $domain = wp_parse_url(home_url(), PHP_URL_HOST);
+        self::relay_image_batch_response(
+            self::api_request_public('POST', '/api/sites/image-optimizer/stop', ['domain' => $domain])
+        );
+    }
+
+    private static function relay_image_batch_response($resp) {
+        if (is_wp_error($resp)) {
+            wp_send_json(['success' => false, 'data' => ['message' => $resp->get_error_message()]]);
+            return;
+        }
+        $data = json_decode($resp, true);
+        if (!is_array($data) || empty($data['success'])) {
+            wp_send_json(['success' => false, 'data' => ['message' => ($data['message'] ?? '面板返回错误')]]);
+            return;
+        }
+        wp_send_json(['success' => true, 'data' => $data['data'] ?? null]);
     }
 
     /**

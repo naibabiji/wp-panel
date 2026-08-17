@@ -31,7 +31,7 @@ trait WPP_Optimizer_Settings_Trait {
         add_action('save_post', [__CLASS__, 'auto_clear'], 99, 1);
         add_action('deleted_post', [__CLASS__, 'auto_clear'], 99, 1);
         add_action('wp_update_comment_count', [__CLASS__, 'auto_comment_clear']);
-        add_filter('plugin_action_links_' . plugin_basename(__FILE__), [__CLASS__, 'action_links']);
+        add_filter('plugin_action_links_' . plugin_basename(WPP_OPTIMIZER_PLUGIN_FILE), [__CLASS__, 'action_links']);
         add_action('admin_notices', [__CLASS__, 'clear_notice']);
         add_action('admin_notices', [__CLASS__, 'file_lock_notice']);
         add_action('wp_ajax_wpp_optimizer_check_update', [__CLASS__, 'ajax_check_update']);
@@ -189,6 +189,7 @@ trait WPP_Optimizer_Settings_Trait {
         $imageJpegQuality = self::clamp_image_quality(get_option(self::OPTION_IMAGE_JPEG_QUALITY, 85));
         $imageWebpQuality = self::clamp_image_quality(get_option(self::OPTION_IMAGE_WEBP_QUALITY, 82));
         $imageSkippedCount = intval(get_option(self::OPTION_IMAGE_SKIPPED_COUNT, 0));
+        $xmlrpcEnabled = get_option('wpp_optimizer_xmlrpc_enabled', '0') === '1';
         ?>
         <div class="wrap">
             <?php $pluginVersion = WP_Panel_Optimizer::VERSION; ?>
@@ -205,181 +206,234 @@ trait WPP_Optimizer_Settings_Trait {
             <?php if ($fileLockEnabled): ?>
                 <div class="notice notice-warning"><p><strong>WP Panel 文件锁定已开启。</strong>发文章、编辑页面和上传图片不受影响；其他运行目录的写入范围由当前文件锁规则决定，安装、更新、删除插件或主题，以及修改代码和站点配置会被阻止。如需维护插件主题或首次配置安全/缓存插件，请先到 WP Panel 网站详情页解除文件锁定。</p></div>
             <?php endif; ?>
-            <div id="wpp-verify-msg"></div>
-            <hr>
+
+            <h2 class="nav-tab-wrapper" id="wpp-tabs">
+                <a href="#" class="nav-tab nav-tab-active" data-tab="cache">缓存与性能</a>
+                <a href="#" class="nav-tab" data-tab="image">图片优化</a>
+                <a href="#" class="nav-tab" data-tab="security">安全与维护</a>
+                <a href="#" class="nav-tab" data-tab="about">关于与面板同步</a>
+            </h2>
+
             <form id="wpp-form" method="post">
                 <?php wp_nonce_field('wpp_optimizer_settings'); ?>
-                <table class="form-table">
-                    <tr>
-                        <th>API Key</th>
-                        <td><code><?php echo esc_html($apiKey ? substr($apiKey, 0, 8) . '...' : '未配置'); ?></code></td>
-                    </tr>
-                    <tr>
-                        <th><label for="wpp-fcache-enabled">FastCGI 缓存</label></th>
-                        <td>
-                            <label><input id="wpp-fcache-enabled" name="fcache_enabled" type="checkbox" value="1" <?php checked($fcacheEnabled); ?>> 开启</label>
-                            <p class="description">Nginx 将 PHP 页面缓存为静态 HTML，大幅提升访问速度。</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th><label for="wpp-fcache-ttl">缓存有效期（秒）</label></th>
-                        <td>
-                            <input id="wpp-fcache-ttl" name="fcache_ttl" type="number" class="regular-text" value="<?php echo esc_attr($fcacheTTL); ?>" min="10" max="86400">
-                            <p class="description">建议 300-3600 秒（5分钟到1小时）。</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th><label for="wpp-preload-enabled">缓存预加载</label></th>
-                        <td>
-                            <label><input id="wpp-preload-enabled" name="preload_enabled" type="checkbox" value="1" <?php checked($preloadEnabled); ?>> 清除缓存后自动预加载</label>
-                            <p class="description">插件会以未登录访客身份访问本站公开页面，让 Nginx 自然生成 FastCGI 缓存文件。默认低速批处理，避免压垮小服务器。</p>
-                            <p class="description"><strong>说明：</strong>预加载只提前处理首页和最近更新的公开内容（最多为下方设置的 URL 数量），不是全站爬虫。未进入预加载队列的页面仍会在真实访客首次访问后由 Nginx 正常生成缓存。</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th><label for="wpp-preload-limit">单次最多预加载 URL</label></th>
-                        <td>
-                            <input id="wpp-preload-limit" name="preload_limit" type="number" class="small-text" value="<?php echo esc_attr($preloadLimit); ?>" min="10" max="500">
-                            <p class="description">范围 10-500。首页优先，其次为最近更新的公开文章、页面和公开分类归档。</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th><label for="wpp-no-updates">禁止检测更新</label></th>
-                        <td>
-                            <label><input id="wpp-no-updates" name="no_updates" type="checkbox" value="1" <?php checked($noUpdates); ?>> 完全屏蔽 WordPress 核心、插件和主题的更新检测和提示</label>
-                            <p class="description">启用后完全屏蔽更新检测，仪表盘无红点无通知，后台「检查更新」也不生效。如需更新，先关闭此开关。</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th><label for="wpp-no-file-edit">禁止文件编辑</label></th>
-                        <td>
-                            <label><input id="wpp-no-file-edit" name="no_file_edit" type="checkbox" value="1" <?php checked($noFileEdit); ?>> 禁止在 WordPress 后台编辑主题和插件文件</label>
-                            <p class="description">面板将写入 <code>DISALLOW_FILE_EDIT</code> 常量到 wp-config.php。</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th><label for="wpp-wp-debug">启用调试模式</label></th>
-                        <td>
-                            <label><input id="wpp-wp-debug" name="wp_debug" type="checkbox" value="1" <?php checked($wpDebug); ?>> 开启 <code>WP_DEBUG</code></label>
-                            <p class="description">开启后 PHP 错误和警告将写入 <code>wp-content/debug.log</code>，并开启 <code>WP_DEBUG_LOG</code>、关闭 <code>WP_DEBUG_DISPLAY</code>（错误不显示在页面，仅记录日志）。<br>用于排查网站白屏、500 错误等问题，正常使用时请关闭以免日志文件持续增长。</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th><label for="wpp-post-revisions">文章修订版本数</label></th>
-                        <td>
-                            <input id="wpp-post-revisions" name="post_revisions" type="number" class="small-text" value="<?php echo esc_attr($postRevisions >= 0 ? $postRevisions : ''); ?>" min="-1" placeholder="默认">
-                            <p class="description">留空 = WordPress 默认（无限制），<strong>0 = 完全不保留修订</strong>，设置为 3~5 可有效减少数据库占用。<br>每保存一次文章就会生成一个修订版本，长期不清理会占用大量数据库空间。</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th><label for="wpp-memory-limit">WordPress 内存限制</label></th>
-                        <td>
-                            <input id="wpp-memory-limit" name="memory_limit" type="text" class="regular-text" value="<?php echo esc_attr($memoryLimit); ?>" placeholder="默认 40M">
-                            <p class="description">设置 WordPress 的 <code>WP_MEMORY_LIMIT</code>，如 <code>128M</code>、<code>256M</code>。留空使用 WordPress 默认值（40M）。<br>这是 WordPress 应用层内存限制，不是 PHP-FPM 的 <code>memory_limit</code> 硬上限；实际值不应超过面板「软件管理」中的 PHP 内存限制。遇到"Allowed memory size exhausted"错误、后台白屏时可适当调高。</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th><label for="wpp-image-mode-off">新上传图片处理</label></th>
-                        <td>
-                            <?php if (!$imageEnvReady): ?>
-                                <p class="description" style="color:#d63638"><strong>服务器缺少 exif 扩展，暂不支持图片处理。</strong>该功能依赖 PHP <code>exif</code> 扩展做拍照方向修正，面板补装完成后刷新本页即可使用。</p>
-                            <?php endif; ?>
-                            <label style="display:block;margin-bottom:6px;"><input id="wpp-image-mode-off" type="radio" name="image_mode" value="off" <?php checked($imageMode, self::IMAGE_MODE_OFF); ?> <?php disabled(!$imageEnvReady); ?>> 关闭</label>
-                            <label style="display:block;margin-bottom:6px;"><input id="wpp-image-mode-optimize" type="radio" name="image_mode" value="optimize" <?php checked($imageMode, self::IMAGE_MODE_OPTIMIZE); ?> <?php disabled(!$imageEnvReady); ?>> 优化模式 — JPEG 按质量重新编码（有损但视觉无差异，非无损），PNG 无损压缩</label>
-                            <label style="display:block;"><input id="wpp-image-mode-webp" type="radio" name="image_mode" value="webp" <?php checked($imageMode, self::IMAGE_MODE_WEBP); ?> <?php disabled(!$imageEnvReady); ?>> WebP 模式 — 统一转换为 WebP 并删除原图</label>
-                            <p class="description" style="margin-top:10px;">
-                                JPEG 质量：<input type="number" name="image_jpeg_quality" class="small-text" value="<?php echo esc_attr($imageJpegQuality); ?>" min="1" max="100" <?php disabled(!$imageEnvReady); ?>>
-                                　WebP 质量：<input type="number" name="image_webp_quality" class="small-text" value="<?php echo esc_attr($imageWebpQuality); ?>" min="1" max="100" <?php disabled(!$imageEnvReady); ?>>
-                            </p>
-                            <?php if ($imageMode === self::IMAGE_MODE_WEBP): ?>
-                                <p class="description">WebP 模式会删除原图，不提供保留原图的选项。如需保留原始文件，请自行在本地备份；网站依赖 JPG/PNG 格式的邮件通知、社交平台分享卡片或第三方插件时请先确认不受影响。</p>
-                            <?php endif; ?>
-                            <?php if ($imageSkippedCount > 0): ?>
-                                <p class="description">有 <?php echo esc_html($imageSkippedCount); ?> 张图片未能转换成功（文件格式不受支持、转换后体积反而更大等原因），已自动保留原图，不影响正常上传。</p>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
-                    <?php $xmlrpcEnabled = get_option('wpp_optimizer_xmlrpc_enabled', '0') === '1'; ?>
-                    <tr>
-                        <th>XML-RPC 接口</th>
-                        <td>
-                            <span style="font-weight:bold;color:<?php echo $xmlrpcEnabled ? '#00a32a' : '#d63638'; ?>"><?php echo $xmlrpcEnabled ? '已开启' : '已关闭'; ?></span>
-                            <p class="description">
-                                XML-RPC 是 WordPress 远程通信接口。关闭后 Nginx 直接返回 403，请求不到 PHP-FPM，可彻底防御 xmlrpc.php 暴力攻击。<br>
-                                影响：<strong>无法使用 Jetpack、WordPress 手机 App、pingback/trackback、第三方通过 XML-RPC 发布文章</strong>。绝大多数站点不需要此功能。<br>
-                                如需开启或关闭，请在 WP Panel 面板中打开网站详情页 → WordPress 优化 →「允许 XML-RPC 接口」开关。<br>
-                            </p>
-                        </td>
-                    </tr>
-                </table>
+
+                <div class="wpp-tab-panel" data-tab-panel="cache">
+                    <table class="form-table">
+                        <tr>
+                            <th><label for="wpp-fcache-enabled">FastCGI 缓存</label></th>
+                            <td>
+                                <label><input id="wpp-fcache-enabled" name="fcache_enabled" type="checkbox" value="1" <?php checked($fcacheEnabled); ?>> 开启</label>
+                                <p class="description">Nginx 将 PHP 页面缓存为静态 HTML，大幅提升访问速度。</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label for="wpp-fcache-ttl">缓存有效期（秒）</label></th>
+                            <td>
+                                <input id="wpp-fcache-ttl" name="fcache_ttl" type="number" class="regular-text" value="<?php echo esc_attr($fcacheTTL); ?>" min="10" max="86400">
+                                <p class="description">建议 300-3600 秒（5分钟到1小时）。</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label for="wpp-preload-enabled">缓存预加载</label></th>
+                            <td>
+                                <label><input id="wpp-preload-enabled" name="preload_enabled" type="checkbox" value="1" <?php checked($preloadEnabled); ?>> 清除缓存后自动预加载</label>
+                                <p class="description">插件会以未登录访客身份访问本站公开页面，让 Nginx 自然生成 FastCGI 缓存文件。默认低速批处理，避免压垮小服务器。</p>
+                                <p class="description"><strong>说明：</strong>预加载只提前处理首页和最近更新的公开内容（最多为下方设置的 URL 数量），不是全站爬虫。未进入预加载队列的页面仍会在真实访客首次访问后由 Nginx 正常生成缓存。</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label for="wpp-preload-limit">单次最多预加载 URL</label></th>
+                            <td>
+                                <input id="wpp-preload-limit" name="preload_limit" type="number" class="small-text" value="<?php echo esc_attr($preloadLimit); ?>" min="10" max="500">
+                                <p class="description">范围 10-500。首页优先，其次为最近更新的公开文章、页面和公开分类归档。</p>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <h3>缓存预加载状态</h3>
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:0 0 12px;">
+                        <?php wp_nonce_field('wpp_cache_clear'); ?>
+                        <input type="hidden" name="action" value="wpp_cache_clear">
+                        <button type="submit" class="button button-primary" <?php disabled($missing); ?>>清除 Nginx 缓存</button>
+                        <span class="description">适合手机后台或管理栏不方便操作时手动清理缓存。</span>
+                    </form>
+                    <p>当前状态：<strong><?php echo esc_html($preloadStatus['running'] ? '运行中' : '空闲'); ?></strong>
+                        <?php if (!empty($preloadStatus['last_message'])): ?>
+                            <span class="description"><?php echo esc_html($preloadStatus['last_message']); ?></span>
+                        <?php endif; ?>
+                    </p>
+                    <p class="description">
+                        队列：<?php echo intval($preloadStatus['queued']); ?>，
+                        成功：<?php echo intval($preloadStatus['done']); ?>，
+                        失败：<?php echo intval($preloadStatus['failed']); ?>
+                        <?php if (!empty($preloadStatus['started_at'])): ?>
+                            ，开始：<?php echo esc_html($preloadStatus['started_at']); ?>
+                        <?php endif; ?>
+                        <?php if (!empty($preloadStatus['last_run_at'])): ?>
+                            ，上次执行：<?php echo esc_html($preloadStatus['last_run_at']); ?>
+                        <?php endif; ?>
+                        <?php if (!empty($preloadStatus['finished_at'])): ?>
+                            ，结束：<?php echo esc_html($preloadStatus['finished_at']); ?>
+                        <?php endif; ?>
+                    </p>
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;margin-right:8px;">
+                        <?php wp_nonce_field('wpp_cache_preload'); ?>
+                        <input type="hidden" name="action" value="wpp_cache_preload">
+                        <button type="submit" class="button" <?php disabled(!$fcacheEnabled); ?>>立即预加载</button>
+                    </form>
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;">
+                        <?php wp_nonce_field('wpp_cache_preload_stop'); ?>
+                        <input type="hidden" name="action" value="wpp_cache_preload_stop">
+                        <button type="submit" class="button" <?php disabled(!$preloadStatus['running']); ?>>停止预加载</button>
+                    </form>
+                    <?php if (!$fcacheEnabled): ?>
+                        <p class="description">请先开启 FastCGI 缓存，再执行预加载。</p>
+                    <?php endif; ?>
+
+                    <?php if (!empty($log)): ?>
+                    <h3>最近清除记录</h3>
+                    <table class="wp-list-table widefat fixed striped" style="max-width:600px">
+                        <thead><tr><th>时间</th><th>方式</th><th>结果</th></tr></thead>
+                        <tbody>
+                            <?php foreach ($log as $entry): ?>
+                            <tr>
+                                <td><?php echo esc_html($entry['time']); ?></td>
+                                <td><?php
+                                    $labels = ['manual' => '手动清除', 'auto' => '自动清除（发布文章）', 'comment' => '自动清除（评论变更）'];
+                                    echo esc_html($labels[$entry['type']] ?? '自动清除');
+                                ?></td>
+                                <td><?php echo !empty($entry['success']) ? '<span style="color:green">成功</span>' : '<span style="color:red">失败</span>'; ?></td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    <?php endif; ?>
+                </div>
+
+                <div class="wpp-tab-panel" data-tab-panel="image" style="display:none">
+                    <table class="form-table">
+                        <tr>
+                            <th><label for="wpp-image-mode-off">新上传图片处理</label></th>
+                            <td>
+                                <?php if (!$imageEnvReady): ?>
+                                    <p class="description" style="color:#d63638"><strong>服务器缺少 exif 扩展，暂不支持图片处理。</strong>该功能依赖 PHP <code>exif</code> 扩展做拍照方向修正，面板补装完成后刷新本页即可使用。</p>
+                                <?php endif; ?>
+                                <label style="display:block;margin-bottom:6px;"><input id="wpp-image-mode-off" type="radio" name="image_mode" value="off" <?php checked($imageMode, self::IMAGE_MODE_OFF); ?> <?php disabled(!$imageEnvReady); ?>> 关闭</label>
+                                <label style="display:block;margin-bottom:6px;"><input id="wpp-image-mode-optimize" type="radio" name="image_mode" value="optimize" <?php checked($imageMode, self::IMAGE_MODE_OPTIMIZE); ?> <?php disabled(!$imageEnvReady); ?>> 优化模式 — JPEG 按质量重新编码（有损但视觉无差异，非无损），PNG 无损压缩</label>
+                                <label style="display:block;"><input id="wpp-image-mode-webp" type="radio" name="image_mode" value="webp" <?php checked($imageMode, self::IMAGE_MODE_WEBP); ?> <?php disabled(!$imageEnvReady); ?>> WebP 模式 — 统一转换为 WebP 并删除原图</label>
+                                <p class="description" style="margin-top:10px;">
+                                    JPEG 质量：<input type="number" name="image_jpeg_quality" class="small-text" value="<?php echo esc_attr($imageJpegQuality); ?>" min="1" max="100" <?php disabled(!$imageEnvReady); ?>>
+                                    　WebP 质量：<input type="number" name="image_webp_quality" class="small-text" value="<?php echo esc_attr($imageWebpQuality); ?>" min="1" max="100" <?php disabled(!$imageEnvReady); ?>>
+                                </p>
+                                <?php if ($imageMode === self::IMAGE_MODE_WEBP): ?>
+                                    <p class="description">WebP 模式会删除原图，不提供保留原图的选项。如需保留原始文件，请自行在本地备份；网站依赖 JPG/PNG 格式的邮件通知、社交平台分享卡片或第三方插件时请先确认不受影响。</p>
+                                <?php endif; ?>
+                                <?php if ($imageSkippedCount > 0): ?>
+                                    <p class="description">有 <?php echo esc_html($imageSkippedCount); ?> 张图片未能转换成功（文件格式不受支持、转换后体积反而更大等原因），已自动保留原图，不影响正常上传。</p>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <hr>
+                    <h3>历史图库批量优化</h3>
+                    <p class="description">对媒体库里已有的历史 JPEG/PNG 做原地无损重编码，不改文件名、不生成 WebP 副本、不影响已发布内容里的图片引用。处理由面板降权执行，这里只是发起和查看进度，跟 WP Panel 网站详情页的「图片优化」卡片是同一个任务。</p>
+                    <p style="margin-top:10px;">
+                        <button type="button" id="wpp-image-batch-start" class="button button-primary" <?php disabled($fileLockEnabled); ?>>开始批量优化</button>
+                        <button type="button" id="wpp-image-batch-stop" class="button" style="display:none">停止</button>
+                        <span id="wpp-image-batch-status" class="description"></span>
+                    </p>
+                    <p id="wpp-image-batch-progress" class="description" style="display:none"></p>
+                </div>
+
+                <div class="wpp-tab-panel" data-tab-panel="security" style="display:none">
+                    <table class="form-table">
+                        <tr>
+                            <th><label for="wpp-no-updates">禁止检测更新</label></th>
+                            <td>
+                                <label><input id="wpp-no-updates" name="no_updates" type="checkbox" value="1" <?php checked($noUpdates); ?>> 完全屏蔽 WordPress 核心、插件和主题的更新检测和提示</label>
+                                <p class="description">启用后完全屏蔽更新检测，仪表盘无红点无通知，后台「检查更新」也不生效。如需更新，先关闭此开关。</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label for="wpp-no-file-edit">禁止文件编辑</label></th>
+                            <td>
+                                <label><input id="wpp-no-file-edit" name="no_file_edit" type="checkbox" value="1" <?php checked($noFileEdit); ?>> 禁止在 WordPress 后台编辑主题和插件文件</label>
+                                <p class="description">面板将写入 <code>DISALLOW_FILE_EDIT</code> 常量到 wp-config.php。</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label for="wpp-wp-debug">启用调试模式</label></th>
+                            <td>
+                                <label><input id="wpp-wp-debug" name="wp_debug" type="checkbox" value="1" <?php checked($wpDebug); ?>> 开启 <code>WP_DEBUG</code></label>
+                                <p class="description">开启后 PHP 错误和警告将写入 <code>wp-content/debug.log</code>，并开启 <code>WP_DEBUG_LOG</code>、关闭 <code>WP_DEBUG_DISPLAY</code>（错误不显示在页面，仅记录日志）。<br>用于排查网站白屏、500 错误等问题，正常使用时请关闭以免日志文件持续增长。</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label for="wpp-post-revisions">文章修订版本数</label></th>
+                            <td>
+                                <input id="wpp-post-revisions" name="post_revisions" type="number" class="small-text" value="<?php echo esc_attr($postRevisions >= 0 ? $postRevisions : ''); ?>" min="-1" placeholder="默认">
+                                <p class="description">留空 = WordPress 默认（无限制），<strong>0 = 完全不保留修订</strong>，设置为 3~5 可有效减少数据库占用。<br>每保存一次文章就会生成一个修订版本，长期不清理会占用大量数据库空间。</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label for="wpp-memory-limit">WordPress 内存限制</label></th>
+                            <td>
+                                <input id="wpp-memory-limit" name="memory_limit" type="text" class="regular-text" value="<?php echo esc_attr($memoryLimit); ?>" placeholder="默认 40M">
+                                <p class="description">设置 WordPress 的 <code>WP_MEMORY_LIMIT</code>，如 <code>128M</code>、<code>256M</code>。留空使用 WordPress 默认值（40M）。<br>这是 WordPress 应用层内存限制，不是 PHP-FPM 的 <code>memory_limit</code> 硬上限；实际值不应超过面板「软件管理」中的 PHP 内存限制。遇到"Allowed memory size exhausted"错误、后台白屏时可适当调高。</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>XML-RPC 接口</th>
+                            <td>
+                                <span style="font-weight:bold;color:<?php echo $xmlrpcEnabled ? '#00a32a' : '#d63638'; ?>"><?php echo $xmlrpcEnabled ? '已开启' : '已关闭'; ?></span>
+                                <p class="description">
+                                    XML-RPC 是 WordPress 远程通信接口。关闭后 Nginx 直接返回 403，请求不到 PHP-FPM，可彻底防御 xmlrpc.php 暴力攻击。<br>
+                                    影响：<strong>无法使用 Jetpack、WordPress 手机 App、pingback/trackback、第三方通过 XML-RPC 发布文章</strong>。绝大多数站点不需要此功能。<br>
+                                    如需开启或关闭，请在 WP Panel 面板中打开网站详情页 → WordPress 优化 →「允许 XML-RPC 接口」开关。<br>
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+
+                <div class="wpp-tab-panel" data-tab-panel="about" style="display:none">
+                    <table class="form-table">
+                        <tr>
+                            <th>API Key</th>
+                            <td><code><?php echo esc_html($apiKey ? substr($apiKey, 0, 8) . '...' : '未配置'); ?></code></td>
+                        </tr>
+                    </table>
+                    <p>
+                        <button type="button" id="wpp-verify-btn" class="button">验证连接</button>
+                    </p>
+                    <div id="wpp-verify-msg"></div>
+                </div>
+
                 <p>
                     <button type="submit" name="wpp_save" class="button button-primary" <?php disabled($fileLockEnabled); ?>>保存设置</button>
-                    <button type="button" id="wpp-verify-btn" class="button">验证连接</button>
                 </p>
             </form>
 
-            <hr>
-            <h2>缓存预加载</h2>
-            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:0 0 12px;">
-                <?php wp_nonce_field('wpp_cache_clear'); ?>
-                <input type="hidden" name="action" value="wpp_cache_clear">
-                <button type="submit" class="button button-primary" <?php disabled($missing); ?>>清除 Nginx 缓存</button>
-                <span class="description">适合手机后台或管理栏不方便操作时手动清理缓存。</span>
-            </form>
-            <p>当前状态：<strong><?php echo esc_html($preloadStatus['running'] ? '运行中' : '空闲'); ?></strong>
-                <?php if (!empty($preloadStatus['last_message'])): ?>
-                    <span class="description"><?php echo esc_html($preloadStatus['last_message']); ?></span>
-                <?php endif; ?>
-            </p>
-            <p class="description">
-                队列：<?php echo intval($preloadStatus['queued']); ?>，
-                成功：<?php echo intval($preloadStatus['done']); ?>，
-                失败：<?php echo intval($preloadStatus['failed']); ?>
-                <?php if (!empty($preloadStatus['started_at'])): ?>
-                    ，开始：<?php echo esc_html($preloadStatus['started_at']); ?>
-                <?php endif; ?>
-                <?php if (!empty($preloadStatus['last_run_at'])): ?>
-                    ，上次执行：<?php echo esc_html($preloadStatus['last_run_at']); ?>
-                <?php endif; ?>
-                <?php if (!empty($preloadStatus['finished_at'])): ?>
-                    ，结束：<?php echo esc_html($preloadStatus['finished_at']); ?>
-                <?php endif; ?>
-            </p>
-            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;margin-right:8px;">
-                <?php wp_nonce_field('wpp_cache_preload'); ?>
-                <input type="hidden" name="action" value="wpp_cache_preload">
-                <button type="submit" class="button" <?php disabled(!$fcacheEnabled); ?>>立即预加载</button>
-            </form>
-            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;">
-                <?php wp_nonce_field('wpp_cache_preload_stop'); ?>
-                <input type="hidden" name="action" value="wpp_cache_preload_stop">
-                <button type="submit" class="button" <?php disabled(!$preloadStatus['running']); ?>>停止预加载</button>
-            </form>
-            <?php if (!$fcacheEnabled): ?>
-                <p class="description">请先开启 FastCGI 缓存，再执行预加载。</p>
-            <?php endif; ?>
-
-            <?php if (!empty($log)): ?>
-            <hr>
-            <h2>最近清除记录</h2>
-            <table class="wp-list-table widefat fixed striped" style="max-width:600px">
-                <thead><tr><th>时间</th><th>方式</th><th>结果</th></tr></thead>
-                <tbody>
-                    <?php foreach ($log as $entry): ?>
-                    <tr>
-                        <td><?php echo esc_html($entry['time']); ?></td>
-                        <td><?php
-                            $labels = ['manual' => '手动清除', 'auto' => '自动清除（发布文章）', 'comment' => '自动清除（评论变更）'];
-                            echo esc_html($labels[$entry['type']] ?? '自动清除');
-                        ?></td>
-                        <td><?php echo !empty($entry['success']) ? '<span style="color:green">成功</span>' : '<span style="color:red">失败</span>'; ?></td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-            <?php endif; ?>
-
             <script>
+            (function() {
+                var tabs = document.querySelectorAll('#wpp-tabs .nav-tab');
+                var panels = document.querySelectorAll('.wpp-tab-panel');
+                function activate(name) {
+                    tabs.forEach(function(t) { t.classList.toggle('nav-tab-active', t.dataset.tab === name); });
+                    panels.forEach(function(p) { p.style.display = (p.dataset.tabPanel === name) ? '' : 'none'; });
+                    try { sessionStorage.setItem('wpp_active_tab', name); } catch (e) {}
+                }
+                tabs.forEach(function(t) {
+                    t.addEventListener('click', function(e) { e.preventDefault(); activate(t.dataset.tab); });
+                });
+                var saved = null;
+                try { saved = sessionStorage.getItem('wpp_active_tab'); } catch (e) {}
+                if (saved && document.querySelector('.wpp-tab-panel[data-tab-panel="' + saved + '"]')) {
+                    activate(saved);
+                }
+            })();
+
             document.getElementById('wpp-verify-btn').addEventListener('click', function() {
                 var btn = this, msg = document.getElementById('wpp-verify-msg');
                 btn.disabled = true;
@@ -423,6 +477,76 @@ trait WPP_Optimizer_Settings_Trait {
                     })
                     .finally(() => { btn.disabled = false; btn.textContent = '检查更新'; });
             });
+
+            (function() {
+                var startBtn = document.getElementById('wpp-image-batch-start');
+                var stopBtn = document.getElementById('wpp-image-batch-stop');
+                var statusEl = document.getElementById('wpp-image-batch-status');
+                var progressEl = document.getElementById('wpp-image-batch-progress');
+                var nonce = '<?php echo esc_attr(wp_create_nonce('wpp_optimizer_settings')); ?>';
+                var ajaxUrl = '<?php echo esc_url(admin_url('admin-ajax.php')); ?>';
+                var pollTimer = null;
+
+                function call(action, extra) {
+                    var params = new URLSearchParams(Object.assign({ action: action, _wpnonce: nonce }, extra || {}));
+                    return fetch(ajaxUrl + '?' + params.toString(), { method: 'POST' }).then(r => r.json());
+                }
+
+                var statusLabels = { queued: '排队中', running: '运行中', succeeded: '已完成', failed: '失败', stopped: '已停止', none: '' };
+
+                function render(job) {
+                    if (!job || !job.Status || job.Status === 'none') {
+                        statusEl.textContent = '';
+                        progressEl.style.display = 'none';
+                        startBtn.style.display = '';
+                        stopBtn.style.display = 'none';
+                        return;
+                    }
+                    var running = job.Status === 'queued' || job.Status === 'running';
+                    statusEl.textContent = statusLabels[job.Status] || job.Status;
+                    startBtn.style.display = running ? 'none' : '';
+                    stopBtn.style.display = running ? '' : 'none';
+                    progressEl.style.display = '';
+                    var text = '进度：' + (job.ProcessedFiles || 0) + ' / ' + (job.TotalFiles || 0);
+                    if (job.FailedFiles > 0) text += '（失败 ' + job.FailedFiles + '）';
+                    var saved = (job.BytesBefore || 0) - (job.BytesAfter || 0);
+                    if (saved > 0) text += '，已节省 ' + (saved / 1024 / 1024).toFixed(2) + ' MB';
+                    progressEl.textContent = text;
+                    if (running) {
+                        clearTimeout(pollTimer);
+                        pollTimer = setTimeout(poll, 3000);
+                    }
+                }
+
+                function poll() {
+                    call('wpp_optimizer_image_batch_status').then(function(data) {
+                        if (data.success) render(data.data);
+                    });
+                }
+
+                startBtn.addEventListener('click', function() {
+                    startBtn.disabled = true;
+                    call('wpp_optimizer_image_batch_start').then(function(data) {
+                        startBtn.disabled = false;
+                        if (data.success) {
+                            render(data.data && data.data.Status ? data.data : { Status: 'queued' });
+                            poll();
+                        } else {
+                            statusEl.textContent = '启动失败：' + (data.data?.message || '未知错误');
+                        }
+                    });
+                });
+
+                stopBtn.addEventListener('click', function() {
+                    stopBtn.disabled = true;
+                    call('wpp_optimizer_image_batch_stop').then(function() {
+                        stopBtn.disabled = false;
+                        poll();
+                    });
+                });
+
+                poll();
+            })();
             </script>
         </div>
         <?php

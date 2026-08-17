@@ -37,6 +37,11 @@ function wpp_optimizer_uninstall() {
 }
 
 
+// 拆分成 trait 文件后 __FILE__ 在 trait 内部指向的是 includes/ 下的文件，不是本文件；
+// plugin_action_links_{basename} 这个钩子名必须精确匹配主文件的 basename，用一个
+// 在主文件里求值的常量传给 trait，不能在 trait 内部重新取 __FILE__。
+define('WPP_OPTIMIZER_PLUGIN_FILE', __FILE__);
+
 require_once __DIR__ . '/includes/trait-config.php';
 require_once __DIR__ . '/includes/trait-cache.php';
 require_once __DIR__ . '/includes/trait-settings.php';
