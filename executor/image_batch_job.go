@@ -41,6 +41,7 @@ type ImageOptimizationJobStatus struct {
 	ProcessedFiles int
 	SucceededFiles int
 	FailedFiles    int
+	SkippedFiles   int
 	BytesBefore    int64
 	BytesAfter     int64
 	LastError      string
@@ -115,11 +116,11 @@ func StopImageOptimizationJob(siteID int) error {
 // GetImageOptimizationJobStatus 返回该站点最近一次任务的状态，没有任务时返回 nil。
 func GetImageOptimizationJobStatus(siteID int) (*ImageOptimizationJobStatus, error) {
 	db := database.GetDB()
-	row := db.QueryRow(`SELECT id, site_id, status, total_files, processed_files, succeeded_files, failed_files,
+	row := db.QueryRow(`SELECT id, site_id, status, total_files, processed_files, succeeded_files, failed_files, skipped_files,
 		bytes_before, bytes_after, last_error, created_at, updated_at, finished_at
 		FROM site_image_optimization_jobs WHERE site_id=? ORDER BY id DESC LIMIT 1`, siteID)
 	var s ImageOptimizationJobStatus
-	if err := row.Scan(&s.ID, &s.SiteID, &s.Status, &s.TotalFiles, &s.ProcessedFiles, &s.SucceededFiles, &s.FailedFiles,
+	if err := row.Scan(&s.ID, &s.SiteID, &s.Status, &s.TotalFiles, &s.ProcessedFiles, &s.SucceededFiles, &s.FailedFiles, &s.SkippedFiles,
 		&s.BytesBefore, &s.BytesAfter, &s.LastError, &s.CreatedAt, &s.UpdatedAt, &s.FinishedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -148,7 +149,11 @@ func runImageOptimizationJob(ctx context.Context, jobID int64, siteID int, webRo
 	}
 
 	pending := filterAlreadyOptimizedImages(db, siteID, candidates)
-	db.Exec(`UPDATE site_image_optimization_jobs SET total_files=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, len(pending), jobID)
+	// skipped 是幂等指纹命中、本次不需要重新处理的文件数——只在界面上展示，
+	// 让用户能看出"总数变小了"是因为跳过了已处理文件，不是又从头扫描一遍。
+	skipped := len(candidates) - len(pending)
+	db.Exec(`UPDATE site_image_optimization_jobs SET total_files=?, skipped_files=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		len(pending), skipped, jobID)
 
 	manifest := make(map[string]int64)
 	var processed, succeeded, failed int

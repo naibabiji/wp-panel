@@ -43,8 +43,13 @@ func TestUpgradeAddsImageOptimizerSchemaFrom1048(t *testing.T) {
 		t.Fatalf("second RunUpgrades() error = %v", err)
 	}
 
-	if got := LatestVersion(); got != "1.0.49" {
-		t.Fatalf("LatestVersion() = %q, want 1.0.49", got)
+	if got := LatestVersion(); got != "1.0.50" {
+		t.Fatalf("LatestVersion() = %q, want 1.0.50", got)
+	}
+
+	var hasSkippedFiles int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('site_image_optimization_jobs') WHERE name = 'skipped_files'`).Scan(&hasSkippedFiles); err != nil || hasSkippedFiles != 1 {
+		t.Fatalf("skipped_files column missing after upgrade: exists=%d err=%v", hasSkippedFiles, err)
 	}
 
 	var sites int
@@ -89,5 +94,9 @@ func TestFreshInstallImageOptimizerSchemaMatchesUpgradePath(t *testing.T) {
 		if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&exists); err != nil || exists != 1 {
 			t.Fatalf("fresh install missing table %s: exists=%d err=%v", table, exists, err)
 		}
+	}
+	var hasSkippedFiles int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('site_image_optimization_jobs') WHERE name = 'skipped_files'`).Scan(&hasSkippedFiles); err != nil || hasSkippedFiles != 1 {
+		t.Fatalf("fresh install missing skipped_files column: exists=%d err=%v", hasSkippedFiles, err)
 	}
 }

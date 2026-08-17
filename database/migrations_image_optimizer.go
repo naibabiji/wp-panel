@@ -16,6 +16,7 @@ var imageOptimizerSchemaStatements = []string{
 		processed_files INTEGER NOT NULL DEFAULT 0,
 		succeeded_files INTEGER NOT NULL DEFAULT 0,
 		failed_files    INTEGER NOT NULL DEFAULT 0,
+		skipped_files   INTEGER NOT NULL DEFAULT 0,
 		bytes_before    INTEGER NOT NULL DEFAULT 0,
 		bytes_after     INTEGER NOT NULL DEFAULT 0,
 		last_error      TEXT NOT NULL DEFAULT '',

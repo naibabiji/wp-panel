@@ -586,6 +586,11 @@ var upgrades = []Upgrade{
 		Description: "新增历史图库批量优化的任务表和已处理文件表",
 		SQL:         imageOptimizerSchemaStatements,
 	},
+	{
+		Version:     "1.0.50",
+		Description: "图片优化任务表新增 skipped_files 列，展示幂等跳过的已处理文件数",
+		Func:        ensureImageOptimizationSkippedFilesColumn,
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {
@@ -970,6 +975,25 @@ func ensureCDNRealIPEnabledColumn() error {
 		return nil
 	}
 	_, err := DB.Exec(`ALTER TABLE websites ADD COLUMN cdn_realip_enabled INTEGER NOT NULL DEFAULT 0`)
+	return err
+}
+
+func ensureImageOptimizationSkippedFilesColumn() error {
+	var tableExists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'site_image_optimization_jobs'`).Scan(&tableExists); err != nil {
+		return err
+	}
+	if tableExists == 0 {
+		return nil
+	}
+	var exists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('site_image_optimization_jobs') WHERE name = 'skipped_files'`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 1 {
+		return nil
+	}
+	_, err := DB.Exec(`ALTER TABLE site_image_optimization_jobs ADD COLUMN skipped_files INTEGER NOT NULL DEFAULT 0`)
 	return err
 }
 
