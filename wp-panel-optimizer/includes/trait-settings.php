@@ -167,7 +167,7 @@ trait WPP_Optimizer_Settings_Trait {
                 $notice = '<div class="notice notice-warning is-dismissible"><p><strong>注意：</strong>设置已保存在本地，但同步到面板失败。错误信息：<code>' . esc_html($errMsg) . '</code></p><p>下次进入本页面时将从面板拉取状态，可能覆盖本次修改。请检查插件设置中的「验证连接」是否正常。</p></div>';
             }
             if ($switchedToWebp) {
-                $notice .= '<div class="notice notice-warning"><p><strong>WebP 模式已开启。</strong>新上传的 JPG/PNG 图片会统一转换为 WebP 格式并删除原图。请确认：① 如需保留原始文件，请自行在本地备份；② 网站没有依赖 JPG/PNG 格式的邮件通知（部分 Outlook 客户端不支持在邮件中显示 WebP 图片）、社交平台分享卡片（部分微信/QQ 等抓取器对 WebP 支持不佳）、或需要原图格式的第三方插件。这些场景仍需要 JPG/PNG 时可以从 WebP 反向转换生成，但不是自动的。</p></div>';
+                $notice .= '<div class="notice notice-info"><p><strong>WebP 模式已开启。</strong>新上传的 JPG/PNG 图片会自动转换为体积更小的 WebP 格式，不再保留原图。绝大多数网站切换后不会有任何影响；如果之后发现某些邮件通知、分享卡片或老插件用到了原图格式，随时可以把对应的 WebP 图片转换回 JPG/PNG 使用。</p></div>';
             }
             }
         }
@@ -267,7 +267,7 @@ trait WPP_Optimizer_Settings_Trait {
                                     　WebP 质量：<input type="number" name="image_webp_quality" class="small-text" value="<?php echo esc_attr($imageWebpQuality); ?>" min="1" max="100" <?php disabled(!$imageEnvReady); ?>>
                                 </p>
                                 <?php if ($imageMode === self::IMAGE_MODE_WEBP): ?>
-                                    <p class="description">WebP 模式会删除原图，不提供保留原图的选项。如需保留原始文件，请自行在本地备份；网站依赖 JPG/PNG 格式的邮件通知、社交平台分享卡片或第三方插件时请先确认不受影响。</p>
+                                    <p class="description">WebP 模式不保留原图，新上传图片会直接转换为 WebP。绝大多数网站不受影响，需要原图格式时也可以随时把 WebP 转换回 JPG/PNG。</p>
                                 <?php endif; ?>
                                 <?php if ($imageSkippedCount > 0): ?>
                                     <p class="description">有 <?php echo esc_html($imageSkippedCount); ?> 张图片未能转换成功（文件格式不受支持、转换后体积反而更大等原因），已自动保留原图，不影响正常上传。</p>
