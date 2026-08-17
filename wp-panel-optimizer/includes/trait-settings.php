@@ -278,7 +278,8 @@ trait WPP_Optimizer_Settings_Trait {
 
                     <hr>
                     <h3>历史图库批量优化</h3>
-                    <p class="description">对媒体库里已有的历史 JPEG/PNG 做原地无损重编码，不改文件名、不生成 WebP 副本、不影响已发布内容里的图片引用。处理由面板降权执行，这里只是发起和查看进度，跟 WP Panel 网站详情页的「图片优化」卡片是同一个任务。</p>
+                    <p class="description">对媒体库里已有的历史 JPEG/PNG 做原地无损重编码，不改文件名、不生成 WebP 副本、不影响已发布内容里的图片引用。实际处理由 WP Panel 面板降权执行，这里只是发起和查看进度。</p>
+                    <p class="description">这是后台任务，开始后可以放心关闭这个页面或标签，不会中断处理；下次回到本页会自动显示当前进度。</p>
                     <p style="margin-top:10px;">
                         <button type="button" id="wpp-image-batch-start" class="button button-primary" <?php disabled($fileLockEnabled); ?>>开始批量优化</button>
                         <button type="button" id="wpp-image-batch-stop" class="button" style="display:none">停止</button>
