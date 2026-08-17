@@ -154,52 +154,6 @@ trait WPP_Optimizer_Config_Trait {
         return self::api_request($method, $path, $body);
     }
 
-    public static function ajax_check_update() {
-        $result = self::check_github_release();
-        if (is_wp_error($result)) {
-            wp_send_json(['success' => false, 'data' => ['message' => $result->get_error_message()]]);
-            return;
-        }
-        $current  = self::VERSION;
-        $latest   = ltrim($result['tag_name'], 'v');
-        $hasUpdate = version_compare($latest, $current, '>');
-        wp_send_json([
-            'success'    => true,
-            'data'       => [
-                'current'     => $current,
-                'latest'      => $latest,
-                'has_update'  => $hasUpdate,
-                'release_url' => $result['html_url'],
-            ],
-        ]);
-    }
-
-    private static function check_github_release() {
-        $transient = get_transient('wpp_optimizer_release_v2');
-        if ($transient !== false) return $transient;
-
-        $resp = wp_remote_get('https://raw.githubusercontent.com/naibabiji/wp-panel/main/wp-panel-optimizer/wp-panel-optimizer.php', [
-            'timeout'   => 10,
-            'sslverify' => true,
-            'headers'   => ['User-Agent' => 'WP-Panel-Optimizer'],
-        ]);
-        if (is_wp_error($resp)) return $resp;
-        $code = wp_remote_retrieve_response_code($resp);
-        if ($code !== 200) return new \WP_Error('github_error', "GitHub raw 返回 HTTP $code");
-
-        $body = wp_remote_retrieve_body($resp);
-        if (!preg_match('/Version:\s*([0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9]+)?)/', $body, $m)) {
-            return new \WP_Error('parse_error', '无法解析插件版本');
-        }
-
-        $result = [
-            'tag_name' => 'v' . $m[1],
-            'html_url' => 'https://github.com/naibabiji/wp-panel/releases',
-        ];
-        set_transient('wpp_optimizer_release_v2', $result, HOUR_IN_SECONDS);
-        return $result;
-    }
-
     private static function api_request($method, $path, $body = null) {
         $baseUrl = self::get_panel_url();
         $apiKey  = self::get_api_key();

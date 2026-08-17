@@ -3,7 +3,7 @@ Contributors: naibabiji
 Requires at least: 5.0
 Tested up to: 7.0
 Requires PHP: 8.1
-Stable tag: 1.1.5
+Stable tag: 1.1.12
 License: GPL-2.0+
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -40,6 +40,13 @@ WP Panel Optimizer 是 [WP Panel](https://github.com/naibabiji/wp-panel) 的配�
 插件安装后，面板会在 Web 目录外的 /var/wp-panel/site-secrets/<domain>/wp-panel-config.json 写入配置文件（含面板地址和 API Key），无需手动填写凭证。
 
 == Changelog ==
+
+= 1.1.12 =
+* 设置页改为标签页布局（缓存与性能 / 图片优化 / 安全与维护 / 关于与面板同步），并修复标签页改造引入的一个 bug：部分表单曾被错误嵌套导致"保存设置"按钮无效
+* 修复插件列表页"设置"快捷链接自 1.1.10 模块化重构后失效的问题
+* 新增：设置页可直接发起/查看/停止历史图库批量优化，不必去面板后台操作，任务是后台任务，关闭页面不影响处理
+* 弱化 WebP 模式的原图删除提示文案，减少对新手用户的误导
+* 移除"检查更新"按钮——实际更新完全由 WP Panel 面板统一部署，这个按钮只是查询 GitHub 版本号，不会真正安装任何东西，容易造成误解
 
 = 1.1.11 =
 * 新增新上传图片处理：关闭 / 优化模式（JPEG 有损重编码 + PNG 无损压缩）/ WebP 模式（统一转换并删除原图）

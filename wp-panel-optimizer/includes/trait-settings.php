@@ -34,7 +34,6 @@ trait WPP_Optimizer_Settings_Trait {
         add_filter('plugin_action_links_' . plugin_basename(WPP_OPTIMIZER_PLUGIN_FILE), [__CLASS__, 'action_links']);
         add_action('admin_notices', [__CLASS__, 'clear_notice']);
         add_action('admin_notices', [__CLASS__, 'file_lock_notice']);
-        add_action('wp_ajax_wpp_optimizer_check_update', [__CLASS__, 'ajax_check_update']);
         add_action(self::PRELOAD_HOOK, [__CLASS__, 'process_preload_batch']);
         self::maybe_process_preload_tick();
         self::image_optimizer_init();
@@ -195,10 +194,7 @@ trait WPP_Optimizer_Settings_Trait {
             <?php $pluginVersion = WP_Panel_Optimizer::VERSION; ?>
             <h1>WP Panel Optimizer</h1>
             <p>由 <a href="https://github.com/naibabiji/wp-panel" target="_blank">WP Panel</a> 面板统一管理。当前站点：<code><?php echo esc_html($currentDomain); ?></code></p>
-            <p>插件版本：<code><?php echo esc_html($pluginVersion); ?></code>
-                <button type="button" id="wpp-check-update-btn" class="button">检查更新</button>
-                <span id="wpp-update-result"></span>
-            </p>
+            <p>插件版本：<code><?php echo esc_html($pluginVersion); ?></code>（随 WP Panel 面板自动更新，无需手动检查）</p>
             <?php echo wp_kses_post($notice); ?>
             <?php if ($missing): ?>
                 <div class="notice notice-error"><p><strong>配置文件缺失</strong> — 请在 WP Panel 面板中进入该网站详情页，点击 WordPress 优化卡片的「安装配套插件」按钮完成初始化。</p></div>
@@ -460,31 +456,6 @@ trait WPP_Optimizer_Settings_Trait {
                     .finally(() => { btn.disabled = false; btn.textContent = '验证连接'; });
             });
 
-            document.getElementById('wpp-check-update-btn').addEventListener('click', function() {
-                var btn = this, result = document.getElementById('wpp-update-result');
-                btn.disabled = true;
-                btn.textContent = '检查中...';
-                result.innerHTML = '';
-                fetch('<?php echo esc_url(admin_url('admin-ajax.php')); ?>?action=wpp_optimizer_check_update')
-                    .then(r => r.json())
-                    .then(data => {
-                        if (data.success) {
-                            var d = data.data;
-                            if (d.has_update) {
-                                result.innerHTML = ' <a href="' + d.release_url + '" target="_blank" style="color:#d63638;font-weight:bold">发现新版本 ' + d.latest + '（当前 ' + d.current + '）→ 在面板中更新</a>';
-                            } else {
-                                result.innerHTML = ' <span style="color:#00a32a">已是最新版本（' + d.current + '）</span>';
-                            }
-                        } else {
-                            result.innerHTML = ' <span style="color:#d63638">检查失败：' + (data.data?.message || '未知错误') + '</span>';
-                        }
-                    })
-                    .catch(e => {
-                        result.innerHTML = ' <span style="color:#d63638">网络错误：' + e.message + '</span>';
-                    })
-                    .finally(() => { btn.disabled = false; btn.textContent = '检查更新'; });
-            });
-
             (function() {
                 var startBtn = document.getElementById('wpp-image-batch-start');
                 var stopBtn = document.getElementById('wpp-image-batch-stop');
@@ -516,6 +487,7 @@ trait WPP_Optimizer_Settings_Trait {
                     progressEl.style.display = '';
                     var text = '进度：' + (job.ProcessedFiles || 0) + ' / ' + (job.TotalFiles || 0);
                     if (job.FailedFiles > 0) text += '（失败 ' + job.FailedFiles + '）';
+                    if (job.SkippedFiles > 0) text += '，另有 ' + job.SkippedFiles + ' 张此前已处理过，本次自动跳过';
                     var saved = (job.BytesBefore || 0) - (job.BytesAfter || 0);
                     if (saved > 0) text += '，已节省 ' + (saved / 1024 / 1024).toFixed(2) + ' MB';
                     progressEl.textContent = text;
