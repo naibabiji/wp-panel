@@ -61,16 +61,26 @@ func (h *ImageOptimizerHandler) PluginStatus(c *gin.Context) {
 		return
 	}
 
+	// 历史累计节省量跟当前任务是否存在无关，两个查询都要走，任一失败不影响另一个。
+	lifetimeSaved, err := executor.GetImageOptimizationLifetimeSavedBytes(site.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询失败"))
+		return
+	}
+
 	status, err := executor.GetImageOptimizationJobStatus(site.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询失败"))
 		return
 	}
 	if status == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"status": "none"}))
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"Status": "none", "LifetimeBytesSaved": lifetimeSaved}))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(status))
+	c.JSON(http.StatusOK, models.SuccessResponse(struct {
+		*executor.ImageOptimizationJobStatus
+		LifetimeBytesSaved int64
+	}{status, lifetimeSaved}))
 }
 
 func (h *ImageOptimizerHandler) PluginStop(c *gin.Context) {

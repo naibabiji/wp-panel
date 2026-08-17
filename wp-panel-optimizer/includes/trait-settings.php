@@ -282,6 +282,7 @@ trait WPP_Optimizer_Settings_Trait {
                         <span id="wpp-image-batch-status" class="description"></span>
                     </p>
                     <p id="wpp-image-batch-progress" class="description" style="display:none"></p>
+                    <p id="wpp-image-batch-lifetime" class="description" style="display:none"></p>
                 </div>
 
                 <div class="wpp-tab-panel" data-tab-panel="security" style="display:none">
@@ -461,6 +462,7 @@ trait WPP_Optimizer_Settings_Trait {
                 var stopBtn = document.getElementById('wpp-image-batch-stop');
                 var statusEl = document.getElementById('wpp-image-batch-status');
                 var progressEl = document.getElementById('wpp-image-batch-progress');
+                var lifetimeEl = document.getElementById('wpp-image-batch-lifetime');
                 var nonce = '<?php echo esc_attr(wp_create_nonce('wpp_optimizer_settings')); ?>';
                 var ajaxUrl = '<?php echo esc_url(admin_url('admin-ajax.php')); ?>';
                 var pollTimer = null;
@@ -472,7 +474,22 @@ trait WPP_Optimizer_Settings_Trait {
 
                 var statusLabels = { queued: '排队中', running: '运行中', succeeded: '已完成', failed: '失败', stopped: '已停止', none: '' };
 
+                // LifetimeBytesSaved 是这个站点历史所有批量任务的累计节省量，跟当前
+                // 有没有任务在跑无关——单次任务的节省量只统计"这次任务实际处理过的
+                // 文件"，跳过的文件不计入，跳过越多，单次数字看起来就越小，容易被
+                // 误以为"节省数据消失了"，所以单独展示一个不随任务重置的累计值。
+                function renderLifetime(job) {
+                    var lifetime = (job && job.LifetimeBytesSaved) || 0;
+                    if (lifetime > 0) {
+                        lifetimeEl.style.display = '';
+                        lifetimeEl.textContent = '累计已节省 ' + (lifetime / 1024 / 1024).toFixed(2) + ' MB（历次批量优化总计）';
+                    } else {
+                        lifetimeEl.style.display = 'none';
+                    }
+                }
+
                 function render(job) {
+                    renderLifetime(job);
                     if (!job || !job.Status || job.Status === 'none') {
                         statusEl.textContent = '';
                         progressEl.style.display = 'none';
@@ -489,7 +506,7 @@ trait WPP_Optimizer_Settings_Trait {
                     if (job.FailedFiles > 0) text += '（失败 ' + job.FailedFiles + '）';
                     if (job.SkippedFiles > 0) text += '，另有 ' + job.SkippedFiles + ' 张此前已处理过，本次自动跳过';
                     var saved = (job.BytesBefore || 0) - (job.BytesAfter || 0);
-                    if (saved > 0) text += '，已节省 ' + (saved / 1024 / 1024).toFixed(2) + ' MB';
+                    if (saved > 0) text += '，本次节省 ' + (saved / 1024 / 1024).toFixed(2) + ' MB';
                     progressEl.textContent = text;
                     if (running) {
                         clearTimeout(pollTimer);

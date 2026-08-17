@@ -130,6 +130,20 @@ func GetImageOptimizationJobStatus(siteID int) (*ImageOptimizationJobStatus, err
 	return &s, nil
 }
 
+// GetImageOptimizationLifetimeSavedBytes 汇总该站点历史上所有批量任务实际节省的
+// 字节数——单次任务的 bytes_before/bytes_after 只统计"这次任务处理过的文件"，
+// 跳过的文件（幂等命中）不会计入，所以一次任务展示的节省量会随着可优化文件越
+// 来越少而趋近于 0；这里把所有历史任务加总，给出"这个站点总共省了多少"。
+func GetImageOptimizationLifetimeSavedBytes(siteID int) (int64, error) {
+	db := database.GetDB()
+	var saved sql.NullInt64
+	err := db.QueryRow(`SELECT SUM(bytes_before - bytes_after) FROM site_image_optimization_jobs WHERE site_id=?`, siteID).Scan(&saved)
+	if err != nil {
+		return 0, err
+	}
+	return saved.Int64, nil
+}
+
 func runImageOptimizationJob(ctx context.Context, jobID int64, siteID int, webRoot, systemUser string) {
 	db := database.GetDB()
 	defer func() {
