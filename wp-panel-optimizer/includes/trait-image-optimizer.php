@@ -72,8 +72,10 @@ trait WPP_Optimizer_Image_Trait {
             return $file;
         }
 
-        // 第 0 步：上传本身已失败，零成本直接跳过。
-        if (!empty($file['error']) && intval($file['error']) !== 0) {
+        // 第 0 步：上传本身已失败（或其他插件已经在 error 里写了拒绝原因，可能
+        // 是非数字字符串），零成本直接跳过；不能用 intval() 判断，字符串错误消息
+        // intval() 后是 0，会被误判为"没有错误"。
+        if (!empty($file['error'])) {
             return $file;
         }
         if (empty($file['tmp_name']) || empty($file['name']) || !is_readable($file['tmp_name'])) {
@@ -143,7 +145,17 @@ trait WPP_Optimizer_Image_Trait {
         // 过去——wp_handle_upload 这个 action 路径下，prefilter 之后 WordPress
         // 会用 is_uploaded_file($file['tmp_name']) 校验这个路径确实是本次请求里
         // PHP 通过 HTTP POST 收到的上传文件，指向新建文件会导致校验失败、上传被拒绝。
+        //
+        // file_put_contents 默认按 'w' 模式打开即截断原文件，磁盘满等情况下可能
+        // 写到一半失败，留下损坏的临时文件；先把原始字节读进内存（前面已校验
+        // 大小不超过 IMAGE_MAX_UPLOAD_BYTES），写失败时尽力恢复，不留半写文件。
+        $originalBytes = @file_get_contents($file['tmp_name']);
+        if ($originalBytes === false) {
+            self::bump_image_skipped_count();
+            return $file;
+        }
         if (@file_put_contents($file['tmp_name'], $encoded) === false) {
+            @file_put_contents($file['tmp_name'], $originalBytes);
             self::bump_image_skipped_count();
             return $file;
         }

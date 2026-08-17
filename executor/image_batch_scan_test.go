@@ -35,6 +35,8 @@ func TestScanSiteUploadsForImagesFindsJPEGAndPNGOnly(t *testing.T) {
 	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
 		t.Fatalf("mkdir uploads: %v", err)
 	}
+	jpegBytes := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46}
+	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
 	files := map[string]bool{ // name -> should be picked up
 		"photo.jpg":   true,
 		"photo.jpeg":  true,
@@ -43,8 +45,17 @@ func TestScanSiteUploadsForImagesFindsJPEGAndPNGOnly(t *testing.T) {
 		"archive.zip": false,
 		"noext":       false,
 	}
+	contents := map[string][]byte{
+		"photo.jpg":  jpegBytes,
+		"photo.jpeg": jpegBytes,
+		"icon.png":   pngBytes,
+	}
 	for name := range files {
-		if err := os.WriteFile(filepath.Join(uploadsDir, name), []byte("data"), 0644); err != nil {
+		data, ok := contents[name]
+		if !ok {
+			data = []byte("data")
+		}
+		if err := os.WriteFile(filepath.Join(uploadsDir, name), data, 0644); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}

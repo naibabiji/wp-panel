@@ -87,6 +87,12 @@ foreach ($byDir as $dir => $basenames) {
 
     $matchedInDir = [];
     foreach ($rows as $row) {
+        // LIKE '<dir>/%' 也会命中子目录（如 <dir>/sub/foo.jpg），子目录里同名文件
+        // 会被 basename 误配到 <dir> 下的清单条目；用 dirname 严格限定在当前目录，
+        // 子附件的 sizes/backup 文件按 WordPress 约定都跟主图同目录，一并覆盖。
+        if (dirname((string) $row->meta_value) !== $dir) {
+            continue;
+        }
         $attachmentId = (int) $row->post_id;
         $attachedBase = basename((string) $row->meta_value);
         $metaChanged = false;

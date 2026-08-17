@@ -26,8 +26,12 @@ var imageFilesizeRunnerPHPSource []byte
 // 硬编码集合，不接受任何来自请求的动态输入，真实的安全边界由这个固定集合、
 // 目标文件路径校验和降权执行三者共同构成（不依赖 executor/commander.go 的
 // allowedCommands 白名单，见 ADR-0003 决策 2）。
+// jpegoptim 只剥 comment/IPTC/XMP，刻意不传 --strip-all：历史照片里可能存在
+// "像素本身未转正、靠 EXIF orientation 标签显示方向"的 JPEG（2019 年前上传、
+// 或从其他面板迁移来的文件），--strip-all 会把 orientation 标签连同 EXIF 一起
+// 剥掉，导致这些照片批量转向且不可逆。保留 EXIF/ICC，只去掉不影响显示的部分。
 var imageBatchBinaryArgs = map[string][]string{
-	"jpegoptim": {"--strip-all"},
+	"jpegoptim": {"--strip-com", "--strip-iptc", "--strip-xmp"},
 	"optipng":   {"-o2", "-quiet"},
 }
 

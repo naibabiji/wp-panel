@@ -131,6 +131,7 @@ func main() {
 	if err := database.RunUpgrades(); err != nil {
 		log.Fatalf("数据库升级失败: %v", err)
 	}
+	executor.ResetStuckImageOptimizationJobs()
 	executor.FinalizePendingPanelUpdate(cfg, Version)
 
 	if *resetAdmin {

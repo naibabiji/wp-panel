@@ -12,9 +12,17 @@ import (
 	"github.com/naibabiji/wp-panel/database"
 )
 
+// imageBatchRunningJob 把取消函数和它所属的 jobID 绑在一起——runImageOptimizationJob
+// 结束时按 jobID 比对再删，避免"旧任务收尾的 defer 删除掉了新任务刚写入的 cancel"
+// 这种竞态（Go 的函数值不可比较，只能靠额外的 jobID 判断是不是同一个条目）。
+type imageBatchRunningJob struct {
+	JobID  int64
+	Cancel context.CancelFunc
+}
+
 var (
 	imageBatchMu      sync.Mutex
-	imageBatchCancels = map[int]context.CancelFunc{} // site_id -> 正在运行任务的取消函数
+	imageBatchCancels = map[int]imageBatchRunningJob{} // site_id -> 正在运行任务
 )
 
 // imageBatchPace 是两个文件之间的处理间隔，低速批处理避免压垮小服务器，
@@ -39,6 +47,24 @@ type ImageOptimizationJobStatus struct {
 	CreatedAt      string
 	UpdatedAt      string
 	FinishedAt     sql.NullString
+}
+
+// ResetStuckImageOptimizationJobs 在面板启动时把上次进程退出前遗留的
+// queued/running 任务清成 stopped——这些任务的执行 goroutine 随进程一起消失了，
+// 但行还留着，唯一索引会一直拒绝该站点的新任务，必须在启动时清掉，不能等用户
+// 手动改库。
+func ResetStuckImageOptimizationJobs() {
+	db := database.GetDB()
+	res, err := db.Exec(`UPDATE site_image_optimization_jobs
+		SET status='stopped', last_error='面板重启，任务已自动停止', finished_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+		WHERE status IN ('queued','running')`)
+	if err != nil {
+		log.Printf("[图片优化] 启动清理遗留任务失败: %v", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("[图片优化] 启动清理了 %d 个遗留的 queued/running 任务", n)
+	}
 }
 
 // StartImageOptimizationJob 为站点创建一个新的历史图库批量优化任务并异步执行。
@@ -67,7 +93,7 @@ func StartImageOptimizationJob(siteID int) (int64, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	imageBatchMu.Lock()
-	imageBatchCancels[siteID] = cancel
+	imageBatchCancels[siteID] = imageBatchRunningJob{JobID: jobID, Cancel: cancel}
 	imageBatchMu.Unlock()
 
 	go runImageOptimizationJob(ctx, jobID, siteID, webRoot, systemUser)
@@ -77,12 +103,12 @@ func StartImageOptimizationJob(siteID int) (int64, error) {
 // StopImageOptimizationJob 取消该站点当前正在运行的任务。
 func StopImageOptimizationJob(siteID int) error {
 	imageBatchMu.Lock()
-	cancel, ok := imageBatchCancels[siteID]
+	job, ok := imageBatchCancels[siteID]
 	imageBatchMu.Unlock()
 	if !ok {
 		return errors.New("该站点没有正在进行的图片优化任务")
 	}
-	cancel()
+	job.Cancel()
 	return nil
 }
 
@@ -107,7 +133,9 @@ func runImageOptimizationJob(ctx context.Context, jobID int64, siteID int, webRo
 	db := database.GetDB()
 	defer func() {
 		imageBatchMu.Lock()
-		delete(imageBatchCancels, siteID)
+		if job, ok := imageBatchCancels[siteID]; ok && job.JobID == jobID {
+			delete(imageBatchCancels, siteID)
+		}
 		imageBatchMu.Unlock()
 	}()
 
@@ -162,8 +190,12 @@ func runImageOptimizationJob(ctx context.Context, jobID int64, siteID int, webRo
 			WHERE id=?`, processed, succeeded, failed, bytesBefore, bytesAfter, jobID)
 
 		if len(manifest) >= imageBatchManifestFlushSize {
-			flushImageFilesizeManifest(ctx, webRoot, systemUser, siteID, manifest)
-			manifest = make(map[string]int64)
+			// flush 失败（例如恰好被 Stop 取消）时不清空 manifest，让这些条目留到
+			// 循环结束后用 context.Background() 重试，避免指纹已落库（上面的
+			// INSERT）但 filesize 回写永久丢失、下次任务又因为指纹匹配被跳过。
+			if flushImageFilesizeManifest(ctx, webRoot, systemUser, siteID, manifest) {
+				manifest = make(map[string]int64)
+			}
 		}
 
 		time.Sleep(imageBatchPace)
@@ -206,11 +238,13 @@ func filterAlreadyOptimizedImages(db *sql.DB, siteID int, candidates []imageBatc
 	return pending
 }
 
-func flushImageFilesizeManifest(ctx context.Context, webRoot, systemUser string, siteID int, manifest map[string]int64) {
+// flushImageFilesizeManifest 返回是否成功——调用方据此决定要不要清空 manifest。
+func flushImageFilesizeManifest(ctx context.Context, webRoot, systemUser string, siteID int, manifest map[string]int64) bool {
 	updated, total, err := runFilesizeRewrite(ctx, webRoot, systemUser, manifest)
 	if err != nil {
 		log.Printf("[图片优化] site=%d filesize 回写失败: %v", siteID, err)
-		return
+		return false
 	}
 	log.Printf("[图片优化] site=%d filesize 回写完成 %d/%d", siteID, updated, total)
+	return true
 }

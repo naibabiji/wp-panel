@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +77,13 @@ func scanSiteUploadsForImages(webRoot string) ([]imageBatchCandidate, error) {
 			return nil
 		}
 
+		// 扩展名只是路由到 jpegoptim/optipng 的依据，不是"这是合法图片"的证明——
+		// 伪装成 .jpg 的任意文件会被交给二进制反复尝试、计为 failed。读文件头
+		// 校验 magic bytes，不合法的直接跳过，不进入候选清单。
+		if !hasImageMagicBytes(real, mime) {
+			return nil
+		}
+
 		rel, err := filepath.Rel(realUploadsRoot, real)
 		if err != nil {
 			return nil
@@ -92,4 +101,27 @@ func scanSiteUploadsForImages(webRoot string) ([]imageBatchCandidate, error) {
 		return nil, err
 	}
 	return candidates, nil
+}
+
+var (
+	jpegMagic = []byte{0xFF, 0xD8, 0xFF}
+	pngMagic  = []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
+)
+
+func hasImageMagicBytes(path, mime string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	header := make([]byte, 8)
+	n, _ := io.ReadFull(f, header)
+	switch mime {
+	case "image/jpeg":
+		return n >= len(jpegMagic) && bytes.Equal(header[:len(jpegMagic)], jpegMagic)
+	case "image/png":
+		return n >= len(pngMagic) && bytes.Equal(header[:len(pngMagic)], pngMagic)
+	default:
+		return false
+	}
 }
