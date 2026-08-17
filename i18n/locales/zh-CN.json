@@ -1771,7 +1771,20 @@
     "no_downloadable_logs": "暂无可下载日志文件",
     "cdn_select_non_cloudflare_help": "这里仅用于阿里云 ESA、腾讯 EdgeOne、又拍云或其他非 Cloudflare CDN。",
     "invalid_site_id": "网站 ID 无效",
-    "not_found": "未找到"
+    "not_found": "未找到",
+    "image_optimizer": "图片优化",
+    "image_optimizer_help": "批量对媒体库历史图片做无损压缩（原地重新编码，不改文件名、不改格式，不影响任何已发布内容的引用）。",
+    "image_optimizer_start": "开始批量优化",
+    "image_optimizer_stop": "停止",
+    "image_optimizer_started": "已加入批量优化队列",
+    "image_optimizer_queued": "排队中",
+    "image_optimizer_running": "运行中",
+    "image_optimizer_succeeded": "已完成",
+    "image_optimizer_failed": "失败",
+    "image_optimizer_stopped": "已停止",
+    "image_optimizer_progress": "已处理 {{done}} / {{total}}",
+    "image_optimizer_failed_count": "{{count}} 个失败",
+    "image_optimizer_saved": "已节省 {{size}}"
   },
   "help": {
     "intro": "遇到问题或有建议？可以通过以下任一方式联系我们。",
@@ -2126,5 +2139,14 @@
     "ignore_failed": "忽略操作失败，请重试",
     "close": "关闭",
     "item_interrupted_acknowledged": "结果不确定，已确认，请自行到网站后台核实"
+  },
+  "image_optimizer": {
+    "not_ready": "服务器尚未就绪：jpegoptim/optipng 还没有安装完成，请稍后重试",
+    "already_running": "该站点已有正在进行的图片优化任务",
+    "create_failed": "创建图片优化任务失败",
+    "not_found": "未找到该网站",
+    "no_active_job": "该站点没有正在进行的图片优化任务",
+    "stop_failed": "停止任务失败",
+    "load_failed": "查询任务状态失败"
   }
 }

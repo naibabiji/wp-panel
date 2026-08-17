@@ -874,6 +874,8 @@ apt-get install -y \
     php8.3-curl \
     php8.3-gd \
     php8.3-exif \
+    jpegoptim \
+    optipng \
     php8.3-mbstring \
     php8.3-xml \
     php8.3-zip \

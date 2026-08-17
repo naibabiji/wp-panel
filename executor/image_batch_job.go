@@ -1,0 +1,216 @@
+package executor
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"log"
+	"sync"
+	"time"
+
+	"github.com/naibabiji/wp-panel/database"
+)
+
+var (
+	imageBatchMu      sync.Mutex
+	imageBatchCancels = map[int]context.CancelFunc{} // site_id -> 正在运行任务的取消函数
+)
+
+// imageBatchPace 是两个文件之间的处理间隔，低速批处理避免压垮小服务器，
+// 跟现有缓存预加载功能的节奏保持一致。
+const imageBatchPace = 300 * time.Millisecond
+
+// imageBatchManifestFlushSize 攒够这么多个文件的 filesize 变更就回写一次，
+// 不要攒到整个任务结束才一次性回写一个巨大清单。
+const imageBatchManifestFlushSize = 50
+
+type ImageOptimizationJobStatus struct {
+	ID             int64
+	SiteID         int
+	Status         string
+	TotalFiles     int
+	ProcessedFiles int
+	SucceededFiles int
+	FailedFiles    int
+	BytesBefore    int64
+	BytesAfter     int64
+	LastError      string
+	CreatedAt      string
+	UpdatedAt      string
+	FinishedAt     sql.NullString
+}
+
+// StartImageOptimizationJob 为站点创建一个新的历史图库批量优化任务并异步执行。
+// 同一站点同时只能有一个 queued/running 任务，由
+// ux_site_image_optimization_jobs_active_site 唯一索引保证。
+func StartImageOptimizationJob(siteID int) (int64, error) {
+	if !ImageBatchBinariesReady() {
+		return 0, errors.New("服务器尚未就绪：jpegoptim/optipng 还没有安装完成，请稍后重试")
+	}
+
+	db := database.GetDB()
+	var webRoot, systemUser string
+	if err := db.QueryRow(`SELECT web_root, system_user FROM websites WHERE id=? AND site_type='wordpress'`, siteID).
+		Scan(&webRoot, &systemUser); err != nil {
+		return 0, fmt.Errorf("站点不存在或不是 WordPress 站点: %w", err)
+	}
+
+	res, err := db.Exec(`INSERT INTO site_image_optimization_jobs (site_id, status) VALUES (?, 'queued')`, siteID)
+	if err != nil {
+		return 0, fmt.Errorf("创建任务失败（可能已有正在进行的任务）: %w", err)
+	}
+	jobID, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	imageBatchMu.Lock()
+	imageBatchCancels[siteID] = cancel
+	imageBatchMu.Unlock()
+
+	go runImageOptimizationJob(ctx, jobID, siteID, webRoot, systemUser)
+	return jobID, nil
+}
+
+// StopImageOptimizationJob 取消该站点当前正在运行的任务。
+func StopImageOptimizationJob(siteID int) error {
+	imageBatchMu.Lock()
+	cancel, ok := imageBatchCancels[siteID]
+	imageBatchMu.Unlock()
+	if !ok {
+		return errors.New("该站点没有正在进行的图片优化任务")
+	}
+	cancel()
+	return nil
+}
+
+// GetImageOptimizationJobStatus 返回该站点最近一次任务的状态，没有任务时返回 nil。
+func GetImageOptimizationJobStatus(siteID int) (*ImageOptimizationJobStatus, error) {
+	db := database.GetDB()
+	row := db.QueryRow(`SELECT id, site_id, status, total_files, processed_files, succeeded_files, failed_files,
+		bytes_before, bytes_after, last_error, created_at, updated_at, finished_at
+		FROM site_image_optimization_jobs WHERE site_id=? ORDER BY id DESC LIMIT 1`, siteID)
+	var s ImageOptimizationJobStatus
+	if err := row.Scan(&s.ID, &s.SiteID, &s.Status, &s.TotalFiles, &s.ProcessedFiles, &s.SucceededFiles, &s.FailedFiles,
+		&s.BytesBefore, &s.BytesAfter, &s.LastError, &s.CreatedAt, &s.UpdatedAt, &s.FinishedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &s, nil
+}
+
+func runImageOptimizationJob(ctx context.Context, jobID int64, siteID int, webRoot, systemUser string) {
+	db := database.GetDB()
+	defer func() {
+		imageBatchMu.Lock()
+		delete(imageBatchCancels, siteID)
+		imageBatchMu.Unlock()
+	}()
+
+	db.Exec(`UPDATE site_image_optimization_jobs SET status='running', updated_at=CURRENT_TIMESTAMP WHERE id=?`, jobID)
+
+	candidates, err := scanSiteUploadsForImages(webRoot)
+	if err != nil {
+		finishImageOptimizationJob(db, jobID, "failed", err.Error())
+		return
+	}
+
+	pending := filterAlreadyOptimizedImages(db, siteID, candidates)
+	db.Exec(`UPDATE site_image_optimization_jobs SET total_files=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, len(pending), jobID)
+
+	manifest := make(map[string]int64)
+	var processed, succeeded, failed int
+	var bytesBefore, bytesAfter int64
+
+	stopped := false
+	for _, c := range pending {
+		select {
+		case <-ctx.Done():
+			stopped = true
+		default:
+		}
+		if stopped {
+			break
+		}
+
+		before, after, optErr := optimizeImageFile(ctx, webRoot, systemUser, c.RelativePath, c.Mime)
+		processed++
+		if optErr != nil {
+			failed++
+			log.Printf("[图片优化] site=%d 处理失败 %s: %v", siteID, c.RelativePath, optErr)
+		} else {
+			succeeded++
+			bytesBefore += before
+			bytesAfter += after
+			if after < before {
+				manifest[c.RelativePath] = after
+			}
+			db.Exec(`INSERT INTO site_image_optimization_files (site_id, relative_path, original_size, optimized_size, mtime_unix, processed_at)
+				VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)
+				ON CONFLICT(site_id, relative_path) DO UPDATE SET
+					original_size=excluded.original_size, optimized_size=excluded.optimized_size,
+					mtime_unix=excluded.mtime_unix, processed_at=CURRENT_TIMESTAMP`,
+				siteID, c.RelativePath, before, after, c.ModUnix)
+		}
+
+		db.Exec(`UPDATE site_image_optimization_jobs
+			SET processed_files=?, succeeded_files=?, failed_files=?, bytes_before=?, bytes_after=?, updated_at=CURRENT_TIMESTAMP
+			WHERE id=?`, processed, succeeded, failed, bytesBefore, bytesAfter, jobID)
+
+		if len(manifest) >= imageBatchManifestFlushSize {
+			flushImageFilesizeManifest(ctx, webRoot, systemUser, siteID, manifest)
+			manifest = make(map[string]int64)
+		}
+
+		time.Sleep(imageBatchPace)
+	}
+
+	// 即便任务被停止，已经优化成功的文件也要把 filesize 回写掉，不要因为中途
+	// 停止就留下一批"文件已经变小、元数据还是旧值"的不一致状态。
+	if len(manifest) > 0 {
+		flushImageFilesizeManifest(context.Background(), webRoot, systemUser, siteID, manifest)
+	}
+
+	if stopped {
+		finishImageOptimizationJob(db, jobID, "stopped", "")
+		return
+	}
+	finishImageOptimizationJob(db, jobID, "succeeded", "")
+}
+
+func finishImageOptimizationJob(db *sql.DB, jobID int64, status, lastError string) {
+	if _, err := db.Exec(`UPDATE site_image_optimization_jobs
+		SET status=?, last_error=?, finished_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		status, lastError, jobID); err != nil {
+		log.Printf("[图片优化] job=%d 更新最终状态失败: %v", jobID, err)
+	}
+}
+
+// filterAlreadyOptimizedImages 幂等过滤：文件大小和修改时间跟上次处理后记录的
+// 一致，说明这个文件自上次处理以来没有变化，跳过，不重复处理。
+func filterAlreadyOptimizedImages(db *sql.DB, siteID int, candidates []imageBatchCandidate) []imageBatchCandidate {
+	var pending []imageBatchCandidate
+	for _, c := range candidates {
+		var optSize, mtime int64
+		err := db.QueryRow(`SELECT optimized_size, mtime_unix FROM site_image_optimization_files WHERE site_id=? AND relative_path=?`,
+			siteID, c.RelativePath).Scan(&optSize, &mtime)
+		if err == nil && optSize == c.Size && mtime == c.ModUnix {
+			continue
+		}
+		pending = append(pending, c)
+	}
+	return pending
+}
+
+func flushImageFilesizeManifest(ctx context.Context, webRoot, systemUser string, siteID int, manifest map[string]int64) {
+	updated, total, err := runFilesizeRewrite(ctx, webRoot, systemUser, manifest)
+	if err != nil {
+		log.Printf("[图片优化] site=%d filesize 回写失败: %v", siteID, err)
+		return
+	}
+	log.Printf("[图片优化] site=%d filesize 回写完成 %d/%d", siteID, updated, total)
+}

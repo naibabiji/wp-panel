@@ -581,6 +581,11 @@ var upgrades = []Upgrade{
 			`CREATE INDEX IF NOT EXISTS idx_ai_ip_aliases_session ON ai_ip_aliases(session_id, alias)`,
 		},
 	},
+	{
+		Version:     "1.0.49",
+		Description: "新增历史图库批量优化的任务表和已处理文件表",
+		SQL:         imageOptimizerSchemaStatements,
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

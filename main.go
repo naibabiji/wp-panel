@@ -124,9 +124,10 @@ func main() {
 	// 先更新插件包，确保后续迁移复制的是最新版本
 	executor.EnsureCacheHelperPlugin(PluginFS)
 	executor.AutoDeployPluginUpdates(PluginFS)
-	// 异步补装新上传图片处理需要的 PHP 扩展，不阻塞启动；装好之后配套插件
-	// 在下次页面加载时会自动感知到，不需要面板重启。
+	// 异步补装图片优化功能需要的 PHP 扩展和系统二进制，不阻塞启动；装好之后
+	// 相应功能会在下次使用时自动感知到，不需要面板重启。
 	go executor.EnsurePHPExifExtension()
+	go executor.EnsureImageBatchBinaries()
 	if err := database.RunUpgrades(); err != nil {
 		log.Fatalf("数据库升级失败: %v", err)
 	}

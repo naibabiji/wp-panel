@@ -401,6 +401,17 @@ var i18nKeys = []string{
 	"log_analysis.start_failed",
 	"log_analysis.detail_ai",
 	"log_analysis.detail_ai_failed",
+	"website.image_optimizer_start",
+	"website.image_optimizer_stop",
+	"website.image_optimizer_started",
+	"website.image_optimizer_queued",
+	"website.image_optimizer_running",
+	"website.image_optimizer_succeeded",
+	"website.image_optimizer_failed",
+	"website.image_optimizer_stopped",
+	"website.image_optimizer_progress",
+	"website.image_optimizer_failed_count",
+	"website.image_optimizer_saved",
 	"log_analysis.detail_ai_running",
 	"log_analysis.ai_session_wait_help",
 	"log_analysis.continue_diagnosis",
@@ -1333,6 +1344,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	settingsHandler := &handlers.SettingsHandler{WPPackageService: wpPackageService}
 	aiHandler := &handlers.AIHandler{}
 	logAnalysisHandler := &handlers.LogAnalysisHandler{}
+	imageOptimizerHandler := &handlers.ImageOptimizerHandler{}
 	protected.GET("/api/settings", settingsHandler.GetSettings)
 	protected.PUT("/api/settings", settingsHandler.UpdateSettings)
 	protected.GET("/api/settings/logs", settingsHandler.GetOperationLogs)
@@ -1362,6 +1374,9 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/log-analysis/:id", logAnalysisHandler.Get)
 	protected.GET("/api/log-analysis/:id/details", logAnalysisHandler.Details)
 	protected.POST("/api/log-analysis/:id/diagnostic-session", logAnalysisHandler.CreateDiagnosticSession)
+	protected.POST("/api/websites/:id/image-optimizer/start", imageOptimizerHandler.Start)
+	protected.GET("/api/websites/:id/image-optimizer/status", imageOptimizerHandler.Status)
+	protected.POST("/api/websites/:id/image-optimizer/stop", imageOptimizerHandler.Stop)
 
 	extensionHandler := &handlers.ExtensionHandler{}
 	protected.GET("/api/extensions", extensionHandler.List)

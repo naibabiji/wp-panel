@@ -1771,7 +1771,20 @@
     "update_failed": "Update failed",
     "update_failed_with_error": "Update failed: {{error}}",
     "updated": "Updated",
-    "user_label": "User"
+    "user_label": "User",
+    "image_optimizer": "Image Optimization",
+    "image_optimizer_help": "Batch losslessly re-compress existing media library images in place (same filename, same format — does not affect any published content references).",
+    "image_optimizer_start": "Start Batch Optimization",
+    "image_optimizer_stop": "Stop",
+    "image_optimizer_started": "Added to the batch optimization queue",
+    "image_optimizer_queued": "Queued",
+    "image_optimizer_running": "Running",
+    "image_optimizer_succeeded": "Completed",
+    "image_optimizer_failed": "Failed",
+    "image_optimizer_stopped": "Stopped",
+    "image_optimizer_progress": "Processed {{done}} / {{total}}",
+    "image_optimizer_failed_count": "{{count}} failed",
+    "image_optimizer_saved": "Saved {{size}}"
   },
   "help": {
     "intro": "Running into a problem or have a suggestion? Reach us through any of the channels below.",
@@ -2126,5 +2139,14 @@
     "ignore_failed": "Failed to ignore, please try again",
     "close": "Close",
     "item_interrupted_acknowledged": "Outcome uncertain, acknowledged — please verify in the site admin yourself"
+  },
+  "image_optimizer": {
+    "not_ready": "Server not ready: jpegoptim/optipng are not installed yet, please try again later",
+    "already_running": "This site already has an image optimization job in progress",
+    "create_failed": "Failed to create image optimization job",
+    "not_found": "Website not found",
+    "no_active_job": "This site has no image optimization job in progress",
+    "stop_failed": "Failed to stop the job",
+    "load_failed": "Failed to load job status"
   }
 }

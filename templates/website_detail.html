@@ -341,6 +341,27 @@ location ^~ /api/ {
         </div>
     </div>
 
+    <!-- Row 2b: 图片优化（历史图库批量优化，只做同文件名无损重编码） -->
+    <div x-show="site.site_type === 'wordpress'" class="mt-6">
+        <div class="card">
+            <h3 class="text-lg font-semibold text-white mb-2">{{t .Lang "website.image_optimizer"}}</h3>
+            <p class="text-sm text-gray-400 mb-3">{{t .Lang "website.image_optimizer_help"}}</p>
+            <div class="flex items-center flex-wrap gap-3 mb-2">
+                <button @click="startImageOptimizer()" :disabled="imageOptimizerStarting || (imageOptimizerJob && ['queued','running'].includes(imageOptimizerJob.Status)) || site.file_lock_enabled" class="btn-primary text-sm py-1.5" x-text="imageOptimizerStarting ? t('common.saving') : t('website.image_optimizer_start')"></button>
+                <button x-show="imageOptimizerJob && ['queued','running'].includes(imageOptimizerJob.Status)" @click="stopImageOptimizer()" :disabled="imageOptimizerStopping" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;" x-text="imageOptimizerStopping ? t('common.saving') : t('website.image_optimizer_stop')"></button>
+                <span x-show="imageOptimizerJob" class="text-sm text-gray-300" x-text="imageOptimizerStatusText()"></span>
+            </div>
+            <div x-show="imageOptimizerJob" class="text-xs text-gray-400 space-y-1">
+                <p>
+                    <span x-text="t('website.image_optimizer_progress', { done: imageOptimizerJob?.ProcessedFiles || 0, total: imageOptimizerJob?.TotalFiles || 0 })"></span>
+                    <span x-show="imageOptimizerJob?.FailedFiles > 0" class="text-red-300" x-text="' · ' + t('website.image_optimizer_failed_count', { count: imageOptimizerJob?.FailedFiles || 0 })"></span>
+                </p>
+                <p x-show="imageOptimizerBytesSaved()" x-text="t('website.image_optimizer_saved', { size: imageOptimizerBytesSaved() })"></p>
+            </div>
+            <p x-show="site.file_lock_enabled" class="text-xs text-yellow-300 mt-2">{{t .Lang "website.file_lock_enabled_notice"}}</p>
+        </div>
+    </div>
+
     <!-- Row 3: 网站日志 -->
     <div class="mt-6">
         <div class="card">
@@ -549,6 +570,10 @@ function websiteDetail() {
         fileLockPreviewLoading: false,
         pluginStatus: 'not_installed',
         pluginInstalling: false,
+        imageOptimizerJob: null,
+        imageOptimizerStarting: false,
+        imageOptimizerStopping: false,
+        imageOptimizerPollTimer: null,
         monitoringEnabled: false,
         monitoringInterval: 5,
         monitoringSaving: false,
@@ -601,7 +626,8 @@ function websiteDetail() {
             Promise.allSettled([
                 this.fetchNginxCustom(),
                 this.fetchPluginStatus(),
-                this.fetchCDNGroups()
+                this.fetchCDNGroups(),
+                this.fetchImageOptimizerStatus()
             ]);
             deferTask(() => {
                 this.fetchLogs();
@@ -858,6 +884,51 @@ function websiteDetail() {
                 await this.fetchPluginStatus();
             } catch(e) { showToast(e.message, 'error'); }
             this.pluginInstalling = false;
+        },
+        async fetchImageOptimizerStatus() {
+            if (!this.site?.id) return;
+            try {
+                const r = await api('/websites/' + this.site.id + '/image-optimizer/status');
+                if (r.success) {
+                    this.imageOptimizerJob = (r.data && r.data.status && r.data.status !== 'none') ? r.data : null;
+                }
+            } catch(e) {}
+            clearTimeout(this.imageOptimizerPollTimer);
+            if (this.imageOptimizerJob && ['queued', 'running'].includes(this.imageOptimizerJob.Status)) {
+                this.imageOptimizerPollTimer = setTimeout(() => this.fetchImageOptimizerStatus(), 3000);
+            }
+        },
+        async startImageOptimizer() {
+            this.imageOptimizerStarting = true;
+            try {
+                await api('/websites/' + this.site.id + '/image-optimizer/start', { method: 'POST' });
+                showToast(t('website.image_optimizer_started'), 'success');
+                await this.fetchImageOptimizerStatus();
+            } catch(e) { showToast(e.message, 'error'); }
+            this.imageOptimizerStarting = false;
+        },
+        async stopImageOptimizer() {
+            this.imageOptimizerStopping = true;
+            try {
+                await api('/websites/' + this.site.id + '/image-optimizer/stop', { method: 'POST' });
+                await this.fetchImageOptimizerStatus();
+            } catch(e) { showToast(e.message, 'error'); }
+            this.imageOptimizerStopping = false;
+        },
+        imageOptimizerStatusText() {
+            const job = this.imageOptimizerJob;
+            if (!job) return '';
+            const labels = { queued: t('website.image_optimizer_queued'), running: t('website.image_optimizer_running'),
+                succeeded: t('website.image_optimizer_succeeded'), failed: t('website.image_optimizer_failed'),
+                stopped: t('website.image_optimizer_stopped') };
+            return labels[job.Status] || job.Status;
+        },
+        imageOptimizerBytesSaved() {
+            const job = this.imageOptimizerJob;
+            if (!job || !job.BytesBefore) return '';
+            const saved = job.BytesBefore - job.BytesAfter;
+            if (saved <= 0) return '';
+            return (saved / 1024 / 1024).toFixed(2) + ' MB';
         },
         fileLockStatusText() {
             if (this.fileLockApplyIncomplete()) return t('website.file_lock_apply_failed');
