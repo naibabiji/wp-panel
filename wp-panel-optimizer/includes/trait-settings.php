@@ -249,65 +249,6 @@ trait WPP_Optimizer_Settings_Trait {
                             </td>
                         </tr>
                     </table>
-
-                    <h3>缓存预加载状态</h3>
-                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:0 0 12px;">
-                        <?php wp_nonce_field('wpp_cache_clear'); ?>
-                        <input type="hidden" name="action" value="wpp_cache_clear">
-                        <button type="submit" class="button button-primary" <?php disabled($missing); ?>>清除 Nginx 缓存</button>
-                        <span class="description">适合手机后台或管理栏不方便操作时手动清理缓存。</span>
-                    </form>
-                    <p>当前状态：<strong><?php echo esc_html($preloadStatus['running'] ? '运行中' : '空闲'); ?></strong>
-                        <?php if (!empty($preloadStatus['last_message'])): ?>
-                            <span class="description"><?php echo esc_html($preloadStatus['last_message']); ?></span>
-                        <?php endif; ?>
-                    </p>
-                    <p class="description">
-                        队列：<?php echo intval($preloadStatus['queued']); ?>，
-                        成功：<?php echo intval($preloadStatus['done']); ?>，
-                        失败：<?php echo intval($preloadStatus['failed']); ?>
-                        <?php if (!empty($preloadStatus['started_at'])): ?>
-                            ，开始：<?php echo esc_html($preloadStatus['started_at']); ?>
-                        <?php endif; ?>
-                        <?php if (!empty($preloadStatus['last_run_at'])): ?>
-                            ，上次执行：<?php echo esc_html($preloadStatus['last_run_at']); ?>
-                        <?php endif; ?>
-                        <?php if (!empty($preloadStatus['finished_at'])): ?>
-                            ，结束：<?php echo esc_html($preloadStatus['finished_at']); ?>
-                        <?php endif; ?>
-                    </p>
-                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;margin-right:8px;">
-                        <?php wp_nonce_field('wpp_cache_preload'); ?>
-                        <input type="hidden" name="action" value="wpp_cache_preload">
-                        <button type="submit" class="button" <?php disabled(!$fcacheEnabled); ?>>立即预加载</button>
-                    </form>
-                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;">
-                        <?php wp_nonce_field('wpp_cache_preload_stop'); ?>
-                        <input type="hidden" name="action" value="wpp_cache_preload_stop">
-                        <button type="submit" class="button" <?php disabled(!$preloadStatus['running']); ?>>停止预加载</button>
-                    </form>
-                    <?php if (!$fcacheEnabled): ?>
-                        <p class="description">请先开启 FastCGI 缓存，再执行预加载。</p>
-                    <?php endif; ?>
-
-                    <?php if (!empty($log)): ?>
-                    <h3>最近清除记录</h3>
-                    <table class="wp-list-table widefat fixed striped" style="max-width:600px">
-                        <thead><tr><th>时间</th><th>方式</th><th>结果</th></tr></thead>
-                        <tbody>
-                            <?php foreach ($log as $entry): ?>
-                            <tr>
-                                <td><?php echo esc_html($entry['time']); ?></td>
-                                <td><?php
-                                    $labels = ['manual' => '手动清除', 'auto' => '自动清除（发布文章）', 'comment' => '自动清除（评论变更）'];
-                                    echo esc_html($labels[$entry['type']] ?? '自动清除');
-                                ?></td>
-                                <td><?php echo !empty($entry['success']) ? '<span style="color:green">成功</span>' : '<span style="color:red">失败</span>'; ?></td>
-                            </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                    <?php endif; ?>
                 </div>
 
                 <div class="wpp-tab-panel" data-tab-panel="image" style="display:none">
@@ -414,6 +355,71 @@ trait WPP_Optimizer_Settings_Trait {
                     <button type="submit" name="wpp_save" class="button button-primary" <?php disabled($fileLockEnabled); ?>>保存设置</button>
                 </p>
             </form>
+
+            <!-- 这几个操作各自独立提交到 admin-post.php，不能嵌套在 wpp-form 里面
+                 （HTML 不允许 form 嵌套 form，嵌套会导致浏览器解析时提前把外层
+                 form 截断，图片优化等后面标签页的字段和保存按钮都会跟着掉出表单）。
+                 用同一个 data-tab-panel="cache" 让标签页切换 JS 一并控制显隐。 -->
+            <div class="wpp-tab-panel" data-tab-panel="cache">
+                <h3>缓存预加载状态</h3>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:0 0 12px;">
+                    <?php wp_nonce_field('wpp_cache_clear'); ?>
+                    <input type="hidden" name="action" value="wpp_cache_clear">
+                    <button type="submit" class="button button-primary" <?php disabled($missing); ?>>清除 Nginx 缓存</button>
+                    <span class="description">适合手机后台或管理栏不方便操作时手动清理缓存。</span>
+                </form>
+                <p>当前状态：<strong><?php echo esc_html($preloadStatus['running'] ? '运行中' : '空闲'); ?></strong>
+                    <?php if (!empty($preloadStatus['last_message'])): ?>
+                        <span class="description"><?php echo esc_html($preloadStatus['last_message']); ?></span>
+                    <?php endif; ?>
+                </p>
+                <p class="description">
+                    队列：<?php echo intval($preloadStatus['queued']); ?>，
+                    成功：<?php echo intval($preloadStatus['done']); ?>，
+                    失败：<?php echo intval($preloadStatus['failed']); ?>
+                    <?php if (!empty($preloadStatus['started_at'])): ?>
+                        ，开始：<?php echo esc_html($preloadStatus['started_at']); ?>
+                    <?php endif; ?>
+                    <?php if (!empty($preloadStatus['last_run_at'])): ?>
+                        ，上次执行：<?php echo esc_html($preloadStatus['last_run_at']); ?>
+                    <?php endif; ?>
+                    <?php if (!empty($preloadStatus['finished_at'])): ?>
+                        ，结束：<?php echo esc_html($preloadStatus['finished_at']); ?>
+                    <?php endif; ?>
+                </p>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;margin-right:8px;">
+                    <?php wp_nonce_field('wpp_cache_preload'); ?>
+                    <input type="hidden" name="action" value="wpp_cache_preload">
+                    <button type="submit" class="button" <?php disabled(!$fcacheEnabled); ?>>立即预加载</button>
+                </form>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;">
+                    <?php wp_nonce_field('wpp_cache_preload_stop'); ?>
+                    <input type="hidden" name="action" value="wpp_cache_preload_stop">
+                    <button type="submit" class="button" <?php disabled(!$preloadStatus['running']); ?>>停止预加载</button>
+                </form>
+                <?php if (!$fcacheEnabled): ?>
+                    <p class="description">请先开启 FastCGI 缓存，再执行预加载。</p>
+                <?php endif; ?>
+
+                <?php if (!empty($log)): ?>
+                <h3>最近清除记录</h3>
+                <table class="wp-list-table widefat fixed striped" style="max-width:600px">
+                    <thead><tr><th>时间</th><th>方式</th><th>结果</th></tr></thead>
+                    <tbody>
+                        <?php foreach ($log as $entry): ?>
+                        <tr>
+                            <td><?php echo esc_html($entry['time']); ?></td>
+                            <td><?php
+                                $labels = ['manual' => '手动清除', 'auto' => '自动清除（发布文章）', 'comment' => '自动清除（评论变更）'];
+                                echo esc_html($labels[$entry['type']] ?? '自动清除');
+                            ?></td>
+                            <td><?php echo !empty($entry['success']) ? '<span style="color:green">成功</span>' : '<span style="color:red">失败</span>'; ?></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php endif; ?>
+            </div>
 
             <script>
             (function() {
