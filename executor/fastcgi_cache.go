@@ -23,6 +23,12 @@ const pluginDirName = "wp-panel-optimizer"
 
 const cacheConfPath = "/etc/nginx/conf.d/wppanel-cache.conf"
 
+// cacheHelperPluginFS 保存面板启动时传入的插件内嵌文件系统（main.go 的
+// PluginFS），供 DeployPluginToSite/PluginNeedsUpdate 在处理单个站点的 HTTP
+// 请求时使用——handlers 包不能直接拿到 main 包的 embed.FS（会形成循环导入），
+// EnsureCacheHelperPlugin 是启动时唯一会调用一次的入口，顺带存一份即可。
+var cacheHelperPluginFS embed.FS
+
 func EnsureFastCGICacheConfig() {
 	os.MkdirAll("/var/cache/nginx/fastcgi", 0755)
 	content := `# WP Panel — FastCGI 缓存
@@ -35,6 +41,7 @@ fastcgi_cache_path /var/cache/nginx/fastcgi levels=1:2 keys_zone=WP_CACHE:200m i
 // （/www/server/panel/packages/wp-panel-optimizer/），仅用于版本比对，不直接服务任何站点，
 // 所以不需要 AutoDeployPluginUpdates 那套原子切换，按文件内容比对同步即可。
 func EnsureCacheHelperPlugin(pluginFS embed.FS) {
+	cacheHelperPluginFS = pluginFS
 	pkgDir := "/www/server/panel/packages"
 	refDir := filepath.Join(pkgDir, pluginDirName)
 	os.MkdirAll(pkgDir, 0755)
@@ -119,6 +126,43 @@ func AutoDeployPluginUpdates(pluginFS embed.FS) {
 	if updated > 0 {
 		log.Printf("[插件自动更新] 已更新 %d 个站点的配套插件", updated)
 	}
+}
+
+// DeployPluginToSite 把面板内置的最新插件版本部署到单个站点，供网站详情页
+// "安装配套插件"按钮使用。跟 AutoDeployPluginUpdates 复用同一套整目录原子部署
+// 逻辑——早期单文件插件时代遗留的"从 /www/server/panel/packages/wp-panel-
+// optimizer.php 读一份 .php 复制过去"的实现，在插件拆分成 includes/trait-*.php
+// 多文件之后就已经不可用了（EnsureCacheHelperPlugin 启动时还会主动清理掉那个
+// 单文件参照副本），这里改成跟自动更新完全一致的路径，不再维护第二套部署逻辑。
+func DeployPluginToSite(webRoot string) error {
+	srcFiles, err := readEmbeddedPluginFiles(cacheHelperPluginFS)
+	if err != nil {
+		return fmt.Errorf("读取内嵌插件源码失败: %w", err)
+	}
+	if len(srcFiles) == 0 {
+		return fmt.Errorf("内嵌插件源码为空")
+	}
+	pluginsDir := filepath.Join(webRoot, "wp-content", "plugins")
+	pluginDir := filepath.Join(pluginsDir, pluginDirName)
+	if pluginDirMatches(pluginDir, srcFiles) {
+		return nil
+	}
+	return deployPluginDirectory(pluginsDir, pluginDir, srcFiles)
+}
+
+// PluginNeedsUpdate 供网站详情页判断该站点已部署的插件是否落后于面板内置版本。
+// installed 为 false 时 needsUpdate 无意义。比较逻辑跟 AutoDeployPluginUpdates
+// 一致（逐文件内容比对），不依赖已经废弃的单文件参照副本的 mtime。
+func PluginNeedsUpdate(webRoot string) (installed bool, needsUpdate bool) {
+	pluginDir := filepath.Join(webRoot, "wp-content", "plugins", pluginDirName)
+	if _, err := os.Stat(filepath.Join(pluginDir, pluginDirName+".php")); err != nil {
+		return false, false
+	}
+	srcFiles, err := readEmbeddedPluginFiles(cacheHelperPluginFS)
+	if err != nil || len(srcFiles) == 0 {
+		return true, false
+	}
+	return true, !pluginDirMatches(pluginDir, srcFiles)
 }
 
 // readEmbeddedPluginFiles 把内嵌的 wp-panel-optimizer 目录展开为「相对路径 -> 文件内容」的映射。

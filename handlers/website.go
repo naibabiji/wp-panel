@@ -1829,21 +1829,9 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 	}
 	domain, webRoot, systemUser := site.Domain, site.WebRoot, site.SystemUser
 
-	src := "/www/server/panel/packages/wp-panel-optimizer.php"
 	pluginDir := filepath.Join(webRoot, "wp-content", "plugins", "wp-panel-optimizer")
-	dst := filepath.Join(pluginDir, "wp-panel-optimizer.php")
-	if err := os.MkdirAll(pluginDir, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建插件目录失败"))
-		return
-	}
-
-	srcData, err := os.ReadFile(src)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("插件源文件不存在，请先升级面板"))
-		return
-	}
-	if err := os.WriteFile(dst, srcData, 0644); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("写入插件文件失败"))
+	if err := executor.DeployPluginToSite(webRoot); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("部署插件文件失败: "+err.Error()))
 		return
 	}
 
@@ -1905,14 +1893,11 @@ func (h *WebsiteHandler) InstallPluginStatus(c *gin.Context) {
 		return
 	}
 
-	dst := filepath.Join(webRoot, "wp-content", "plugins", "wp-panel-optimizer", "wp-panel-optimizer.php")
-	dstInfo, dstErr := os.Stat(dst)
-	srcInfo, srcErr := os.Stat("/www/server/panel/packages/wp-panel-optimizer.php")
-
+	installed, needsUpdate := executor.PluginNeedsUpdate(webRoot)
 	status := "not_installed"
-	if dstErr == nil {
+	if installed {
 		status = "installed"
-		if srcErr == nil && dstInfo.ModTime().Before(srcInfo.ModTime()) {
+		if needsUpdate {
 			status = "update_available"
 		}
 	}
