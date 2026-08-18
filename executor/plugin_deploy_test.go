@@ -30,6 +30,19 @@ func listStagingLikeDirs(t *testing.T, pluginsDir string) []string {
 	return names
 }
 
+// withVersionMarker mirrors what embeddedPluginFilesWithVersion does for tests
+// that build a raw file map directly instead of going through
+// readEmbeddedPluginFiles (which needs a real embed.FS).
+func withVersionMarker(src map[string][]byte) (map[string][]byte, string) {
+	version := pluginSourceVersion(src)
+	out := make(map[string][]byte, len(src)+1)
+	for k, v := range src {
+		out[k] = v
+	}
+	out[pluginVersionMarkerFile] = []byte(version)
+	return out, version
+}
+
 func TestDeployPluginDirectoryFreshInstall(t *testing.T) {
 	pluginsDir := t.TempDir()
 	pluginDir := filepath.Join(pluginsDir, pluginDirName)
@@ -37,8 +50,9 @@ func TestDeployPluginDirectoryFreshInstall(t *testing.T) {
 		"wp-panel-optimizer.php":   []byte("<?php // bootstrap\n"),
 		"includes/trait-cache.php": []byte("<?php // cache\n"),
 	}
+	srcWithVersion, version := withVersionMarker(src)
 
-	if err := deployPluginDirectory(pluginsDir, pluginDir, src); err != nil {
+	if err := deployPluginDirectory(pluginsDir, pluginDir, srcWithVersion); err != nil {
 		t.Fatalf("deployPluginDirectory: %v", err)
 	}
 
@@ -51,8 +65,8 @@ func TestDeployPluginDirectoryFreshInstall(t *testing.T) {
 	if leftover := listStagingLikeDirs(t, pluginsDir); len(leftover) != 0 {
 		t.Fatalf("expected no leftover staging/backup dirs, got %v", leftover)
 	}
-	if !pluginDirMatches(pluginDir, src) {
-		t.Fatalf("pluginDirMatches should report match right after deploy")
+	if got := pluginDeployedVersion(pluginDir); got != version {
+		t.Fatalf("pluginDeployedVersion = %q, want %q", got, version)
 	}
 }
 
@@ -104,15 +118,16 @@ func TestDeployPluginDirectoryRemovesFilesDroppedFromNewerVersion(t *testing.T) 
 	newSrc := map[string][]byte{
 		"wp-panel-optimizer.php": []byte("<?php // v2\n"),
 	}
-	if err := deployPluginDirectory(pluginsDir, pluginDir, newSrc); err != nil {
+	newSrcWithVersion, version := withVersionMarker(newSrc)
+	if err := deployPluginDirectory(pluginsDir, pluginDir, newSrcWithVersion); err != nil {
 		t.Fatalf("deploy v2: %v", err)
 	}
 
 	if _, err := os.Stat(filepath.Join(pluginDir, "includes/trait-legacy.php")); !os.IsNotExist(err) {
 		t.Fatalf("expected legacy module file to be removed, stat err = %v", err)
 	}
-	if !pluginDirMatches(pluginDir, newSrc) {
-		t.Fatalf("pluginDirMatches should report match after dropping stale files")
+	if got := pluginDeployedVersion(pluginDir); got != version {
+		t.Fatalf("pluginDeployedVersion = %q, want %q", got, version)
 	}
 }
 
@@ -184,32 +199,69 @@ func TestCleanupStalePluginStagingDirsRemovesLeftovers(t *testing.T) {
 	}
 }
 
-func TestPluginDirMatchesDetectsExtraFile(t *testing.T) {
+func TestPluginSourceVersionChangesWithContent(t *testing.T) {
+	a := map[string][]byte{"wp-panel-optimizer.php": []byte("<?php // v1\n")}
+	b := map[string][]byte{"wp-panel-optimizer.php": []byte("<?php // v2\n")}
+	if pluginSourceVersion(a) == pluginSourceVersion(b) {
+		t.Fatalf("expected different content to produce different versions")
+	}
+	// Stable and order-independent.
+	c := map[string][]byte{
+		"b.php": []byte("<?php // b\n"),
+		"a.php": []byte("<?php // a\n"),
+	}
+	d := map[string][]byte{
+		"a.php": []byte("<?php // a\n"),
+		"b.php": []byte("<?php // b\n"),
+	}
+	if pluginSourceVersion(c) != pluginSourceVersion(d) {
+		t.Fatalf("expected map iteration order not to affect the computed version")
+	}
+}
+
+func TestPluginDeployedVersionMissingMarkerMeansOutdated(t *testing.T) {
 	pluginsDir := t.TempDir()
 	pluginDir := filepath.Join(pluginsDir, pluginDirName)
-	src := map[string][]byte{
-		"wp-panel-optimizer.php": []byte("<?php // v\n"),
-	}
+	src := map[string][]byte{"wp-panel-optimizer.php": []byte("<?php // v\n")}
+
+	// Deployed without going through embeddedPluginFilesWithVersion, simulating
+	// a site that was deployed by an older panel build before this marker
+	// mechanism existed — it must be treated as "needs redeploy", not "matches".
 	if err := deployPluginDirectory(pluginsDir, pluginDir, src); err != nil {
 		t.Fatalf("deploy: %v", err)
 	}
-	if !pluginDirMatches(pluginDir, src) {
-		t.Fatalf("expected match right after deploy")
+	if got := pluginDeployedVersion(pluginDir); got != "" {
+		t.Fatalf("expected empty version for a pre-marker deploy, got %q", got)
 	}
+	if got := pluginDeployedVersion(pluginDir); got == pluginSourceVersion(src) {
+		t.Fatalf("empty marker must never accidentally equal a real source version")
+	}
+}
 
-	// A leftover file not present in the current source set (e.g. a module
-	// removed in a later version) must make the comparison report "not matching"
-	// so AutoDeployPluginUpdates re-deploys and cleans it up.
-	if err := os.WriteFile(filepath.Join(pluginDir, "includes/stale-module.php"), []byte("<?php\n"), 0644); err == nil {
-		t.Fatalf("expected write to fail because includes/ doesn't exist yet")
+// TestPluginDeployedVersionIgnoresExtraFiles documents an intentional trade-off
+// of switching from a full per-file directory diff to a single version marker:
+// a stray file dropped into an already-up-to-date plugin directory by hand no
+// longer flips the comparison to "outdated" and no longer gets cleaned up until
+// the embedded plugin source itself actually changes. Full drift-healing on
+// every panel startup was never the point of this check — deciding whether a
+// site needs the latest shipped version is — so this is accepted, not a bug.
+func TestPluginDeployedVersionIgnoresExtraFiles(t *testing.T) {
+	pluginsDir := t.TempDir()
+	pluginDir := filepath.Join(pluginsDir, pluginDirName)
+	src := map[string][]byte{"wp-panel-optimizer.php": []byte("<?php // v\n")}
+	srcWithVersion, version := withVersionMarker(src)
+
+	if err := deployPluginDirectory(pluginsDir, pluginDir, srcWithVersion); err != nil {
+		t.Fatalf("deploy: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Join(pluginDir, "includes"), 0755); err != nil {
 		t.Fatalf("mkdir includes: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(pluginDir, "includes/stale-module.php"), []byte("<?php\n"), 0644); err != nil {
-		t.Fatalf("write stale module: %v", err)
+	if err := os.WriteFile(filepath.Join(pluginDir, "includes/stray.php"), []byte("<?php\n"), 0644); err != nil {
+		t.Fatalf("write stray file: %v", err)
 	}
-	if pluginDirMatches(pluginDir, src) {
-		t.Fatalf("expected mismatch once an extra file not in src is present")
+
+	if got := pluginDeployedVersion(pluginDir); got != version {
+		t.Fatalf("pluginDeployedVersion = %q, want %q (a stray file must not change it)", got, version)
 	}
 }

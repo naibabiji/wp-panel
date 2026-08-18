@@ -3,6 +3,7 @@ package executor
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"embed"
 	"encoding/hex"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/naibabiji/wp-panel/config"
@@ -84,7 +86,7 @@ func EnsureCacheHelperPlugin(pluginFS embed.FS) {
 // 若 plugin_api_key 非空且站点上的插件目录内容落后于面板内置版本，则自动更新。
 // 每次面板启动时调用，实现插件无感自动升级。
 func AutoDeployPluginUpdates(pluginFS embed.FS) {
-	srcFiles, err := readEmbeddedPluginFiles(pluginFS)
+	srcFiles, version, err := embeddedPluginFilesWithVersion(pluginFS)
 	if err != nil || len(srcFiles) == 0 {
 		return
 	}
@@ -111,8 +113,8 @@ func AutoDeployPluginUpdates(pluginFS embed.FS) {
 		pluginsDir := filepath.Join(webRoot, "wp-content", "plugins")
 		pluginDir := filepath.Join(pluginsDir, pluginDirName)
 
-		// 优先对比目录内容，完全一致直接跳过，避免多余的系统权限调用（chown）
-		if pluginDirMatches(pluginDir, srcFiles) {
+		// 版本标记一致就直接跳过，避免多余的系统权限调用（chown）
+		if pluginDeployedVersion(pluginDir) == version {
 			continue
 		}
 
@@ -135,7 +137,7 @@ func AutoDeployPluginUpdates(pluginFS embed.FS) {
 // 多文件之后就已经不可用了（EnsureCacheHelperPlugin 启动时还会主动清理掉那个
 // 单文件参照副本），这里改成跟自动更新完全一致的路径，不再维护第二套部署逻辑。
 func DeployPluginToSite(webRoot string) error {
-	srcFiles, err := readEmbeddedPluginFiles(cacheHelperPluginFS)
+	srcFiles, version, err := embeddedPluginFilesWithVersion(cacheHelperPluginFS)
 	if err != nil {
 		return fmt.Errorf("读取内嵌插件源码失败: %w", err)
 	}
@@ -144,25 +146,24 @@ func DeployPluginToSite(webRoot string) error {
 	}
 	pluginsDir := filepath.Join(webRoot, "wp-content", "plugins")
 	pluginDir := filepath.Join(pluginsDir, pluginDirName)
-	if pluginDirMatches(pluginDir, srcFiles) {
+	if pluginDeployedVersion(pluginDir) == version {
 		return nil
 	}
 	return deployPluginDirectory(pluginsDir, pluginDir, srcFiles)
 }
 
 // PluginNeedsUpdate 供网站详情页判断该站点已部署的插件是否落后于面板内置版本。
-// installed 为 false 时 needsUpdate 无意义。比较逻辑跟 AutoDeployPluginUpdates
-// 一致（逐文件内容比对），不依赖已经废弃的单文件参照副本的 mtime。
+// installed 为 false 时 needsUpdate 无意义。
 func PluginNeedsUpdate(webRoot string) (installed bool, needsUpdate bool) {
 	pluginDir := filepath.Join(webRoot, "wp-content", "plugins", pluginDirName)
 	if _, err := os.Stat(filepath.Join(pluginDir, pluginDirName+".php")); err != nil {
 		return false, false
 	}
-	srcFiles, err := readEmbeddedPluginFiles(cacheHelperPluginFS)
-	if err != nil || len(srcFiles) == 0 {
+	_, version, err := embeddedPluginFilesWithVersion(cacheHelperPluginFS)
+	if err != nil {
 		return true, false
 	}
-	return true, !pluginDirMatches(pluginDir, srcFiles)
+	return true, pluginDeployedVersion(pluginDir) != version
 }
 
 // readEmbeddedPluginFiles 把内嵌的 wp-panel-optimizer 目录展开为「相对路径 -> 文件内容」的映射。
@@ -193,30 +194,57 @@ func readEmbeddedPluginFiles(pluginFS embed.FS) (map[string][]byte, error) {
 	return files, nil
 }
 
-// pluginDirMatches 判断站点上已部署的插件目录是否和内嵌源码逐文件内容一致，
-// 且没有源码里已经不存在、但站点目录里还残留的多余文件。
-func pluginDirMatches(pluginDir string, srcFiles map[string][]byte) bool {
-	for rel, data := range srcFiles {
-		existing, err := os.ReadFile(filepath.Join(pluginDir, filepath.FromSlash(rel)))
-		if err != nil || !bytes.Equal(existing, data) {
-			return false
-		}
+// pluginVersionMarkerFile 是随插件一起部署到每个站点的版本标记文件，内容是
+// pluginSourceVersion() 算出的 hash。不是真正的插件功能文件，纯粹用来快速判断
+// "站点上部署的版本是不是面板内置的最新版本"——原来的做法是把插件所有文件挨个
+// 读出来逐字节比对，还要再遍历一遍目标目录揪出多余文件，每次面板启动、每个站点
+// 都要做一整套文件系统操作；换成比对一个标记字符串，逻辑和开销都小得多。
+// 以 "." 开头，WordPress 的 get_plugins() 只识别插件目录下 .php 文件的头部注释，
+// 不会把它当成任何东西。
+const pluginVersionMarkerFile = ".wpp-version"
+
+// embeddedPluginFilesWithVersion 读取内嵌插件源码，算出版本标记后把标记本身也
+// 作为一个文件加进返回的映射里，这样调用方不管是部署整目录（deployPluginDirectory）
+// 还是同步本地参照副本，标记都会跟着一起写下去，不需要额外单独处理。
+func embeddedPluginFilesWithVersion(pluginFS embed.FS) (map[string][]byte, string, error) {
+	srcFiles, err := readEmbeddedPluginFiles(pluginFS)
+	if err != nil {
+		return nil, "", err
 	}
-	matches := true
-	filepath.WalkDir(pluginDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !matches {
-			return nil
-		}
-		rel, relErr := filepath.Rel(pluginDir, path)
-		if relErr != nil {
-			return nil
-		}
-		if _, ok := srcFiles[filepath.ToSlash(rel)]; !ok {
-			matches = false
-		}
-		return nil
-	})
-	return matches
+	version := pluginSourceVersion(srcFiles)
+	srcFiles[pluginVersionMarkerFile] = []byte(version)
+	return srcFiles, version, nil
+}
+
+// pluginSourceVersion 对内嵌插件源码整体算一个 hash：按相对路径排序后把
+// "路径+内容"逐个喂进同一个 hash，结果稳定、不依赖 map 遍历顺序（Go 的 map
+// 遍历顺序是随机的），源码任何一个文件变了这个值就会变。
+func pluginSourceVersion(srcFiles map[string][]byte) string {
+	rels := make([]string, 0, len(srcFiles))
+	for rel := range srcFiles {
+		rels = append(rels, rel)
+	}
+	sort.Strings(rels)
+	h := sha256.New()
+	for _, rel := range rels {
+		h.Write([]byte(rel))
+		h.Write([]byte{0})
+		h.Write(srcFiles[rel])
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// pluginDeployedVersion 读取已部署到某个站点的插件目录里的版本标记。目录不存在、
+// 标记文件缺失（例如老版本面板部署的、还没有这个标记）统一返回空字符串——调用方
+// 拿它跟当前源码版本比对时，空字符串必然不相等，会触发一次部署，效果等价于以前
+// "逐文件比对发现不一致"，行为不变。
+func pluginDeployedVersion(pluginDir string) string {
+	data, err := os.ReadFile(filepath.Join(pluginDir, pluginVersionMarkerFile))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // deployPluginDirectory 把 srcFiles 部署到 pluginDir。目标目录常态下已存在且非空
