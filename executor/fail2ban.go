@@ -746,6 +746,8 @@ func RecordFail2banBan(ip, jail string, banTime, banCount int, restored bool) er
 		reason = "404 泛滥检测"
 	} else if jail == "wppanel-sshd" {
 		reason = "SSH 暴力破解"
+	} else if jail == "wppanel-login" {
+		reason = "登录/XML-RPC 认证爆破"
 	}
 	expiresModifier := fmt.Sprintf("+%d seconds", banTime)
 
@@ -831,7 +833,7 @@ func MaybeRemoveNginxBan(ip string) error {
 	}
 	var activeWebBans int
 	err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM firewall_bans
-		WHERE ip_address=? AND source_jail IN ('wppanel','wppanel-404','manual')
+		WHERE ip_address=? AND source_jail IN ('wppanel','wppanel-404','wppanel-login','manual')
 		AND unbanned_at IS NULL AND (expires_at IS NULL OR expires_at > datetime('now'))`, ip).Scan(&activeWebBans)
 	if err != nil || activeWebBans > 0 {
 		return err
@@ -1360,7 +1362,9 @@ func CleanExpiredBans() {
 
 		// Fail2ban-controlled bans are closed by actionunban or SyncFail2banBans.
 		// Do not expire them from the panel clock while Fail2ban may still enforce them.
-		if jail == "wppanel" || jail == "wppanel-404" || jail == "wppanel-sshd" {
+		// normalizeFail2banJail recognizes every Fail2ban-managed jail name, so a
+		// future jail addition can't silently fall through this skip list again.
+		if normalizeFail2banJail(jail) != "" {
 			continue
 		}
 		db.Exec("UPDATE firewall_bans SET unbanned_at = datetime('now') WHERE id = ?", id)
