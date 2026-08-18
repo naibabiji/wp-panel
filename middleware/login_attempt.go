@@ -41,11 +41,21 @@ func (t *LoginAttemptTracker) RecordAttempt(ip string, attemptType string) {
 	}
 }
 
+// IsBanned gates access to the panel itself, so it deliberately excludes
+// wppanel-login bans: a failed WordPress login on a hosted site produces the
+// exact same log signal whether it's an attacker or the admin mistyping their
+// own password, unlike the other ban sources (SSH brute force, site-wide
+// flood/404 scanning, the panel's own auth failures) which legitimate admin
+// activity essentially never triggers. Locking an admin out of the panel for
+// typos on a site they'd need the panel to go fix is a worse outcome than
+// letting that one signal not also gate panel access; the hosted site itself
+// is still protected by the wppanel-login jail at the Nginx/nftables layer.
 func (t *LoginAttemptTracker) IsBanned(ip string) bool {
 	var count int
 	err := t.DB.QueryRow(
 		`SELECT COUNT(*) FROM firewall_bans
 		 WHERE ip_address = ?
+		 AND source_jail != 'wppanel-login'
 		 AND unbanned_at IS NULL
 		 AND (expires_at IS NULL OR expires_at > datetime('now'))`,
 		ip,
