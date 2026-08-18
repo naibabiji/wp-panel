@@ -91,7 +91,7 @@ func TestWriteFail2banLocalRemovesDuplicatePurgeSettings(t *testing.T) {
 }
 
 func TestFail2banLoginFilterAllowsQueriesAndIgnoresCoreNonLoginActions(t *testing.T) {
-	lines := strings.Split(fail2banFilterConfig, "\n")
+	lines := strings.Split(fail2banLoginFilterConfig, "\n")
 	var failPattern, ignorePattern string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -140,21 +140,85 @@ func TestFail2banLoginFilterAllowsQueriesAndIgnoresCoreNonLoginActions(t *testin
 	if !pythonMatch(ignorePattern, line("/wp-login.php?action=login&action=lostpassword", "200")) {
 		t.Fatal("the final safe action should be ignored")
 	}
-	if strings.Contains(fail2banFilterConfig, " 444 ") {
+	if strings.Contains(fail2banLoginFilterConfig, " 444 ") {
 		t.Fatal("444 must not be included in Fail2ban filters")
+	}
+}
+
+// TestFail2banLoginFilterIsUriAgnostic 证明登录/XML-RPC 爆破 failregex 的判定
+// 只依赖状态码结构（POST ... 200/403），不要求路径斜杠数量——因为"是不是
+// wp-login.php/xmlrpc.php"这件事已经由 Nginx 侧基于规范化 $uri 的 map 判断完，
+// 写进 wp-login-security.log 的每一行本身就是候选事件，这里只做防御性结构校验。
+func TestFail2banLoginFilterIsUriAgnostic(t *testing.T) {
+	lines := strings.Split(fail2banLoginFilterConfig, "\n")
+	var failPatterns []string
+	inFailregex := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "failregex = ") {
+			failPatterns = append(failPatterns, strings.TrimPrefix(trimmed, "failregex = "))
+			inFailregex = true
+			continue
+		}
+		if strings.HasPrefix(trimmed, "ignoreregex") {
+			inFailregex = false
+			continue
+		}
+		if inFailregex && trimmed != "" {
+			failPatterns = append(failPatterns, trimmed)
+		}
+	}
+	if len(failPatterns) != 2 {
+		t.Fatalf("expected exactly 2 failregex lines (200 + 403), got %d: %v", len(failPatterns), failPatterns)
+	}
+	loginRE := regexp.MustCompile(strings.ReplaceAll(failPatterns[0], "<HOST>", `\S+`))
+	xmlrpcRE := regexp.MustCompile(strings.ReplaceAll(failPatterns[1], "<HOST>", `\S+`))
+	line := func(target, status string) string {
+		return `203.0.113.9 - - [14/Aug/2026:12:00:00 +0800] "POST ` + target + ` HTTP/2.0" ` + status + ` 123 "-" "test"`
+	}
+	for _, target := range []string{"/wp-login.php", "//wp-login.php", "///wp-login.php", "/%2Fwp-login.php"} {
+		if !loginRE.MatchString(line(target, "200")) {
+			t.Fatalf("login failregex should not care about slash count: %s", target)
+		}
+	}
+	for _, target := range []string{"/xmlrpc.php", "//xmlrpc.php", "///xmlrpc.php"} {
+		if !xmlrpcRE.MatchString(line(target, "403")) {
+			t.Fatalf("xmlrpc failregex should not care about slash count: %s", target)
+		}
+	}
+}
+
+// TestFail2banWebFilterNoLongerCountsLoginOrXmlrpc 防止未来有人把登录/XML-RPC
+// 检测重新加回 wppanel 的 filter，导致同一次失败登录被 wppanel 和 wppanel-login
+// 两个 jail 分别计数、触发两次独立封禁。
+func TestFail2banWebFilterNoLongerCountsLoginOrXmlrpc(t *testing.T) {
+	if strings.Contains(fail2banFilterConfig, "wp-login") || strings.Contains(fail2banFilterConfig, "xmlrpc") {
+		t.Fatalf("wppanel filter must not reference wp-login/xmlrpc any more, that belongs to wppanel-login now:\n%s", fail2banFilterConfig)
+	}
+	if strings.Contains(fail2banFilterConfig, " 200 ") {
+		t.Fatalf("wppanel filter must not match on HTTP 200 any more, that belongs to wppanel-login now:\n%s", fail2banFilterConfig)
+	}
+}
+
+func TestFail2banLoginJailIsRecognizedAsWebSource(t *testing.T) {
+	if normalizeFail2banJail("wppanel-login") != "wppanel-login" {
+		t.Fatal("normalizeFail2banJail should recognize wppanel-login")
+	}
+	if !isWebBanSource("wppanel-login") {
+		t.Fatal("isWebBanSource should treat wppanel-login as a web ban source")
 	}
 }
 
 func TestValidateGeneratedFail2banJailConfigRequiresFixedLadderForAllJails(t *testing.T) {
 	block := "bantime = 600\nbantime.increment = true\nbantime.multipliers = 1 6 36 144 1008\nbantime.maxtime = 7d\nbantime.overalljails = false\n"
-	valid := "[wppanel]\n" + block + "[wppanel-404]\n" + block + "[wppanel-sshd]\n" + block
+	valid := "[wppanel]\n" + block + "[wppanel-404]\n" + block + "[wppanel-login]\n" + block + "[wppanel-sshd]\n" + block
 	if err := validateGeneratedFail2banJailConfig(valid); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateGeneratedFail2banJailConfig("[wppanel]\n" + block + "[wppanel-404]\n" + block); err == nil {
 		t.Fatal("config missing one jail ladder was accepted")
 	}
-	misplaced := "[wppanel]\n" + block + "bantime.increment = true\n[wppanel-404]\n" + block + "[wppanel-sshd]\n" + strings.Replace(block, "bantime.increment = true\n", "", 1)
+	misplaced := "[wppanel]\n" + block + "bantime.increment = true\n[wppanel-404]\n" + block + "[wppanel-login]\n" + block + "[wppanel-sshd]\n" + strings.Replace(block, "bantime.increment = true\n", "", 1)
 	if err := validateGeneratedFail2banJailConfig(misplaced); err == nil {
 		t.Fatal("globally balanced but misplaced directive was accepted")
 	}

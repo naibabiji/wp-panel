@@ -12,17 +12,23 @@
             <div class="text-sm text-gray-300 space-y-4">
                 <div>
                     <p class="text-white font-semibold mb-1">检测范围</p>
-                    <p>自动封禁规则监控所有网站的 access.log 和 error.log；WordPress 可疑访问分析额外读取 wp-security.log，仅做本地统计和证据整理。</p>
+                    <p>自动封禁规则监控所有网站的 access.log 和 error.log；登录/XML-RPC 认证爆破单独读取 wp-login-security.log（不受站点「访问日志」模式影响，始终记录）；WordPress 可疑访问分析额外读取 wp-security.log，仅做本地统计和证据整理。</p>
+                </div>
+                <div>
+                    <p class="text-white font-semibold mb-1">登录/XML-RPC 认证爆破 — 来源标注为「登录防护」（独立 jail，命中以下任一规则计为 1 次违规）</p>
+                    <ul class="list-disc list-inside space-y-1 ml-2">
+                        <li><code class="text-gray-300">POST /wp-login.php</code> 返回 <span class="text-gray-300">HTTP 200</span> — 作为疑似登录失败计数；成功登录返回的 302，以及找回密码、重置密码、注册等明确合法动作不计入。部分二次验证或安全插件流程也可能返回 200，设置阈值时需考虑此类场景</li>
+                        <li><code class="text-gray-300">POST /xmlrpc.php</code> 返回 <span class="text-gray-300">HTTP 403</span> — 仅在面板禁用 XML-RPC 时出现，视为无条件的攻击信号</li>
+                    </ul>
+                    <p class="text-gray-500 mt-1">判定依据是 Nginx 路由完成后已规范化的请求路径，任意数量的多余斜杠或 URL 编码变体（如 <code class="text-gray-300">//wp-login.php</code>、<code class="text-gray-300">%2Fwp-login.php</code>）只要最终被路由到登录/XML-RPC 入口，都会统一计数，不存在换个写法就不计数的空子。使用独立的 <code class="text-gray-300">wppanel-login</code> jail，和下方「Web防护」的全站限流/探测信号分开累计，互不影响触发阈值。</p>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">触发条件 — 来源标注为「Web防护」（命中以下任一规则计为 1 次违规）</p>
                     <ul class="list-disc list-inside space-y-1 ml-2">
-                        <li><code class="text-gray-300">POST /wp-login.php</code> 返回 <span class="text-gray-300">HTTP 200</span> — 作为疑似登录失败计数；成功登录返回的 302，以及找回密码、重置密码、注册等明确合法动作不计入。部分二次验证或安全插件流程也可能返回 200，设置阈值时需考虑此类场景</li>
-                        <li><code class="text-gray-300">POST /xmlrpc.php</code> 返回 <span class="text-gray-300">HTTP 403</span> — 禁用 XML-RPC 后仍被请求（含 <code class="text-gray-300">//xmlrpc.php</code> 变体）</li>
                         <li>返回 <span class="text-gray-300">HTTP 429</span> — 超出请求频率限制</li>
                         <li>敏感文件扫描返回 <span class="text-gray-300">404</span> — 如 <code class="text-gray-300">.env</code>、<code class="text-gray-300">.git</code>、<code class="text-gray-300">wp-config.php</code>、<code class="text-gray-300">.sql</code>、压缩包等</li>
                     </ul>
-                    <p class="text-gray-500 mt-1">以上 4 条共用同一条 Fail2ban 规则（jail: <code class="text-gray-300">wppanel</code>），封禁列表「来源」列只会统一显示「Web防护」，无法从来源反查具体命中哪一条，可结合「原因」列或站点日志判断。</p>
+                    <p class="text-gray-500 mt-1">以上 2 条共用同一条 Fail2ban 规则（jail: <code class="text-gray-300">wppanel</code>），封禁列表「来源」列只会统一显示「Web防护」，无法从来源反查具体命中哪一条，可结合「原因」列或站点日志判断。</p>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">404 泛滥检测（独立规则，来源标注为「404防御」）</p>
@@ -35,14 +41,14 @@
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">封禁阈值</p>
-                    <p>「Web防护」的 4 条触发条件默认 <span class="text-blue-400">60 秒</span>内累计 <span class="text-blue-400">5 次</span>违规 → 自动封禁（可在「安全设置」页面自定义阈值和统计窗口；自动封禁阶梯固定）。</p>
+                    <p>「Web防护」的 2 条触发条件默认 <span class="text-blue-400">60 秒</span>内累计 <span class="text-blue-400">5 次</span>违规 → 自动封禁；「登录防护」的 2 条触发条件复用同一份阈值配置（均可在「安全设置」页面自定义阈值和统计窗口；自动封禁阶梯固定），但按独立 jail 累计，互不影响。</p>
                     <p>「404防御」固定为 <span class="text-blue-400">30 次/60 秒</span>，不开放自定义。</p>
                 </div>
                 <div>
                     <p class="text-white font-semibold mb-1">重复违规递增封禁</p>
                     <ul class="space-y-1 ml-2">
                         <li>同一 IP 在同一 jail 重复触发时，按 <span class="text-blue-400">10 分钟 → 1 小时 → 6 小时 → 24 小时 → 7 天</span> 递增，到期由 Fail2ban 自动解除</li>
-                        <li>「Web防护」「404防御」「SSH防护」分别计数；一个规则中的次数不会叠加到另一个规则</li>
+                        <li>「Web防护」「登录防护」「404防御」「SSH防护」分别计数；一个规则中的次数不会叠加到另一个规则</li>
                         <li>违规历史由 Fail2ban 保留 30 天；超过保留期后，后续触发可能重新从首档计算</li>
                         <li>自动规则最长封禁 7 天，<span class="text-red-400">不会自动升级为永久封禁</span>；永久封禁仅由管理员手动执行</li>
                     </ul>
@@ -51,7 +57,7 @@
                 <div>
                     <p class="text-white font-semibold mb-1">封禁机制</p>
                     <ul class="space-y-1 ml-2">
-                        <li><span class="text-blue-400">Fail2ban</span> — 管理来源「Web防护」封禁（jail: <code class="text-gray-300">wppanel</code>）、来源「404防御」封禁（jail: <code class="text-gray-300">wppanel-404</code>）和来源「SSH防护」封禁（jail: <code class="text-gray-300">wppanel-sshd</code>，复用与 Web防护相同的阈值，检测 <code class="text-gray-300">/var/log/auth.log</code> 中的 SSH 登录失败），到期自动释放</li>
+                        <li><span class="text-blue-400">Fail2ban</span> — 管理来源「Web防护」封禁（jail: <code class="text-gray-300">wppanel</code>）、来源「登录防护」封禁（jail: <code class="text-gray-300">wppanel-login</code>）、来源「404防御」封禁（jail: <code class="text-gray-300">wppanel-404</code>）和来源「SSH防护」封禁（jail: <code class="text-gray-300">wppanel-sshd</code>，复用与 Web防护相同的阈值，检测 <code class="text-gray-300">/var/log/auth.log</code> 中的 SSH 登录失败），到期自动释放</li>
                         <li><span class="text-purple-400">Nftables 持久</span> — 管理管理员手动永久封禁、来源「扫描防御」封禁（jail: <code class="text-gray-300">panel_scan</code>）和来源「面板」封禁（jail: <code class="text-gray-300">panel</code>），独立于 Fail2ban；有期限的记录到期解除，手动永久封禁需管理员解封</li>
                         <li><span class="text-green-400">Nginx 黑名单</span> — 与 Fail2ban 联动，Web 防护 jail 封禁时同步写入 Nginx geo 黑名单，被禁 IP 直接返回 <code class="text-gray-300">444</code>（关闭连接），确保 Cloudflare 代理场景下也能有效拦截</li>
                     </ul>
@@ -105,6 +111,10 @@
                         <div>
                             <span class="text-gray-500"># 查看网站防护封禁</span>
                             <br><span class="text-green-400">fail2ban-client</span> status wppanel
+                        </div>
+                        <div>
+                            <span class="text-gray-500"># 查看登录/XML-RPC 认证爆破封禁</span>
+                            <br><span class="text-green-400">fail2ban-client</span> status wppanel-login
                         </div>
                         <div>
                             <span class="text-gray-500"># 查看 404 泛滥封禁</span>
@@ -301,6 +311,7 @@
                 <select x-model="banSourceFilter" @change="page=1;fetchBans()" class="input-field text-sm py-1.5 w-40">
                     <option value="">{{t .Lang "firewall.all_sources"}}</option>
                     <option value="wppanel">{{t .Lang "firewall.source_web_protect"}}</option>
+                    <option value="wppanel-login">{{t .Lang "firewall.source_login"}}</option>
                     <option value="wppanel-404">{{t .Lang "firewall.source_404"}}</option>
                     <option value="wppanel-sshd">{{t .Lang "firewall.source_ssh"}}</option>
                     <option value="panel">{{t .Lang "firewall.source_panel"}}</option>
@@ -626,6 +637,7 @@ function firewallManager() {
         },
         sourceLabel(ban) {
             if (ban.source_jail === 'wppanel') return t('firewall.source_web_protect');
+            if (ban.source_jail === 'wppanel-login') return t('firewall.source_login');
             if (ban.source_jail === 'wppanel-404') return t('firewall.source_404');
             if (ban.source_jail === 'wppanel-sshd') return t('firewall.source_ssh');
             if (ban.source_jail === 'panel') return t('firewall.source_panel');
@@ -636,6 +648,7 @@ function firewallManager() {
         },
         sourceClass(ban) {
             if (ban.source_jail === 'wppanel') return 'text-blue-400';
+            if (ban.source_jail === 'wppanel-login') return 'text-pink-400';
             if (ban.source_jail === 'wppanel-404') return 'text-yellow-400';
             if (ban.source_jail === 'wppanel-sshd') return 'text-green-400';
             if (ban.source_jail === 'manual') return 'text-purple-400';

@@ -1293,6 +1293,7 @@
     "risk_medium": "Medium",
     "scanning": "Scanning...",
     "source_404": "404 protection",
+    "source_login": "Login protection",
     "source_manual": "Manual ban",
     "source_nftables": "Persistent Nftables",
     "source_nginx": "Nginx",

@@ -153,6 +153,18 @@ map "$wp_uri_security_loggable$wp_sqli_probe_hit$wp_fake_search_bot_hit" $wp_sec
     default 1;
     "000" 0;
 }
+
+# 登录/XML-RPC 认证爆破检测的唯一真实来源：Nginx 已经完成 merge_slashes、
+# %XX 解码、location 匹配之后的 $uri，而不是客户端提交的原始 $request 文本。
+# 任何斜杠数量、编码变体，只要最终被 Nginx 路由进了 wp-login.php / xmlrpc.php
+# 这两个 location 并拿到下面的状态码，就一定会命中这里——不需要、也不允许再
+# 在 Fail2ban 正则里为新的斜杠/编码变体打补丁。这份日志不受站点 AccessLogMode
+# 影响，始终记录（与 wp-security.log 的既有语义一致）。
+map "$request_method:$uri:$status" $wp_login_attempt_loggable {
+    default 0;
+    "POST:/wp-login.php:200" 1;
+    "POST:/xmlrpc.php:403"   1;
+}
 `
 }
 
@@ -661,6 +673,7 @@ server {
 	    access_log /www/wwwlogs/{{.Domain}}/access.log wppanel_combined if=$wp_access_log_disabled;
 	    {{end}}
     access_log /www/wwwlogs/{{.Domain}}/wp-security.log wppanel_combined if=$wp_security_loggable;
+    access_log /www/wwwlogs/{{.Domain}}/wp-login-security.log wppanel_combined if=$wp_login_attempt_loggable;
 
     {{if .FCacheEnabled}}
     set $wp_skip_cache 0;
@@ -861,6 +874,7 @@ server {
 	    access_log /www/wwwlogs/{{.Domain}}/access.log wppanel_combined if=$wp_access_log_disabled;
 	    {{end}}
     access_log /www/wwwlogs/{{.Domain}}/wp-security.log wppanel_combined if=$wp_security_loggable;
+    access_log /www/wwwlogs/{{.Domain}}/wp-login-security.log wppanel_combined if=$wp_login_attempt_loggable;
 
     {{if .FCacheEnabled}}
     set $wp_skip_cache 0;

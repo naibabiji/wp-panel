@@ -526,6 +526,7 @@ var i18nKeys = []string{
 	"firewall.risk_medium",
 	"firewall.scanning",
 	"firewall.source_404",
+	"firewall.source_login",
 	"firewall.source_manual",
 	"firewall.source_nftables",
 	"firewall.source_nginx",

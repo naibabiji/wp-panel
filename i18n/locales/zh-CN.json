@@ -1223,6 +1223,7 @@
     "source_scanner": "本机扫描",
     "found": "发现",
     "source_web_protect": "Web防护",
+    "source_login": "登录防护",
     "source_404": "404防御",
     "source_ssh": "SSH防护",
     "source_panel": "面板",

@@ -32,13 +32,34 @@ const (
 
 var googlebotHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
+// fail2banFilterConfig 只负责全站洪泛/探测信号（429 限流、敏感文件 404 探测）。
+// 登录/XML-RPC 认证爆破信号已经拆分到 fail2banLoginFilterConfig + wppanel-login
+// jail，读取的是 Nginx 基于规范化 $uri 单独生成的 wp-login-security.log，不再
+// 从这里的 access.log 里用 $request 原始文本匹配——避免同一次登录失败被两个
+// jail 分别计数、触发两次独立封禁。
 const fail2banFilterConfig = `# WP Panel Generated — DO NOT EDIT MANUALLY
 [Definition]
-failregex = ^<HOST> .* "POST /wp-login\.php[^"]*" 200 .*$
-            ^<HOST> .* "POST /xmlrpc\.php .*" 403 .*$
-            ^<HOST> .* "POST //xmlrpc\.php .*" 403 .*$
-            ^<HOST> .* ".*" 429 .*$
+failregex = ^<HOST> .* ".*" 429 .*$
             ^<HOST> - - \[.*\] "(GET|POST) .*(\.env|\.git|config\.bak|wp-config\.php|\.sql|\.tar|\.gz|\.zip|\.old|\.swp|\.save|\.DS_Store).*" 404 .*$
+ignoreregex =
+`
+
+// fail2banLoginFilterConfig 承载 wp-login.php 登录失败（200）和被禁用的
+// xmlrpc.php 认证请求（403）两类信号。这两类事件能不能进入 wp-login-security.log，
+// 已经由 Nginx 侧的 $wp_login_attempt_loggable map（基于规范化后的 $uri，而不是
+// 客户端原始 $request 文本）判断完毕，所以这里的 failregex 只做轻量结构校验
+// （POST + 状态码），不再要求路径斜杠数量——防止模板被误改导致这个文件意外
+// 写入无关请求时被 Fail2ban 全部当成攻击，但不会重新引入"单斜杠才算数"的老问题。
+//
+// ignoreregex 是从旧 fail2banFilterConfig 原样搬过来的，用于放行
+// lostpassword/register/logout 等合法 WordPress 核心 action；这段正则专门处理了
+// 重复 action 参数时 WordPress/PHP 取最后一个、而非第一个的语义（已用局域网实测
+// 确认 Nginx 的 $arg_action 取的是第一个，两者不一致，所以这段判断必须留在
+// Fail2ban 侧解析完整 $request 文本，不能挪到 Nginx map 里用 $arg_action 做）。
+const fail2banLoginFilterConfig = `# WP Panel Generated — DO NOT EDIT MANUALLY
+[Definition]
+failregex = ^<HOST> .* "POST [^"]*" 200 .*$
+            ^<HOST> .* "POST [^"]*" 403 .*$
 ignoreregex =
               ^<HOST> .* "POST /wp-login\.php\?(?:[A-Za-z0-9_.~-]+=[^&"]*&)*action=(?:confirm_admin_email|postpass|logout|lostpassword|retrievepassword|resetpass|rp|register|checkemail|confirmaction|entered_recovery_mode)(?:&(?!action=)[A-Za-z0-9_.~-]+=[^&"]*)* HTTP/[^"]+" 200 .*$
 `
@@ -72,7 +93,8 @@ func deployFail2ban(webWhitelistIPs, sshWhitelistIPs string, maxRetry, findTime,
 	actionPath := filepath.Join(actionDir, "wppanel-nginx.conf")
 	filterPath := filepath.Join(filterDir, "wppanel.conf")
 	filter404Path := filepath.Join(filterDir, "wppanel-404.conf")
-	backups, err := backupFail2banConfigFiles(jailPath, actionPath, filterPath, filter404Path, localPath)
+	filterLoginPath := filepath.Join(filterDir, "wppanel-login.conf")
+	backups, err := backupFail2banConfigFiles(jailPath, actionPath, filterPath, filter404Path, filterLoginPath, localPath)
 	if err != nil {
 		return err
 	}
@@ -137,6 +159,21 @@ bantime.maxtime = 7d
 bantime.overalljails = false
 ignoreip = %s
 
+[wppanel-login]
+enabled = true
+filter = wppanel-login
+action = nftables-multiport[name=wppanel-login, port="http,https"]
+         wppanel-nginx[name=wppanel-login]
+logpath = /www/wwwlogs/*/wp-login-security.log
+maxretry = %d
+findtime = %d
+bantime = %d
+bantime.increment = true
+bantime.multipliers = 1 6 36 144 1008
+bantime.maxtime = 7d
+bantime.overalljails = false
+ignoreip = %s
+
 [wppanel-sshd]
 enabled = true
 filter = sshd
@@ -150,7 +187,7 @@ bantime.multipliers = 1 6 36 144 1008
 bantime.maxtime = 7d
 bantime.overalljails = false
 ignoreip = %s
-`, maxRetry, findTime, banTime, webIgnoreIPs, banTime, webIgnoreIPs, maxRetry, findTime, banTime, sshIgnoreIPs)
+`, maxRetry, findTime, banTime, webIgnoreIPs, banTime, webIgnoreIPs, maxRetry, findTime, banTime, webIgnoreIPs, maxRetry, findTime, banTime, sshIgnoreIPs)
 	if err := validateGeneratedFail2banJailConfig(jailConfig); err != nil {
 		return err
 	}
@@ -187,6 +224,10 @@ ignoreregex =
 		return rollbackDeploy(fmt.Errorf("写入 404 filter 配置失败: %w", err))
 	}
 
+	if err := os.WriteFile(filterLoginPath, []byte(fail2banLoginFilterConfig), 0644); err != nil {
+		return rollbackDeploy(fmt.Errorf("写入登录爆破 filter 配置失败: %w", err))
+	}
+
 	if _, err := executeCommand("fail2ban-client", "-t"); err != nil {
 		return rollbackDeploy(fmt.Errorf("Fail2ban 配置校验失败: %w", err))
 	}
@@ -197,7 +238,7 @@ ignoreregex =
 }
 
 func validateGeneratedFail2banJailConfig(config string) error {
-	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-sshd"} {
+	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd"} {
 		header := "[" + jail + "]"
 		start := strings.Index(config, header)
 		if start < 0 {
@@ -349,6 +390,7 @@ func ensureLogFiles() {
 			touch("/www/wwwlogs/" + e.Name() + "/access.log")
 			touch("/www/wwwlogs/" + e.Name() + "/error.log")
 			touch("/www/wwwlogs/" + e.Name() + "/wp-security.log")
+			touch("/www/wwwlogs/" + e.Name() + "/wp-login-security.log")
 			touch("/www/wwwlogs/" + e.Name() + "/php-error.log")
 			touch("/www/wwwlogs/" + e.Name() + "/php-slow.log")
 			hasLogs = true
@@ -359,6 +401,7 @@ func ensureLogFiles() {
 		touch("/www/wwwlogs/_panel_placeholder/access.log")
 		touch("/www/wwwlogs/_panel_placeholder/error.log")
 		touch("/www/wwwlogs/_panel_placeholder/wp-security.log")
+		touch("/www/wwwlogs/_panel_placeholder/wp-login-security.log")
 		touch("/www/wwwlogs/_panel_placeholder/php-error.log")
 		touch("/www/wwwlogs/_panel_placeholder/php-slow.log")
 	}
@@ -372,6 +415,7 @@ func ensureSiteLogFiles(logDir string) {
 	touch(filepath.Join(logDir, "access.log"))
 	touch(filepath.Join(logDir, "error.log"))
 	touch(filepath.Join(logDir, "wp-security.log"))
+	touch(filepath.Join(logDir, "wp-login-security.log"))
 	touch(filepath.Join(logDir, "php-error.log"))
 	touch(filepath.Join(logDir, "php-slow.log"))
 }
@@ -561,14 +605,14 @@ func SyncFail2banBans() {
 	webBannedSet := make(map[string]bool)
 	webJailStatusRead := false
 
-	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-sshd"} {
+	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd"} {
 		out, err := executeCommand("fail2ban-client", "status", jail)
 		if err != nil || out == "" {
 			log.Printf("Fail2ban 状态同步跳过 %s：无法读取 jail 状态", jail)
 			continue
 		}
 		jailStatusRead[jail] = true
-		isWebJail := jail == "wppanel" || jail == "wppanel-404"
+		isWebJail := isWebBanSource(jail)
 		if isWebJail {
 			webJailStatusRead = true
 		}
@@ -907,7 +951,7 @@ func deduplicateActiveFirewallBanIP(db *sql.DB, ip, jail string) error {
 
 func normalizeFail2banJail(jail string) string {
 	switch strings.TrimSpace(jail) {
-	case "wppanel", "wppanel-404", "wppanel-sshd":
+	case "wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd":
 		return strings.TrimSpace(jail)
 	default:
 		return ""
@@ -915,11 +959,11 @@ func normalizeFail2banJail(jail string) string {
 }
 
 func isWebBanSource(jail string) bool {
-	return jail == "wppanel" || jail == "wppanel-404" || jail == "manual"
+	return jail == "wppanel" || jail == "wppanel-404" || jail == "wppanel-login" || jail == "manual"
 }
 
 func detectFail2banJail(ip string) string {
-	for _, jail := range []string{"wppanel", "wppanel-404"} {
+	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login"} {
 		out, err := executeCommand("fail2ban-client", "status", jail)
 		if err != nil {
 			continue
@@ -1285,7 +1329,7 @@ func UnbanAllIPs() string {
 	exec.Command("bash", "-c", "nft flush set ip wppanel_persist banned_ips 2>/dev/null; true").Run()
 	_ = ReplaceNginxBannedIPs(map[string]bool{})
 
-	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-sshd"} {
+	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd"} {
 		out, err := executeCommand("fail2ban-client", "status", jail)
 		if err == nil && out != "" {
 			for _, ip := range parseBannedIPs(out) {
