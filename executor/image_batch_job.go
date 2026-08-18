@@ -83,12 +83,22 @@ func StartImageOptimizationJob(siteID int) (int64, error) {
 		return 0, fmt.Errorf("站点不存在或不是 WordPress 站点: %w", err)
 	}
 
+	// 跟备份恢复、WP 核心/插件/主题更新共用同一把站点级独占锁——jpegoptim/optipng
+	// 在任务运行期间持续原地重写 wp-content/uploads/ 下的文件，如果这时候有恢复
+	// 或更新操作同时替换同一批文件，会导致文件损坏或数据不一致，见 site_lock.go。
+	// 锁持有到任务结束（成功/失败/停止），不是只护住创建这一步。
+	if !TryAcquireSiteOpLock(siteID, "image_optimizer") {
+		return 0, errors.New("站点当前有其他维护操作正在进行（更新、备份恢复等），请稍后重试")
+	}
+
 	res, err := db.Exec(`INSERT INTO site_image_optimization_jobs (site_id, status) VALUES (?, 'queued')`, siteID)
 	if err != nil {
+		ReleaseSiteOpLock(siteID)
 		return 0, fmt.Errorf("创建任务失败（可能已有正在进行的任务）: %w", err)
 	}
 	jobID, err := res.LastInsertId()
 	if err != nil {
+		ReleaseSiteOpLock(siteID)
 		return 0, err
 	}
 
@@ -97,7 +107,7 @@ func StartImageOptimizationJob(siteID int) (int64, error) {
 	imageBatchCancels[siteID] = imageBatchRunningJob{JobID: jobID, Cancel: cancel}
 	imageBatchMu.Unlock()
 
-	go runImageOptimizationJob(ctx, jobID, siteID, webRoot, systemUser)
+	GoSafe(func() { runImageOptimizationJob(ctx, jobID, siteID, webRoot, systemUser) })
 	return jobID, nil
 }
 
@@ -111,6 +121,43 @@ func StopImageOptimizationJob(siteID int) error {
 	}
 	job.Cancel()
 	return nil
+}
+
+// StopAllImageOptimizationJobsForShutdown 面板收到 SIGINT/SIGTERM 时调用：取消所有仍在
+// 运行的批量优化任务并等待它们的 goroutine 退出（有超时上限）。main.go 的 defer
+// database.Close() 会在 main() 返回后立刻执行，如果这时候还有任务 goroutine 在跑，
+// 它接下来的 db.Exec 会对着已关闭的连接报错；跟 wp 核心更新等其他后台任务的关闭
+// 处理保持同样的"取消 + 限时等待"模式。
+func StopAllImageOptimizationJobsForShutdown(timeout time.Duration) {
+	imageBatchMu.Lock()
+	jobs := make([]imageBatchRunningJob, 0, len(imageBatchCancels))
+	for _, job := range imageBatchCancels {
+		jobs = append(jobs, job)
+	}
+	imageBatchMu.Unlock()
+	if len(jobs) == 0 {
+		return
+	}
+	for _, job := range jobs {
+		job.Cancel()
+	}
+
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		imageBatchMu.Lock()
+		remaining := len(imageBatchCancels)
+		imageBatchMu.Unlock()
+		if remaining == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			log.Printf("[图片优化] 关闭超时，仍有 %d 个任务未退出", remaining)
+			return
+		}
+		<-ticker.C
+	}
 }
 
 // GetImageOptimizationJobStatus 返回该站点最近一次任务的状态，没有任务时返回 nil。
@@ -152,6 +199,7 @@ func runImageOptimizationJob(ctx context.Context, jobID int64, siteID int, webRo
 			delete(imageBatchCancels, siteID)
 		}
 		imageBatchMu.Unlock()
+		ReleaseSiteOpLock(siteID)
 	}()
 
 	db.Exec(`UPDATE site_image_optimization_jobs SET status='running', updated_at=CURRENT_TIMESTAMP WHERE id=?`, jobID)
@@ -185,6 +233,13 @@ func runImageOptimizationJob(ctx context.Context, jobID int64, siteID int, webRo
 		}
 
 		before, after, newModUnix, optErr := optimizeImageFile(ctx, webRoot, systemUser, c.RelativePath, c.Mime)
+		if optErr != nil && ctx.Err() != nil {
+			// 文件正在处理时被点了停止：子进程是被 context 取消杀掉的，不是真的
+			// 处理失败，不计入 processed/failed，避免日志和统计里出现误导性的
+			// "处理失败"记录。
+			stopped = true
+			break
+		}
 		processed++
 		if optErr != nil {
 			failed++

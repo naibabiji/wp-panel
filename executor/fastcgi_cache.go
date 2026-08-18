@@ -216,9 +216,33 @@ func deployPluginDirectory(pluginsDir, pluginDir string, srcFiles map[string][]b
 	}
 
 	if targetExists {
+		logUnexpectedPluginFiles(backupDir, srcFiles)
 		os.RemoveAll(backupDir)
 	}
 	return nil
+}
+
+// logUnexpectedPluginFiles 在丢弃旧插件目录（backupDir）之前记录一次源码里没有的多余
+// 文件——通常是用户手动放进插件目录的调试脚本之类。整目录原子替换会把它们一并丢弃，
+// 这里只做诊断日志，不做保留（保留会破坏"部署结果与内嵌源码逐文件一致"这个不变量）。
+func logUnexpectedPluginFiles(backupDir string, srcFiles map[string][]byte) {
+	var extra []string
+	filepath.WalkDir(backupDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(backupDir, path)
+		if relErr != nil {
+			return nil
+		}
+		if _, ok := srcFiles[filepath.ToSlash(rel)]; !ok {
+			extra = append(extra, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	if len(extra) > 0 {
+		log.Printf("[插件部署] 发现 %d 个源码之外的文件，本次更新会一并移除: %v", len(extra), extra)
+	}
 }
 
 // recoverOrCleanupStalePluginDirs 处理上一次部署可能遗留的临时/备份目录（例如面板恰好

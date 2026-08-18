@@ -182,8 +182,15 @@ trait WPP_Optimizer_Config_Trait {
 
         $code = wp_remote_retrieve_response_code($response);
         if ($code >= 400) {
-            $msg = wp_remote_retrieve_body($response);
-            $msg = $msg ?: "HTTP $code";
+            $body = wp_remote_retrieve_body($response);
+            // 面板错误响应是 {"success":false,"message":"..."} 这样的 JSON，取出 message
+            // 字段展示给用户；不是这个形状（例如反代/网关的错误页）才退回原始响应体。
+            $decoded = $body ? json_decode($body, true) : null;
+            if (is_array($decoded) && !empty($decoded['message'])) {
+                $msg = $decoded['message'];
+            } else {
+                $msg = $body ?: "HTTP $code";
+            }
             return new \WP_Error('api_error', $msg);
         }
 

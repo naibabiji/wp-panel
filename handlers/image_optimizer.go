@@ -40,13 +40,15 @@ func (h *ImageOptimizerHandler) PluginStart(c *gin.Context) {
 		}
 		if status, statusErr := executor.GetImageOptimizationJobStatus(site.ID); statusErr == nil && status != nil &&
 			(status.Status == "queued" || status.Status == "running") {
-			c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"id": status.ID, "status": status.Status}))
+			// key 大小写要跟 PluginStatus 返回的 ImageOptimizationJobStatus 结构（无 json
+			// tag，字段名原样输出）一致，插件侧 JS 统一按大写字段名（data.data.Status）读取。
+			c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"ID": status.ID, "Status": status.Status}))
 			return
 		}
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建任务失败"))
 		return
 	}
-	c.JSON(http.StatusAccepted, models.SuccessResponse(gin.H{"id": jobID, "status": "queued"}))
+	c.JSON(http.StatusAccepted, models.SuccessResponse(gin.H{"ID": jobID, "Status": "queued"}))
 }
 
 func (h *ImageOptimizerHandler) PluginStatus(c *gin.Context) {

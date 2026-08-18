@@ -76,13 +76,26 @@ $updated = 0;
 $total = 0;
 foreach ($byDir as $dir => $basenames) {
     $total += count($basenames);
-    $like = $wpdb->esc_like($dir . '/') . '%';
-    $rows = $wpdb->get_results(
-        $wpdb->prepare(
-            "SELECT post_id, meta_value FROM {$wpdb->postmeta} WHERE meta_key = '_wp_attached_file' AND meta_value LIKE %s",
-            $like
-        )
-    );
+    if ($dir === '.') {
+        // 附件直接放在 uploads/ 根目录（未按年/月分文件夹）时 dirname() 返回 '.'，
+        // 但 _wp_attached_file 里存的是不带任何目录前缀的纯文件名——LIKE './%' 永远
+        // 匹配不到，得按文件名精确匹配，不能拼目录前缀。
+        $placeholders = implode(',', array_fill(0, count($basenames), '%s'));
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT post_id, meta_value FROM {$wpdb->postmeta} WHERE meta_key = '_wp_attached_file' AND meta_value IN ($placeholders)",
+                array_keys($basenames)
+            )
+        );
+    } else {
+        $like = $wpdb->esc_like($dir . '/') . '%';
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT post_id, meta_value FROM {$wpdb->postmeta} WHERE meta_key = '_wp_attached_file' AND meta_value LIKE %s",
+                $like
+            )
+        );
+    }
     if (empty($rows)) continue;
 
     $matchedInDir = [];
