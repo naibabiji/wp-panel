@@ -42,6 +42,26 @@ const (
 	imageFilesizeResultMax = 4 << 10
 )
 
+// lookupSiteSystemUser 查找并校验站点系统用户，optimizeImageFile 和
+// runFilesizeRewrite 共用这段逻辑，避免两处各自重复实现一遍 uid/gid 解析。
+//
+// 不再判断"用户名是不是纯数字"——调用方在这之前都已经用 wpInventoryUserPattern
+// （要求 wp_ 前缀）校验过 systemUser 的格式，而面板生成 systemUser 时也是
+// 固定拼 "wp_" 前缀（见 website_tasks.go），不存在被误当成 uid 解析的可能，
+// 这层校验对这个项目来说是不可达的死代码。
+func lookupSiteSystemUser(systemUser string) (*user.User, int, int, error) {
+	u, err := user.Lookup(systemUser)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("查找站点系统用户失败: %w", err)
+	}
+	uid, err1 := strconv.Atoi(u.Uid)
+	gid, err2 := strconv.Atoi(u.Gid)
+	if err1 != nil || err2 != nil || uid <= 0 || gid <= 0 {
+		return nil, 0, 0, errors.New("站点系统用户身份异常")
+	}
+	return u, uid, gid, nil
+}
+
 func binaryForMime(mime string) string {
 	switch mime {
 	case "image/jpeg":
@@ -95,14 +115,9 @@ func optimizeImageFile(ctx context.Context, webRoot, systemUser, relativePath, m
 	}
 	before = beforeInfo.Size()
 
-	u, err := user.Lookup(systemUser)
+	u, _, _, err := lookupSiteSystemUser(systemUser)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("查找站点系统用户失败: %w", err)
-	}
-	uid, err1 := strconv.Atoi(u.Uid)
-	gid, err2 := strconv.Atoi(u.Gid)
-	if err1 != nil || err2 != nil || uid <= 0 || gid <= 0 || u.Username != systemUser {
-		return 0, 0, 0, errors.New("站点系统用户身份异常")
+		return 0, 0, 0, err
 	}
 
 	binaryPath, err := validateInventoryBinary("/usr/bin/"+binaryName, "/usr/bin", 0, 0)
@@ -186,14 +201,9 @@ func runFilesizeRewrite(ctx context.Context, webRoot, systemUser string, manifes
 		return 0, 0, fmt.Errorf("站点目录校验失败: %w", err)
 	}
 
-	u, err := user.Lookup(systemUser)
+	u, uid, gid, err := lookupSiteSystemUser(systemUser)
 	if err != nil {
 		return 0, 0, err
-	}
-	uid, err1 := strconv.Atoi(u.Uid)
-	gid, err2 := strconv.Atoi(u.Gid)
-	if err1 != nil || err2 != nil || uid <= 0 || gid <= 0 || u.Username != systemUser {
-		return 0, 0, errors.New("站点系统用户身份异常")
 	}
 
 	phpPath, err := validateInventoryBinary(wpInventoryPHPPath, "/usr/bin", 0, 0)
