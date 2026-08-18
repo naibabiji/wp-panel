@@ -218,6 +218,7 @@ function cronManager() {
         openEdit(job) {
             this.editingId = job.id;
             this.form = { name: job.name, cron_expression: job.cron_expression, command: job.command || '', task_type: job.task_type || 'command', backup_mode: job.backup_mode || 'incremental', keep_count: job.keep_count || 3, site_id: job.site_id || '', notify_fail: !!job.notify_fail };
+            this.onTaskTypeChange();
             this.showModal = true;
         },
         async saveJob() {
