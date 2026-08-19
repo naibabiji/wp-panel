@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -10,6 +11,7 @@ import (
 func EnsureWordPressBaseline() {
 	ensurePHPBaseline()
 	ensureNginxBaseline()
+	ensureNginxCacheBypassMap()
 	ensureNginxSSLDefaultServer()
 	ensureMariaDBBaseline()
 	ensureRedisBaseline()
@@ -46,6 +48,35 @@ server_names_hash_bucket_size 128;
 	}
 }
 
+// ensureNginxCacheBypassMap 定义 $wp_cache_skip_args，供每个站点的 FastCGI 缓存绕过
+// 判断复用（站点模板里引用了这个全局变量，不能在每个站点自己的配置文件里各定义一份——
+// map 指令只能在 http{} 顶层出现一次，两个站点各定义一份同名变量会导致 nginx -t 报重复定义）。
+//
+// 语义：只要查询字符串完全由已知的营销/统计追踪参数组成（utm_*/fbclid/gclid 等），就不算
+// "真实查询参数"，仍然允许命中缓存；只要出现任何一个不在名单里的参数，$wp_cache_skip_args
+// 就会保留原始 $args（非空），触发跳过缓存——这样从广告点击进来的流量不会把缓存打穿。
+func ensureNginxCacheBypassMap() {
+	path := "/etc/nginx/conf.d/wppanel-cache-bypass.conf"
+	if _, err := os.Stat(path); err == nil {
+		return
+	}
+	content := `# WP Panel — FastCGI 缓存例外：营销追踪参数不算"真实查询参数"
+map $args $wp_cache_skip_args {
+    default $args;
+    "~^(?:(?:utm_source|utm_medium|utm_campaign|utm_term|utm_content|fbclid|gclid|msclkid|mc_cid|mc_eid)=[^&]*&?)+$" "";
+}
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		log.Printf("[WP-Panel] 写入缓存例外配置失败 %s: %v", path, err)
+		return
+	}
+	if out, err := exec.Command("nginx", "-t").CombinedOutput(); err != nil {
+		log.Printf("[WP-Panel] Nginx 配置语法错误，跳过重载: %s", string(out))
+		return
+	}
+	exec.Command("nginx", "-s", "reload").Run()
+}
+
 func ensureNginxSSLDefaultServer() {
 	confPath := "/etc/nginx/conf.d/wppanel-ssl-default.conf"
 	content := `# WP Panel — 默认 SSL 服务器，拒绝未知域名的 TLS 握手，防止证书跨站泄露
@@ -70,16 +101,7 @@ func ensureMariaDBBaseline() {
 	if _, err := os.Stat(path); err == nil {
 		return
 	}
-	totalMemKB := getTotalMemoryKB()
-	var poolSize string
-	switch {
-	case totalMemKB <= 1048576:
-		poolSize = "128M"
-	case totalMemKB <= 2097152:
-		poolSize = "256M"
-	default:
-		poolSize = "512M"
-	}
+	poolSize := fmt.Sprintf("%dM", RecommendInnoDBBufferPoolSizeMB(CollectSystemFacts()))
 	content := fmt.Sprintf(`# WP Panel — WordPress 安全基线 (安装时自动生成)
 [mysqld]
 innodb_buffer_pool_size = %s
@@ -99,16 +121,7 @@ func ensureRedisBaseline() {
 		return
 	}
 
-	totalMemKB := getTotalMemoryKB()
-	var maxmem string
-	switch {
-	case totalMemKB <= 1048576:
-		maxmem = "64mb"
-	case totalMemKB <= 2097152:
-		maxmem = "128mb"
-	default:
-		maxmem = "256mb"
-	}
+	maxmem := fmt.Sprintf("%dmb", RecommendRedisMaxmemoryMB(CollectSystemFacts()))
 
 	// Find commented maxmemory line and uncomment it
 	content := string(data)

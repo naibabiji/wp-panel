@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/naibabiji/wp-panel/config"
@@ -595,7 +596,7 @@ func RegenerateAllSitesNginx() error {
 // 用于 open_basedir 等模板变更后批量刷新旧站点。
 func RegenerateAllSitesFPM() error {
 	db := database.GetDB()
-	rows, err := db.Query("SELECT id, domain, system_user, web_root, log_dir, php_pool_path FROM websites")
+	rows, err := db.Query("SELECT id, domain, system_user, web_root, log_dir, php_pool_path, php_fpm_max_children FROM websites")
 	if err != nil {
 		log.Printf("[FPM重建] 查询网站列表失败: %v", err)
 		return err
@@ -607,9 +608,9 @@ func RegenerateAllSitesFPM() error {
 	var failures []string
 
 	for rows.Next() {
-		var siteID int
+		var siteID, maxChildren int
 		var domain, systemUser, webRoot, logDir, phpPoolPath string
-		if err := rows.Scan(&siteID, &domain, &systemUser, &webRoot, &logDir, &phpPoolPath); err != nil {
+		if err := rows.Scan(&siteID, &domain, &systemUser, &webRoot, &logDir, &phpPoolPath, &maxChildren); err != nil {
 			failures = append(failures, err.Error())
 			continue
 		}
@@ -627,6 +628,9 @@ func RegenerateAllSitesFPM() error {
 			WebRoot:    webRoot,
 			SocketPath: cfg.Paths.PHPFPMSock,
 			SocketName: poolName,
+			// 沿用该站点持久化的 pm.max_children，不按当前硬件/站点数重新计算——
+			// 见 PHPFPMPoolData.MaxChildren 注释。
+			MaxChildren: strconv.Itoa(maxChildren),
 		}
 		phpConfig, err := engine.RenderPHPFPMPool(phpData)
 		if err != nil {

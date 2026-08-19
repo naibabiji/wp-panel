@@ -146,6 +146,94 @@ func TestFastCGICacheTemplatesDoNotCacheRedirects(t *testing.T) {
 	}
 }
 
+func TestFastCGICacheTemplatesUseShortTTLFor404(t *testing.T) {
+	for name, tmpl := range map[string]string{
+		"wordpress-http":  nginxHTTPTemplate,
+		"wordpress-https": nginxHTTPSTemplate,
+		"php-http":        phpHTTPTemplate,
+		"php-https":       phpHTTPSTemplate,
+	} {
+		if !strings.Contains(tmpl, "fastcgi_cache_valid 404 1m;") {
+			t.Fatalf("%s template must cache 404 responses with a short, independent TTL", name)
+		}
+		// 绝不能忽略 Set-Cookie：匿名访客响应里可能带 Set-Cookie（比如 WooCommerce
+		// 购物车令牌），忽略这个头会导致该响应被缓存后回放给所有后续访客，跨用户泄露。
+		// 检查的是具体的指令行本身，不是整个模板文本——模板里的解释性注释会提到
+		// "Set-Cookie" 这个词，不能用简单的整体 Contains 判断，否则会把注释也误判进去。
+		for _, line := range strings.Split(tmpl, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "fastcgi_ignore_headers") && strings.Contains(trimmed, "Set-Cookie") {
+				t.Fatalf("%s template must never ignore Set-Cookie in fastcgi_ignore_headers (cross-user cookie leak risk): %q", name, trimmed)
+			}
+		}
+		if !strings.Contains(tmpl, "add_header X-FastCGI-Cache $upstream_cache_status always;") {
+			t.Fatalf("%s template must use 'always' so the cache-status header shows up on error responses too (nginx omits add_header on non-2xx/3xx by default)", name)
+		}
+	}
+
+	// 真机验证过：WordPress 在 404 页面自带 Cache-Control: no-store 之类的响应头，
+	// 不加 fastcgi_ignore_headers 的话上面那条 404 缓存规则完全不会生效。这个例外
+	// 只对 WordPress 站点成立（nocache_headers() 是 WP 核心的确切行为）；通用 PHP
+	// 站点的 location 块没有 cookie/URI 白名单保护，个性化页面如果只靠 Cache-Control
+	// 防止被缓存，忽略这个头会导致跨用户缓存串号，所以通用 PHP 模板绝不能加这条指令。
+	for name, tmpl := range map[string]string{
+		"wordpress-http":  nginxHTTPTemplate,
+		"wordpress-https": nginxHTTPSTemplate,
+	} {
+		if !strings.Contains(tmpl, "fastcgi_ignore_headers Cache-Control Expires;") {
+			t.Fatalf("%s template must ignore upstream Cache-Control/Expires so 404 caching actually takes effect", name)
+		}
+	}
+	for name, tmpl := range map[string]string{
+		"php-http":  phpHTTPTemplate,
+		"php-https": phpHTTPSTemplate,
+	} {
+		if strings.Contains(tmpl, "fastcgi_ignore_headers") {
+			t.Fatalf("%s template must not ignore Cache-Control/Expires: generic PHP sites lack WordPress's cookie/URI bypass whitelist, so a personalized page relying only on Cache-Control: no-store could be cached and leaked across users", name)
+		}
+	}
+}
+
+func TestFastCGICacheTemplatesEnableBackgroundUpdate(t *testing.T) {
+	for name, tmpl := range map[string]string{
+		"wordpress-http":  nginxHTTPTemplate,
+		"wordpress-https": nginxHTTPSTemplate,
+		"php-http":        phpHTTPTemplate,
+		"php-https":       phpHTTPSTemplate,
+	} {
+		if !strings.Contains(tmpl, "fastcgi_cache_background_update on;") {
+			t.Fatalf("%s template must serve stale content while refreshing in the background", name)
+		}
+	}
+}
+
+func TestFastCGICacheTemplatesUseTrackingParamAwareBypass(t *testing.T) {
+	for name, tmpl := range map[string]string{
+		"wordpress-http":  nginxHTTPTemplate,
+		"wordpress-https": nginxHTTPSTemplate,
+		"php-http":        phpHTTPTemplate,
+		"php-https":       phpHTTPSTemplate,
+	} {
+		if !strings.Contains(tmpl, `if ($wp_cache_skip_args != "") { set $wp_skip_cache 1; }`) {
+			t.Fatalf("%s template must bypass cache based on $wp_cache_skip_args (marketing-tracking-aware), not raw $query_string", name)
+		}
+		if strings.Contains(tmpl, `if ($query_string != "")`) {
+			t.Fatalf("%s template should no longer bypass cache on any non-empty query string", name)
+		}
+	}
+}
+
+func TestWordPressFastCGICacheTemplatesBypassRESTAPI(t *testing.T) {
+	for name, tmpl := range map[string]string{
+		"wordpress-http":  nginxHTTPTemplate,
+		"wordpress-https": nginxHTTPSTemplate,
+	} {
+		if !strings.Contains(tmpl, "/wp-json/") {
+			t.Fatalf("%s template must bypass cache for /wp-json/ (REST API) requests", name)
+		}
+	}
+}
+
 func TestSSLTemplatesServeHTTPACMEChallengeWithoutRedirect(t *testing.T) {
 	for name, tmpl := range map[string]string{
 		"wordpress": nginxHTTPSTemplate,

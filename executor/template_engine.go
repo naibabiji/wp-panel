@@ -56,6 +56,11 @@ type PHPFPMPoolData struct {
 	PostMaxSize       string
 	MaxExecutionTime  string
 	MaxInputTime      string
+	// MaxChildren 是 pm.max_children 的值。建站时按当时的服务器内存/CPU 计算一次并持久化到
+	// websites.php_fpm_max_children，此后固定不变——不会因为后续站点数量变化、或者其它站点
+	// 触发 PHP 配置重建而被重新计算。调用方（建站/改域名/RegenerateAllSitesFPM）都应该显式传入
+	// 已持久化的值；留空时回退到旧的固定默认值 10，仅作为兜底。
+	MaxChildren string
 }
 
 type TemplateEngine struct {
@@ -400,6 +405,14 @@ func (e *TemplateEngine) RenderPHPFPMPool(data *PHPFPMPoolData) (string, error) 
 	if data.MaxInputTime == "" {
 		data.MaxInputTime = phpCfg.MaxInputTime
 	}
+	// 兜底不能只挡空字符串——如果调用方漏加载 site.PHPFPMMaxChildren（零值 0），
+	// strconv.Itoa(0) 得到的是非空字符串 "0"，pm.max_children=0 会被 php-fpm8.3 -t
+	// 拒绝（"must be a positive value"），虽然现有语法检查+回滚机制能挡住它不生效，
+	// 但不该指望这层保护，源头上就不要生成非正数。strconv.Atoi("") 本身就会返回
+	// error，因此这一个判断同时覆盖了空字符串和非正数两种情况。
+	if n, err := strconv.Atoi(data.MaxChildren); err != nil || n <= 0 {
+		data.MaxChildren = "10"
+	}
 	tmpl, err := template.New("php_fpm_pool").Funcs(template.FuncMap{
 		"sitePHPOpenBaseDir":       sitePHPOpenBaseDir,
 		"sitePHPDisabledFunctions": sitePHPDisabledFunctions,
@@ -715,17 +728,26 @@ server {
         fastcgi_busy_buffers_size 256k;
 	    {{if .FCacheEnabled}}
 	    if ($request_method = POST) { set $wp_skip_cache 1; }
-	    if ($query_string != "") { set $wp_skip_cache 1; }
+	    if ($wp_cache_skip_args != "") { set $wp_skip_cache 1; }
 	    if ($http_cookie ~* "wordpress_logged_in|wordpress_sec_|wp-settings-|comment_author|woocommerce|wp_woocommerce_session|wp-resetpass") { set $wp_skip_cache 1; }
-	    if ($request_uri ~* "/wp-admin/|/wp-login.php|/wp-signup.php|/cart/|/checkout/|/my-account/") { set $wp_skip_cache 1; }
+	    if ($request_uri ~* "/wp-admin/|/wp-login.php|/wp-signup.php|/cart/|/checkout/|/my-account/|/wp-json/") { set $wp_skip_cache 1; }
 	    fastcgi_cache WP_CACHE;
 	    fastcgi_cache_key "$scheme$request_method$host$request_uri$wp_cache_ver";
 	    fastcgi_cache_valid 200 {{.FCacheTTL}}s;
+	    fastcgi_cache_valid 404 1m;
 	    fastcgi_cache_use_stale error timeout updating invalid_header http_500;
+	    fastcgi_cache_background_update on;
 	    fastcgi_cache_bypass $wp_skip_cache;
 	    fastcgi_no_cache $wp_skip_cache;
 	    fastcgi_cache_lock on;
-	    add_header X-FastCGI-Cache $upstream_cache_status;
+	    # WordPress 在 404/搜索结果等页面会自带 Cache-Control: no-store 之类的响应头
+	    # （核心 nocache_headers() 调用），不忽略这两个头的话上面的 fastcgi_cache_valid
+	    # 404 完全不会生效——Nginx 会尊重源站"不要缓存"的指令，实测验证过。
+	    # 特意不把 Set-Cookie 也加进来：如果匿名访客的响应带了 Set-Cookie（比如
+	    # WooCommerce 购物车令牌），忽略这个头会让 Nginx 把这次响应缓存下来，
+	    # 之后所有访问同一 URL 的人都会收到同一个 Set-Cookie，属于真实的跨用户风险。
+	    fastcgi_ignore_headers Cache-Control Expires;
+	    add_header X-FastCGI-Cache $upstream_cache_status always;
 	    {{end}}
     }
 
@@ -917,17 +939,26 @@ server {
         fastcgi_busy_buffers_size 256k;
 	    {{if .FCacheEnabled}}
 	    if ($request_method = POST) { set $wp_skip_cache 1; }
-	    if ($query_string != "") { set $wp_skip_cache 1; }
+	    if ($wp_cache_skip_args != "") { set $wp_skip_cache 1; }
 	    if ($http_cookie ~* "wordpress_logged_in|wordpress_sec_|wp-settings-|comment_author|woocommerce|wp_woocommerce_session|wp-resetpass") { set $wp_skip_cache 1; }
-	    if ($request_uri ~* "/wp-admin/|/wp-login.php|/wp-signup.php|/cart/|/checkout/|/my-account/") { set $wp_skip_cache 1; }
+	    if ($request_uri ~* "/wp-admin/|/wp-login.php|/wp-signup.php|/cart/|/checkout/|/my-account/|/wp-json/") { set $wp_skip_cache 1; }
 	    fastcgi_cache WP_CACHE;
 	    fastcgi_cache_key "$scheme$request_method$host$request_uri$wp_cache_ver";
 	    fastcgi_cache_valid 200 {{.FCacheTTL}}s;
+	    fastcgi_cache_valid 404 1m;
 	    fastcgi_cache_use_stale error timeout updating invalid_header http_500;
+	    fastcgi_cache_background_update on;
 	    fastcgi_cache_bypass $wp_skip_cache;
 	    fastcgi_no_cache $wp_skip_cache;
 	    fastcgi_cache_lock on;
-	    add_header X-FastCGI-Cache $upstream_cache_status;
+	    # WordPress 在 404/搜索结果等页面会自带 Cache-Control: no-store 之类的响应头
+	    # （核心 nocache_headers() 调用），不忽略这两个头的话上面的 fastcgi_cache_valid
+	    # 404 完全不会生效——Nginx 会尊重源站"不要缓存"的指令，实测验证过。
+	    # 特意不把 Set-Cookie 也加进来：如果匿名访客的响应带了 Set-Cookie（比如
+	    # WooCommerce 购物车令牌），忽略这个头会让 Nginx 把这次响应缓存下来，
+	    # 之后所有访问同一 URL 的人都会收到同一个 Set-Cookie，属于真实的跨用户风险。
+	    fastcgi_ignore_headers Cache-Control Expires;
+	    add_header X-FastCGI-Cache $upstream_cache_status always;
 	    {{end}}
     }
 
@@ -998,10 +1029,7 @@ listen.group = www-data
 listen.mode = 0660
 
 pm = ondemand
-pm.max_children = 10
-pm.start_servers = 2
-pm.min_spare_servers = 1
-pm.max_spare_servers = 5
+pm.max_children = {{.MaxChildren}}
 pm.process_idle_timeout = 10s
 pm.max_requests = 500
 

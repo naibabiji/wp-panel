@@ -64,15 +64,17 @@ server {
         fastcgi_busy_buffers_size 256k;
 	    {{if .FCacheEnabled}}
 	    if ($request_method = POST) { set $wp_skip_cache 1; }
-	    if ($query_string != "") { set $wp_skip_cache 1; }
+	    if ($wp_cache_skip_args != "") { set $wp_skip_cache 1; }
 	    fastcgi_cache WP_CACHE;
 	    fastcgi_cache_key "$scheme$request_method$host$request_uri$wp_cache_ver";
 	    fastcgi_cache_valid 200 {{.FCacheTTL}}s;
+	    fastcgi_cache_valid 404 1m;
 	    fastcgi_cache_use_stale error timeout updating invalid_header http_500;
+	    fastcgi_cache_background_update on;
 	    fastcgi_cache_bypass $wp_skip_cache;
 	    fastcgi_no_cache $wp_skip_cache;
 	    fastcgi_cache_lock on;
-	    add_header X-FastCGI-Cache $upstream_cache_status;
+	    add_header X-FastCGI-Cache $upstream_cache_status always;
 	    {{end}}
     }
 
@@ -214,15 +216,17 @@ server {
         fastcgi_busy_buffers_size 256k;
 	    {{if .FCacheEnabled}}
 	    if ($request_method = POST) { set $wp_skip_cache 1; }
-	    if ($query_string != "") { set $wp_skip_cache 1; }
+	    if ($wp_cache_skip_args != "") { set $wp_skip_cache 1; }
 	    fastcgi_cache WP_CACHE;
 	    fastcgi_cache_key "$scheme$request_method$host$request_uri$wp_cache_ver";
 	    fastcgi_cache_valid 200 {{.FCacheTTL}}s;
+	    fastcgi_cache_valid 404 1m;
 	    fastcgi_cache_use_stale error timeout updating invalid_header http_500;
+	    fastcgi_cache_background_update on;
 	    fastcgi_cache_bypass $wp_skip_cache;
 	    fastcgi_no_cache $wp_skip_cache;
 	    fastcgi_cache_lock on;
-	    add_header X-FastCGI-Cache $upstream_cache_status;
+	    add_header X-FastCGI-Cache $upstream_cache_status always;
 	    {{end}}
     }
 
