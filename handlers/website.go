@@ -36,7 +36,7 @@ const websiteCols = `id, name, domain, aliases, status, system_user, web_root, d
 		xmlrpc_enabled, wp_debug_enabled, wp_post_revisions, wp_memory_limit,
 		file_lock_enabled, file_lock_mode, file_lock_apply_status,
 		password_reset_mode,
-		log_retention_days, cdn_realip_enabled, expires_at, created_at, updated_at`
+		log_retention_days, cdn_realip_enabled, php_fpm_max_children, expires_at, created_at, updated_at`
 
 const fileLockBlockedMessage = "该站点已开启文件锁定，请先解除文件锁定后再执行此维护操作"
 
@@ -74,7 +74,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 		&xmlrpcEnabled, &wpDebugEnabled, &wpPostRevisions, &wpMemoryLimit,
 		&fileLockEnabled, &w.FileLockMode, &w.FileLockApplyStatus,
 		&passwordResetMode,
-		&logRetentionDays, &cdnRealIPEnabled, &w.ExpiresAt,
+		&logRetentionDays, &cdnRealIPEnabled, &w.PHPFPMMaxChildren, &w.ExpiresAt,
 		&w.CreatedAt, &w.UpdatedAt,
 	)
 	if err != nil {

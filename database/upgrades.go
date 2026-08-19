@@ -591,6 +591,17 @@ var upgrades = []Upgrade{
 		Description: "图片优化任务表新增 skipped_files 列，展示幂等跳过的已处理文件数",
 		Func:        ensureImageOptimizationSkippedFilesColumn,
 	},
+	{
+		Version:     "1.0.51",
+		Description: "PHP max_input_vars 旧默认值 2000 升级为 10000（仅未手动修改过的用户）",
+	},
+	{
+		Version:     "1.0.52",
+		Description: "新增站点级 pm.max_children 持久化字段；老站点统一回填为原有固定值 10，不按新公式重算，避免升级后并发数意外变化",
+		SQL: []string{
+			`ALTER TABLE websites ADD COLUMN php_fpm_max_children INTEGER NOT NULL DEFAULT 10`,
+		},
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

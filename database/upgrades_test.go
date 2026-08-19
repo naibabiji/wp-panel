@@ -354,7 +354,7 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.50" {
+	if got := LatestVersion(); got != "1.0.52" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
 	for _, column := range []string{"database_backup_mode", "database_backup_source_id", "auto_rollback", "batch_id"} {
@@ -1711,14 +1711,13 @@ func TestUpgradeAddsCDNRealIPColumnToOldSchema(t *testing.T) {
 func TestUpgradeAddsBotRateLimitSettingsToExistingSchema(t *testing.T) {
 	openTempDB(t)
 
-	if _, err := DB.Exec(`CREATE TABLE security_settings (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		skey TEXT NOT NULL UNIQUE,
-		svalue TEXT NOT NULL DEFAULT '',
-		description TEXT DEFAULT '',
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	)`); err != nil {
-		t.Fatalf("create security_settings: %v", err)
+	// 真实安装在 RunUpgrades() 之前一定先跑过 RunMigrations()，websites/security_settings
+	// 等表（含 security_settings 的 INSERT OR IGNORE 基线种子数据）已经存在；后续版本
+	// （如 1.0.52）会对 websites 表做 ALTER TABLE ADD COLUMN，需要这个前提才不会报错。
+	// security_settings 的基线种子已经包含本测试断言的 bot_limit_* 键值，之后 1.0.13
+	// 升级步骤里的 INSERT OR IGNORE 会是正常的幂等空操作，不影响本测试的断言语义。
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
 	}
 	if _, err := DB.Exec(`CREATE TABLE schema_version (
 		version TEXT PRIMARY KEY,

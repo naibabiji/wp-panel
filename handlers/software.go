@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/i18n"
 	"github.com/naibabiji/wp-panel/models"
@@ -82,10 +84,26 @@ var configDefaults = map[string]string{
 	"post_max_size":           "64M",
 	"max_execution_time":      "300",
 	"max_input_time":          "300",
-	"max_input_vars":          "2000",
+	"max_input_vars":          "10000",
 	"client_max_body_size":    "1m",
 	"innodb_buffer_pool_size": "128M",
 	"maxmemory":               "0",
+}
+
+// adaptiveConfigFallback 是 opcache.memory_consumption / opcache.max_accelerated_files
+// 这两个硬件自适应参数的展示兜底。它们理论上从 EnsurePHPRuntimeConfigFile 第一次跑完
+// 之后就会一直存在于配置文件里，这里现算只是给配置文件被外部删除之类的极端情况兜底——
+// 不能像 configDefaults 那样写死一个固定数字，否则会跟"重新计算推荐值"按钮实际算出来
+// 的结果对不上，徒增困惑。
+func adaptiveConfigFallback(key string) string {
+	switch key {
+	case "opcache.memory_consumption":
+		return strconv.Itoa(executor.RecommendOPcacheMemoryConsumptionMB(executor.CollectSystemFacts()))
+	case "opcache.max_accelerated_files":
+		return strconv.Itoa(executor.RecommendOPcacheMaxAcceleratedFiles(executor.CollectSystemFacts()))
+	default:
+		return ""
+	}
 }
 
 func populateConfigValues(item *softwareItem) {
@@ -95,16 +113,19 @@ func populateConfigValues(item *softwareItem) {
 		content = string(data)
 	}
 	for i := range item.Configs {
-		val := findPHPIniValue(content, item.Configs[i].Key)
+		key := item.Configs[i].Key
+		val := findPHPIniValue(content, key)
 		if val == "" {
-			val = findNginxValue(content, item.Configs[i].Key)
+			val = findNginxValue(content, key)
 		}
 		if val == "" {
-			val = findRedisValue(content, item.Configs[i].Key)
+			val = findRedisValue(content, key)
 		}
 		if val != "" {
 			item.Configs[i].Value = val
-		} else if def, ok := configDefaults[item.Configs[i].Key]; ok {
+		} else if adaptive := adaptiveConfigFallback(key); adaptive != "" {
+			item.Configs[i].Value = adaptive
+		} else if def, ok := configDefaults[key]; ok {
 			item.Configs[i].Value = def
 		}
 	}
@@ -196,6 +217,7 @@ var softConfigAllowed = map[string]map[string]bool{
 	"PHP": {
 		"memory_limit": true, "upload_max_filesize": true, "post_max_size": true,
 		"max_execution_time": true, "max_input_time": true, "max_input_vars": true,
+		"opcache.memory_consumption": true, "opcache.max_accelerated_files": true,
 	},
 	"Nginx":   {"client_max_body_size": true},
 	"MariaDB": {"innodb_buffer_pool_size": true},
@@ -216,7 +238,8 @@ func validateSoftwareConfigValue(lang, name, key, value string) string {
 		if !phpSizeValueRe.MatchString(value) {
 			return i18n.T(lang, "software.php_size_invalid")
 		}
-	case "max_execution_time", "max_input_time", "max_input_vars":
+	case "max_execution_time", "max_input_time", "max_input_vars",
+		"opcache.memory_consumption", "opcache.max_accelerated_files":
 		if !phpIntValueRe.MatchString(value) {
 			return i18n.T(lang, "software.php_int_invalid")
 		}
@@ -340,14 +363,44 @@ func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 		newContent = replaceIniValue(content, req.Key, req.Value)
 	}
 
+	if newContent == content && oldValue == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "software.config_not_found", i18n.P{"key": req.Key})))
+		return
+	}
+
+	// MariaDB/Redis 没有可靠的配置语法预检查工具（不像 PHP-FPM/Nginx 有 -t 可以先验证
+	// 再重载），只能靠"原子写入 → 重启 → 健康检查 → 失败自动回滚"这套事务性流程保证
+	// 安全，不能像过去那样重启命令返回值都不检查就告诉用户"已更新"。
+	if req.Name == "MariaDB" || req.Name == "Redis" {
+		// 值没变就不要触发一次真实的重启——前端已经会跳过没改过的值，但后端不该只
+		// 依赖前端做这层保护（比如以后有人直接调 API，或者前端逻辑被改动）。
+		if newContent == content {
+			c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.T(lang, "software.config_unchanged")}))
+			return
+		}
+		ready := softwareReadinessCheck(req.Name)
+		result := executor.SafeApplyRestartConfig(configPath, newContent, content, serviceName, ready)
+		if !result.Applied {
+			log.Printf("%s 配置应用失败 rolled_back=%v rollback_ok=%v: %v", req.Name, result.RolledBack, result.RollbackSucceeded, result.Err)
+			switch {
+			case result.RolledBack && result.RollbackSucceeded:
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.apply_failed_rolled_back", i18n.P{"error": result.Err.Error()})))
+			case result.RolledBack:
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.apply_failed_rollback_failed", i18n.P{"service": serviceName, "error": result.Err.Error()})))
+			default:
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.apply_failed", i18n.P{"error": result.Err.Error()})))
+			}
+			return
+		}
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.T(lang, "software.config_updated_reloaded", i18n.P{"service": serviceName})}))
+		return
+	}
+
 	if newContent != content {
 		if err := os.WriteFile(configPath, []byte(newContent), 0644); err != nil {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.write_config_failed")))
 			return
 		}
-	} else if oldValue == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "software.config_not_found", i18n.P{"key": req.Key})))
-		return
 	}
 
 	// Syntax check
@@ -374,6 +427,79 @@ func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.T(lang, "software.config_updated_reloaded", i18n.P{"service": serviceName})}))
 }
 
+// softwareReadinessCheck 返回指定软件重启后的健康检查函数，供 SafeApplyRestartConfig
+// 验证服务是否真的恢复可用，而不只是看 systemctl 返回码。
+func softwareReadinessCheck(name string) func(context.Context) error {
+	switch name {
+	case "MariaDB":
+		return func(ctx context.Context) error { return executor.MariaDBReady(ctx, config.AppConfig) }
+	case "Redis":
+		return executor.RedisReady
+	default:
+		return nil
+	}
+}
+
+// Recommend 根据当前服务器硬件规格和站点数量，为指定软件计算配置建议值。
+// 纯只读计算，不写入任何文件、不触发任何服务重启——是否真正应用由管理员在软件
+// 管理页手动确认后点击"保存并重载"决定。
+func (h *SoftwareHandler) Recommend(c *gin.Context) {
+	lang := softwareLang(c)
+	name := c.Query("name")
+	facts := executor.CollectSystemFacts()
+	totalMB := facts.TotalMemoryBytes / 1024 / 1024
+
+	recommendations := map[string]string{}
+	switch name {
+	case "PHP":
+		recommendations["opcache.memory_consumption"] = strconv.Itoa(executor.RecommendOPcacheMemoryConsumptionMB(facts))
+		recommendations["opcache.max_accelerated_files"] = strconv.Itoa(executor.RecommendOPcacheMaxAcceleratedFiles(facts))
+	case "MariaDB":
+		recommendations["innodb_buffer_pool_size"] = strconv.Itoa(executor.RecommendInnoDBBufferPoolSizeMB(facts)) + "M"
+	case "Redis":
+		recommendations["maxmemory"] = strconv.Itoa(executor.RecommendRedisMaxmemoryMB(facts)) + "mb"
+	default:
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "software.unknown_software")))
+		return
+	}
+
+	reasonKey := "software.recommend_reason"
+	if name == "PHP" {
+		// PHP 卡片有 8 个配置项，但只有 opcache 这两项跟硬件规格相关、会被这个按钮更新，
+		// 其余 6 项（memory_limit/upload_max_filesize 等）取决于业务需求而非硬件规格，
+		// 从设计上就不提供推荐值。用专门的提示文案明确告诉管理员"只改了这两项"，
+		// 避免以为点了按钮会重新计算整张卡片。
+		reasonKey = "software.recommend_reason_php"
+	}
+	reason := i18n.T(lang, reasonKey, i18n.P{
+		"mem":   strconv.FormatUint(totalMB, 10),
+		"sites": strconv.Itoa(facts.SiteCount),
+	})
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"facts": gin.H{
+			"total_memory_mb": totalMB,
+			"cpu_cores":       facts.CPUCores,
+			"site_count":      facts.SiteCount,
+		},
+		"reason":          reason,
+		"recommendations": recommendations,
+	}))
+}
+
+// ClearOpcache 清空 PHP OPcache 字节码缓存。这是全局操作，不区分站点，只在面板
+// 管理员这一侧提供入口（不对站点管理员开放，避免任意一个站点的管理员能影响同一
+// 台服务器上其它所有站点的短暂性能抖动）。
+func (h *SoftwareHandler) ClearOpcache(c *gin.Context) {
+	lang := softwareLang(c)
+	if err := executor.ClearOPcache(); err != nil {
+		log.Printf("清空 OPcache 失败: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.opcache_clear_failed", i18n.P{"error": err.Error()})))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.T(lang, "software.opcache_cleared")}))
+}
+
 func getPHPInfo(lang string) softwareItem {
 	ver := runCmd("php -v 2>/dev/null | head -1 | awk '{print $2}'")
 	extCount := runCmd("php -m 2>/dev/null | wc -l")
@@ -388,6 +514,8 @@ func getPHPInfo(lang string) softwareItem {
 			{Key: "post_max_size", Label: i18n.T(lang, "software.post_max_size_label"), Hint: i18n.T(lang, "software.post_max_size_hint")},
 			{Key: "max_execution_time", Label: i18n.T(lang, "software.max_execution_time_label"), Hint: i18n.T(lang, "software.max_execution_time_hint")},
 			{Key: "max_input_vars", Label: i18n.T(lang, "software.max_input_vars_label"), Hint: i18n.T(lang, "software.max_input_vars_hint")},
+			{Key: "opcache.memory_consumption", Label: i18n.T(lang, "software.opcache_memory_consumption_label"), Hint: i18n.T(lang, "software.opcache_memory_consumption_hint")},
+			{Key: "opcache.max_accelerated_files", Label: i18n.T(lang, "software.opcache_max_accelerated_files_label"), Hint: i18n.T(lang, "software.opcache_max_accelerated_files_hint")},
 		},
 	}
 }

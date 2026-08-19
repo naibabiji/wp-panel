@@ -54,6 +54,7 @@ type Website struct {
 	LogRetentionDays    int              `json:"log_retention_days"`
 	CDNRealIPEnabled    bool             `json:"cdn_realip_enabled"`
 	CDNRealIPGroups     []CDNRealIPGroup `json:"cdn_realip_groups,omitempty"`
+	PHPFPMMaxChildren   int              `json:"php_fpm_max_children"`
 	ExpiresAt           *time.Time       `json:"expires_at"`
 	CreatedAt           time.Time        `json:"created_at"`
 	UpdatedAt           time.Time        `json:"updated_at"`

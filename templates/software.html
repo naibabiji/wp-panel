@@ -8,118 +8,38 @@
 
     <div x-show="showHelp" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="showHelp = false">
         <div class="bg-gray-800 rounded-lg p-6 w-full mx-4 shadow-xl max-h-[85vh] overflow-y-auto" style="max-width:900px">
-            <h3 class="text-lg font-bold text-white mb-4">WordPress 配置建议（按 VPS 配置分档）</h3>
-            <p class="text-xs text-gray-500 mb-4">以下为保守建议值，确保系统稳定不 OOM。可在软件管理中根据实际需求调大。</p>
+            <h3 class="text-lg font-bold text-white mb-4">WordPress 配置建议（按站点复杂度分档）</h3>
+            <p class="text-xs text-gray-500 mb-4">以下为保守建议值，确保系统稳定不 OOM，按站点复杂度（而非硬件规格）分档，可在软件管理中根据实际需求调大。OPcache、MariaDB、Redis 这类跟服务器硬件规格相关的参数，请直接使用下方软件管理页对应卡片里的"重新计算推荐值"按钮——那是根据这台服务器实际内存/CPU/站点数现算的，比这张静态表格更准确。</p>
 
             <div class="overflow-x-auto">
                 <table class="w-full text-xs">
                     <thead class="border-b border-gray-600 text-gray-300">
                         <tr>
-                            <th class="py-2 text-left sticky left-0 bg-gray-800">VPS 配置</th>
                             <th class="py-2 text-left">适用场景</th>
                             <th class="py-2 text-left">PHP memory_limit</th>
                             <th class="py-2 text-left">upload / post</th>
-                            <th class="py-2 text-left">max_input_vars</th>
-                            <th class="py-2 text-left">MariaDB pool</th>
-                            <th class="py-2 text-left">Redis maxmemory</th>
                         </tr>
                     </thead>
                     <tbody class="text-gray-400">
                         <tr class="border-b border-gray-700/50">
-                            <td class="py-2 text-white font-medium sticky left-0 bg-gray-800">1C 1G</td>
-                            <td class="py-2">1 个简单博客</td>
+                            <td class="py-2">简单博客 / 展示站</td>
                             <td class="py-2 text-green-400">128M</td>
                             <td class="py-2">32M / 32M</td>
-                            <td class="py-2">1000</td>
-                            <td class="py-2">128M</td>
-                            <td class="py-2">64mb</td>
                         </tr>
                         <tr class="border-b border-gray-700/50">
-                            <td class="py-2 text-white font-medium sticky left-0 bg-gray-800">1C 1G</td>
-                            <td class="py-2">1 个多插件站</td>
+                            <td class="py-2">多插件站 / 普通企业站</td>
                             <td class="py-2 text-blue-400">256M</td>
                             <td class="py-2">64M / 64M</td>
-                            <td class="py-2">2000</td>
-                            <td class="py-2">128M</td>
-                            <td class="py-2">64mb</td>
-                        </tr>
-
-                        <tr class="border-b border-gray-700/50">
-                            <td class="py-2 text-white font-medium sticky left-0 bg-gray-800">1C 2G</td>
-                            <td class="py-2">1 个电商/Elementor</td>
-                            <td class="py-2 text-blue-400">256M</td>
-                            <td class="py-2">64M / 64M</td>
-                            <td class="py-2">3000</td>
-                            <td class="py-2">256M</td>
-                            <td class="py-2">128mb</td>
                         </tr>
                         <tr class="border-b border-gray-700/50">
-                            <td class="py-2 text-white font-medium sticky left-0 bg-gray-800">1C 2G</td>
-                            <td class="py-2">2~3 个简单博客</td>
-                            <td class="py-2 text-blue-400">256M</td>
-                            <td class="py-2">64M / 64M</td>
-                            <td class="py-2">2000</td>
-                            <td class="py-2">256M</td>
-                            <td class="py-2">128mb</td>
-                        </tr>
-
-                        <tr class="border-b border-gray-700/50">
-                            <td class="py-2 text-white font-medium sticky left-0 bg-gray-800">2C 2G</td>
-                            <td class="py-2">1 个电商 + 2 个展示站</td>
-                            <td class="py-2 text-blue-400">256M</td>
-                            <td class="py-2">64M / 64M</td>
-                            <td class="py-2">3000</td>
-                            <td class="py-2">256M</td>
-                            <td class="py-2">128mb</td>
-                        </tr>
-
-                        <tr class="border-b border-gray-700/50">
-                            <td class="py-2 text-white font-medium sticky left-0 bg-gray-800">2C 4G</td>
-                            <td class="py-2">3~5 个站（含电商）</td>
+                            <td class="py-2">电商 / Elementor 等重度页面构建器</td>
                             <td class="py-2 text-yellow-400">512M</td>
                             <td class="py-2">128M / 128M</td>
-                            <td class="py-2">3000</td>
-                            <td class="py-2">512M</td>
-                            <td class="py-2">256mb</td>
                         </tr>
                         <tr class="border-b border-gray-700/50">
-                            <td class="py-2 text-white font-medium sticky left-0 bg-gray-800">2C 4G</td>
-                            <td class="py-2">5+ 个简单博客</td>
-                            <td class="py-2 text-blue-400">256M</td>
-                            <td class="py-2">64M / 64M</td>
-                            <td class="py-2">2000</td>
-                            <td class="py-2">512M</td>
-                            <td class="py-2">256mb</td>
-                        </tr>
-
-                        <tr class="border-b border-gray-700/50">
-                            <td class="py-2 text-white font-medium sticky left-0 bg-gray-800">2C 8G</td>
-                            <td class="py-2">多电商 / 高流量多站</td>
-                            <td class="py-2 text-yellow-400">512M</td>
-                            <td class="py-2">128M / 128M</td>
-                            <td class="py-2">3000</td>
-                            <td class="py-2">1G</td>
-                            <td class="py-2">512mb</td>
-                        </tr>
-
-                        <tr class="border-b border-gray-700/50">
-                            <td class="py-2 text-white font-medium sticky left-0 bg-gray-800">4C 8G</td>
-                            <td class="py-2">10+ 站 / 高并发</td>
-                            <td class="py-2 text-yellow-400">512M</td>
-                            <td class="py-2">128M / 128M</td>
-                            <td class="py-2">5000</td>
-                            <td class="py-2">1G</td>
-                            <td class="py-2">512mb</td>
-                        </tr>
-
-                        <tr class="border-b border-gray-700/50">
-                            <td class="py-2 text-white font-medium sticky left-0 bg-gray-800">4C 16G</td>
                             <td class="py-2">大型多站点 / 高负载</td>
                             <td class="py-2 text-yellow-400">512M</td>
                             <td class="py-2">256M / 256M</td>
-                            <td class="py-2">5000</td>
-                            <td class="py-2">2G</td>
-                            <td class="py-2">1gb</td>
                         </tr>
                     </tbody>
                 </table>
@@ -130,9 +50,8 @@
                 <ul class="text-gray-400 space-y-1 list-disc list-inside">
                     <li>post_max_size 必须 ≥ upload_max_filesize，Nginx client_max_body_size 需保持一致</li>
                     <li>max_execution_time 建议统一 300，导入数据或批量处理时临时调至 600</li>
-                    <li>MariaDB innodb_buffer_pool_size 为物理内存的 10%~25%（保守），MySQL 官方建议可到 50%~70%</li>
-                    <li>Redis maxmemory 每个站点约 64~128mb，多站按比例增加但不超过空闲内存的 50%</li>
-                    <li>单站点与多站点最大区别在 MariaDB pool 和 Redis，PHP 参数主要看站点复杂度</li>
+                    <li>max_input_vars 面板默认已是 10000，覆盖绝大多数场景，通常无需调整；只有单页面字段数量极多（如超大型 Elementor 页面）时才需要继续调大</li>
+                    <li>OPcache（opcache.memory_consumption / opcache.max_accelerated_files）、MariaDB innodb_buffer_pool_size、Redis maxmemory 都跟服务器硬件规格和站点数量相关，请用软件管理页对应卡片的"重新计算推荐值"按钮获取针对这台服务器的准确建议，不要套用固定数值</li>
                 </ul>
             </div>
 
@@ -219,6 +138,14 @@
                         <span x-show="sw._saving && sw.name === 'PHP'">{{t .Lang "software.save_rebuild_fpm"}}</span>
                         <span x-show="sw._saving && sw.name !== 'PHP'">{{t .Lang "software.save_reloading"}}</span>
                     </button>
+                    <button x-show="['PHP', 'MariaDB', 'Redis'].includes(sw.name)" @click="recommend(sw)" :disabled="sw._recommending" class="btn-secondary text-sm">
+                        <span x-show="!sw._recommending">{{t .Lang "software.recommend"}}</span>
+                        <span x-show="sw._recommending">{{t .Lang "software.recommending"}}</span>
+                    </button>
+                    <button x-show="sw.name === 'PHP'" @click="clearOpcache()" :disabled="clearingOpcache" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">
+                        <span x-show="!clearingOpcache">{{t .Lang "software.opcache_clear"}}</span>
+                        <span x-show="clearingOpcache">{{t .Lang "software.opcache_clearing"}}</span>
+                    </button>
                     <button @click="viewLog(sw.name)" class="btn-secondary text-sm">{{t .Lang "software.view_logs"}}</button>
                 </div>
             </div>
@@ -273,6 +200,7 @@ function softwareManager() {
     return {
         software: [],
         showHelp: false,
+        clearingOpcache: false,
         logModal: { open: false, title: '', content: '' },
         async fetchList() {
             try {
@@ -280,6 +208,7 @@ function softwareManager() {
                 if (r.success) {
                     this.software = (r.data || []).map(sw => {
                         sw._saving = false;
+                        sw._recommending = false;
                         (sw.configs || []).forEach(cfg => { cfg._value = cfg.value; });
                         return sw;
                     });
@@ -316,6 +245,29 @@ function softwareManager() {
                 } catch(e) { showToast(e.message, 'error'); }
                 sw._saving = false;
             }
+        },
+        async recommend(sw) {
+            sw._recommending = true;
+            try {
+                const r = await api('/software/recommend?name=' + encodeURIComponent(sw.name));
+                if (r.success) {
+                    const recs = r.data.recommendations || {};
+                    for (const cfg of sw.configs) {
+                        if (recs[cfg.key] !== undefined) cfg._value = recs[cfg.key];
+                    }
+                    showToast(r.data.reason, 'info');
+                }
+            } catch(e) { showToast(e.message, 'error'); }
+            sw._recommending = false;
+        },
+        async clearOpcache() {
+            if (!await confirmModal('{{t .Lang "software.opcache_clear_confirm"}}')) return;
+            this.clearingOpcache = true;
+            try {
+                const r = await api('/software/opcache/clear', { method: 'POST' });
+                showToast(r.data?.message || '{{t .Lang "software.opcache_cleared"}}', 'success');
+            } catch(e) { showToast(e.message, 'error'); }
+            this.clearingOpcache = false;
         }
     }
 }

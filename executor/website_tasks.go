@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -280,13 +281,18 @@ func executeCreateSite(task *Task) TaskResult {
 
 	allServerNames := buildServerNames(domain, payload.Aliases)
 
+	// pm.max_children 按建站当时的服务器内存/CPU 计算一次，随即持久化到 websites 表，
+	// 此后固定不变，不随服务器后续新增/删除站点而改变（见 PHPFPMPoolData.MaxChildren 注释）。
+	maxChildren := RecommendPHPFPMMaxChildren(CollectSystemFacts())
+
 	phpData := &PHPFPMPoolData{
-		Domain:     domain,
-		PoolName:   configBase,
-		SystemUser: systemUser,
-		WebRoot:    webRoot,
-		SocketPath: cfg.Paths.PHPFPMSock,
-		SocketName: configBase,
+		Domain:      domain,
+		PoolName:    configBase,
+		SystemUser:  systemUser,
+		WebRoot:     webRoot,
+		SocketPath:  cfg.Paths.PHPFPMSock,
+		SocketName:  configBase,
+		MaxChildren: strconv.Itoa(maxChildren),
 	}
 	phpConfig, err := engine.RenderPHPFPMPool(phpData)
 	if err != nil {
@@ -418,11 +424,11 @@ func executeCreateSite(task *Task) TaskResult {
 	db := database.GetDB()
 	insertResult, err := db.Exec(
 		`INSERT INTO websites (name, domain, aliases, status, system_user, web_root, document_root_subdir, log_dir,
-		 db_name, db_user, php_pool_path, nginx_conf_path, site_type, ssl_enabled, ssl_cert_path, ssl_key_path, ssl_expires_at, ssl_last_error, template_version, access_log_mode, expires_at)
-		 VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v1.0', 'error_only', ?)`,
+		 db_name, db_user, php_pool_path, nginx_conf_path, site_type, ssl_enabled, ssl_cert_path, ssl_key_path, ssl_expires_at, ssl_last_error, template_version, access_log_mode, php_fpm_max_children, expires_at)
+		 VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v1.0', 'error_only', ?, ?)`,
 		siteName, domain, strings.Join(payload.Aliases, "\n"), systemUser,
 		webRoot, documentRootSubdir, logDir, dbName, dbUser, phpPoolPath, nginxConfPath, payload.SiteType, sslEnabled,
-		certPath, keyPath, sslExpiry, sslWarning, nilIfEmpty(payload.ExpiresAt),
+		certPath, keyPath, sslExpiry, sslWarning, maxChildren, nilIfEmpty(payload.ExpiresAt),
 	)
 	if err != nil {
 		rollback()
@@ -749,6 +755,9 @@ func executeUpdateDomains(task *Task) TaskResult {
 			WebRoot:    newWebRoot,
 			SocketPath: cfg.Paths.PHPFPMSock,
 			SocketName: poolName,
+			// 改域名不等于服务器规格变化，沿用建站时已经持久化的 pm.max_children，
+			// 不重新计算——否则每次改域名都会悄悄改变这个站点的并发上限。
+			MaxChildren: strconv.Itoa(site.PHPFPMMaxChildren),
 		}
 		phpConfig, err := engine.RenderPHPFPMPool(phpData)
 		if err != nil {

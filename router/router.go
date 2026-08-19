@@ -1442,6 +1442,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 		c.HTML(http.StatusOK, "software.html", pageData(suffix, "software", "software_content", c))
 	})
 	protected.GET("/api/software", softwareHandler.List)
+	protected.GET("/api/software/recommend", softwareHandler.Recommend)
+	protected.POST("/api/software/opcache/clear", softwareHandler.ClearOpcache)
 	protected.GET("/api/software/guard", softwareHandler.GetGuardStatus)
 	protected.POST("/api/software/guard/action", softwareHandler.GuardAction)
 	protected.PUT("/api/software/config", softwareHandler.SaveConfig)
