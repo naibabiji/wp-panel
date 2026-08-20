@@ -216,6 +216,10 @@
                     <template x-if="pkg.available">
                         <div class="space-y-1">
                             <div class="flex items-center justify-between">
+                                <span class="text-xs text-gray-500">{{t .Lang "settings.wp_package_version"}}</span>
+                                <span class="text-xs text-white font-mono" x-text="pkg.version || '--'"></span>
+                            </div>
+                            <div class="flex items-center justify-between">
                                 <span class="text-xs text-gray-500">{{t .Lang "settings.file_size"}}</span>
                                 <span class="text-xs text-white" x-text="pkg.size_text"></span>
                             </div>
@@ -240,6 +244,27 @@
                     <button @click="fetchStatus()" class="text-xs py-1 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">{{t .Lang "settings.refresh"}}</button>
                 </div>
                 <p x-show="msg" class="text-xs mt-2" :class="msgOk ? 'text-green-400' : 'text-red-400'" x-text="msg"></p>
+
+                <div class="mt-4 p-3 rounded" style="background-color: #0f172a; border: 1px solid #1e293b;">
+                    <div class="flex items-center justify-between mb-2">
+                        <div>
+                            <p class="text-sm text-gray-300">{{t .Lang "settings.wp_package_auto_check"}}</p>
+                            <p class="text-xs text-gray-500">{{t .Lang "settings.wp_package_auto_check_help"}}</p>
+                        </div>
+                        <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                            <input type="checkbox" x-model="autoCheck.enabled" @change="saveAutoCheck">
+                            <span x-text="autoCheck.enabled ? t('settings.enabled') : t('settings.disabled')"></span>
+                        </label>
+                    </div>
+                    <div class="text-xs text-gray-500 space-y-1">
+                        <p>{{t .Lang "settings.wp_package_last_check"}}
+                            <span class="text-gray-300" x-text="autoCheck.lastCheckAt || t('settings.wp_package_never_checked')"></span>
+                            <span x-show="autoCheck.lastStatus" :class="autoCheck.lastStatus === 'failed' ? 'text-red-400' : 'text-gray-400'" x-text="autoCheckStatusText()"></span>
+                        </p>
+                        <p x-show="autoCheck.lastError" class="text-red-400" x-text="autoCheck.lastError"></p>
+                        <p x-show="autoCheck.remoteVersion">{{t .Lang "settings.wp_package_remote_version"}}<span class="text-gray-300" x-text="autoCheck.remoteVersion"></span></p>
+                    </div>
+                </div>
             </div>
 		</div>
 
@@ -331,7 +356,8 @@
 <script>
 function wpPackage() {
     return {
-        pkg: { available: false, size_text: '', updated_at: '' },
+        pkg: { available: false, size_text: '', updated_at: '', version: '' },
+        autoCheck: { enabled: true, lastCheckAt: '', lastStatus: '', lastError: '', remoteVersion: '' },
         downloading: false,
         uploading: false,
         deleting: false,
@@ -340,8 +366,30 @@ function wpPackage() {
         async fetchStatus() {
             try {
                 const r = await api('/settings/wp-package');
-                if (r.success) this.pkg = r.data;
+                if (r.success) {
+                    this.pkg = r.data;
+                    const ac = r.data.auto_check || {};
+                    this.autoCheck.enabled = ac.wp_package_auto_check_enabled !== 'false';
+                    this.autoCheck.lastCheckAt = ac.wp_package_last_check_at || '';
+                    this.autoCheck.lastStatus = ac.wp_package_last_check_status || '';
+                    this.autoCheck.lastError = ac.wp_package_last_check_error || '';
+                    this.autoCheck.remoteVersion = ac.wp_package_last_remote_version || '';
+                }
             } catch(e) {}
+        },
+        autoCheckStatusText() {
+            const map = {
+                up_to_date: t('settings.wp_package_check_status_up_to_date'),
+                updated: t('settings.wp_package_check_status_updated'),
+                failed: t('settings.wp_package_check_status_failed'),
+            };
+            return map[this.autoCheck.lastStatus] ? '(' + map[this.autoCheck.lastStatus] + ')' : '';
+        },
+        async saveAutoCheck() {
+            try {
+                await api('/settings', { method: 'PUT', body: { wp_package_auto_check_enabled: this.autoCheck.enabled ? 'true' : 'false' } });
+                showToast(t('settings.updated'), 'success');
+            } catch(e) { showToast(e.message, 'error'); }
         },
         async downloadPkg() {
             this.downloading = true;

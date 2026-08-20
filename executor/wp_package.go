@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/naibabiji/wp-panel/config"
 )
 
 const (
@@ -57,6 +59,37 @@ func NewWPPackageService(target string, client *http.Client) (*WPPackageService,
 		client = restrictedWPPackageHTTPClient(transport, wpPackageDownloadHTTPTimeout)
 	}
 	return &WPPackageService{target: filepath.Clean(target), client: client}, nil
+}
+
+var (
+	sharedWPPackageServiceOnce sync.Once
+	sharedWPPackageServiceInst *WPPackageService
+	sharedWPPackageServiceErr  error
+)
+
+// SharedWPPackageService returns the process-wide WordPress install-package
+// service, built once from the configured target path. The manual settings
+// handlers (upload/online-download) and the auto-update scheduler must share
+// this single instance rather than each constructing their own — the
+// service's busy-lock only prevents concurrent publishes if both sides hold
+// the same mutex.
+func SharedWPPackageService(cfg *config.Config) (*WPPackageService, error) {
+	sharedWPPackageServiceOnce.Do(func() {
+		sharedWPPackageServiceInst, sharedWPPackageServiceErr = NewWPPackageService(cfg.Paths.WordPressPackage, nil)
+	})
+	return sharedWPPackageServiceInst, sharedWPPackageServiceErr
+}
+
+// LocalPackageInfo reports the WordPress version/locale of the package
+// currently published at path, without mutating it. ok is false if the file
+// is missing or fails validation (e.g. corrupted or manually replaced with
+// something invalid) — callers should treat that the same as "unknown".
+func LocalPackageInfo(ctx context.Context, path string) (version, locale string, ok bool) {
+	report, err := ValidateWordPressPackage(ctx, path)
+	if err != nil {
+		return "", "", false
+	}
+	return report.Version, report.Locale, true
 }
 
 func defaultWPPackageHTTPClient() *http.Client {

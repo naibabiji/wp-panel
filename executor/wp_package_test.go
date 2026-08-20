@@ -34,6 +34,26 @@ func TestValidateWordPressPackage(t *testing.T) {
 	}
 }
 
+func TestLocalPackageInfoReportsVersionAndLocale(t *testing.T) {
+	version, locale, ok := LocalPackageInfo(context.Background(), validWordPressZIP(t))
+	if !ok || version != "7.0.2" || locale != "zh_CN" {
+		t.Fatalf("version=%q locale=%q ok=%v, want 7.0.2/zh_CN/true", version, locale, ok)
+	}
+}
+
+func TestLocalPackageInfoReportsNotOKForMissingOrInvalidFile(t *testing.T) {
+	if _, _, ok := LocalPackageInfo(context.Background(), filepath.Join(t.TempDir(), "missing.zip")); ok {
+		t.Fatal("expected ok=false for a missing file")
+	}
+	corrupt := filepath.Join(t.TempDir(), "corrupt.zip")
+	if err := os.WriteFile(corrupt, []byte("not a zip"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := LocalPackageInfo(context.Background(), corrupt); ok {
+		t.Fatal("expected ok=false for a corrupted file")
+	}
+}
+
 func TestValidateWordPressPackageRejectsExtraRoot(t *testing.T) {
 	filename := writeTestZIP(t, map[string]string{
 		"wordpress/wp-admin/index.php":      "x",
@@ -200,13 +220,13 @@ func TestAllowedWPUpdateExternalURL(t *testing.T) {
 		// Elementor Pro serves packages from such URLs and the archive is
 		// validated later as a zip, so the path shape is not constrained here.
 		"https://example.com/v2/package_download/abc/package_download": true,
-		"https://example.com/elementor-pro-4.2.0.zip":                 true,
+		"https://example.com/elementor-pro-4.2.0.zip":                  true,
 		// WordPress.org must never be treated as an external vendor.
 		"https://downloads.wordpress.org/plugin/foo.1.0.0.zip": false,
-		"https://wordpress.org/x":                                     false,
+		"https://wordpress.org/x":                              false,
 		// Plain HTTP, fragments, and literal/private IPs are rejected.
-		"http://example.com/x":       false,
-		"https://example.com/x#f":    false,
+		"http://example.com/x":      false,
+		"https://example.com/x#f":   false,
 		"https://10.0.0.1/x":        false,
 		"https://169.254.169.254/x": false,
 	} {

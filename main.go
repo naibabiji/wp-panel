@@ -261,6 +261,7 @@ func main() {
 	executor.StartOOMMonitor()
 	executor.StartTelemetry(Version)
 	executor.StartPanelAutoUpdateScheduler(Version, *configPath, cfg)
+	executor.StartWPPackageAutoUpdateScheduler(cfg)
 	log.Println("WordPress config baseline ensured")
 	log.Println("进程守护已启动")
 	log.Println("告警监控已启动")

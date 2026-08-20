@@ -90,6 +90,7 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		PanelAutoUpdateWindow     *string `json:"panel_auto_update_window"`
 		PanelAutoUpdateDelay      *string `json:"panel_auto_update_release_delay_minutes"`
 		PanelAutoUpdateSigTimeout *string `json:"panel_auto_update_signature_timeout_minutes"`
+		WPPackageAutoCheckEnabled *string `json:"wp_package_auto_check_enabled"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
@@ -242,6 +243,14 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		if !saveMinuteSetting(c, "panel_auto_update_signature_timeout_minutes", *req.PanelAutoUpdateSigTimeout, 5, 1440) {
 			return
 		}
+	}
+	if req.WPPackageAutoCheckEnabled != nil {
+		v := strings.TrimSpace(*req.WPPackageAutoCheckEnabled)
+		if v != "true" && v != "false" {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("自动检测开关参数错误"))
+			return
+		}
+		saveSecuritySetting("wp_package_auto_check_enabled", v)
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "设置已更新"}))
@@ -415,15 +424,19 @@ func getHostname() string {
 func (h *SettingsHandler) GetWPPackage(c *gin.Context) {
 	cfg := config.AppConfig
 	pkgPath := cfg.Paths.WordPressPackage
+	autoCheck := readWPPackageAutoCheckStatus()
 
 	info, err := os.Stat(pkgPath)
 	if err != nil {
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-			"available": false,
-			"path":      pkgPath,
+			"available":  false,
+			"path":       pkgPath,
+			"auto_check": autoCheck,
 		}))
 		return
 	}
+
+	version, locale, _ := executor.LocalPackageInfo(c.Request.Context(), pkgPath)
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"available":  true,
@@ -431,7 +444,27 @@ func (h *SettingsHandler) GetWPPackage(c *gin.Context) {
 		"size":       info.Size(),
 		"size_text":  formatFileSize(info.Size()),
 		"updated_at": info.ModTime().Format("2006-01-02 15:04:05"),
+		"version":    version,
+		"locale":     locale,
+		"auto_check": autoCheck,
 	}))
+}
+
+// readWPPackageAutoCheckStatus reads the WordPress package auto-check
+// toggle and its last-run status, written by executor.StartWPPackageAutoUpdateScheduler.
+func readWPPackageAutoCheckStatus() gin.H {
+	db := database.GetDB()
+	autoCheck := gin.H{}
+	for _, key := range []string{
+		"wp_package_auto_check_enabled", "wp_package_last_check_at",
+		"wp_package_last_check_status", "wp_package_last_check_error",
+		"wp_package_last_remote_version",
+	} {
+		var v string
+		db.QueryRow("SELECT svalue FROM security_settings WHERE skey = ?", key).Scan(&v)
+		autoCheck[key] = v
+	}
+	return autoCheck
 }
 
 func (h *SettingsHandler) UploadWPPackage(c *gin.Context) {

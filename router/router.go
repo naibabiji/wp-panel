@@ -141,6 +141,10 @@ var i18nKeys = []string{
 	"settings.package_download_complete",
 	"settings.package_not_installed",
 	"settings.package_ready",
+	"settings.wp_package_check_status_failed",
+	"settings.wp_package_check_status_up_to_date",
+	"settings.wp_package_check_status_updated",
+	"settings.wp_package_never_checked",
 	"settings.panel_restarting",
 	"settings.passwords_not_match",
 	"settings.preparing_update",
@@ -1331,7 +1335,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/files/mkdir", fileHandler.CreateDir)
 	protected.POST("/api/files/fix-permissions", fileHandler.FixPermissions)
 
-	wpPackageService, err := executor.NewWPPackageService(cfg.Paths.WordPressPackage, nil)
+	wpPackageService, err := executor.SharedWPPackageService(cfg)
 	if err != nil {
 		log.Printf("WordPress package service disabled: code=%s", executor.ArchiveErrorCode(err))
 	}

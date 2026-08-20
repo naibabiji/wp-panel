@@ -13,8 +13,62 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/naibabiji/wp-panel/config"
+	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/executor"
 )
+
+func TestGetWPPackageReportsLocalVersionAndAutoCheckStatus(t *testing.T) {
+	oldDB := database.DB
+	if err := database.Open(filepath.Join(t.TempDir(), "panel.db")); err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := database.RunMigrations(); err != nil {
+		t.Fatalf("migrate db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = database.Close()
+		database.DB = oldDB
+	})
+
+	target := filepath.Join(t.TempDir(), "wordpress.zip")
+	if err := os.WriteFile(target, buildHandlerWordPressZIP(t), 0644); err != nil {
+		t.Fatal(err)
+	}
+	oldCfg := config.AppConfig
+	config.AppConfig = &config.Config{Paths: config.PathsConfig{WordPressPackage: target}}
+	t.Cleanup(func() { config.AppConfig = oldCfg })
+
+	handler := &SettingsHandler{}
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/settings/wp-package", nil)
+	handler.GetWPPackage(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Data struct {
+			Available bool   `json:"available"`
+			Version   string `json:"version"`
+			AutoCheck struct {
+				Enabled string `json:"wp_package_auto_check_enabled"`
+			} `json:"auto_check"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON response: %v; body=%s", err, recorder.Body.String())
+	}
+	if !body.Data.Available || body.Data.Version != "7.0.2" {
+		t.Fatalf("available=%v version=%q, want true/7.0.2", body.Data.Available, body.Data.Version)
+	}
+	// Unset in security_settings must default to enabled (not an empty/false-ish string).
+	if body.Data.AutoCheck.Enabled != "" {
+		t.Fatalf("auto_check.enabled = %q, want empty (unset) before any toggle save", body.Data.AutoCheck.Enabled)
+	}
+}
 
 func TestUploadWPPackageRejectsInvalidPackageAndPreservesTarget(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "wordpress.zip")
