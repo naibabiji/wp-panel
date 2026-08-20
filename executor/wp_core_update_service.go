@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/models"
 )
 
@@ -290,16 +291,17 @@ func (s *WPCoreUpdateService) downloadAndSeal(ctx context.Context, task WPUpdate
 		return WPUpdateTask{}, err
 	}
 	target := filepath.Join(taskDir, "package.zip")
-	packages, err := NewWPPackageService(target, nil)
+	cfg := config.AppConfig
+	if cfg == nil {
+		return WPUpdateTask{}, errors.New("面板配置未加载")
+	}
+	report, usedCache, err := AcquireCorePackage(ctx, cfg.Paths.WordPressPackage, target, record.targetVersion, defaultCorePackageRefresher(cfg))
 	if err != nil {
 		return WPUpdateTask{}, err
 	}
-	report, err := packages.download(ctx, record.downloadURL)
-	if err != nil || report.Version != record.targetVersion || report.Locale != record.locale {
-		return WPUpdateTask{}, errors.New("core update package identity mismatch")
-	}
-	checksums, err := defaultWPCoreChecksumFetcher(nil)(ctx, record.targetVersion, record.locale)
-	if err != nil || validateWPCoreChecksumSet(checksums, record.targetVersion, record.locale) != nil || verifyWPCorePackageChecksums(target, checksums) != nil {
+	log.Printf("核心更新包已就绪 task=%s version=%s 来源=%s", task.ID, report.Version, map[bool]string{true: "本地缓存", false: "刷新下载"}[usedCache])
+	checksums, err := defaultWPCoreChecksumFetcher(nil)(ctx, report.Version, report.Locale)
+	if err != nil || validateWPCoreChecksumSet(checksums, report.Version, report.Locale) != nil || verifyWPCorePackageChecksums(target, checksums) != nil {
 		return WPUpdateTask{}, errors.New("core update package verification failed")
 	}
 	if err := os.Chmod(target, 0600); err != nil {

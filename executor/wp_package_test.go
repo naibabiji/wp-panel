@@ -3,6 +3,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -22,6 +23,104 @@ func validWordPressZIP(t *testing.T) string {
 		"wordpress/wp-settings.php":         "<?php",
 		"wordpress/wp-load.php":             "<?php",
 	})
+}
+
+func wordPressZIPWithVersion(t *testing.T, version string) string {
+	return writeTestZIP(t, map[string]string{
+		"wordpress/":                        "",
+		"wordpress/wp-admin/":               "",
+		"wordpress/wp-admin/index.php":      "<?php",
+		"wordpress/wp-includes/":            "",
+		"wordpress/wp-includes/load.php":    "<?php",
+		"wordpress/wp-includes/version.php": "<?php\n$wp_version = '" + version + "';\n",
+		"wordpress/wp-settings.php":         "<?php",
+		"wordpress/wp-load.php":             "<?php",
+	})
+}
+
+func TestAcquireCorePackageUsesCacheWithoutRefreshingWhenVersionMatches(t *testing.T) {
+	cachePath := wordPressZIPWithVersion(t, "7.1")
+	destPath := filepath.Join(t.TempDir(), "package.zip")
+	refreshCalled := false
+	refresh := func(context.Context) error { refreshCalled = true; return nil }
+
+	report, usedCache, err := AcquireCorePackage(context.Background(), cachePath, destPath, "7.1", refresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshCalled {
+		t.Fatal("cache already matched target version; refresh must not run")
+	}
+	if !usedCache || report.Version != "7.1" {
+		t.Fatalf("usedCache=%v report=%+v", usedCache, report)
+	}
+}
+
+func TestAcquireCorePackageRefreshesWhenCacheVersionDiffers(t *testing.T) {
+	cachePath := wordPressZIPWithVersion(t, "7.0.4") // stale
+	destPath := filepath.Join(t.TempDir(), "package.zip")
+	refreshed := wordPressZIPWithVersion(t, "7.1")
+	refresh := func(context.Context) error {
+		body, err := os.ReadFile(refreshed)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(cachePath, body, 0644) // simulate the settings-page cache being updated in place
+	}
+
+	report, usedCache, err := AcquireCorePackage(context.Background(), cachePath, destPath, "7.1", refresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usedCache {
+		t.Fatal("stale cache must trigger a refresh, not be reported as a cache hit")
+	}
+	if report.Version != "7.1" {
+		t.Fatalf("version = %q, want 7.1", report.Version)
+	}
+}
+
+func TestAcquireCorePackageSurfacesRefreshFailure(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "missing.zip") // no cache at all
+	destPath := filepath.Join(t.TempDir(), "package.zip")
+	refresh := func(context.Context) error { return errors.New("network unreachable") }
+
+	if _, _, err := AcquireCorePackage(context.Background(), cachePath, destPath, "7.1", refresh); err == nil {
+		t.Fatal("expected refresh failure to be surfaced")
+	}
+	if _, err := os.Stat(destPath); !os.IsNotExist(err) {
+		t.Fatal("a failed acquisition must not leave a partial file at destPath")
+	}
+}
+
+func TestAcquireCorePackageRejectsPersistentVersionMismatch(t *testing.T) {
+	cachePath := wordPressZIPWithVersion(t, "7.0.4")
+	destPath := filepath.Join(t.TempDir(), "package.zip")
+	// Refresh "succeeds" but still doesn't produce the requested version —
+	// e.g. the shared cache always refreshes to "latest", which may not equal
+	// a site's stepped-upgrade target version.
+	refresh := func(context.Context) error { return nil }
+
+	if _, _, err := AcquireCorePackage(context.Background(), cachePath, destPath, "7.1", refresh); err == nil {
+		t.Fatal("expected a clear error rather than installing the wrong version")
+	}
+}
+
+func TestAcquireCorePackageAcceptsAnyVersionWhenNoneRequested(t *testing.T) {
+	cachePath := wordPressZIPWithVersion(t, "7.0.4")
+	destPath := filepath.Join(t.TempDir(), "package.zip")
+	refresh := func(context.Context) error {
+		t.Fatal("refresh must not run when any cached version is acceptable")
+		return nil
+	}
+
+	report, usedCache, err := AcquireCorePackage(context.Background(), cachePath, destPath, "", refresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !usedCache || report.Version != "7.0.4" {
+		t.Fatalf("usedCache=%v report=%+v", usedCache, report)
+	}
 }
 
 func TestValidateWordPressPackage(t *testing.T) {

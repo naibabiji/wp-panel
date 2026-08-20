@@ -7,7 +7,66 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/naibabiji/wp-panel/config"
 )
+
+// newWPCoreUpdateServiceForDownloadAndSealTest builds a service with a real
+// store/artifacts backing (needed by downloadAndSeal to create task dirs and
+// seal plans) but no network-touching dependencies wired in — these tests
+// only exercise the package-acquisition wiring (AcquireCorePackage via
+// config.AppConfig), not the official-checksums network round trip that
+// downloadAndSeal performs afterward on a successful acquisition; that step
+// has no injection point today and is out of scope for this change.
+func newWPCoreUpdateServiceForDownloadAndSealTest(t *testing.T) (*WPCoreUpdateService, int) {
+	t.Helper()
+	store, siteID := newWPUpdateStoreTest(t)
+	artifacts, err := newWPUpdateArtifactService(store, t.TempDir(), func(context.Context, string, string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &WPCoreUpdateService{db: store.db, store: store, artifacts: artifacts, confirmations: newWPCoreConfirmationStore(), now: time.Now}, siteID
+}
+
+func createUnsealedCoreUpdateTask(t *testing.T, service *WPCoreUpdateService, siteID int) WPUpdateTask {
+	t.Helper()
+	task, err := service.store.createCoreManualPlan(context.Background(), WPUpdatePlan{
+		SiteID: siteID, CurrentVersion: "7.0.1", TargetVersion: "7.0.2", PackageSource: "wordpress.org",
+		DownloadURL: "https://downloads.wordpress.org/release/wordpress-7.0.2.zip",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return task
+}
+
+func TestWPCoreUpdateServiceDownloadAndSealFailsCleanlyWhenConfigMissing(t *testing.T) {
+	service, siteID := newWPCoreUpdateServiceForDownloadAndSealTest(t)
+	task := createUnsealedCoreUpdateTask(t, service, siteID)
+
+	oldCfg := config.AppConfig
+	config.AppConfig = nil
+	t.Cleanup(func() { config.AppConfig = oldCfg })
+
+	record := wpCoreConfirmation{targetVersion: "7.0.2", locale: "en_US"}
+	if _, err := service.downloadAndSeal(context.Background(), task, record); err == nil {
+		t.Fatal("expected an error when config.AppConfig is not loaded")
+	}
+}
+
+func TestWPCoreUpdateServiceDownloadAndSealFailsCleanlyWhenCachePathUnconfigured(t *testing.T) {
+	service, siteID := newWPCoreUpdateServiceForDownloadAndSealTest(t)
+	task := createUnsealedCoreUpdateTask(t, service, siteID)
+
+	oldCfg := config.AppConfig
+	config.AppConfig = &config.Config{} // Paths.WordPressPackage left empty
+	t.Cleanup(func() { config.AppConfig = oldCfg })
+
+	record := wpCoreConfirmation{targetVersion: "7.0.2", locale: "en_US"}
+	if _, err := service.downloadAndSeal(context.Background(), task, record); err == nil {
+		t.Fatal("expected an error when the shared package cache path is unconfigured")
+	}
+}
 
 func TestWPCoreUpdateServicePreviewFixesServerCandidate(t *testing.T) {
 	store, siteID := newWPUpdateStoreTest(t)

@@ -2351,7 +2351,7 @@ func (h *WebsiteHandler) ReinstallWordPress(c *gin.Context) {
 	}
 	c.ShouldBindJSON(&req)
 
-	if err := executor.ReinstallWordPress(cfg.Paths.WordPressPackage, webRoot, dbName, dbUser, systemUser, cfg,
+	if err := executor.ReinstallWordPress(c.Request.Context(), webRoot, dbName, dbUser, systemUser, cfg,
 		req.CleanDefaults, req.RemoveUnusedThemes, req.InstallThemes, req.InstallPlugins); err != nil {
 		log.Printf("WordPress 重装失败 site=%d: %v", id, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(reinstallWordPressErrorMessage(err)))

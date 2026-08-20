@@ -92,6 +92,68 @@ func LocalPackageInfo(ctx context.Context, path string) (version, locale string,
 	return report.Version, report.Locale, true
 }
 
+// corePackageRefresher refreshes the panel's shared local WordPress
+// install-package cache. Production code always uses
+// defaultCorePackageRefresher; tests inject a fake so they never touch the
+// process-wide SharedWPPackageService singleton or the real network.
+type corePackageRefresher func(ctx context.Context) error
+
+func defaultCorePackageRefresher(cfg *config.Config) corePackageRefresher {
+	return func(ctx context.Context) error {
+		svc, err := SharedWPPackageService(cfg)
+		if err != nil {
+			return err
+		}
+		_, err = svc.DownloadLatest(ctx)
+		return err
+	}
+}
+
+// AcquireCorePackage is the single WP core-package acquisition path used by
+// both site creation and core updates. It copies the panel's shared local
+// install-package cache (the settings page's cached package) to destPath if
+// the cache already holds wantVersion ("" accepts whatever is cached);
+// otherwise it refreshes the shared cache via refresh — the same locked,
+// checksum-verified, atomically-published path the settings page's manual
+// download button and 7-day auto-check scheduler use — and retries once.
+// usedCache reports which branch satisfied the request, for logging.
+//
+// Reading the cache file without holding the shared service's lock is safe:
+// WPPackageService.publishLocked always writes to a temp file and
+// atomically renames it into place, so a concurrent publish is never
+// observed half-written — a reader either sees the complete old file or the
+// complete new one.
+func AcquireCorePackage(ctx context.Context, cachePath, destPath, wantVersion string, refresh corePackageRefresher) (report WPPackageReport, usedCache bool, err error) {
+	if cachePath == "" {
+		return WPPackageReport{}, false, errors.New("wp package cache path not configured")
+	}
+	if report, ok := copyCoreCacheIfVersionMatches(ctx, cachePath, destPath, wantVersion); ok {
+		return report, true, nil
+	}
+	if refresh == nil {
+		return WPPackageReport{}, false, errors.New("wp package cache refresh unavailable")
+	}
+	if err := refresh(ctx); err != nil {
+		return WPPackageReport{}, false, fmt.Errorf("刷新本地安装包失败，可到设置页手动上传: %w", err)
+	}
+	if report, ok := copyCoreCacheIfVersionMatches(ctx, cachePath, destPath, wantVersion); ok {
+		return report, false, nil
+	}
+	return WPPackageReport{}, false, errors.New("刷新后本地安装包版本仍不满足要求")
+}
+
+func copyCoreCacheIfVersionMatches(ctx context.Context, cachePath, destPath, wantVersion string) (WPPackageReport, bool) {
+	if err := copyFile(cachePath, destPath); err != nil {
+		return WPPackageReport{}, false
+	}
+	report, err := ValidateWordPressPackage(ctx, destPath)
+	if err != nil || (wantVersion != "" && report.Version != wantVersion) {
+		_ = os.Remove(destPath)
+		return WPPackageReport{}, false
+	}
+	return report, true
+}
+
 func defaultWPPackageHTTPClient() *http.Client {
 	return defaultWPLimitedHTTPClient(wpMetadataHTTPTimeout)
 }

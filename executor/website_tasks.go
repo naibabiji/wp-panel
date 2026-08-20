@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -236,9 +237,8 @@ func executeCreateSite(task *Task) TaskResult {
 
 	// Step 3: Deploy site files
 	if payload.SiteType != "php" {
-		wpPackagePath := cfg.Paths.WordPressPackage
 		tmpDir := "/tmp/wp_deploy_" + siteName + "_" + generatePassword(8)
-		if err := deployWordPress(wpPackagePath, webRoot, tmpDir); err != nil {
+		if err := deployWordPress(context.Background(), cfg, webRoot, tmpDir); err != nil {
 			rollback()
 			log.Printf("WordPress 部署失败: %v", err)
 			return TaskResult{Success: false, Message: "WordPress 部署失败"}
@@ -927,7 +927,7 @@ func nilIfEmpty(s string) interface{} {
 	return s
 }
 
-func ReinstallWordPress(packagePath, webRoot, dbName, dbUser, systemUser string, cfg *config.Config,
+func ReinstallWordPress(ctx context.Context, webRoot, dbName, dbUser, systemUser string, cfg *config.Config,
 	cleanDefaults, removeThemes bool, installThemes, installPlugins []string) error {
 	webRoot, err := managedSubpath(cfg.Paths.WWWRoot, webRoot, "网站目录")
 	if err != nil {
@@ -942,7 +942,7 @@ func ReinstallWordPress(packagePath, webRoot, dbName, dbUser, systemUser string,
 	if err := os.MkdirAll(tmpWebRoot, 0755); err != nil {
 		return fmt.Errorf("创建临时网站目录失败: %w", err)
 	}
-	if err := deployWordPress(packagePath, tmpWebRoot, tmpDir); err != nil {
+	if err := deployWordPress(ctx, cfg, tmpWebRoot, tmpDir); err != nil {
 		return fmt.Errorf("WordPress 部署失败: %w", err)
 	}
 

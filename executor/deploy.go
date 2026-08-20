@@ -1,13 +1,16 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/naibabiji/wp-panel/config"
 )
 
-func deployWordPress(packagePath, webRoot, tmpDir string) error {
+func deployWordPress(ctx context.Context, cfg *config.Config, webRoot, tmpDir string) error {
 	os.RemoveAll(tmpDir)
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {
 		return fmt.Errorf("创建临时目录失败: %w", err)
@@ -16,7 +19,7 @@ func deployWordPress(packagePath, webRoot, tmpDir string) error {
 
 	zipPath := filepath.Join(tmpDir, "wordpress.zip")
 
-	if err := downloadWP(packagePath, zipPath); err != nil {
+	if err := downloadWP(ctx, cfg, zipPath); err != nil {
 		return err
 	}
 
@@ -98,21 +101,9 @@ func copyDir(src, dst string) error {
 	return nil
 }
 
-func downloadWP(localPath, destPath string) error {
-	// 优先使用本地安装包（更快、更可靠，适合国内网络环境）
-	if info, err := os.Stat(localPath); err == nil && info.Size() > 0 {
-		if _, err := executeCommand("cp", "-f", localPath, destPath); err == nil {
-			return nil
-		}
-	}
-
-	// 本地不可用，在线下载
-	if _, err := executeCommand("wget", "-q", "-T", "30", "-t", "3", "-O", destPath,
-		"https://wordpress.org/latest.zip"); err != nil {
-		return fmt.Errorf("本地安装包不可用且在线下载失败: %w", err)
-	}
-
-	return nil
+func downloadWP(ctx context.Context, cfg *config.Config, destPath string) error {
+	_, _, err := AcquireCorePackage(ctx, cfg.Paths.WordPressPackage, destPath, "", defaultCorePackageRefresher(cfg))
+	return err
 }
 
 func removeDefaultPlugins(webRoot string) {
