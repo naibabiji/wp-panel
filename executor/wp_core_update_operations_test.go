@@ -42,7 +42,7 @@ func TestWPCoreSystemOperationsPrepareAndHealth(t *testing.T) {
 		return checksumFixture(t, webRoot, version, locale), nil
 	}
 	probeCalls := 0
-	ops, err := newWPCoreSystemOperations(runner, func(context.Context, string, string) error { return nil }, func(context.Context, string, string, string) error { return nil }, fetch, func(context.Context, string) error { probeCalls++; return nil }, func(context.Context, wpCoreUpdateExecution, ZIPInspection) error { return nil })
+	ops, err := newWPCoreSystemOperations(runner, func(context.Context, string, string) error { return nil }, func(context.Context, string, string, string, string) error { return nil }, fetch, func(context.Context, string) error { probeCalls++; return nil }, func(context.Context, wpCoreUpdateExecution, ZIPInspection) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestCheckWPCoreFilesystemRejectsMaintenanceAndMismatch(t *testing.T) {
 
 func TestWPCoreSystemOperationsControlsMaintenanceFile(t *testing.T) {
 	root := t.TempDir()
-	ops, err := newWPCoreSystemOperations(&fakeCoreRunner{}, func(context.Context, string, string) error { return nil }, func(context.Context, string, string, string) error { return nil }, func(context.Context, string, string) (wpCoreChecksumSet, error) { return wpCoreChecksumSet{}, nil }, func(context.Context, string) error { return nil }, func(context.Context, wpCoreUpdateExecution, ZIPInspection) error { return nil })
+	ops, err := newWPCoreSystemOperations(&fakeCoreRunner{}, func(context.Context, string, string) error { return nil }, func(context.Context, string, string, string, string) error { return nil }, func(context.Context, string, string) (wpCoreChecksumSet, error) { return wpCoreChecksumSet{}, nil }, func(context.Context, string) error { return nil }, func(context.Context, wpCoreUpdateExecution, ZIPInspection) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

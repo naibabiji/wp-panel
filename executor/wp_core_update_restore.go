@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -89,9 +91,18 @@ func restoreWPCoreDatabase(ctx context.Context, mysqlPath, dbName, password, bac
 	return nil
 }
 
-func defaultWPCoreFilesRestorer(ctx context.Context, webRoot, backupPath, taskID string) error {
+func defaultWPCoreFilesRestorer(ctx context.Context, webRoot, backupPath, taskID, systemUser string) error {
 	if !wpUpdateTaskIDPattern.MatchString(taskID) || !filepath.IsAbs(backupPath) {
 		return errors.New("invalid core restore request")
+	}
+	u, err := user.Lookup(systemUser)
+	if err != nil {
+		return errors.New("core restore user unavailable")
+	}
+	uid, uidErr := strconv.Atoi(u.Uid)
+	gid, gidErr := strconv.Atoi(u.Gid)
+	if uidErr != nil || gidErr != nil || uid <= 0 || gid <= 0 || u.Username != systemUser {
+		return errors.New("invalid core restore identity")
 	}
 	rootPath, err := safeSiteWebRoot(webRoot)
 	if err != nil {
@@ -123,7 +134,7 @@ func defaultWPCoreFilesRestorer(ctx context.Context, webRoot, backupPath, taskID
 	if err != nil {
 		return err
 	}
-	if err := extractCoreBackupTar(ctx, backupPath, stage); err != nil {
+	if err := extractCoreBackupTar(ctx, backupPath, stage, uid, gid); err != nil {
 		stage.Close()
 		return err
 	}
@@ -204,7 +215,7 @@ func defaultWPCoreFilesRestorer(ctx context.Context, webRoot, backupPath, taskID
 	return closeErr
 }
 
-func extractCoreBackupTar(ctx context.Context, backupPath string, root *os.Root) error {
+func extractCoreBackupTar(ctx context.Context, backupPath string, root *os.Root, uid, gid int) error {
 	f, err := os.Open(backupPath)
 	if err != nil {
 		return err
@@ -239,14 +250,14 @@ func extractCoreBackupTar(ctx context.Context, backupPath string, root *os.Root)
 		}
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := ensureRootDirectories(root, name); err != nil {
+			if err := ensureCoreRestoreDirectories(root, name, uid, gid); err != nil {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
 			if header.Size < 0 || header.Size > wpCoreRestoreMaxBytes-total {
 				return errors.New("core restore archive too large")
 			}
-			if err := ensureRootDirectories(root, filepath.Dir(name)); err != nil {
+			if err := ensureCoreRestoreDirectories(root, filepath.Dir(name), uid, gid); err != nil {
 				return err
 			}
 			dst, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
@@ -255,13 +266,54 @@ func extractCoreBackupTar(ctx context.Context, backupPath string, root *os.Root)
 			}
 			written, copyErr := copyWithContext(ctx, dst, io.LimitReader(tr, header.Size))
 			chmodErr := dst.Chmod(0644)
+			chownErr := dst.Chown(uid, gid)
 			closeErr := dst.Close()
-			if copyErr != nil || chmodErr != nil || closeErr != nil || written != header.Size {
+			if copyErr != nil || chmodErr != nil || chownErr != nil || closeErr != nil || written != header.Size {
 				return errors.New("core restore archive extraction failed")
 			}
 			total += written
 		default:
 			return errors.New("core restore archive type rejected")
+		}
+	}
+	return nil
+}
+
+// ensureCoreRestoreDirectories mirrors ensurePluginRestoreDirectories: it
+// creates (or reuses) each path component and chowns it to the site's
+// system user. The shared ensureRootDirectories helper (used by generic ZIP
+// extraction elsewhere) does not chown, which previously left restored
+// wp-admin/wp-includes owned by root — the process running the restore —
+// instead of the site user, breaking every subsequent core update attempt.
+func ensureCoreRestoreDirectories(root *os.Root, name string, uid, gid int) error {
+	if name == "." || name == "" {
+		return nil
+	}
+	current := ""
+	for _, part := range strings.Split(filepath.Clean(name), string(filepath.Separator)) {
+		if part == "" || part == "." || part == ".." {
+			return errors.New("invalid core restore directory")
+		}
+		current = filepath.Join(current, part)
+		info, err := root.Lstat(current)
+		if os.IsNotExist(err) {
+			if err := root.Mkdir(current, 0755); err != nil {
+				return err
+			}
+			info, err = root.Lstat(current)
+		}
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("invalid core restore directory")
+		}
+		dir, err := root.Open(current)
+		if err != nil {
+			return errors.New("invalid core restore directory")
+		}
+		chmodErr := dir.Chmod(0755)
+		chownErr := dir.Chown(uid, gid)
+		closeErr := dir.Close()
+		if chmodErr != nil || chownErr != nil || closeErr != nil {
+			return errors.New("core restore directory ownership failed")
 		}
 	}
 	return nil

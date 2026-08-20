@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -46,6 +47,15 @@ func TestRestoreWPCoreDatabaseUsesBoundedArgumentsAndSanitizedDump(t *testing.T)
 	}
 }
 
+func testCoreRestoreSystemUser(t *testing.T) string {
+	t.Helper()
+	u, err := user.Current()
+	if err != nil || u.Uid == "0" {
+		t.Skip("non-root current user required")
+	}
+	return u.Username
+}
+
 func TestDefaultWPCoreFilesRestorerRestoresOnlyCore(t *testing.T) {
 	webRoot := filepath.Join(t.TempDir(), "wordpress")
 	if err := os.Mkdir(webRoot, 0755); err != nil {
@@ -71,7 +81,7 @@ func TestDefaultWPCoreFilesRestorerRestoresOnlyCore(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(webRoot, "wp-config.php"), []byte("keep-config"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := defaultWPCoreFilesRestorer(context.Background(), webRoot, backup, "wpu_0123456789abcdef0123456789abcdef"); err != nil {
+	if err := defaultWPCoreFilesRestorer(context.Background(), webRoot, backup, "wpu_0123456789abcdef0123456789abcdef", testCoreRestoreSystemUser(t)); err != nil {
 		t.Fatal(err)
 	}
 	assertFileText(t, filepath.Join(webRoot, "wp-admin", "admin.php"), "admin")
@@ -92,6 +102,27 @@ func TestDefaultWPCoreFilesRestorerRestoresOnlyCore(t *testing.T) {
 	}
 }
 
+// TestDefaultWPCoreFilesRestorerRejectsUnknownSystemUser guards the fix for
+// the bug where a rollback restore left wp-admin/wp-includes owned by root
+// (the panel process's own uid) instead of the site's system user, silently
+// breaking every subsequent core update attempt on that site. The restorer
+// must resolve a real system user via user.Lookup before writing anything.
+func TestDefaultWPCoreFilesRestorerRejectsUnknownSystemUser(t *testing.T) {
+	webRoot := filepath.Join(t.TempDir(), "wordpress")
+	if err := os.Mkdir(webRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeWordPressCoreFixture(t, webRoot)
+	backup := filepath.Join(t.TempDir(), "core.tar.gz")
+	if err := archiveWordPressCore(webRoot, backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := defaultWPCoreFilesRestorer(context.Background(), webRoot, backup, "wpu_0123456789abcdef0123456789abcdef", "wp-panel-no-such-user"); err == nil {
+		t.Fatal("expected unknown system user to be rejected")
+	}
+	assertFileText(t, filepath.Join(webRoot, "wp-config.php"), "secret")
+}
+
 func TestDefaultWPCoreFilesRestorerRejectsUnexpectedArchivePath(t *testing.T) {
 	webRoot := filepath.Join(t.TempDir(), "wordpress")
 	if err := os.Mkdir(webRoot, 0755); err != nil {
@@ -100,7 +131,7 @@ func TestDefaultWPCoreFilesRestorerRejectsUnexpectedArchivePath(t *testing.T) {
 	writeWordPressCoreFixture(t, webRoot)
 	backup := filepath.Join(t.TempDir(), "bad.tar.gz")
 	writeCoreRestoreTar(t, backup, map[string]string{"wp-admin/admin.php": "admin", "wp-config.php": "malicious"})
-	if err := defaultWPCoreFilesRestorer(context.Background(), webRoot, backup, "wpu_0123456789abcdef0123456789abcdef"); err == nil {
+	if err := defaultWPCoreFilesRestorer(context.Background(), webRoot, backup, "wpu_0123456789abcdef0123456789abcdef", testCoreRestoreSystemUser(t)); err == nil {
 		t.Fatal("expected archive rejection")
 	}
 	assertFileText(t, filepath.Join(webRoot, "wp-config.php"), "secret")
@@ -120,7 +151,7 @@ func TestDefaultWPCoreFilesRestorerRejectsExistingTransactionDirectory(t *testin
 	if err := os.Mkdir(filepath.Join(webRoot, ".wp-panel-core-restore-stage-"+taskID), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := defaultWPCoreFilesRestorer(context.Background(), webRoot, backup, taskID); err == nil {
+	if err := defaultWPCoreFilesRestorer(context.Background(), webRoot, backup, taskID, testCoreRestoreSystemUser(t)); err == nil {
 		t.Fatal("expected stale transaction rejection")
 	}
 }

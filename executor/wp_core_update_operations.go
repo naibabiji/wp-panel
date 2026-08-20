@@ -27,7 +27,7 @@ type wpCoreUpdateRunner interface {
 }
 
 type wpCoreDatabaseRestorer func(context.Context, string, string) error
-type wpCoreFilesRestorer func(context.Context, string, string, string) error
+type wpCoreFilesRestorer func(context.Context, string, string, string, string) error
 
 type wpCoreChecksumSet struct {
 	Version   string
@@ -185,7 +185,7 @@ func (o *wpCoreSystemOperations) RestoreDatabase(ctx context.Context, execution 
 }
 
 func (o *wpCoreSystemOperations) RestoreCoreFiles(ctx context.Context, execution wpCoreUpdateExecution) error {
-	return o.restoreFiles(ctx, execution.WebRoot, execution.CoreBackup, execution.Task.ID)
+	return o.restoreFiles(ctx, execution.WebRoot, execution.CoreBackup, execution.Task.ID, execution.SystemUser)
 }
 
 func (o *wpCoreSystemOperations) CheckRollbackHealth(ctx context.Context, execution wpCoreUpdateExecution) error {
