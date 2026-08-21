@@ -35,7 +35,10 @@ import (
 type FileHandler struct{}
 
 const (
-	maxArchiveEntries      = 100000
+	// maxArchiveEntries 保护的是"单次网页请求内同步跑完的条目数"，不是恶意压缩包的下限。
+	// 30 万大约是常见 WooCommerce/多插件站点全量包（数万商品图 + 数万插件文件）的 3 倍冗余；
+	// 真撞到这条线的包，交给 archiveTooHeavyMessage 引导去 SSH 解压，而不是简单调大数字了事。
+	maxArchiveEntries      = 300000
 	maxPanelArchiveBytes   = int64(5 * 1024 * 1024 * 1024)
 	uploadChunkSize        = int64(5 * 1024 * 1024)
 	maxUploadChunks        = 20000
@@ -1542,12 +1545,40 @@ func archiveSSHExtractCommand(archivePath, format string) string {
 	}
 }
 
-func oversizedArchiveMessage(archivePath, format string) string {
+// archiveTooHeavyMessage 是"这个压缩包对面板在线解压来说太重"的统一出口。
+// 面板在线解压在一次网页请求里同步完成，没有后台任务队列也没有进度显示：
+// 处理时间一长，浏览器关闭、网络波动或系统重启都会让解压中途中断，
+// 留下部分文件已写入、部分没写的半成品状态，且面板不会知道要不要回滚。
+// 体积和条目数任一超限都归到这里，统一引导去 SSH 手动解压——
+// SSH 端可以后台运行（配合 nohup/tmux）、实时看进度，不受网页会话影响。
+func archiveTooHeavyMessage(archivePath, format, reason string) string {
+	base := fmt.Sprintf(
+		"压缩包%s，面板在线解压是在一次网页请求里同步完成的，没有后台任务和进度显示，"+
+			"处理时间过长容易在浏览器关闭、网络波动时中途失败、把文件解压到一半，"+
+			"因此面板不支持这类压缩包在线解压。建议改用 SSH 手动解压。",
+		reason,
+	)
 	cmd := archiveSSHExtractCommand(archivePath, format)
 	if cmd == "" {
-		return "文件超大，面板解压可能不稳定，建议从 SSH 端执行解压命令。"
+		return base
 	}
-	return "文件超大，面板解压可能不稳定，建议从 SSH 端执行解压命令：\n" + cmd
+	return base + "\n" + cmd
+}
+
+func oversizedArchiveMessage(archivePath, format string, size int64) string {
+	reason := fmt.Sprintf(
+		"体积过大（%s，超过面板在线解压上限 %s）",
+		formatFileSize(size), formatFileSize(maxPanelArchiveBytes),
+	)
+	return archiveTooHeavyMessage(archivePath, format, reason)
+}
+
+func tooManyEntriesArchiveMessage(archivePath, format string, count int) string {
+	reason := fmt.Sprintf(
+		"文件数量过多（%d 个，超过面板在线解压上限 %d 个）",
+		count, maxArchiveEntries,
+	)
+	return archiveTooHeavyMessage(archivePath, format, reason)
 }
 
 func openTarReader(path, format string) (*tar.Reader, io.Closer, error) {
@@ -1614,7 +1645,7 @@ func checkTarArchive(archivePath, format, basePath, destDir string, overwrite bo
 		}
 		count++
 		if count > maxArchiveEntries {
-			return nil, fmt.Errorf("压缩包文件数量过多")
+			return nil, fmt.Errorf("%s", tooManyEntriesArchiveMessage(archivePath, format, count))
 		}
 
 		target, skip, err := tarTargetForHeader(basePath, destDir, hdr)
@@ -1655,7 +1686,7 @@ func extractTarArchive(archivePath, format, basePath, destDir string, lockSite *
 		}
 		count++
 		if count > maxArchiveEntries {
-			return fmt.Errorf("压缩包文件数量过多")
+			return fmt.Errorf("%s", tooManyEntriesArchiveMessage(archivePath, format, count))
 		}
 
 		target, skip, err := tarTargetForHeader(basePath, destDir, hdr)
@@ -1763,7 +1794,7 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 		return
 	}
 	if info.Size() > maxPanelArchiveBytes {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse(oversizedArchiveMessage(fullPath, format)))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(oversizedArchiveMessage(fullPath, format, info.Size())))
 		return
 	}
 
@@ -1802,7 +1833,7 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 
 	var conflicts []string
 	if len(r.File) > maxArchiveEntries {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("压缩包文件数量过多"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(tooManyEntriesArchiveMessage(fullPath, format, len(r.File))))
 		return
 	}
 	for _, f := range r.File {
