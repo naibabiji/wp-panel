@@ -195,10 +195,24 @@ func (s *WPPackageService) PublishUpload(ctx context.Context, src io.Reader, dec
 }
 
 func (s *WPPackageService) DownloadLatest(ctx context.Context) (WPPackageReport, error) {
-	return s.download(ctx, wordpressLatestURL)
+	return s.download(ctx, wordpressLatestURL, "")
 }
 
-func (s *WPPackageService) download(ctx context.Context, rawURL string) (WPPackageReport, error) {
+// DownloadLatestExpecting downloads wordpress.org/latest.zip like DownloadLatest,
+// but additionally rejects the result if its parsed version doesn't match
+// wantVersion. wordpress.org's stable-check API and latest.zip are served from
+// separate endpoints that can briefly disagree (CDN propagation lag); the
+// auto-update scheduler already decided to update based on stable-check's
+// answer, so it must get exactly that version or nothing; a not-yet-published
+// or already-superseded latest.zip must be treated as a failed check, not
+// silently published as "updated". Manual downloads (DownloadLatest) keep
+// accepting whatever is currently live, since an admin clicking the button
+// has no such expectation to violate.
+func (s *WPPackageService) DownloadLatestExpecting(ctx context.Context, wantVersion string) (WPPackageReport, error) {
+	return s.download(ctx, wordpressLatestURL, wantVersion)
+}
+
+func (s *WPPackageService) download(ctx context.Context, rawURL, wantVersion string) (WPPackageReport, error) {
 	if !s.mu.TryLock() {
 		return WPPackageReport{}, archiveError("package_busy", nil)
 	}
@@ -223,7 +237,7 @@ func (s *WPPackageService) download(ctx context.Context, rawURL string) (WPPacka
 	if resp.Request == nil || !allowedWordPressURL(resp.Request.URL) || resp.StatusCode != http.StatusOK {
 		return WPPackageReport{}, archiveError("package_download_failed", nil)
 	}
-	return s.publishLocked(ctx, io.LimitReader(resp.Body, wpDownloadMaxBytes+1), wpDownloadMaxBytes)
+	return s.publishLocked(ctx, io.LimitReader(resp.Body, wpDownloadMaxBytes+1), wpDownloadMaxBytes, wantVersion)
 }
 
 func (s *WPPackageService) publish(ctx context.Context, src io.Reader, maxBytes int64) (WPPackageReport, error) {
@@ -231,10 +245,10 @@ func (s *WPPackageService) publish(ctx context.Context, src io.Reader, maxBytes 
 		return WPPackageReport{}, archiveError("package_busy", nil)
 	}
 	defer s.mu.Unlock()
-	return s.publishLocked(ctx, src, maxBytes)
+	return s.publishLocked(ctx, src, maxBytes, "")
 }
 
-func (s *WPPackageService) publishLocked(ctx context.Context, src io.Reader, maxBytes int64) (report WPPackageReport, retErr error) {
+func (s *WPPackageService) publishLocked(ctx context.Context, src io.Reader, maxBytes int64, wantVersion string) (report WPPackageReport, retErr error) {
 	dir := filepath.Dir(s.target)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return report, archiveError("package_publish_failed", err)
@@ -275,6 +289,9 @@ func (s *WPPackageService) publishLocked(ctx context.Context, src io.Reader, max
 	report, err = ValidateWordPressPackage(validationCtx, stagedName)
 	if err != nil {
 		return report, err
+	}
+	if wantVersion != "" && report.Version != wantVersion {
+		return report, archiveError("package_version_mismatch", nil)
 	}
 	sha, size, err := fileSHA256(stagedName)
 	if err != nil || sha != report.Inspection.SHA256 || size != report.Inspection.ArchiveBytes {

@@ -102,7 +102,7 @@ func runWPPackageAutoCheck(cfg *config.Config, svc *WPPackageService, fetchVersi
 	}
 
 	downloadCtx, downloadCancel := context.WithTimeout(context.Background(), wpPackageDownloadHTTPTimeout)
-	report, err := svc.DownloadLatest(downloadCtx)
+	report, err := svc.DownloadLatestExpecting(downloadCtx, remoteVersion)
 	downloadCancel()
 	if err != nil {
 		recordWPPackageCheckFailure(remoteVersion, "自动下载失败，本地已有安装包保持不变: "+ArchiveErrorCode(err))

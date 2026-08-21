@@ -153,6 +153,47 @@ func TestRunWPPackageAutoCheckDownloadsNewerVersion(t *testing.T) {
 	}
 }
 
+func TestRunWPPackageAutoCheckRejectsVersionMismatchedDownload(t *testing.T) {
+	setupWPPackageSchedulerTestDB(t)
+	target := filepath.Join(t.TempDir(), "wordpress.zip")
+	original := []byte("manually-uploaded-package")
+	if err := os.WriteFile(target, original, 0644); err != nil {
+		t.Fatal(err)
+	}
+	// stable-check says 9.9.9 is out, but latest.zip is a structurally valid
+	// package for a different version (e.g. CDN propagation lag) — this must
+	// be treated as a failed check, not published as "updated".
+	mismatchedZIP, err := os.ReadFile(wordPressZIPWithVersion(t, "7.0.2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(mismatchedZIP)), Header: make(http.Header), Request: req}, nil
+	})}
+	svc, err := NewWPPackageService(target, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runWPPackageAutoCheck(&config.Config{Paths: config.PathsConfig{WordPressPackage: target}}, svc, func(ctx context.Context) (string, error) {
+		return "9.9.9", nil
+	})
+
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatal("a version-mismatched download must not replace the existing package")
+	}
+	if status := readSecuritySetting("wp_package_last_check_status"); status != "failed" {
+		t.Fatalf("status = %q, want failed", status)
+	}
+	if errText := readSecuritySetting("wp_package_last_check_error"); errText == "" {
+		t.Fatal("expected last_check_error to be recorded")
+	}
+}
+
 func TestRunWPPackageAutoCheckFailedDownloadPreservesExistingPackage(t *testing.T) {
 	setupWPPackageSchedulerTestDB(t)
 	target := filepath.Join(t.TempDir(), "wordpress.zip")
