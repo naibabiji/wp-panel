@@ -242,6 +242,8 @@ var i18nKeys = []string{
 	"website.backup_list",
 	"website.save_other_cdn_settings",
 	"website.save_settings",
+	"website.wp_optimization",
+	"website.fastcgi_cache_title",
 	"website.restore",
 	"website.processing",
 	"website.sync_db_info",

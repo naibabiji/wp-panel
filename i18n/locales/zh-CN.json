@@ -1642,6 +1642,7 @@
     "location_level_config": "Location 级配置（.conf — location 块之前，缓存绕过规则写这里）",
     "refresh": "刷新",
     "wp_optimization": "WordPress优化",
+    "fastcgi_cache_title": "FastCGI 缓存",
     "file_lock": "WordPress 文件保护",
     "file_lock_help": "开启后，WordPress 核心、插件、主题和重要配置将设为只读。即使网站漏洞被利用，也能阻止恶意代码修改这些文件，降低后门长期驻留和网站程序被篡改的风险。日常发文章、改页面和上传图片不受影响。",
     "file_lock_limit_title": "仍需注意：",

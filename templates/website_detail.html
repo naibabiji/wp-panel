@@ -170,9 +170,14 @@ location ^~ /api/ {
     </div>
 
     <!-- Row 2: WordPress优化 | WordPress文件保护 -->
+    <!-- 这张卡片对 wordpress 和 php 两种 site_type 都会渲染（见上面的 :class 三元判断），
+         里面混了通用控件（FastCGI 缓存）和多个 WordPress 专属控件。新增/修改任何一个
+         "仅 WordPress 站点显示"的元素时，必须把本卡片内所有同类元素都加上
+         x-show="site.site_type === 'wordpress'"，不能只改自己新加的那一个——
+         之前"高级设置"折叠面板就漏加过，导致通用 PHP 站点也看到了停止更新检查等选项。 -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mt-6">
         <div class="card" :class="site.site_type === 'wordpress' ? '' : 'md:col-span-2'">
-            <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "website.wp_optimization"}}</h3>
+            <h3 class="text-lg font-semibold text-white mb-4" x-text="site.site_type === 'wordpress' ? t('website.wp_optimization') : t('website.fastcgi_cache_title')"></h3>
             <div class="flex items-center space-x-3 mb-3">
                 <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
                     <input type="checkbox" x-model="fcacheEnabled">
@@ -183,7 +188,7 @@ location ^~ /api/ {
                 <label class="text-sm text-gray-300 mb-1 block">{{t .Lang "website.cache_ttl_seconds"}}</label>
                 <input type="number" x-model="fcacheTTL" class="input-field w-32 text-sm py-1" min="10" max="86400">
             </div>
-            <details class="mb-4 rounded border border-gray-700 bg-gray-900/30 px-3 py-2">
+            <details class="mb-4 rounded border border-gray-700 bg-gray-900/30 px-3 py-2" x-show="site.site_type === 'wordpress'">
                 <summary class="cursor-pointer text-sm text-gray-300">{{t .Lang "website.wp_optimization_advanced"}}</summary>
                 <label class="mt-3 flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
                     <input type="checkbox" x-model="disableWPUpdates" class="mt-0.5">

@@ -1550,6 +1550,7 @@
     "location_level_config": "Location-level configuration (.conf — before location blocks, for cache bypass rules)",
     "refresh": "Refresh",
     "wp_optimization": "WordPress Optimization",
+    "fastcgi_cache_title": "FastCGI Cache",
     "file_lock": "WordPress File Protection",
     "file_lock_help": "WordPress core, plugins, themes, and important configuration are made read-only. Even if a site vulnerability is exploited, malicious code is blocked from modifying these files, reducing the risk of persistent backdoors and program-file tampering. Publishing, editing pages, and uploading media continue to work.",
     "file_lock_limit_title": "Important limitations:",
