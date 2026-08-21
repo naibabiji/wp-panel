@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/naibabiji/wp-panel/database"
@@ -77,6 +78,7 @@ func TestRestoreStatusRejectsMismatchedTaskType(t *testing.T) {
 	task := executor.GlobalQueue.Enqueue(executor.TaskCreateBackup, &executor.CreateBackupPayload{
 		Site: &models.Website{ID: 1, Domain: "example.com"},
 	})
+	waitForTaskResult(t, task)
 
 	rec := performBackupStatusRequest("/api/websites/1/backups/restore-tasks/" + task.ID)
 	if rec.Code != http.StatusNotFound {
@@ -90,10 +92,28 @@ func TestRestoreStatusRejectsMismatchedSiteID(t *testing.T) {
 	task := executor.GlobalQueue.Enqueue(executor.TaskRestoreBackup, &executor.RestoreBackupPayload{
 		Site: &models.Website{ID: 2, Domain: "other.com"},
 	})
+	waitForTaskResult(t, task)
 
 	rec := performBackupStatusRequest("/api/websites/1/backups/restore-tasks/" + task.ID)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+// waitForTaskResult blocks until the queue's background worker has finished
+// processing task (success, failure, or recovered panic all send on
+// ResultCh — see executor/queue.go's worker). These tests enqueue a task on
+// the shared executor.GlobalQueue purely to have a real task ID/type/site to
+// probe the mismatch-rejection handler with; without this wait, the test can
+// return and its t.Cleanup() can close the DB and remove its temp dir while
+// the worker goroutine is still mid-task, racing the cleanup (observed as
+// "sql: database is closed" and "TempDir RemoveAll: directory not empty").
+func waitForTaskResult(t *testing.T, task *executor.Task) {
+	t.Helper()
+	select {
+	case <-task.ResultCh:
+	case <-time.After(3 * time.Second):
+		t.Fatal("task did not finish before timeout; queue worker likely stuck")
 	}
 }
 
