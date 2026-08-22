@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
@@ -60,11 +59,15 @@ func TestLogIncidentWritesCoreServiceAlert(t *testing.T) {
 	service := &GuardService{Name: "MariaDB", ServiceName: "mariadb"}
 	logIncident(service, "auto_restart", "MariaDB 进程异常退出，自动恢复成功", true)
 
-	var incidents, alerts int
+	var incidents, alerts, resolved int
 	_ = db.QueryRow("SELECT COUNT(*) FROM process_guard_incidents").Scan(&incidents)
 	_ = db.QueryRow("SELECT COUNT(*) FROM alert_log WHERE alert_type = 'alert_service'").Scan(&alerts)
+	_ = db.QueryRow("SELECT COALESCE(MAX(resolved), 0) FROM alert_log WHERE alert_type = 'alert_service'").Scan(&resolved)
 	if incidents != 1 || alerts != 1 {
 		t.Fatalf("incidents=%d alerts=%d, want 1 and 1", incidents, alerts)
+	}
+	if resolved != 1 {
+		t.Fatalf("fast recovered service event resolved=%d, want 1", resolved)
 	}
 }
 
@@ -135,7 +138,7 @@ func TestRunGuardCommandTimesOut(t *testing.T) {
 	}
 }
 
-func TestLogIncidentSkipsImmediateNotificationWhenRecoveryFailed(t *testing.T) {
+func TestLogIncidentLeavesUnrecoveredFailureToStateMonitor(t *testing.T) {
 	db := openAlertTestDB(t)
 	mustExec(t, db, `CREATE TABLE process_guard_incidents (
 		id INTEGER PRIMARY KEY, service TEXT, event TEXT, message TEXT,
@@ -159,11 +162,40 @@ func TestLogIncidentSkipsImmediateNotificationWhenRecoveryFailed(t *testing.T) {
 		t.Fatalf("notifications=%d, want 0", notifications)
 	}
 
-	var message string
-	if err := db.QueryRow("SELECT message FROM alert_log").Scan(&message); err != nil {
+	var alerts int
+	if err := db.QueryRow("SELECT COUNT(*) FROM alert_log").Scan(&alerts); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(message, "自动恢复失败") {
-		t.Fatalf("alert log should retain failure details: %q", message)
+	if alerts != 0 {
+		t.Fatalf("unrecovered failure alerts=%d, want 0 before central state monitor confirms it", alerts)
+	}
+}
+
+func TestLogIncidentSuppressesRecoveredEventWhenStateAlertIsFiring(t *testing.T) {
+	db := openAlertTestDB(t)
+	mustExec(t, db, `CREATE TABLE process_guard_incidents (
+		id INTEGER PRIMARY KEY, service TEXT, event TEXT, message TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`)
+	mustExec(t, db, `CREATE TABLE alert_log (
+		id INTEGER PRIMARY KEY, alert_type TEXT, level TEXT, message TEXT,
+		resolved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`)
+	mustExec(t, db, `CREATE TABLE security_settings (skey TEXT PRIMARY KEY, svalue TEXT)`)
+	mustExec(t, db, `INSERT INTO security_settings VALUES ('alert_service', 'true')`)
+	mustExec(t, db, `CREATE TABLE alert_runtime_state (alert_type TEXT PRIMARY KEY, status TEXT)`)
+	mustExec(t, db, `INSERT INTO alert_runtime_state VALUES ('alert_service', 'firing')`)
+
+	oldNotifier := serviceIncidentNotifier
+	notifications := 0
+	serviceIncidentNotifier = func(_, _ string) { notifications++ }
+	t.Cleanup(func() { serviceIncidentNotifier = oldNotifier })
+	service := &GuardService{Name: "MariaDB", ServiceName: "mariadb"}
+	logIncident(service, "auto_restart", "MariaDB 自动恢复成功", true)
+	if notifications != 0 {
+		t.Fatalf("notifications=%d, want 0 while central alert is firing", notifications)
+	}
+	var alerts int
+	_ = db.QueryRow("SELECT COUNT(*) FROM alert_log").Scan(&alerts)
+	if alerts != 0 {
+		t.Fatalf("alerts=%d, want 0; central monitor owns the recovery transition", alerts)
 	}
 }

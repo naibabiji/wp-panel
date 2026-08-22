@@ -393,6 +393,23 @@ var migrations = append([]string{
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_alert_log_type ON alert_log(alert_type, created_at)`,
+	`CREATE TABLE IF NOT EXISTS alert_runtime_state (
+		alert_type      TEXT PRIMARY KEY,
+		status          TEXT NOT NULL DEFAULT 'normal',
+		pending_since   TEXT NOT NULL DEFAULT '',
+		last_fired_at   TEXT NOT NULL DEFAULT '',
+		last_message    TEXT NOT NULL DEFAULT '',
+		updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		CHECK (status IN ('normal', 'pending', 'firing'))
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_alert_runtime_status ON alert_runtime_state(status, updated_at)`,
+	`CREATE TABLE IF NOT EXISTS alert_event_markers (
+		alert_type TEXT NOT NULL,
+		event_key  TEXT NOT NULL,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (alert_type, event_key)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_alert_event_markers_created ON alert_event_markers(created_at)`,
 
 	// ============================================================
 	// system_oom_events

@@ -347,8 +347,7 @@ func logIncident(s *GuardService, event, message string, notify bool) {
 	}
 	pruneIncidents(db)
 	if coreIncident && isRuleEnabled("alert_service") {
-		logAlert("alert_service", "critical", message)
-		if notify {
+		if notify && !isAlertRuntimeFiring("alert_service") {
 			serviceIncidentNotifier(s.Name, message)
 		}
 	}
@@ -364,13 +363,7 @@ func isCoreGuardService(service string) bool {
 }
 
 func sendServiceIncidentNotification(service, message string) {
-	title := getPanelTitle() + " 告警 — " + service + " 服务异常"
-	if cfg := GetSMTPConfig(); cfg != nil && cfg.Host != "" && cfg.AdminEmail != "" {
-		go SendMail("", title, formatEmailHTML(service+" 服务异常", message, "请根据初步原因检查服务日志和当时的资源使用情况。", true))
-	}
-	if cfg := GetWebhookConfig(); cfg != nil && cfg.Enabled == "true" && cfg.URL != "" {
-		go SendWebhook(title, message)
-	}
+	sendResolvedAlertEvent("alert_service", service+" 服务异常", message, "请查看服务日志和自动恢复结果。")
 }
 
 func pruneIncidents(db *sql.DB) {

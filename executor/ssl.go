@@ -112,15 +112,15 @@ func FriendlySSLError(err error) string {
 	lower := strings.ToLower(raw)
 	switch {
 	case strings.Contains(lower, "invalid response from http://") && strings.Contains(lower, ": 404"):
-		return "Let's Encrypt 访问 HTTP-01 验证文件返回 404。请检查域名 A/AAAA 是否指向当前服务器；如果使用 CDN，请确认 CDN 正确回源，并且未缓存、重写或拦截 /.well-known/acme-challenge/。"
+		return "Let's Encrypt HTTP-01 验证返回 404。请确认域名指向本服务器；如使用 CDN，请放行 ACME 验证路径。"
 	case strings.Contains(lower, "no valid a records found") || strings.Contains(lower, "no valid aaaa records found") || strings.Contains(lower, "nxdomain"):
 		return "域名解析记录无效或尚未生效。请检查主域名和附加域名的 A/AAAA 记录后重试。"
 	case strings.Contains(lower, "connection refused"):
-		return "Let's Encrypt 无法连接网站 80 端口。请确认域名已指向当前服务器，并且防火墙、CDN、Nginx 没有拦截 HTTP 访问。"
+		return "Let's Encrypt 无法连接 80 端口。请检查域名解析、防火墙和 CDN 回源。"
 	case strings.Contains(lower, "timeout") || strings.Contains(lower, "i/o timeout") || strings.Contains(lower, "context deadline exceeded"):
-		return "Let's Encrypt 访问验证文件超时。请检查域名解析、80 端口连通性，以及 CDN 回源配置。"
+		return "Let's Encrypt 验证超时。请检查域名解析、80 端口和 CDN 回源。"
 	case strings.Contains(lower, "unauthorized"):
-		return "Let's Encrypt 验证未通过。请检查域名是否解析到当前服务器；如果使用 CDN，请确认 CDN 放行 /.well-known/acme-challenge/ 并正确回源。"
+		return "Let's Encrypt 验证未通过。请确认域名指向本服务器；如使用 CDN，请放行 ACME 验证路径。"
 	default:
 		return "申请 Let's Encrypt 证书失败：" + raw
 	}
@@ -522,11 +522,13 @@ func executeRenewSSL(task *Task) TaskResult {
 			filepath.Join(cfg.Paths.Certificates, w.Domain))
 		if renewErr != nil {
 			log.Printf("SSL续期失败 domain=%s: %v", w.Domain, renewErr)
+			db.Exec("UPDATE websites SET ssl_last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+				FriendlySSLError(renewErr), w.ID)
 			failed = append(failed, w.Domain+"(续期失败)")
 			continue
 		}
 
-		db.Exec("UPDATE websites SET ssl_expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		db.Exec("UPDATE websites SET ssl_expires_at = ?, ssl_last_error = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 			newExpiry, w.ID)
 
 		renewed = append(renewed, w.Domain)

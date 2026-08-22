@@ -107,20 +107,7 @@ func recordOOMEvent(event oomEvent) error {
 			return err
 		}
 	}
-	if _, err := database.GetDB().Exec(
-		"INSERT INTO alert_log (alert_type, level, message, created_at) VALUES (?, ?, ?, ?)",
-		"alert_oom", "critical", message, event.OccurredAt,
-	); err != nil {
-		return err
-	}
-	database.GetDB().Exec("DELETE FROM alert_log WHERE id NOT IN (SELECT id FROM alert_log ORDER BY id DESC LIMIT 30)")
-	title := getPanelTitle() + " 告警 — 系统内存耗尽"
-	if cfg := GetSMTPConfig(); cfg != nil && cfg.Host != "" && cfg.AdminEmail != "" {
-		go SendMail("", title, formatEmailHTML("系统内存耗尽", message, "请检查当时的内存占用和相关服务日志。", true))
-	}
-	if cfg := GetWebhookConfig(); cfg != nil && cfg.Enabled == "true" && cfg.URL != "" {
-		go SendWebhook(title, message)
-	}
+	sendResolvedAlertEvent("alert_oom", "系统内存耗尽", message, "请检查当时的内存占用和相关服务日志。")
 	return nil
 }
 

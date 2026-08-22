@@ -20,7 +20,7 @@ func TestFriendlySSLError(t *testing.T) {
 		{
 			name: "http 404 challenge",
 			err:  errors.New("获取证书失败: invalid authorization: Invalid response from http://example.com/.well-known/acme-challenge/token: 404"),
-			want: []string{"HTTP-01", "A/AAAA", "CDN"},
+			want: []string{"HTTP-01", "CDN", "ACME"},
 		},
 		{
 			name: "dns nxdomain",

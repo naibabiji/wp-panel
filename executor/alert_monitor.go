@@ -1,9 +1,11 @@
 package executor
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"html"
+	"net"
 	"net/http"
 	"os/exec"
 	"strconv"
@@ -18,6 +20,8 @@ type alertRule struct {
 	key               string
 	checkFn           func() (firing bool, msg string)
 	thresholdDuration time.Duration
+	eventOnly         bool
+	sendRecovery      bool
 	pendingSince      time.Time
 	lastFired         time.Time
 	firing            bool
@@ -30,29 +34,46 @@ type alertManager struct {
 	stopCh chan struct{}
 }
 
+type alertCheckResult struct {
+	firing  bool
+	message string
+}
+
 var (
-	alertMgr            = &alertManager{stopCh: make(chan struct{})}
-	panelCurrentVersion string
+	alertMgr                 = &alertManager{stopCh: make(chan struct{})}
+	panelCurrentVersion      string
+	cloudflareProxyDetector  = isLikelyCloudflareProxied
+	cloudflareDNSLookup      = net.DefaultResolver.LookupIPAddr
+	cloudflareDetectionCache = struct {
+		sync.Mutex
+		entries map[string]cloudflareDetectionEntry
+	}{entries: make(map[string]cloudflareDetectionEntry)}
 )
+
+type cloudflareDetectionEntry struct {
+	proxied   bool
+	checkedAt time.Time
+}
 
 func StartAlertMonitor(currentVersion string) {
 	panelCurrentVersion = currentVersion
 	alertMgr.rules = []*alertRule{
-		{key: "alert_cpu", checkFn: checkCPU, thresholdDuration: 5 * time.Minute},
-		{key: "alert_memory", checkFn: checkMemory, thresholdDuration: 5 * time.Minute},
-		{key: "alert_disk", checkFn: checkDisk},
-		{key: "alert_service", checkFn: checkService},
-		{key: "alert_ssl", checkFn: checkSSL},
-		{key: "alert_backup", checkFn: checkBackup},
-		{key: "alert_website_expiry", checkFn: checkWebsiteExpiry},
-		{key: "alert_remote_backup", checkFn: checkRemoteBackup},
-		{key: "alert_cron_fail", checkFn: checkCronFail},
-		{key: "alert_site", checkFn: checkSites},
+		{key: "alert_cpu", checkFn: checkCPU, thresholdDuration: 5 * time.Minute, sendRecovery: true},
+		{key: "alert_memory", checkFn: checkMemory, thresholdDuration: 5 * time.Minute, sendRecovery: true},
+		{key: "alert_disk", checkFn: checkDisk, sendRecovery: true},
+		{key: "alert_service", checkFn: checkService, sendRecovery: true},
+		{key: "alert_ssl", checkFn: checkSSL, sendRecovery: true},
+		{key: "alert_backup", checkFn: checkBackup, sendRecovery: true},
+		{key: "alert_website_expiry", checkFn: checkWebsiteExpiry, eventOnly: true},
+		{key: "alert_remote_backup", checkFn: checkRemoteBackup, sendRecovery: true},
+		{key: "alert_cron_fail", checkFn: checkCronFail, sendRecovery: true},
+		{key: "alert_site", checkFn: checkSites, sendRecovery: true},
 		{key: "alert_system_update", checkFn: checkSystemUpdate},
 		{key: "alert_panel_update", checkFn: checkPanelUpdate},
 		{key: "alert_wp_sqli_probe", checkFn: checkWPSQLiProbeThreshold},
 		{key: "alert_wp_fake_search_bot", checkFn: checkWPFakeSearchBotThreshold},
 	}
+	loadAlertRuntimeState(alertMgr.rules)
 	go alertMgr.loop()
 }
 
@@ -74,14 +95,23 @@ func (m *alertManager) loop() {
 }
 
 func (m *alertManager) runChecks() {
-	// 站点监控的串行 curl 调用可能耗时较长（多站点 + 超时），
-	// 提前到全局锁之外执行，避免阻塞 CPU/内存/磁盘等其他告警规则。
-	sitePreChecked := false
-	var siteFiring bool
-	var siteMsg string
+	// 站点访问和 SSL/CDN 探测可能等待网络。先在后台启动，让资源与服务规则
+	// 立即评估；轮到对应规则时再接收结果，避免网络等待串行叠加。
+	var siteResultCh chan alertCheckResult
 	if isRuleEnabled("alert_site") {
-		siteFiring, siteMsg = checkSites()
-		sitePreChecked = true
+		siteResultCh = make(chan alertCheckResult, 1)
+		go func() {
+			firing, message := checkSites()
+			siteResultCh <- alertCheckResult{firing: firing, message: message}
+		}()
+	}
+	var sslResultCh chan alertCheckResult
+	if isRuleEnabled("alert_ssl") {
+		sslResultCh = make(chan alertCheckResult, 1)
+		go func() {
+			firing, message := checkSSL()
+			sslResultCh <- alertCheckResult{firing: firing, message: message}
+		}()
 	}
 
 	m.mu.Lock()
@@ -95,61 +125,82 @@ func (m *alertManager) runChecks() {
 
 	for _, r := range m.rules {
 		if !isRuleEnabled(r.key) {
-			r.firing = false
-			r.pendingSince = time.Time{}
+			disableAlertRule(r)
 			continue
 		}
 
 		var instantFiring bool
 		var msg string
-		if r.key == "alert_site" && sitePreChecked {
-			instantFiring, msg = siteFiring, siteMsg
+		if r.key == "alert_site" && siteResultCh != nil {
+			result := <-siteResultCh
+			instantFiring, msg = result.firing, result.message
+		} else if r.key == "alert_ssl" && sslResultCh != nil {
+			result := <-sslResultCh
+			instantFiring, msg = result.firing, result.message
 		} else {
 			instantFiring, msg = r.checkFn()
 		}
 		now := time.Now()
+		if r.eventOnly {
+			if instantFiring {
+				sendAlertMilestone(r.key, msg)
+			}
+			continue
+		}
+		wasPending := !r.pendingSince.IsZero()
 		firing := r.sustainedFiring(instantFiring, now)
 		if firing && !r.firing {
 			// Transition: normal → alert
 			r.firing = true
 			r.lastFired = now
 			r.lastAlertMsg = msg
-			logAlert(r.key, "critical", msg)
-			if hasSMTP {
-				go SendMail("", getPanelTitle()+" 告警 — "+alertLabel(r.key), formatEmailHTML(alertLabel(r.key), msg, getEmailTip(r.key, false), true))
-			}
-			if hasWebhook {
-				go SendWebhook(getPanelTitle()+" 告警 — "+alertLabel(r.key), msg)
-			}
+			sendAlertNotificationWithChannels(r.key, msg, false, hasSMTP, hasWebhook)
+			persistAlertRuntimeState(r)
 		} else if !firing && r.firing {
 			// Transition: alert → normal
 			r.firing = false
 			recoveryDetail := buildRecoveryDetail(r)
-			logAlert(r.key, "info", recoveryDetail)
+			if r.sendRecovery {
+				logAlert(r.key, "info", recoveryDetail)
+			}
 			database.GetDB().Exec("UPDATE alert_log SET resolved = 1 WHERE alert_type = ? AND resolved = 0", r.key)
 			// 即时告警（无阈值）直接发送恢复通知，有阈值的等 5 分钟防抖
 			sendRecovery := time.Since(r.lastFired) > 5*time.Minute || r.thresholdDuration <= 0
-			if hasSMTP && sendRecovery {
+			if r.sendRecovery && hasSMTP && sendRecovery {
 				go SendMail("", getPanelTitle()+" 恢复通知", formatEmailHTML(alertLabel(r.key)+" 已恢复正常", recoveryDetail, getEmailTip(r.key, true), false))
 			}
-			if hasWebhook && sendRecovery {
+			if r.sendRecovery && hasWebhook && sendRecovery {
 				go SendWebhook(getPanelTitle()+" 恢复通知", recoveryDetail)
 			}
+			persistAlertRuntimeState(r)
 		} else if firing && r.firing {
 			r.lastAlertMsg = msg
 			// Continuous alert — re-send on each rule's interval.
 			if time.Since(r.lastFired) > alertResendInterval(r.key) {
 				r.lastFired = time.Now()
-				logAlert(r.key, "critical", msg)
-				if hasSMTP {
-					go SendMail("", getPanelTitle()+" 告警 — "+alertLabel(r.key)+"（持续中）", formatEmailHTML(alertLabel(r.key)+"（持续中）", msg, getEmailTip(r.key, false), true))
-				}
-				if hasWebhook {
-					go SendWebhook(getPanelTitle()+" 告警 — "+alertLabel(r.key)+"（持续中）", msg)
-				}
+				sendAlertNotificationWithChannels(r.key, msg, true, hasSMTP, hasWebhook)
+				persistAlertRuntimeState(r)
 			}
+		} else if wasPending != !r.pendingSince.IsZero() || (!firing && !r.pendingSince.IsZero()) {
+			persistAlertRuntimeState(r)
 		}
 	}
+}
+
+func disableAlertRule(r *alertRule) {
+	if r == nil {
+		return
+	}
+	wasActive := r.firing || !r.pendingSince.IsZero()
+	r.firing = false
+	r.pendingSince = time.Time{}
+	if !wasActive {
+		return
+	}
+	if database.GetDB() != nil {
+		database.GetDB().Exec("UPDATE alert_log SET resolved = 1 WHERE alert_type = ? AND resolved = 0", r.key)
+	}
+	persistAlertRuntimeState(r)
 }
 
 func (r *alertRule) sustainedFiring(instantFiring bool, now time.Time) bool {
@@ -172,7 +223,12 @@ func (r *alertRule) sustainedFiring(instantFiring bool, now time.Time) bool {
 
 func alertResendInterval(key string) time.Duration {
 	switch key {
-	case "alert_system_update", "alert_panel_update":
+	case "alert_cpu", "alert_memory", "alert_disk":
+		return 2 * time.Hour
+	case "alert_service", "alert_site":
+		return 6 * time.Hour
+	case "alert_ssl", "alert_backup", "alert_remote_backup", "alert_cron_fail",
+		"alert_system_update", "alert_panel_update":
 		return 24 * time.Hour
 	case "alert_wp_sqli_probe", "alert_wp_fake_search_bot":
 		// 判定条件本身就是"过去 24 小时内达到阈值"的滚动窗口，只要攻击没有停止，
@@ -181,6 +237,114 @@ func alertResendInterval(key string) time.Duration {
 		return 24 * time.Hour
 	}
 	return 30 * time.Minute
+}
+
+func loadAlertRuntimeState(rules []*alertRule) {
+	db := database.GetDB()
+	if db == nil {
+		return
+	}
+	for _, r := range rules {
+		if r.eventOnly {
+			continue
+		}
+		var status, pending, fired, message string
+		err := db.QueryRow(`SELECT status, pending_since, last_fired_at, last_message
+			FROM alert_runtime_state WHERE alert_type = ?`, r.key).Scan(&status, &pending, &fired, &message)
+		if err != nil {
+			continue
+		}
+		r.firing = status == "firing"
+		r.pendingSince = parseAlertStateTime(pending)
+		r.lastFired = parseAlertStateTime(fired)
+		r.lastAlertMsg = message
+	}
+}
+
+func persistAlertRuntimeState(r *alertRule) {
+	if r == nil || r.eventOnly || database.GetDB() == nil {
+		return
+	}
+	status := "normal"
+	if r.firing {
+		status = "firing"
+	} else if !r.pendingSince.IsZero() {
+		status = "pending"
+	}
+	_, _ = database.GetDB().Exec(`INSERT INTO alert_runtime_state
+		(alert_type, status, pending_since, last_fired_at, last_message, updated_at)
+		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(alert_type) DO UPDATE SET status=excluded.status,
+		pending_since=excluded.pending_since, last_fired_at=excluded.last_fired_at,
+		last_message=excluded.last_message, updated_at=CURRENT_TIMESTAMP`,
+		r.key, status, formatAlertStateTime(r.pendingSince), formatAlertStateTime(r.lastFired), r.lastAlertMsg)
+}
+
+func formatAlertStateTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func parseAlertStateTime(raw string) time.Time {
+	if raw == "" {
+		return time.Time{}
+	}
+	t, _ := time.Parse(time.RFC3339Nano, raw)
+	return t
+}
+
+func sendAlertMilestone(key, message string) {
+	smtp := GetSMTPConfig()
+	hasSMTP := smtp != nil && smtp.Host != "" && smtp.AdminEmail != ""
+	webhook := GetWebhookConfig()
+	hasWebhook := webhook != nil && webhook.Enabled == "true" && webhook.URL != ""
+	logAlertEvent(key, "critical", message)
+	deliverAlertNotification(key, message, false, hasSMTP, hasWebhook)
+}
+
+func sendAlertNotificationWithChannels(key, message string, ongoing, hasSMTP, hasWebhook bool) {
+	logAlert(key, "critical", message)
+	deliverAlertNotification(key, message, ongoing, hasSMTP, hasWebhook)
+}
+
+func deliverAlertNotification(key, message string, ongoing, hasSMTP, hasWebhook bool) {
+	label := alertLabel(key)
+	title := getPanelTitle() + " 告警 — " + label
+	emailTitle := label
+	if ongoing {
+		title += "（持续中）"
+		emailTitle += "（持续中）"
+	}
+	if hasSMTP {
+		go SendMail("", title, formatEmailHTML(emailTitle, message, getEmailTip(key, false), true))
+	}
+	if hasWebhook {
+		go SendWebhook(title, message)
+	}
+}
+
+func sendResolvedAlertEvent(key, title, message, tip string) {
+	logAlertEvent(key, "critical", message)
+	subject := getPanelTitle() + " 告警 — " + title
+	if cfg := GetSMTPConfig(); cfg != nil && cfg.Host != "" && cfg.AdminEmail != "" {
+		go SendMail("", subject, formatEmailHTML(title, message, tip, true))
+	}
+	if cfg := GetWebhookConfig(); cfg != nil && cfg.Enabled == "true" && cfg.URL != "" {
+		go SendWebhook(subject, message)
+	}
+}
+
+func isAlertRuntimeFiring(key string) bool {
+	if database.GetDB() == nil {
+		return false
+	}
+	var status string
+	if err := database.GetDB().QueryRow("SELECT status FROM alert_runtime_state WHERE alert_type = ?", key).Scan(&status); err != nil {
+		return false
+	}
+	return status == "firing"
 }
 
 func isRuleEnabled(key string) bool {
@@ -229,67 +393,52 @@ func logAlert(alertType, level, message string) {
 		return
 	}
 	db.Exec("INSERT INTO alert_log (alert_type, level, message) VALUES (?, ?, ?)", alertType, level, message)
-	// Keep last 30
-	db.Exec("DELETE FROM alert_log WHERE id NOT IN (SELECT id FROM alert_log ORDER BY id DESC LIMIT 30)")
+	// 告警历史按时间保留，避免高频事件在数小时内挤掉所有上下文。
+	db.Exec("DELETE FROM alert_log WHERE created_at < datetime('now', '-90 days')")
+}
+
+func logAlertEvent(alertType, level, message string) {
+	db := database.GetDB()
+	if db == nil {
+		return
+	}
+	db.Exec("INSERT INTO alert_log (alert_type, level, message, resolved) VALUES (?, ?, ?, 1)", alertType, level, message)
+	db.Exec("DELETE FROM alert_log WHERE created_at < datetime('now', '-90 days')")
 }
 
 func getEmailTip(key string, isRecovery bool) string {
+	if isRecovery {
+		return ""
+	}
 	switch key {
 	case "alert_cpu":
-		return "小提示：CPU 持续高负载可能是流量增长或被攻击的信号，建议登录面板查看实时趋势图。"
+		return "请在面板查看资源趋势和异常流量。"
 	case "alert_memory":
-		return "小提示：内存不足可能是 PHP 进程或 Redis 占用过高，也可能是恶意爬虫大量请求所致，建议登录面板查看访问日志，排查异常流量。"
+		return "请检查高占用进程和访问流量。"
 	case "alert_disk":
-		return "小提示：优先清理旧备份文件和日志通常能快速释放大量空间，比升级硬盘更实际。"
+		return "请清理无用备份或日志，并确认磁盘余量。"
 	case "alert_service":
-		if isRecovery {
-			return "小提示：问题解决后建议回顾日志，了解根因有助于预防再次发生。"
-		}
-		return "小提示：服务会自动尝试重启，若反复告警请登录面板查看对应日志排查根因。"
+		return "请查看服务日志和自动恢复结果。"
 	case "alert_ssl":
-		if isRecovery {
-			return "小提示：建议在日历中标注下次到期日，提前 30 天续签更从容。"
-		}
-		return "小提示：证书过期会导致浏览器「不安全」警告，影响访客信任和 SEO，建议尽快续签。"
+		return "请完成续签，或手动上传有效证书。"
 	case "alert_backup":
-		return "小提示：养成定期备份网站的好习惯，数据安全有备无患。"
+		return "请检查自动备份记录并确认下一次备份成功。"
 	case "alert_website_expiry":
-		if isRecovery {
-			return "小提示：养成定期备份网站的好习惯，数据安全有备无患。"
-		}
-		return "小提示：请及时提醒网站用户续费或备份数据，到期后网站将无法访问。"
+		return "请及时续期或备份网站数据。"
 	case "alert_remote_backup":
-		return "小提示：养成定期备份网站的好习惯，数据安全有备无患。"
+		return "请检查远程连接，并确认失败文件重新同步成功。"
 	case "alert_cron_fail":
-		if isRecovery {
-			return "小提示：问题解决后建议回顾日志，了解根因有助于预防再次发生。"
-		}
-		return "小提示：计划任务失败可能是脚本错误或资源不足，建议查看执行日志定位原因。"
+		return "请查看任务日志并确认下一次执行成功。"
 	case "alert_site":
-		if isRecovery {
-			return "小提示：建议确认网站已可正常访问，并将此次故障情况同步给网站用户。"
-		}
-		return "小提示：请尽快排查服务器状态、域名解析和网站程序是否正常，避免长时间离线影响用户业务。"
+		return "请检查域名解析、服务器状态和网站程序。"
 	case "alert_system_update":
-		if isRecovery {
-			return "小提示：建议定期保持系统更新，这是维护服务器安全最简单有效的方式。"
-		}
-		return "小提示：建议尽快登录面板设置页执行系统更新。安全更新通常修复已知漏洞，延迟更新会增加被攻击风险。"
+		return "请在合适的维护窗口执行系统更新。"
 	case "alert_panel_update":
-		if isRecovery {
-			return "小提示：面板已更新后，建议简单检查网站列表、备份、计划任务等关键页面是否正常。"
-		}
-		return "小提示：建议及时更新面板，避免跨多个版本升级时累积变更过多，增加升级风险。"
+		return "请在面板设置页查看并执行更新。"
 	case "alert_wp_sqli_probe":
-		if isRecovery {
-			return "小提示：面板只记录不自动封禁，建议结合「安全防御」页面的历史记录判断是否需要长期观察该 IP。"
-		}
-		return "小提示：面板只记录不自动封禁，请登录「安全防御」页面查看命中详情，结合 IP 来源和请求路径判断是否需要手动封禁。"
+		return "面板不会自动封禁；请在安全防御页面核对来源。"
 	case "alert_wp_fake_search_bot":
-		if isRecovery {
-			return "小提示：面板只记录不自动封禁，建议结合「安全防御」页面的历史记录判断是否需要长期观察该 IP。"
-		}
-		return "小提示：面板只记录不自动封禁，如确认对方并非真实搜索引擎爬虫，可在「安全防御」页面手动封禁对应 IP。"
+		return "面板不会自动封禁；请在安全防御页面核对来源。"
 	}
 	return ""
 }
@@ -429,32 +578,116 @@ func checkService() (bool, string) {
 
 func checkSSL() (bool, string) {
 	db := database.GetDB()
-	// 包含最近 7 天内过期的证书，避免已过期证书被静默忽略
-	rows, err := db.Query(`SELECT domain, ssl_expires_at FROM websites WHERE ssl_enabled = 1 AND ssl_expires_at > datetime('now', '-7 days')`)
+	rows, err := db.Query(`SELECT domain, ssl_expires_at, COALESCE(ssl_last_error, '')
+		FROM websites WHERE ssl_enabled = 1 AND ssl_expires_at IS NOT NULL`)
 	if err != nil {
 		return false, ""
 	}
-	defer rows.Close()
-
-	var msgs []string
+	type sslAlertCandidate struct {
+		domain           string
+		message          string
+		detectCloudflare bool
+		cloudflare       bool
+	}
+	var candidates []sslAlertCandidate
 	now := time.Now()
 	for rows.Next() {
-		var domain string
+		var domain, lastError string
 		var expiresAt time.Time
-		if rows.Scan(&domain, &expiresAt) != nil {
+		if rows.Scan(&domain, &expiresAt, &lastError) != nil {
 			continue
 		}
 		days := int(expiresAt.Sub(now).Hours() / 24)
+		message := ""
 		if days < 0 {
-			msgs = append(msgs, fmt.Sprintf("%s 证书已过期 %d 天", domain, -days))
+			message = fmt.Sprintf("%s 证书已过期 %d 天", domain, -days)
 		} else if days <= 14 {
-			msgs = append(msgs, fmt.Sprintf("%s 证书 %d 天后到期", domain, days))
+			message = fmt.Sprintf("%s 证书 %d 天后到期", domain, days)
 		}
+		if message == "" {
+			continue
+		}
+		detectCloudflare := false
+		if strings.TrimSpace(lastError) != "" {
+			message += "，自动续签未成功"
+			detectCloudflare = true
+		}
+		candidates = append(candidates, sslAlertCandidate{domain: domain, message: message, detectCloudflare: detectCloudflare})
+	}
+	rows.Close()
+
+	var wg sync.WaitGroup
+	for i := range candidates {
+		if !candidates[i].detectCloudflare {
+			continue
+		}
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			candidates[index].cloudflare = cloudflareProxyDetector(candidates[index].domain)
+		}(i)
+	}
+	wg.Wait()
+
+	msgs := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		message := candidate.message
+		if candidate.cloudflare {
+			message += "。可能使用 Cloudflare；Full (strict) 仍需有效源站证书，可放行 ACME 路径或手动上传证书"
+		}
+		msgs = append(msgs, message)
 	}
 	if len(msgs) > 0 {
 		return true, strings.Join(msgs, "；")
 	}
 	return false, ""
+}
+
+func isLikelyCloudflareProxied(domain string) bool {
+	cloudflareDetectionCache.Lock()
+	if entry, ok := cloudflareDetectionCache.entries[domain]; ok && time.Since(entry.checkedAt) < 6*time.Hour {
+		cloudflareDetectionCache.Unlock()
+		return entry.proxied
+	}
+	cloudflareDetectionCache.Unlock()
+
+	raw := cachedCloudflareRealIPRanges()
+	var ranges []*net.IPNet
+	for _, line := range strings.Fields(raw) {
+		_, network, err := net.ParseCIDR(strings.TrimSpace(line))
+		if err == nil {
+			ranges = append(ranges, network)
+		}
+	}
+	if len(ranges) == 0 {
+		return cacheCloudflareDetection(domain, false)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	addrs, err := cloudflareDNSLookup(ctx, domain)
+	if err != nil || len(addrs) == 0 {
+		return cacheCloudflareDetection(domain, false)
+	}
+	for _, addr := range addrs {
+		matched := false
+		for _, network := range ranges {
+			if network.Contains(addr.IP) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return cacheCloudflareDetection(domain, false)
+		}
+	}
+	return cacheCloudflareDetection(domain, true)
+}
+
+func cacheCloudflareDetection(domain string, proxied bool) bool {
+	cloudflareDetectionCache.Lock()
+	cloudflareDetectionCache.entries[domain] = cloudflareDetectionEntry{proxied: proxied, checkedAt: time.Now()}
+	cloudflareDetectionCache.Unlock()
+	return proxied
 }
 
 func checkBackup() (bool, string) {
@@ -496,9 +729,12 @@ func checkWebsiteExpiry() (bool, string) {
 	if err != nil {
 		return false, ""
 	}
-	defer rows.Close()
-
-	var msgs []string
+	type expiryMilestone struct {
+		domain    string
+		expiresAt time.Time
+		days      int
+	}
+	var candidates []expiryMilestone
 	now := time.Now()
 	milestones := map[int]bool{14: true, 7: true, 3: true, 1: true}
 
@@ -512,16 +748,25 @@ func checkWebsiteExpiry() (bool, string) {
 		if !milestones[days] {
 			continue
 		}
-		// 检查此域名今天是否已告警过
-		var alerted int
-		db.QueryRow(`SELECT COUNT(*) FROM alert_log
-			WHERE alert_type = 'alert_website_expiry' AND message LIKE ? AND created_at > datetime('now', '-24 hours')`,
-			domain+"%").Scan(&alerted)
-		if alerted > 0 {
+		candidates = append(candidates, expiryMilestone{domain: domain, expiresAt: expiresAt, days: days})
+	}
+	rows.Close()
+
+	var msgs []string
+	for _, candidate := range candidates {
+		eventKey := candidate.domain + "|" + candidate.expiresAt.UTC().Format(time.RFC3339Nano) + "|" + strconv.Itoa(candidate.days)
+		result, insertErr := db.Exec(`INSERT OR IGNORE INTO alert_event_markers (alert_type, event_key)
+			VALUES ('alert_website_expiry', ?)`, eventKey)
+		if insertErr != nil {
 			continue
 		}
-		msgs = append(msgs, fmt.Sprintf("%s %d 天后到期", domain, days))
+		inserted, rowsErr := result.RowsAffected()
+		if rowsErr != nil || inserted == 0 {
+			continue
+		}
+		msgs = append(msgs, fmt.Sprintf("%s %d 天后到期", candidate.domain, candidate.days))
 	}
+	db.Exec("DELETE FROM alert_event_markers WHERE created_at < datetime('now', '-2 years')")
 	if len(msgs) > 0 {
 		return true, strings.Join(msgs, "；")
 	}
@@ -536,13 +781,13 @@ func checkRemoteBackup() (bool, string) {
 		return false, ""
 	}
 
-	// 检查最近1小时的同步日志是否有失败记录
+	// 失败记录只有在对应备份后续同步成功、transport_status 被更新后才算恢复。
 	var failCount int
-	db.QueryRow(`SELECT COUNT(*) FROM operation_logs
-		WHERE operation = '远程备份' AND message LIKE '远程同步失败%'
-		AND created_at > datetime('now', '-1 hour')`).Scan(&failCount)
+	db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM db_backups WHERE transport_status = 'failed') +
+		(SELECT COUNT(*) FROM file_backups WHERE transport_status = 'failed')`).Scan(&failCount)
 	if failCount > 0 {
-		return true, fmt.Sprintf("近1小时内有 %d 次远程备份同步失败", failCount)
+		return true, fmt.Sprintf("有 %d 个远程备份文件同步失败", failCount)
 	}
 	return false, ""
 }
@@ -551,7 +796,7 @@ func checkCronFail() (bool, string) {
 	db := database.GetDB()
 	rows, err := db.Query(`SELECT name FROM cron_jobs
 		WHERE enabled = 1 AND notify_fail = 1 AND running = 0
-		AND last_status = 'failed' AND last_run_at > datetime('now', '-1 hour')`)
+		AND last_status = 'failed'`)
 	if err != nil {
 		return false, ""
 	}

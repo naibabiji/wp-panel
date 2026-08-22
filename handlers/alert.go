@@ -217,7 +217,7 @@ func (h *AlertHandler) TestWebhook(c *gin.Context) {
 
 func (h *AlertHandler) GetLog(c *gin.Context) {
 	db := database.GetDB()
-	rows, err := db.Query("SELECT id, alert_type, level, message, resolved, created_at FROM alert_log ORDER BY id DESC LIMIT 30")
+	rows, err := db.Query("SELECT id, alert_type, level, message, resolved, created_at FROM alert_log WHERE created_at >= datetime('now', '-90 days') ORDER BY id DESC LIMIT 100")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询失败"))
 		return

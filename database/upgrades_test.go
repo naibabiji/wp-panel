@@ -354,7 +354,7 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.52" {
+	if got := LatestVersion(); got != "1.0.53" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
 	for _, column := range []string{"database_backup_mode", "database_backup_source_id", "auto_rollback", "batch_id"} {
@@ -1659,6 +1659,51 @@ func TestUpgradeRunnerAdvancesExistingVersion(t *testing.T) {
 	}
 	if version != LatestVersion() {
 		t.Fatalf("version = %q, want %q", version, LatestVersion())
+	}
+}
+
+func TestUpgradeAddsAlertRuntimeStateToExistingSchema(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	if _, err := DB.Exec("DROP TABLE alert_runtime_state"); err != nil {
+		t.Fatalf("drop alert_runtime_state: %v", err)
+	}
+	if _, err := DB.Exec("DROP TABLE alert_event_markers"); err != nil {
+		t.Fatalf("drop alert_event_markers: %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("delete schema_version: %v", err)
+	}
+	if _, err := DB.Exec("INSERT INTO schema_version (version) VALUES ('1.0.52')"); err != nil {
+		t.Fatalf("seed schema_version: %v", err)
+	}
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("second RunUpgrades() error = %v", err)
+	}
+	var tableExists, indexExists, markerTableExists, markerIndexExists int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='alert_runtime_state'").Scan(&tableExists); err != nil {
+		t.Fatal(err)
+	}
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_alert_runtime_status'").Scan(&indexExists); err != nil {
+		t.Fatal(err)
+	}
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='alert_event_markers'").Scan(&markerTableExists); err != nil {
+		t.Fatal(err)
+	}
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_alert_event_markers_created'").Scan(&markerIndexExists); err != nil {
+		t.Fatal(err)
+	}
+	if tableExists != 1 || indexExists != 1 || markerTableExists != 1 || markerIndexExists != 1 {
+		t.Fatalf("alert state schema exists = runtime %d/%d markers %d/%d, want all 1", tableExists, indexExists, markerTableExists, markerIndexExists)
 	}
 }
 

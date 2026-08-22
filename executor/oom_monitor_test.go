@@ -69,11 +69,15 @@ func TestRecordOOMEventDeduplicates(t *testing.T) {
 		t.Fatalf("eventCount=%d alertCount=%d, want 1 and 1", eventCount, alertCount)
 	}
 	var message string
-	if err := db.QueryRow("SELECT message FROM alert_log").Scan(&message); err != nil {
+	var resolved int
+	if err := db.QueryRow("SELECT message, resolved FROM alert_log").Scan(&message, &resolved); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(message, "MariaDB") || !strings.Contains(message, "PID 4321") {
 		t.Fatalf("unexpected alert message: %q", message)
+	}
+	if resolved != 1 {
+		t.Fatalf("OOM event resolved=%d, want 1 for one-time event", resolved)
 	}
 }
 
