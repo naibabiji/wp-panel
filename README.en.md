@@ -12,6 +12,7 @@ If you want the Chinese project README, see [README.md](README.md).
 ## Official Sources
 
 - Official website: <https://wp-panel.org>
+- Help Center: <https://wp-panel.org/help/>
 - GitHub repository: <https://github.com/naibabiji/wp-panel>
 
 Any domain other than `wp-panel.org` and this GitHub repository is not an official WP Panel website.
@@ -29,6 +30,7 @@ WP Panel focuses on one job: **running WordPress sites efficiently on VPS server
 | Module | What it does |
 |------|------|
 | **Site management** | One-click site provisioning with isolated users, directories, Nginx, PHP-FPM, and databases; pause, enable, delete, and reinstall WordPress |
+| **Site migration** | Move WordPress or generic PHP sites between two WP Panel servers running the same version, with multi-site selection, per-site progress, retries, and explicit completion options |
 | **WordPress update management** | Manual per-site core/plugin/theme updates (preview, dedicated pre-update backup, maintenance mode, health check, automatic rollback on failure); multi-select batch plugin updates; licensed commercial plugins/themes can update through the vendor's channel |
 | **WordPress fleet overview** | Read-only inventory of each site's core version, plugins, themes, and available updates; a dedicated overview page summarizes all sites, with manual refresh and staggered background refresh |
 | **SSL certificates** | Automatic Let's Encrypt issuance, automatic renewal before expiry, manual replacement, and self-signed certificates |
@@ -78,6 +80,17 @@ After installation, the script prints the panel URL and the two login layers: Ba
 
 If you need a fresh WordPress site, use the site management pages in the panel UI to create one. The panel will handle the isolated user, web root, PHP-FPM pool, and MariaDB database for that site.
 
+## Site Migration
+
+WP Panel can move WordPress or generic PHP sites between two servers running the same WP Panel version. After upgrading both servers, open **Site Management → Site Migration**, connect the two panels, and select the sites you want to move.
+
+- The migration can include site files, databases, domains and aliases, SSL certificates, and the main PHP, Nginx, monitoring, scheduled-task, and WordPress runtime settings.
+- Backup history, access logs, security-event history, server-level remote-backup credentials, and custom-command scheduled tasks are not migrated.
+- The source site enters HTTP 503 maintenance mode during migration to prevent new data from being written.
+- The target server does not overwrite an existing site with the same domain. After migration, the administrator must verify the site and update DNS/CDN records manually.
+
+Before starting, open the [Help Center](https://wp-panel.org/help/) and read the panel-to-panel site migration guide for prerequisites, steps, and completion options.
+
 ## Security
 
 **Short version: if the login URL and credentials stay private, outsiders do not get in.**
@@ -102,7 +115,7 @@ Only users who pass all four layers can enter the panel. Five failures at any la
 ### Anti-Bruteforce
 
 - five consecutive failures at any authentication layer trigger a 24-hour nftables ban
-- progressive ban durations: 10 minutes, 24 hours, 30 days, then permanent
+- website and SSH Fail2ban rules use independent progressive durations: 10 minutes, 1 hour, 6 hours, 24 hours, then 7 days; automatic rules do not escalate to a permanent ban
 
 ### Site Isolation
 
@@ -112,7 +125,7 @@ Only users who pass all four layers can enter the panel. Five failures at any la
 
 ### WordPress-Specific Protection
 
-- automatically detects and bans brute-force attacks against `wp-login.php` and malicious `xmlrpc.php` requests
+- detects failed `wp-login.php` authentication responses (HTTP 200) and disabled `xmlrpc.php` authentication requests (HTTP 403); successful logins and recognized password-recovery or reset actions are excluded
 - scans for sensitive files such as `.env`, `.git`, and archives, then bans the source automatically
 - detects 404 bursts and treats 30 hits in 60 seconds as a directory scan
 - Nginx rejects HTTPS connections for unknown domains to avoid certificate leaks

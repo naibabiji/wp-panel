@@ -16,6 +16,7 @@ The full English project guide is available here: [README.en.md](README.en.md).
 ## 官方来源
 
 - 官方网站：<https://wp-panel.org>
+- 帮助中心：<https://wp-panel.org/help/>
 - GitHub 项目地址：<https://github.com/naibabiji/wp-panel>
 
 除 `wp-panel.org` 和本 GitHub 仓库外，其他域名均不是 WP Panel 官方网站，与本项目无关。
@@ -33,6 +34,7 @@ WP Panel 只做一件事：**在 VPS 上高效管理 WordPress 网站**。不做
 | 模块 | 说明 |
 |------|------|
 | **网站管理** | 一键建站（自动创建隔离用户/目录/Nginx/PHP-FPM/数据库）、暂停/启用/删除、重装 WordPress |
+| **网站搬家** | 在两台相同版本的 WP Panel 之间迁移 WordPress 或通用 PHP 网站，支持多站选择、独立进度、失败重试和安全收尾 |
 | **WordPress 更新管理** | 单站点核心/插件/主题手动更新（预览确认、更新前专用备份、维护模式、健康检查、失败自动回滚）；插件支持多选批量更新；已授权商业插件/主题可走供应商渠道更新 |
 | **WordPress 站点群总览** | 只读采集各站点版本、插件、主题与可用更新，独立总览页汇总全部站点状态，支持手动刷新和后台自动错峰刷新 |
 | **SSL 证书** | Let's Encrypt 自动申请、到期前 30 天自动续签、手动替换、自签名证书 |
@@ -68,6 +70,17 @@ apt-get update && apt-get install -y wget ca-certificates && wget -qO- https://g
 安装完成后输出面板地址和两层登录凭据（BasicAuth + Web 登录）。
 
 > 自签名证书首次访问浏览器提示不安全，点击「高级」→「继续访问」即可。
+
+## 网站搬家
+
+WP Panel 支持在两台相同版本的面板之间搬迁 WordPress 或通用 PHP 网站。升级两台服务器后，从「网站管理」进入「网站搬家」，建立面板连接并选择需要迁移的网站。
+
+- 可迁移网站文件、数据库、域名与别名、SSL 证书，以及主要的 PHP、Nginx、监控、计划任务和 WordPress 运行设置。
+- 备份历史、访问日志、安全事件历史、服务器级远程备份凭据和自定义命令类计划任务不会迁移。
+- 搬家期间源网站会进入 HTTP 503 维护状态，避免迁移过程中继续产生新数据。
+- 接收端不会覆盖同域名网站；迁移完成后仍需管理员自行检查业务并调整 DNS/CDN 解析。
+
+开始操作前，请前往[帮助中心](https://wp-panel.org/help/)阅读“两台 WP Panel 之间的网站搬家”，了解准备条件、迁移步骤和完成后的处理方式。
 
 ## 安全性
 
@@ -166,8 +179,7 @@ WordPress 官方推荐 PHP 8.3 或更高版本。8.3 在 WordPress 生态中经�
 
 **为什么是 MariaDB 而非 MySQL？**
 
-WordPress 官方推荐 MariaDB 10.6 或更高版本。Debian 12/13 自带的 MariaDB 均满足此要求。Oracle MySQL 存在许可证和功能限制风险，MariaDB 是完全兼容的 GPL 分支，由社区驱动。
-Oracle MySQL 存在许可证和功能限制风险。MariaDB 是 MySQL 的 GPL 分支，完全兼容且由社区驱动。Debian 源自带的 MariaDB LTS 版本提供到 2028 年的安全更新，无需添加第三方仓库。
+WordPress 官方推荐 MariaDB 10.6 或更高版本。Debian 自带的 MariaDB 满足此要求。MariaDB 是由社区驱动的 GPL 分支，兼容 MySQL，并可直接获得 Debian 软件源提供的安全更新，无需添加第三方数据库仓库。
 
 **为什么是自己编的 Go 二进制，不用 Docker/PM2？**
 
