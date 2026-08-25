@@ -2,6 +2,7 @@ package executor
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"embed"
@@ -544,10 +545,41 @@ func RegenerateSiteNginx(siteID int) error {
 	if err != nil {
 		return fmt.Errorf("渲染 Nginx 配置失败(site %d): %w", siteID, err)
 	}
+	var migrationLockCount int
+	var migrationLockDirection, migrationSiteID, migrationStage string
+	if err := db.QueryRow(`SELECT COUNT(*),COALESCE(MAX(ml.direction),''),COALESCE(MAX(ml.migration_site_id),''),COALESCE(MAX(ms.stage),'')
+		FROM site_migration_locks ml JOIN site_migration_sites ms ON ms.id=ml.migration_site_id
+		WHERE ml.status='active' AND ((? > 0 AND ml.site_id=?) OR ml.domain=?)`, siteID, siteID, strings.ToLower(strings.TrimSpace(domain))).Scan(&migrationLockCount, &migrationLockDirection, &migrationSiteID, &migrationStage); err != nil {
+		return fmt.Errorf("检查站点迁移锁失败(site %d): %w", siteID, err)
+	}
+	if migrationLockCount > 1 {
+		return fmt.Errorf("检查站点迁移锁失败(site %d): 发现多个活动锁", siteID)
+	}
+	if migrationLockDirection == "target" {
+		block, enabledPath, err := loadPersistedSiteMigrationTargetMarkerBlock(context.Background(), db, migrationSiteID, migrationStage)
+		if err != nil {
+			return fmt.Errorf("恢复迁移目标标记失败(site %d): %w", siteID, err)
+		}
+		config, err = injectSiteMigrationTargetMarker(config, block)
+		if err != nil {
+			return fmt.Errorf("恢复迁移目标配置失败(site %d): %w", siteID, err)
+		}
+		if err := applyMigrationNginxContent(nginxConfPath, enabledPath, config); err != nil {
+			return fmt.Errorf("应用迁移目标 Nginx 配置失败(site %d): %w", siteID, err)
+		}
+		return nil
+	}
+	if migrationLockDirection == "source" {
+		// Keep the task-owned maintenance symlink untouched while still refreshing
+		// the inactive normal configuration for a future explicit restore.
+		if err := engine.ApplyNginxConfigKeepDisabled(config, nginxConfPath); err != nil {
+			return fmt.Errorf("应用迁移中站点 Nginx 配置失败(site %d): %w", siteID, err)
+		}
+		return nil
+	}
 
-	if status == string(models.StatusPaused) {
-		// 站点已暂停：只刷新磁盘上的配置内容，不恢复 sites-enabled 软链接、不 reload，
-		// 避免批量模板刷新时把已暂停的站点重新暴露为可访问。
+	if status == string(models.StatusPaused) || status == string(models.StatusMigrated) {
+		// 已暂停或已搬家的源站只刷新未启用配置，不改变当前运行链接。
 		if err := engine.ApplyNginxConfigKeepDisabled(config, nginxConfPath); err != nil {
 			return fmt.Errorf("应用 Nginx 配置失败(site %d): %w", siteID, err)
 		}

@@ -6,6 +6,7 @@ require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-acme/lego/v4 v4.25.2
 	github.com/google/uuid v1.6.0
+	github.com/klauspost/compress v1.18.0
 	golang.org/x/crypto v0.51.0
 	modernc.org/sqlite v1.33.1
 )

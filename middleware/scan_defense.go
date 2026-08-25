@@ -54,6 +54,38 @@ func isCommonProbePath(path string) bool {
 	return strings.HasPrefix(path, "/.well-known/")
 }
 
+// Site migration machine calls cannot use the panel's random browser prefix.
+// Only these exact POST endpoints bypass probe classification; their handlers
+// still enforce pairing tokens or peer credentials and strict body limits.
+func isSiteMigrationMachineRequest(c *gin.Context) bool {
+	if c.Request.Method != http.MethodPost {
+		return false
+	}
+	switch c.Request.URL.Path {
+	case "/api/site-migration/v1/pair/redeem",
+		"/api/site-migration/v1/pair/challenge",
+		"/api/site-migration/v1/peer/revoke",
+		"/api/site-migration/v1/preflight",
+		"/api/site-migration/v1/target/batches",
+		"/api/site-migration/v1/target/batches/queue",
+		"/api/site-migration/v1/source/manifest",
+		"/api/site-migration/v1/source/chunk",
+		"/api/site-migration/v1/source/file-shard",
+		"/api/site-migration/v1/source/database",
+		"/api/site-migration/v1/source/database-chunk",
+		"/api/site-migration/v1/source/certificates",
+		"/api/site-migration/v1/source/certificate-chunk",
+		"/api/site-migration/v1/source/settings",
+		"/api/site-migration/v1/target/status",
+		"/api/site-migration/v1/target/retry",
+		"/api/site-migration/v1/target/delete-task",
+		"/api/site-migration/v1/source/delete-task":
+		return true
+	default:
+		return false
+	}
+}
+
 // Requests carrying a Basic Auth header are likely from uptime monitors or
 // reverse-proxy health checks, not port scanners. Panel access still requires
 // valid credentials and a valid session, so allowing them through does not
@@ -126,7 +158,7 @@ func ScanDefense(db *sql.DB, randomSuffix string) gin.HandlerFunc {
 			return
 		}
 
-		if isCommonProbePath(path) || hasBasicAuthHeader(c) {
+		if isCommonProbePath(path) || hasBasicAuthHeader(c) || isSiteMigrationMachineRequest(c) {
 			c.Next()
 			return
 		}

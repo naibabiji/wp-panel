@@ -272,3 +272,32 @@ func performWebsiteLogRequest(router *gin.Engine, method, path string) *httptest
 	router.ServeHTTP(rec, req)
 	return rec
 }
+
+func TestDeleteWebsiteRejectsActiveMigrationWithActionableMessage(t *testing.T) {
+	router, _, siteID := setupWebsiteLogFilesHandlerTest(t, "wordpress")
+	db := database.GetDB()
+	if _, err := db.Exec(`INSERT INTO site_migration_peers(id,status) VALUES ('peer_00000000001','paired')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO site_migration_batches(id,peer_id,direction,status) VALUES ('batch_0000000001','peer_00000000001','source','active')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO site_migration_sites(id,batch_id,source_site_id,source_domain,target_domain,site_type,status,stage)
+		VALUES ('migration_0000001','batch_0000000001',?,'example.com','example.com','wordpress','awaiting_cutover','transferring_database')`, siteID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO site_migration_locks(domain,site_id,migration_site_id,direction,status)
+		VALUES ('example.com',?,'migration_0000001','source','active')`, siteID); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := &WebsiteHandler{}
+	router.DELETE("/api/websites/:id", handler.Delete)
+	rec := performWebsiteLogRequest(router, http.MethodDelete, "/api/websites/"+siteID)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s, want 409", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "不能从网站列表直接删除") || !strings.Contains(rec.Body.String(), "网站搬家") {
+		t.Fatalf("body=%s, want actionable migration delete message", rec.Body.String())
+	}
+}

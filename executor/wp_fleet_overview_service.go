@@ -191,7 +191,7 @@ func wpFleetSiteModel(row wpFleetOverviewRow, generatedAt time.Time) (models.WPF
 		return models.WPFleetSite{}, errors.New("invalid wordpress fleet site type")
 	}
 	switch row.status {
-	case string(models.StatusActive), string(models.StatusPaused), string(models.StatusError),
+	case string(models.StatusActive), string(models.StatusPaused), string(models.StatusMigrated), string(models.StatusError),
 		string(models.StatusCreating), string(models.StatusDeleting):
 	default:
 		return models.WPFleetSite{}, errors.New("invalid wordpress fleet site status")

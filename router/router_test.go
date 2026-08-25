@@ -19,6 +19,7 @@ var pageTemplates = map[string]string{
 	"login.html":                  "",
 	"dashboard.html":              "dashboard_content",
 	"websites.html":               "websites_content",
+	"site_migration.html":         "site_migration_content",
 	"wordpress_overview.html":     "wordpress_overview_content",
 	"website_new.html":            "websites_new_content",
 	"website_detail.html":         "websites_detail_content",
@@ -89,7 +90,7 @@ func TestFeatureSettingsAreSeparatedFromPanelSettings(t *testing.T) {
 
 func TestContentTemplatesRender(t *testing.T) {
 	contents := []string{
-		"dashboard_content", "websites_content", "wordpress_overview_content", "websites_new_content",
+		"dashboard_content", "websites_content", "site_migration_content", "wordpress_overview_content", "websites_new_content",
 		"websites_detail_content", "wordpress_site_detail_content", "databases_content", "database_detail_content", "ai_diagnostics_content", "log_analysis_content", "cron_content", "backups_content", "remote_backup_settings_content", "firewall_content",
 		"files_content", "security_content", "settings_content",
 		"alert_content", "extensions_content", "software_content", "help_content",
@@ -102,6 +103,77 @@ func TestContentTemplatesRender(t *testing.T) {
 				t.Fatalf("render %s: %v", content, err)
 			}
 		})
+	}
+}
+
+func TestSiteMigrationPageIncludesContent(t *testing.T) {
+	output := renderPage(t, "site_migration.html", "site_migration_content")
+	if !bytes.Contains(output, []byte(`x-data="siteMigrationPairing()"`)) || !bytes.Contains(output, []byte(`api('/site-migration/peers')`)) {
+		t.Fatal("rendered site migration page is missing its content template")
+	}
+	for _, expected := range [][]byte{
+		[]byte(`window.setInterval(() => this.refreshTasks(), 3000)`),
+		[]byte(`x-for="task in visibleTasks()"`),
+		[]byte(`taskProgress(task)`),
+		[]byte(`task.stage === 'publishing'`),
+		[]byte(`task.transfer_speed_bps`),
+		[]byte(`site_migration.progress_receiving_speed`),
+		[]byte(`site_migration.progress_sending_speed`),
+		[]byte(`site_migration.progress_extracting`),
+		[]byte(`site_migration.progress_remote_extracting`),
+		[]byte(`this.selectedPeer = pkg.peer_id`),
+		[]byte(`peerMatchesPackage(peer, pkg)`),
+		[]byte(`this.preflightResult.conflicts.length === 0`),
+		[]byte(`site_migration.estimate_summary`),
+		[]byte(`:disabled="site.status !== 'active'"`),
+		[]byte(`toggleAllSites()`),
+		[]byte(`showPairing || pairedPeers().length === 0`),
+		[]byte(`site_migration.add_receiving_server`),
+		[]byte(`max-h-72 overflow-y-auto`),
+		[]byte(`task.remote_backup_reconfigure && task.source_decision_pending`),
+		[]byte(`!task.source_decision_pending && !taskNeedsCleanup(task)`),
+		[]byte(`task.direction === 'target' && taskNeedsCleanup(task)`),
+		[]byte(`site_migration.cancel_migration_confirm`),
+		[]byte(`taskPeerAddress(task)`),
+		[]byte(`localPanelAddress()`),
+		[]byte(`peerStatusLabel(peer)`),
+		[]byte(`taskProgressPercent(task)`),
+		[]byte(`taskProgressColor(task)`),
+	} {
+		if !bytes.Contains(output, expected) {
+			t.Fatalf("rendered site migration page is missing live progress behavior %q", expected)
+		}
+	}
+	tasksPanel := bytes.Index(output, []byte(`x-show="visibleTasks().length > 0"`))
+	roleSelector := bytes.Index(output, []byte(`@click="role = 'source'"`))
+	if tasksPanel < 0 || roleSelector < 0 || tasksPanel > roleSelector {
+		t.Fatal("active migration tasks must appear before setup controls")
+	}
+	if bytes.Contains(output, []byte(`publishing_target`)) {
+		t.Fatal("rendered site migration page uses a target publishing stage that the backend never writes")
+	}
+	if bytes.Contains(output, []byte(`x-text="peer.status"`)) {
+		t.Fatal("panel connections must not expose the internal peer status value")
+	}
+	if !bytes.Contains(output, []byte(`role="progressbar"`)) || bytes.Contains(output, []byte(`border-t border-gray-700/70`)) {
+		t.Fatal("migration task divider must render as a stage progress bar")
+	}
+	if bytes.Contains(output, []byte(`xl:sticky xl:top-6`)) {
+		t.Fatal("panel connections must be grouped with the receiving-server card")
+	}
+	if bytes.Contains(output, []byte(`readyToStart() { return this.selectedSiteIDs.length > 0 && this.preflightResult && this.estimateResult`)) {
+		t.Fatal("start migration can be enabled without confirming an empty conflict list")
+	}
+	receiving := bytes.Index(output, []byte(`task.stage === 'transferring_files'`))
+	sourceFallback := bytes.Index(output, []byte(`task.direction === 'source') return t('site_migration.progress_preparing_source')`))
+	if receiving < 0 || sourceFallback < 0 || sourceFallback < receiving {
+		t.Fatal("source task fallback hides the receiving panel's authoritative progress")
+	}
+	if !bytes.Contains(output, []byte(`task.direction === 'source' ? 'site_migration.progress_preparing_source' : 'site_migration.progress_receiving'`)) {
+		t.Fatal("source database preparation must not be presented as receiving data")
+	}
+	if bytes.Contains(output, []byte(`confirm(t('site_migration.`)) || bytes.Contains(output, []byte(`confirm(t('website.delete_confirm`)) {
+		t.Fatal("site migration actions must use the panel confirmation modal instead of the browser confirm dialog")
 	}
 }
 

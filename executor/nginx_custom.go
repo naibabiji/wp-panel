@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/exec"
@@ -21,6 +22,11 @@ func executeSaveNginxCustom(task *Task) TaskResult {
 
 	site := payload.Site
 	domain := site.Domain
+	if locked, err := SiteMigrationLocked(context.Background(), site.ID, site.Domain); err != nil {
+		return TaskResult{Success: false, Message: "检查站点迁移锁失败"}
+	} else if locked {
+		return TaskResult{Success: false, Message: "网站正在迁移维护中，不能修改自定义 Nginx 配置"}
+	}
 
 	if err := os.MkdirAll(nginxCustomDir, 0755); err != nil {
 		log.Printf("创建配置目录失败: %v", err)

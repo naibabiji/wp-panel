@@ -430,6 +430,11 @@ func (e *TemplateEngine) RenderPHPFPMPool(data *PHPFPMPoolData) (string, error) 
 }
 
 func (e *TemplateEngine) ApplyNginxConfig(configContent string, targetPath string, enabledPath string) error {
+	if locked, err := siteMigrationLockedByNginxConfig(targetPath); err != nil {
+		return fmt.Errorf("检查站点迁移锁失败: %w", err)
+	} else if locked {
+		return errSiteMigrationBusy
+	}
 	if err := e.writeNginxConfigFile(configContent, targetPath); err != nil {
 		return err
 	}
@@ -449,6 +454,18 @@ func (e *TemplateEngine) ApplyNginxConfig(configContent string, targetPath strin
 	}
 
 	return nil
+}
+
+func siteMigrationLockedByNginxConfig(targetPath string) (bool, error) {
+	db := database.GetDB()
+	if db == nil || strings.TrimSpace(targetPath) == "" {
+		return false, nil
+	}
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM site_migration_locks ml
+		JOIN websites w ON w.id=ml.site_id
+		WHERE ml.status='active' AND w.nginx_conf_path=?`, filepath.Clean(targetPath)).Scan(&count)
+	return count > 0, err
 }
 
 // ApplyNginxConfigKeepDisabled 校验并写入 Nginx 配置文件内容（含旧配置备份），

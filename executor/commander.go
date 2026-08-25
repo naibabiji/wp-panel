@@ -20,6 +20,7 @@ var allowedCommands = map[string][]string{
 	"userdel":         {"-r", "-f"},
 	"usermod":         {"-a", "-G", "-g"},
 	"groupadd":        {"-r"},
+	"groupdel":        {"-f", "--force"},
 	"getent":          {"group"},
 	"chown":           {"-R"},
 	"chmod":           {"-R"},

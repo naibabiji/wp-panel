@@ -362,7 +362,7 @@ function wpFleetOverview() {
             });
         },
         statusKey(status) {
-            const keys = { active: 'wp_fleet.status_active', paused: 'wp_fleet.status_paused', error: 'wp_fleet.status_error', creating: 'wp_fleet.status_creating', deleting: 'wp_fleet.status_deleting' };
+            const keys = { active: 'wp_fleet.status_active', paused: 'wp_fleet.status_paused', migrated: 'website.status_migrated', error: 'wp_fleet.status_error', creating: 'wp_fleet.status_creating', deleting: 'wp_fleet.status_deleting' };
             return keys[status] || 'wp_fleet.health_unknown';
         },
         statusClass(status) {

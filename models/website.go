@@ -7,6 +7,7 @@ type WebsiteStatus string
 const (
 	StatusActive   WebsiteStatus = "active"
 	StatusPaused   WebsiteStatus = "paused"
+	StatusMigrated WebsiteStatus = "migrated"
 	StatusError    WebsiteStatus = "error"
 	StatusCreating WebsiteStatus = "creating"
 	StatusDeleting WebsiteStatus = "deleting"
@@ -75,5 +76,5 @@ type CreateWebsiteRequest struct {
 }
 
 type UpdateWebsiteStatusRequest struct {
-	Action string `json:"action" binding:"required,oneof=pause enable"`
+	Action string `json:"action" binding:"required,oneof=pause enable restore_migrated"`
 }

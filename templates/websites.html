@@ -3,7 +3,10 @@
 <div x-data="websiteList()" x-init="fetchList()">
     <div class="flex items-center justify-between mb-6">
         <h2 class="text-xl font-bold text-white">{{t .Lang "nav.websites"}}</h2>
-        <a href="/{{.RandomSuffix}}/websites/new" class="btn-primary">{{t .Lang "website.create_site"}}</a>
+		<div class="flex space-x-3">
+			<a href="/{{.RandomSuffix}}/websites/migration" class="btn-secondary">{{t .Lang "site_migration.title"}}</a>
+			<a href="/{{.RandomSuffix}}/websites/new" class="btn-primary">{{t .Lang "website.create_site"}}</a>
+		</div>
     </div>
 
     <!-- 重装 WordPress 对话框 -->
@@ -76,7 +79,7 @@
                             <td class="table-cell font-medium">
                                 <a :href="'http://' + site.domain" target="_blank" class="text-blue-400 hover:text-blue-300 hover:underline" x-text="site.domain"></a>
                             </td>
-                            <td class="table-cell"><span :class="site.status === 'active' ? 'badge-success' : 'badge-warning'" x-text="site.status === 'active' ? t('website.status_running') : t('website.status_paused')"></span></td>
+                            <td class="table-cell"><span :class="site.status === 'active' ? 'badge-success' : 'badge-warning'" x-text="statusText(site.status)"></span></td>
                             <td class="table-cell"><span :class="site.file_lock_enabled ? 'badge-warning' : 'badge-success'" x-text="site.file_lock_enabled ? t('website.file_locked') : t('website.file_unlocked')"></span></td>
                             <td class="table-cell">
                                 <div class="space-y-1">
@@ -96,7 +99,8 @@
                                 <div class="flex space-x-2">
                                     <a :href="'/{{$.RandomSuffix}}/websites/' + site.id" class="btn-secondary text-xs py-1 px-2">{{t .Lang "website.details"}}</a>
                                     <a :href="'/{{$.RandomSuffix}}/files?site_id=' + site.id" class="text-xs py-1 px-2 rounded" style="background-color: #1e3a5f; color: #93c5fd;">{{t .Lang "website.file_short"}}</a>
-                                    <button @click="toggleStatus(site)" class="text-xs py-1 px-2 rounded" :class="site.status === 'active' ? 'btn-warning bg-yellow-700 hover:bg-yellow-600 text-white' : 'btn-success text-xs'" x-text="site.status === 'active' ? t('website.site_pause') : t('website.site_enable')"></button>
+                                    <button x-show="site.status === 'active' || site.status === 'paused'" @click="toggleStatus(site)" class="text-xs py-1 px-2 rounded" :class="site.status === 'active' ? 'btn-warning bg-yellow-700 hover:bg-yellow-600 text-white' : 'btn-success text-xs'" x-text="site.status === 'active' ? t('website.site_pause') : t('website.site_enable')"></button>
+                                    <button x-show="site.status === 'migrated'" @click="restoreMigrated(site)" class="btn-success text-xs py-1 px-2" x-text="t('website.restore_migrated')"></button>
                                     <button x-show="site.site_type === 'wordpress'" @click="reinstallWP(site)" :disabled="reinstallingId === site.id" class="text-xs py-1 px-2 rounded" style="background-color: #7f1d1d; color: #fca5a5;" x-text="reinstallingId === site.id ? t('website.reinstalling') : t('website.reinstall')"></button>
                                     <button @click="deleteSite(site)" class="btn-danger text-xs py-1 px-2">{{t .Lang "website.delete"}}</button>
                                 </div>
@@ -130,6 +134,11 @@ function websiteList() {
                 if (resp.success) this.websites = resp.data || [];
             } catch (e) { showToast(e.message, 'error'); }
         },
+        statusText(status) {
+            if (status === 'active') return t('website.status_running');
+            if (status === 'migrated') return t('website.status_migrated');
+            return t('website.status_paused');
+        },
         async toggleStatus(site) {
             const action = site.status === 'active' ? 'pause' : 'enable';
             try {
@@ -137,6 +146,16 @@ function websiteList() {
                 if (resp.success) {
                     site.status = action === 'pause' ? 'paused' : 'active';
                     showToast(resp.message || t('common.operation_success'), 'success');
+                }
+            } catch (e) { showToast(e.message, 'error'); }
+        },
+        async restoreMigrated(site) {
+            if (!await confirmModal(t('website.restore_migrated_confirm', { domain: site.domain }))) return;
+            try {
+                const resp = await api('/websites/' + site.id + '/status', { method: 'PATCH', body: { action: 'restore_migrated' } });
+                if (resp.success) {
+                    site.status = 'active';
+                    showToast(resp.data?.message || t('website.restore_migrated_success'), 'success');
                 }
             } catch (e) { showToast(e.message, 'error'); }
         },

@@ -1,0 +1,260 @@
+{{template "base" .}}
+{{define "site_migration_content"}}
+<div x-data="siteMigrationPairing()" x-init="startPolling()" class="space-y-6">
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+            <h2 class="text-xl font-bold text-white">{{t .Lang "site_migration.title"}}</h2>
+            <p class="text-sm text-gray-400 mt-1">{{t .Lang "site_migration.g1_notice"}}</p>
+        </div>
+        <a href="/{{.RandomSuffix}}/websites" class="btn-secondary">{{t .Lang "website.back_to_list"}}</a>
+    </div>
+
+    <div x-show="message" class="p-4 rounded-lg text-sm border" :class="failed ? 'bg-red-900/30 border-red-800 text-red-300' : 'bg-green-900/30 border-green-800 text-green-300'" x-text="message"></div>
+
+	<div x-show="visibleTasks().length > 0" class="card border border-blue-900/60">
+		<div class="flex items-center justify-between gap-3 mb-3">
+			<h3 class="font-semibold text-white">{{t .Lang "site_migration.tasks"}}</h3>
+			<span class="px-2 py-1 rounded-full bg-blue-900/50 text-blue-300 text-xs" x-text="visibleTasks().length"></span>
+		</div>
+		<div class="space-y-3">
+			<template x-for="task in visibleTasks()" :key="task.id">
+				<div class="p-4 rounded-lg bg-gray-900/40 border border-gray-700 text-sm">
+					<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+						<div class="min-w-0"><span class="text-white font-medium break-all" x-text="task.source_domain"></span><span class="ml-2 px-2 py-0.5 rounded bg-gray-700 text-xs text-gray-300" x-text="directionLabel(task)"></span></div>
+						<span class="text-blue-300" x-text="taskProgress(task)"></span>
+					</div>
+					<p x-show="task.error_code" class="mt-2 text-xs text-red-300" x-text="task.error_code"></p>
+					<p x-show="task.remote_state_unavailable" class="mt-2 text-xs text-yellow-300">{{t .Lang "site_migration.remote_state_warning"}}</p>
+					<p x-show="task.remote_backup_reconfigure && task.source_decision_pending" class="mt-2 text-xs text-yellow-300">{{t .Lang "site_migration.remote_backup_warning"}}</p>
+					<p x-show="task.skipped_custom_commands > 0" class="mt-2 text-xs text-yellow-300" x-text="t('site_migration.custom_command_warning') + ' ' + task.skipped_custom_commands"></p>
+					<p x-show="task.source_decision_pending" x-text="t('site_migration.target_ready_dns_reminder', {server: taskPeerAddress(task)})" class="mt-2 text-xs text-green-300"></p>
+					<div class="mt-3 h-1 rounded-full bg-gray-700/70 overflow-hidden" role="progressbar" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="taskProgressPercent(task)"><div class="h-full rounded-full transition-all duration-500" :class="taskProgressColor(task)" :style="'width:' + taskProgressPercent(task) + '%'" ></div></div>
+					<div class="flex flex-wrap gap-2 mt-3">
+						<button x-show="task.status === 'failed_retryable'" @click="retryTask(task)" :disabled="busy" class="btn-secondary text-xs">{{t .Lang "site_migration.retry"}}</button>
+						<button x-show="task.direction === 'source' && task.source_decision_pending" @click="completeSourceTask(task)" :disabled="busy" class="btn-primary text-xs">{{t .Lang "site_migration.complete"}}</button>
+						<button x-show="task.direction === 'source' && task.source_decision_pending && task.source_site_present" @click="completeAndDeleteSourceTask(task)" :disabled="busy" class="btn-danger text-xs">{{t .Lang "site_migration.complete_delete"}}</button>
+						<button x-show="task.direction === 'source' && !task.source_decision_pending && !taskNeedsCleanup(task)" @click="restoreSourceTask(task)" :disabled="busy" class="bg-yellow-700 hover:bg-yellow-600 text-white font-medium px-4 py-2 text-xs disabled:opacity-50 disabled:cursor-not-allowed">{{t .Lang "site_migration.cancel_migration"}}</button>
+						<button x-show="task.direction === 'source' && (task.source_decision_pending || taskNeedsCleanup(task))" @click="restoreSourceTask(task)" :disabled="busy" class="btn-danger text-xs">{{t .Lang "site_migration.restore_source"}}</button>
+						<button x-show="task.direction === 'target' && taskNeedsCleanup(task)" @click="deleteTask(task)" :disabled="busy" class="btn-danger text-xs">{{t .Lang "site_migration.delete_task"}}</button>
+					</div>
+				</div>
+			</template>
+		</div>
+	</div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <button @click="role = 'source'" class="p-4 rounded-lg text-left border transition-colors" :class="role === 'source' ? 'border-blue-500 bg-blue-900/20' : 'border-gray-700 bg-gray-800 hover:border-gray-600'">
+            <h3 class="font-semibold" :class="role === 'source' ? 'text-blue-300' : 'text-white'">{{t .Lang "site_migration.source_role"}}</h3>
+            <p class="text-sm text-gray-400 mt-1">{{t .Lang "site_migration.source_help"}}</p>
+        </button>
+        <button @click="role = 'target'" class="p-4 rounded-lg text-left border transition-colors" :class="role === 'target' ? 'border-blue-500 bg-blue-900/20' : 'border-gray-700 bg-gray-800 hover:border-gray-600'">
+            <h3 class="font-semibold" :class="role === 'target' ? 'text-blue-300' : 'text-white'">{{t .Lang "site_migration.target_role"}}</h3>
+            <p class="text-sm text-gray-400 mt-1">{{t .Lang "site_migration.target_help"}}</p>
+        </button>
+    </div>
+
+	<div class="space-y-6">
+		<div x-show="role === 'target'" class="card">
+			<div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4"><div><h3 class="font-semibold text-white">{{t .Lang "site_migration.generate_package"}}</h3><p class="text-sm text-yellow-300 mt-2">{{t .Lang "site_migration.package_warning"}}</p></div><button @click="generatePackage()" :disabled="busy" class="btn-primary whitespace-nowrap">{{t .Lang "site_migration.generate_package"}}</button></div>
+			<div x-show="packageText" class="mt-4 p-4 bg-gray-900/40 border border-gray-700"><textarea x-model="packageText" readonly rows="5" class="input-field font-mono text-xs"></textarea><div class="flex justify-end mt-3"><button @click="copyPackage()" class="btn-secondary">{{t .Lang "site_migration.copy_package"}}</button></div></div>
+			<div class="mt-5 pt-4 border-t border-gray-700"><div class="flex items-center justify-between gap-3 mb-3"><h4 class="text-sm font-medium text-gray-200">{{t .Lang "site_migration.paired_panels"}}</h4><span class="text-xs text-gray-500" x-text="peers.length"></span></div><div x-show="peers.length === 0" class="text-sm text-gray-500">{{t .Lang "site_migration.no_peers"}}</div><div class="grid grid-cols-1 md:grid-cols-2 gap-2"><template x-for="peer in peers" :key="peer.id"><div class="flex items-center justify-between gap-3 p-3 bg-gray-900/40 border border-gray-700"><div class="min-w-0"><p class="text-sm text-white break-all" x-text="peer.base_url"></p><p class="mt-1 text-xs text-gray-500" x-text="peerStatusLabel(peer)"></p></div><button @click="revoke(peer.id)" class="btn-danger text-xs shrink-0">{{t .Lang "site_migration.revoke"}}</button></div></template></div></div>
+		</div>
+
+		<div x-show="role === 'source'" class="space-y-6">
+			<div class="card">
+				<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3"><div><h3 class="font-semibold text-white">{{t .Lang "site_migration.receiving_panel"}}</h3><p class="text-sm text-gray-400 mt-1">{{t .Lang "site_migration.source_help"}}</p></div><button @click="showPairing = !showPairing" type="button" class="btn-secondary text-xs" x-text="showPairing ? t('site_migration.hide_pairing') : t('site_migration.add_receiving_server')"></button></div>
+				<div x-show="pairedPeers().length > 0" class="mt-4"><label class="label">{{t .Lang "site_migration.receiving_panel"}}</label><select x-model="selectedPeer" class="input-field"><template x-for="peer in pairedPeers()" :key="peer.id"><option :value="peer.id" x-text="peer.base_url"></option></template></select></div>
+				<div x-show="showPairing || pairedPeers().length === 0" class="mt-4 p-4 bg-gray-900/40 border border-gray-700"><label class="label">{{t .Lang "site_migration.connect_peer"}}</label><textarea x-model="packageText" rows="5" class="input-field font-mono text-xs" placeholder='{"peer_id":"..."}'></textarea><div class="flex justify-end mt-3"><button @click="connectPeer()" :disabled="busy || !packageText" class="btn-primary">{{t .Lang "site_migration.verify_connect"}}</button></div></div>
+				<div class="mt-5 pt-4 border-t border-gray-700"><div class="flex items-center justify-between gap-3 mb-3"><h4 class="text-sm font-medium text-gray-200">{{t .Lang "site_migration.paired_panels"}}</h4><span class="text-xs text-gray-500" x-text="peers.length"></span></div><div x-show="peers.length === 0" class="text-sm text-gray-500">{{t .Lang "site_migration.no_peers"}}</div><div class="grid grid-cols-1 md:grid-cols-2 gap-2"><template x-for="peer in peers" :key="peer.id"><div class="flex items-center justify-between gap-3 p-3 bg-gray-900/40 border border-gray-700"><div class="min-w-0"><p class="text-sm text-white break-all" x-text="peer.base_url"></p><p class="mt-1 text-xs text-gray-500" x-text="peerStatusLabel(peer)"></p></div><button @click="revoke(peer.id)" class="btn-danger text-xs shrink-0">{{t .Lang "site_migration.revoke"}}</button></div></template></div></div>
+			</div>
+
+			<div x-show="pairedPeers().length > 0" class="card">
+				<div class="flex items-center justify-between gap-3 mb-3"><h3 class="font-semibold text-white">{{t .Lang "site_migration.select_sites"}}</h3><button @click="toggleAllSites()" type="button" class="btn-secondary text-xs">{{t .Lang "site_migration.select_all"}}</button></div>
+				<div class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-72 overflow-y-auto pr-1"><template x-for="site in sites" :key="site.id"><label class="flex items-start gap-2 p-3 border border-gray-700 text-sm" :class="site.status === 'active' ? 'text-gray-300 bg-gray-900/30 cursor-pointer' : 'text-gray-500'"><input class="mt-0.5" type="checkbox" :value="site.id" x-model.number="selectedSiteIDs" :disabled="site.status !== 'active'"><span class="min-w-0"><span class="break-all" x-text="site.domain"></span><span x-show="site.status !== 'active'" class="block text-xs text-yellow-300 mt-1">{{t .Lang "site_migration.site_must_be_active"}}</span></span></label></template></div>
+				<div class="mt-5 pt-4 border-t border-gray-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3"><div class="text-sm min-h-5"><span x-show="preflightResult && !preflightResult.conflicts.length" class="text-green-300">{{t .Lang "site_migration.no_conflicts"}}</span><span x-show="preflightResult && preflightResult.conflicts.length" class="text-yellow-300" x-text="'{{t .Lang "site_migration.conflicts"}} ' + (preflightResult ? preflightResult.conflicts.map(item => item.domain).join(', ') : '')"></span><div x-show="estimateResult" class="mt-1 text-gray-300" x-text="estimateSummary()"></div></div><div class="flex gap-2 shrink-0"><button @click="preflight()" :disabled="busy || !selectedPeer || selectedSiteIDs.length === 0" class="btn-secondary">{{t .Lang "site_migration.run_preflight"}}</button><button @click="startMigration()" :disabled="busy || !readyToStart()" class="btn-primary">{{t .Lang "site_migration.start"}}</button></div></div>
+			</div>
+		</div>
+	</div>
+</div>
+
+<script>
+function siteMigrationPairing() {
+    return {
+		role: 'source', showPairing: false, packageText: '', peers: [], sites: [], tasks: [], transferSamples: {}, selectedPeer: '', selectedSiteIDs: [], startBatchID: '', preflightResult: null, estimateResult: null, preflightKey: '', busy: false, message: '', failed: false, pollTimer: null,
+		startPolling() {
+			this.loadPeers();
+			this.pollTimer = window.setInterval(() => this.refreshTasks(), 3000);
+		},
+		destroy() { if (this.pollTimer) window.clearInterval(this.pollTimer); },
+        async loadPeers() {
+			try {
+				const [peerResult, siteResult, taskResult] = await Promise.all([api('/site-migration/peers'), api('/websites'), api('/site-migration/tasks')]);
+				this.peers = peerResult.peers || []; this.sites = siteResult.data || [];
+				this.setTasks(taskResult.tasks || []);
+				if (!this.pairedPeers().some(peer => peer.id === this.selectedPeer)) this.selectedPeer = this.pairedPeers().length ? this.pairedPeers()[0].id : '';
+				return true;
+			} catch (_) { return false; }
+        },
+		async refreshTasks() {
+			if (this.busy) return;
+			try { const result = await api('/site-migration/tasks'); this.setTasks(result.tasks || []); }
+			catch (_) {}
+		},
+		setTasks(tasks) {
+			const now = Date.now(), nextSamples = {};
+			for (const task of tasks) {
+				const bytes = Number(task.transfer_received_bytes || 0), previous = this.transferSamples[task.id];
+				task.transfer_speed_bps = previous && bytes >= previous.bytes && now > previous.at ? (bytes - previous.bytes) * 1000 / (now - previous.at) : 0;
+				if (task.stage === 'transferring_files') nextSamples[task.id] = {bytes, at: now};
+			}
+			this.transferSamples = nextSamples; this.tasks = tasks;
+		},
+		pairedPeers() { return this.peers.filter(peer => peer.status === 'paired'); },
+		peerMatchesPackage(peer, pkg) { return !!peer && !!pkg && peer.id === pkg.peer_id && peer.status === 'paired' && String(peer.base_url || '').replace(/\/+$/, '') === String(pkg.base_url || '').replace(/\/+$/, '') && String(peer.certificate_sha256 || '').toLowerCase() === String(pkg.certificate_sha256 || '').toLowerCase(); },
+		peerAddress(peer) { if (!peer || !peer.base_url) return t('site_migration.receiving_server'); try { return new URL(peer.base_url).hostname || peer.base_url; } catch (_) { return peer.base_url; } },
+		peerStatusLabel(peer) { return t(peer.status === 'paired' ? 'site_migration.peer_status_paired' : 'site_migration.peer_status_pending', {address: this.peerAddress(peer)}); },
+		taskPeerAddress(task) { return this.peerAddress(this.peers.find(item => item.id === task.peer_id)); },
+		localPanelAddress() { return window.location.hostname || t('site_migration.sending_server'); },
+		activeSites() { return this.sites.filter(site => site.status === 'active'); },
+		taskNeedsCleanup(task) { return task.status === 'failed_retryable' || task.status === 'interrupted_unknown' || task.status === 'cleanup_failed' || task.status === 'failed_manual'; },
+		toggleAllSites() { const active = this.activeSites(); this.selectedSiteIDs = this.selectedSiteIDs.length === active.length ? [] : active.map(site => site.id); },
+		isFinishedTask(task) { return (task.status === 'completed' || task.status === 'abandoned' || task.status === 'failed_manual') && !task.source_decision_pending; },
+		visibleTasks() { return this.tasks.filter(task => !this.isFinishedTask(task)); },
+		directionLabel(task) { return t(task.direction === 'source' ? 'site_migration.direction_source' : 'site_migration.direction_target'); },
+		taskProgressPercent(task) {
+			if (task.source_decision_pending || task.status === 'completed') return 100;
+			if (task.status === 'draft') return 5;
+			if (task.status === 'queued') return 10;
+			const stages = {preflight_passed:15,source_freezing:20,source_frozen:25,manifesting:30,manifest_ready:35,transferring_files:55,preparing_target:70,publishing:80,configuring_target:88,awaiting_cutover:92,activating_target:96,activation_runtime_sync:98};
+			if (task.stage === 'transferring_database') return task.direction === 'source' ? 40 : 60;
+			return stages[task.stage] || 10;
+		},
+		taskProgressColor(task) { if (this.taskNeedsCleanup(task)) return 'bg-red-500'; if (task.source_decision_pending || task.status === 'completed') return 'bg-green-500'; return 'bg-blue-500'; },
+		taskProgress(task) {
+			if (task.source_decision_pending) return t('site_migration.progress_decision');
+			if (task.status === 'failed_manual') return t('site_migration.progress_manual_failure');
+			if (task.status === 'failed_retryable') return t('site_migration.progress_retryable_failure');
+			if (task.status === 'interrupted_unknown' || task.status === 'cleanup_failed') return t('site_migration.progress_interrupted');
+			if (task.status === 'draft') return t('site_migration.progress_waiting_source');
+			if (task.status === 'queued') return t('site_migration.progress_queued');
+			if (task.stage === 'transferring_files') {
+				const received = Number(task.transfer_received_bytes || 0), speed = Number(task.transfer_speed_bps || 0);
+				if (task.direction === 'source') {
+					if (task.transfer_extracting) return t('site_migration.progress_remote_extracting');
+					if (received > 0 && speed > 0) return t('site_migration.progress_sending_speed', {sent: this.formatBytes(received), speed: this.formatBytes(speed)});
+					if (received > 0) return t('site_migration.progress_sending_bytes', {sent: this.formatBytes(received)});
+					return t('site_migration.progress_sending');
+				}
+				if (task.transfer_extracting) return t('site_migration.progress_extracting');
+				if (received > 0 && speed > 0) return t('site_migration.progress_receiving_speed', {received: this.formatBytes(received), speed: this.formatBytes(speed)});
+				if (received > 0) return t('site_migration.progress_receiving_bytes', {received: this.formatBytes(received)});
+				return t('site_migration.progress_receiving');
+			}
+			if (task.stage === 'transferring_database') return t(task.direction === 'source' ? 'site_migration.progress_preparing_source' : 'site_migration.progress_receiving');
+			if (task.stage === 'preparing_target' || task.stage === 'publishing' || task.stage === 'configuring_target') return t('site_migration.progress_building_target');
+			if (task.stage === 'awaiting_cutover' || task.stage === 'activating_target' || task.stage === 'activation_runtime_sync') return t('site_migration.progress_activating');
+			if (task.direction === 'source') return t('site_migration.progress_preparing_source');
+			return t('site_migration.progress_processing');
+		},
+		selectionKey() { return this.selectedPeer + ':' + [...this.selectedSiteIDs].sort((a, b) => a - b).join(','); },
+		readyToStart() { return this.selectedSiteIDs.length > 0 && this.preflightResult && this.preflightResult.success === true && Array.isArray(this.preflightResult.conflicts) && this.preflightResult.conflicts.length === 0 && this.estimateResult && this.preflightKey === this.selectionKey(); },
+		formatBytes(value) { const units = ['B','KiB','MiB','GiB','TiB']; let size = Number(value || 0), i = 0; while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; } return size.toFixed(i ? 1 : 0) + ' ' + units[i]; },
+		estimateSummary() {
+			if (!this.estimateResult) return '';
+			return t('site_migration.estimate_summary', {files: this.formatBytes(this.estimateResult.total_file_bytes), database: this.formatBytes(this.estimateResult.total_database_bytes), required: this.formatBytes(this.estimateResult.total_reservation_bytes)});
+		},
+        async generatePackage() {
+            this.busy = true; this.message = '';
+            try {
+                const r = await api('/site-migration/pairing-package', {method: 'POST', body: {base_url: window.location.origin}});
+                this.packageText = JSON.stringify(r.package, null, 2);
+                this.failed = false; this.message = t('site_migration.package_generated'); await this.loadPeers();
+            } catch (_) { this.failed = true; this.message = t('site_migration.operation_failed'); }
+            finally { this.busy = false; }
+        },
+        async connectPeer() {
+            this.busy = true; this.message = '';
+			let pkg = null;
+            try {
+				pkg = JSON.parse(this.packageText);
+                await api('/site-migration/peers/connect', {method: 'POST', body: {package: pkg, source_base_url: window.location.origin}});
+				await this.loadPeers();
+				if (!this.peers.some(peer => this.peerMatchesPackage(peer, pkg))) throw new Error('paired peer is unavailable');
+				this.selectedPeer = pkg.peer_id; this.showPairing = false; this.preflightResult = null; this.estimateResult = null; this.preflightKey = '';
+				this.failed = false; this.message = t('site_migration.connected');
+			} catch (_) {
+				if (pkg) await this.loadPeers();
+				if (pkg && this.peers.some(peer => this.peerMatchesPackage(peer, pkg))) {
+					this.selectedPeer = pkg.peer_id; this.showPairing = false; this.preflightResult = null; this.estimateResult = null; this.preflightKey = '';
+					this.failed = false; this.message = t('site_migration.connected');
+				} else { this.failed = true; this.message = t('site_migration.operation_failed'); }
+			}
+            finally { this.busy = false; }
+        },
+        async copyPackage() {
+            try { await navigator.clipboard.writeText(this.packageText); this.failed = false; this.message = t('site_migration.copied'); }
+            catch (_) { this.failed = true; this.message = t('site_migration.copy_failed'); }
+        },
+		async preflight() {
+			const key = this.selectionKey(); if (this.preflightKey && this.preflightKey !== key) this.startBatchID = '';
+			this.busy = true; this.preflightResult = null; this.estimateResult = null;
+			try {
+				const domains = this.sites.filter(site => this.selectedSiteIDs.includes(site.id)).map(site => site.domain);
+				const [preflight, estimate] = await Promise.all([api('/site-migration/peers/' + encodeURIComponent(this.selectedPeer) + '/preflight', {method: 'POST', body: {peer_id: this.selectedPeer, domains}}), api('/site-migration/estimate', {method: 'POST', body: {site_ids: this.selectedSiteIDs}})]);
+				this.preflightResult = preflight; this.estimateResult = estimate.estimate; this.preflightKey = key;
+                this.failed = false; this.message = t('site_migration.preflight_complete');
+            } catch (_) { this.failed = true; this.message = t('site_migration.operation_failed'); }
+			finally { this.busy = false; }
+		},
+		async startMigration() {
+			if (!await confirmModal(t('site_migration.start_confirm'))) return;
+			this.busy = true; this.message = '';
+			try {
+				if (!this.startBatchID) { const bytes = new Uint8Array(12); crypto.getRandomValues(bytes); this.startBatchID = 'batch_' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(''); }
+				await api('/site-migration/start', {method: 'POST', body: {peer_id: this.selectedPeer, batch_id: this.startBatchID, site_ids: this.selectedSiteIDs}});
+				this.startBatchID = ''; this.preflightResult = null; this.estimateResult = null; this.preflightKey = ''; this.failed = false; this.message = t('site_migration.started'); await this.loadPeers();
+			} catch (_) { this.failed = true; this.message = t('site_migration.operation_failed'); }
+			finally { this.busy = false; }
+		},
+		async taskAction(path, body, successKey) {
+			this.busy = true; this.message = '';
+			try { await api(path, {method: 'POST', body: body || {}}); this.failed = false; this.message = t(successKey); await this.loadPeers(); }
+			catch (_) { this.failed = true; this.message = t('site_migration.operation_failed'); }
+			finally { this.busy = false; }
+		},
+		retryTask(task) { return this.taskAction('/site-migration/tasks/' + encodeURIComponent(task.id) + '/retry', {}, 'site_migration.retry_queued'); },
+		async deleteTask(task) {
+			if (!await confirmModal(t(task.direction === 'source' ? 'site_migration.delete_source_task_confirm' : 'site_migration.delete_target_task_confirm'))) return;
+			this.busy = true; this.message = '';
+			try { await api('/site-migration/tasks/' + encodeURIComponent(task.id), {method: 'DELETE'}); this.failed = false; this.message = t('site_migration.task_deleted'); await this.loadPeers(); }
+			catch (_) { this.failed = true; this.message = t('site_migration.operation_failed'); }
+			finally { this.busy = false; }
+		},
+		completeSourceTask(task) { return this.taskAction('/site-migration/tasks/' + encodeURIComponent(task.id) + '/complete', {}, 'site_migration.completed'); },
+		async completeAndDeleteSourceTask(task) {
+			const site = this.sites.find(item => item.id === task.source_site_id || item.domain === task.source_domain);
+			if (!site || !await confirmModal(t('website.delete_confirm', {domain: task.source_domain}))) return;
+			this.busy = true; this.message = '';
+			try {
+				await api('/site-migration/tasks/' + encodeURIComponent(task.id) + '/complete', {method: 'POST', body: {}});
+				await api('/websites/' + encodeURIComponent(site.id), {method: 'DELETE'});
+				this.failed = false; this.message = t('site_migration.completed_delete_queued'); await this.loadPeers();
+			} catch (_) { this.failed = true; this.message = t('site_migration.operation_failed'); }
+			finally { this.busy = false; }
+		},
+		async restoreSourceTask(task) {
+			const confirmKey = task.source_decision_pending || this.taskNeedsCleanup(task) ? 'site_migration.restore_source_confirm' : 'site_migration.cancel_migration_confirm';
+			if (!await confirmModal(t(confirmKey))) return;
+			this.busy = true; this.message = '';
+			try { await api('/site-migration/tasks/' + encodeURIComponent(task.id), {method: 'DELETE'}); this.failed = false; this.message = t('site_migration.source_restored_dns_reminder', {server: this.localPanelAddress()}); await this.loadPeers(); }
+			catch (_) { this.failed = true; this.message = t('site_migration.operation_failed'); }
+			finally { this.busy = false; }
+		},
+        async revoke(id) {
+            try { await api('/site-migration/peers/' + encodeURIComponent(id), {method: 'DELETE'}); await this.loadPeers(); }
+            catch (_) { this.failed = true; this.message = t('site_migration.operation_failed'); }
+        }
+    };
+}
+</script>
+{{end}}

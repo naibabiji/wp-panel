@@ -45,6 +45,26 @@ func runMySQL(rootPassword string, args ...string) error {
 	return nil
 }
 
+func runMySQLInput(rootPassword, input string, args ...string) error {
+	cmd := exec.Command("mysql", args...)
+	cmd.Env = append(os.Environ(), "MYSQL_PWD="+rootPassword)
+	cmd.Stdin = strings.NewReader(input)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("mysql: %s", strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+func createMigrationMariaDBDatabase(dbName, dbUser, dbPassword string, cfg *config.Config) error {
+	if cfg == nil || !isValidMySQLIdentifier(dbName) || !isValidMySQLIdentifier(dbUser) || len(dbPassword) < 24 || !mysqlIdentifierPattern.MatchString(dbPassword) {
+		return fmt.Errorf("invalid migration database identity")
+	}
+	sqlText := fmt.Sprintf("CREATE DATABASE `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\nDROP USER IF EXISTS '%s'@'localhost';\nCREATE USER '%s'@'localhost' IDENTIFIED BY '%s';\nGRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost';\nFLUSH PRIVILEGES;\n", dbName, dbUser, dbUser, dbPassword, dbName, dbUser)
+	return runMySQLInput(cfg.MariaDB.RootPassword, sqlText, "-u", cfg.MariaDB.RootUser)
+}
+
 // GetMariaDBDatabaseSizes returns the on-disk table and index size for each
 // non-system database. The caller may filter the result to panel-managed sites.
 func GetMariaDBDatabaseSizes(cfg *config.Config) (map[string]int64, error) {

@@ -26,8 +26,10 @@ func renderCronConfig() TaskResult {
 
 	db := database.GetDB()
 	rows, err := db.Query(
-		`SELECT name, cron_expression, command, run_as_user, task_type, backup_mode, keep_count, site_id
-		 FROM cron_jobs WHERE enabled = 1`,
+		`SELECT cj.name,cj.cron_expression,cj.command,cj.run_as_user,cj.task_type,cj.backup_mode,cj.keep_count,cj.site_id
+		 FROM cron_jobs cj
+		 LEFT JOIN site_migration_locks ml ON ml.site_id=cj.site_id AND ml.status='active'
+		 WHERE cj.enabled=1 AND (cj.site_id IS NULL OR ml.id IS NULL)`,
 	)
 	if err != nil {
 		log.Printf("查询Cron任务失败: %v", err)

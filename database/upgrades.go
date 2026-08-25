@@ -625,6 +625,20 @@ var upgrades = []Upgrade{
 			`CREATE INDEX IF NOT EXISTS idx_alert_event_markers_created ON alert_event_markers(created_at)`,
 		},
 	},
+	{
+		Version:     "1.0.54",
+		Description: "新增网站搬家 G1 持久化任务、资源、断点、事件和站点锁表",
+		SQL:         siteMigrationSchemaStatements,
+	},
+	{
+		Version:     "1.0.55",
+		Description: "新增网站搬家批次容量估算与目标空间预留字段",
+		SQL: []string{
+			`ALTER TABLE site_migration_sites ADD COLUMN estimated_file_bytes INTEGER NOT NULL DEFAULT 0 CHECK (estimated_file_bytes >= 0)`,
+			`ALTER TABLE site_migration_sites ADD COLUMN estimated_database_bytes INTEGER NOT NULL DEFAULT 0 CHECK (estimated_database_bytes >= 0)`,
+			`ALTER TABLE site_migration_sites ADD COLUMN reserved_bytes INTEGER NOT NULL DEFAULT 0 CHECK (reserved_bytes >= 0)`,
+		},
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

@@ -37,6 +37,47 @@ func TestScanDefenseAllowsBasicAuthHeaderWithoutBan(t *testing.T) {
 	}
 }
 
+func TestScanDefenseAllowsOnlyExactSiteMigrationMachinePosts(t *testing.T) {
+	db := newScanDefenseTestDB(t)
+	router := newScanDefenseTestRouter(t, db)
+
+	for _, path := range []string{
+		"/api/site-migration/v1/pair/redeem",
+		"/api/site-migration/v1/pair/challenge",
+		"/api/site-migration/v1/peer/revoke",
+		"/api/site-migration/v1/preflight",
+		"/api/site-migration/v1/target/batches",
+		"/api/site-migration/v1/target/batches/queue",
+		"/api/site-migration/v1/source/manifest",
+		"/api/site-migration/v1/source/chunk",
+		"/api/site-migration/v1/source/file-shard",
+		"/api/site-migration/v1/source/database",
+		"/api/site-migration/v1/source/database-chunk",
+		"/api/site-migration/v1/source/certificates",
+		"/api/site-migration/v1/source/certificate-chunk",
+		"/api/site-migration/v1/source/settings",
+		"/api/site-migration/v1/target/status",
+		"/api/site-migration/v1/target/retry",
+		"/api/site-migration/v1/target/delete-task",
+		"/api/site-migration/v1/source/delete-task",
+	} {
+		rec := performScanDefenseRequest(router, http.MethodPost, path, "Go-http-client/1.1", "")
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("POST %s status=%d, want downstream %d", path, rec.Code, http.StatusUnauthorized)
+		}
+	}
+	for _, request := range []struct{ method, path string }{
+		{http.MethodGet, "/api/site-migration/v1/preflight"},
+		{http.MethodPost, "/api/site-migration/v1/preflight/extra"},
+		{http.MethodPost, "/api/site-migration/v1/unknown"},
+	} {
+		rec := performScanDefenseRequest(router, request.method, request.path, "Go-http-client/1.1", "")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s %s status=%d, want %d", request.method, request.path, rec.Code, http.StatusForbidden)
+		}
+	}
+}
+
 func TestScanDefenseBansNonBrowserProbeAndRecordsRequestSummary(t *testing.T) {
 	db := newScanDefenseTestDB(t)
 	router := newScanDefenseTestRouter(t, db)
@@ -106,6 +147,28 @@ func newScanDefenseTestRouter(t *testing.T, db *sql.DB) *gin.Engine {
 	router.GET("/secret", func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
+	for _, path := range []string{
+		"/api/site-migration/v1/pair/redeem",
+		"/api/site-migration/v1/pair/challenge",
+		"/api/site-migration/v1/peer/revoke",
+		"/api/site-migration/v1/preflight",
+		"/api/site-migration/v1/target/batches",
+		"/api/site-migration/v1/target/batches/queue",
+		"/api/site-migration/v1/source/manifest",
+		"/api/site-migration/v1/source/chunk",
+		"/api/site-migration/v1/source/file-shard",
+		"/api/site-migration/v1/source/database",
+		"/api/site-migration/v1/source/database-chunk",
+		"/api/site-migration/v1/source/certificates",
+		"/api/site-migration/v1/source/certificate-chunk",
+		"/api/site-migration/v1/source/settings",
+		"/api/site-migration/v1/target/status",
+		"/api/site-migration/v1/target/retry",
+		"/api/site-migration/v1/target/delete-task",
+		"/api/site-migration/v1/source/delete-task",
+	} {
+		router.POST(path, func(c *gin.Context) { c.Status(http.StatusUnauthorized) })
+	}
 	router.NoRoute(func(c *gin.Context) {
 		c.Status(http.StatusNotFound)
 	})

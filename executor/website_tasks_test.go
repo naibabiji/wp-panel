@@ -1,8 +1,11 @@
 package executor
 
 import (
+	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +73,59 @@ func TestDeleteSiteAndAssociatedCronJobsDeletesOnlyMatchingSite(t *testing.T) {
 	}
 	if deletedAgain {
 		t.Fatal("deleteSiteAndAssociatedCronJobs = true on second call, want false (nothing left to delete)")
+	}
+}
+
+func TestEnableSiteRestoresMigratedMaintenanceLink(t *testing.T) {
+	openTestDB(t)
+	installStubNginx(t)
+	db := database.GetDB()
+	root := t.TempDir()
+	cfg := &config.Config{Paths: config.PathsConfig{
+		NginxSitesAvailable: filepath.Join(root, "available"),
+		NginxSitesEnabled:   filepath.Join(root, "enabled"),
+	}}
+	oldCfg := config.AppConfig
+	config.AppConfig = cfg
+	t.Cleanup(func() { config.AppConfig = oldCfg })
+	if err := os.MkdirAll(cfg.Paths.NginxSitesAvailable, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cfg.Paths.NginxSitesEnabled, 0755); err != nil {
+		t.Fatal(err)
+	}
+	domain := "migrated.example.com"
+	nginxConf := filepath.Join(cfg.Paths.NginxSitesAvailable, domain+".conf")
+	maintenance := filepath.Join(cfg.Paths.NginxSitesAvailable, ".wp-panel-migration-migration_0000001.conf")
+	enabled := filepath.Join(cfg.Paths.NginxSitesEnabled, domain+".conf")
+	if err := os.WriteFile(nginxConf, []byte("server {}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(maintenance, []byte("return 503;"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(maintenance, enabled); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO websites (id,name,domain,status,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path)
+		VALUES (31,'migrated','migrated.example.com','migrated','wp_migrated','/www/migrated','/logs/migrated','db','user','/php/migrated',?)`, nginxConf); err != nil {
+		t.Fatal(err)
+	}
+	site := &models.Website{ID: 31, Domain: domain, Status: models.StatusMigrated, NginxConfPath: nginxConf}
+	result := executeEnableSite(&Task{Payload: &EnableSitePayload{Site: site}})
+	if !result.Success {
+		t.Fatalf("restore migrated site failed: %+v", result)
+	}
+	target, err := os.Readlink(enabled)
+	if err != nil || filepath.Clean(target) != filepath.Clean(nginxConf) {
+		t.Fatalf("enabled target=%q err=%v", target, err)
+	}
+	if _, err := os.Stat(maintenance); !os.IsNotExist(err) {
+		t.Fatalf("maintenance file remains: %v", err)
+	}
+	var status string
+	if err := db.QueryRow(`SELECT status FROM websites WHERE id=31`).Scan(&status); err != nil || status != "active" {
+		t.Fatalf("status=%q err=%v", status, err)
 	}
 }
 
@@ -160,6 +216,64 @@ func TestDeleteSiteWithEnabledFileBackupCronDoesNotDeadlockQueue(t *testing.T) {
 	}
 	if cronCount != 0 {
 		t.Fatalf("associated cron job count = %d, want deleted", cronCount)
+	}
+}
+
+func TestDeleteSiteRejectsActiveMigrationBeforeExternalCleanup(t *testing.T) {
+	store, siteID := newSiteMigrationStoreTest(t)
+	if err := store.acquireLock(context.Background(), "migration_0000001", &siteID, "example.com", "source", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	webRoot := t.TempDir()
+	marker := filepath.Join(webRoot, "must-remain.txt")
+	if err := os.WriteFile(marker, []byte("protected"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result := executeDeleteSite(&Task{Payload: &DeleteSitePayload{Site: &models.Website{
+		ID: siteID, Domain: "example.com", WebRoot: webRoot,
+	}}})
+	if result.Success || !strings.Contains(result.Message, "不能从网站列表直接删除") {
+		t.Fatalf("result=%#v, want explicit migration-lock rejection", result)
+	}
+	if got, err := os.ReadFile(marker); err != nil || string(got) != "protected" {
+		t.Fatalf("protected file changed: content=%q err=%v", got, err)
+	}
+	var count int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM websites WHERE id=?`, siteID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("website row count=%d err=%v, want 1", count, err)
+	}
+}
+
+func TestDeleteSiteAllowsCompletedSourceAndClearsMigrationReferences(t *testing.T) {
+	store, siteID := newSiteMigrationStoreTest(t)
+	if err := store.acquireLock(context.Background(), "migration_0000001", &siteID, "example.com", "source", freezerTestTime()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE site_migration_sites SET status='completed',stage='completed' WHERE id='migration_0000001'`); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := SiteMigrationDeleteBlocked(context.Background(), siteID, "example.com")
+	if err != nil || blocked {
+		t.Fatalf("completed source delete blocked=%v err=%v", blocked, err)
+	}
+	if _, err := deleteSiteAndAssociatedCronJobs(store.db, siteID); err != nil {
+		t.Fatal(err)
+	}
+	var websites int
+	var lockStatus string
+	var lockSite, sourceSite sql.NullInt64
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM websites WHERE id=?`, siteID).Scan(&websites); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT status,site_id FROM site_migration_locks WHERE migration_site_id='migration_0000001' AND direction='source'`).Scan(&lockStatus, &lockSite); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT source_site_id FROM site_migration_sites WHERE id='migration_0000001'`).Scan(&sourceSite); err != nil {
+		t.Fatal(err)
+	}
+	if websites != 0 || lockStatus != "released" || lockSite.Valid || sourceSite.Valid {
+		t.Fatalf("websites=%d lock=%q lockSite=%v sourceSite=%v", websites, lockStatus, lockSite, sourceSite)
 	}
 }
 

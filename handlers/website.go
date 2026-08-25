@@ -472,6 +472,13 @@ func (h *WebsiteHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
+	if locked, lockErr := executor.SiteMigrationDeleteBlocked(c.Request.Context(), site.ID, site.Domain); lockErr != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "common.operation_failed")))
+		return
+	} else if locked {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "site_migration.delete_locked")))
+		return
+	}
 
 	payload := &executor.DeleteSitePayload{Site: site}
 	task := executor.GlobalQueue.Enqueue(executor.TaskDeleteSite, payload)
@@ -551,12 +558,33 @@ func (h *WebsiteHandler) ToggleStatus(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
+	if locked, lockErr := executor.SiteMigrationLocked(c.Request.Context(), site.ID, site.Domain); lockErr != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "common.operation_failed")))
+		return
+	} else if locked {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "site_migration.site_locked")))
+		return
+	}
 
 	var taskType executor.TaskType
 	switch req.Action {
 	case "pause":
+		if site.Status != models.StatusActive {
+			c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "website.status_action_unavailable")))
+			return
+		}
 		taskType = executor.TaskPauseSite
 	case "enable":
+		if site.Status == models.StatusMigrated {
+			c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "website.status_action_unavailable")))
+			return
+		}
+		taskType = executor.TaskEnableSite
+	case "restore_migrated":
+		if site.Status != models.StatusMigrated {
+			c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "website.status_action_unavailable")))
+			return
+		}
 		taskType = executor.TaskEnableSite
 	default:
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效操作"))

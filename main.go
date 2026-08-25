@@ -184,12 +184,18 @@ func main() {
 	seedAdminUser(cfg)
 
 	log.Println("数据库初始化完成")
+	if reconciled, err := executor.ReconcileMigratedWebsiteStatuses(context.Background(), database.GetDB(), cfg); err != nil {
+		log.Printf("已搬家源站状态收敛跳过: %v", err)
+	} else if reconciled > 0 {
+		log.Printf("已收敛 %d 个历史搬家源站状态", reconciled)
+	}
 
 	executor.InitQueue(cfg)
 	log.Println("任务队列初始化完成")
 	var inventoryWorker *executor.WPInventoryWorker
 	var inventoryScheduler *executor.WPInventoryScheduler
 	var coreUpdateWorker wpCoreUpdateWorkerLifecycle
+	var migrationWorker *executor.SiteMigrationWorker
 	if candidate, err := executor.NewWPInventoryWorker(cfg); err != nil {
 		log.Println("WordPress 库存后台任务未启动")
 	} else if err := candidate.Start(); err != nil {
@@ -213,6 +219,14 @@ func main() {
 	} else {
 		coreUpdateWorker = candidate
 		log.Println("WordPress 更新后台任务已启动")
+	}
+	if candidate, err := executor.NewSiteMigrationWorker(cfg, Version); err != nil {
+		log.Println("网站搬家后台任务未启动")
+	} else if err := candidate.Start(); err != nil {
+		log.Println("网站搬家后台任务未启动")
+	} else {
+		migrationWorker = candidate
+		log.Println("网站搬家后台任务已启动")
 	}
 
 	collector.Start()
@@ -311,6 +325,13 @@ func main() {
 	log.Println("正在关闭面板...")
 	executor.GlobalAdminer.DisableAll()
 	executor.StopAllImageOptimizationJobsForShutdown(wpCoreUpdateWorkerShutdownTimeout)
+	if migrationWorker != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), wpCoreUpdateWorkerShutdownTimeout)
+		if err := migrationWorker.Stop(ctx); err != nil {
+			log.Println("网站搬家后台任务关闭超时")
+		}
+		cancel()
+	}
 	if coreUpdateWorker != nil {
 		if err := stopWPCoreUpdateWorker(coreUpdateWorker, wpCoreUpdateWorkerShutdownTimeout); err != nil {
 			log.Println("WordPress 核心更新后台任务关闭超时")

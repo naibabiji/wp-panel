@@ -8,6 +8,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
@@ -181,6 +183,54 @@ var i18nKeys = []string{
 	"settings.upload_success",
 	"settings.uploading",
 	"settings.zip_only",
+	"site_migration.connected",
+	"site_migration.peer_status_paired",
+	"site_migration.peer_status_pending",
+	"site_migration.add_receiving_server",
+	"site_migration.hide_pairing",
+	"site_migration.copied",
+	"site_migration.copy_failed",
+	"site_migration.operation_failed",
+	"site_migration.package_generated",
+	"site_migration.preflight_complete",
+	"site_migration.estimate_summary",
+	"site_migration.direction_source",
+	"site_migration.direction_target",
+	"site_migration.sending_server",
+	"site_migration.receiving_server",
+	"site_migration.progress_waiting_source",
+	"site_migration.progress_queued",
+	"site_migration.progress_preparing_source",
+	"site_migration.progress_receiving",
+	"site_migration.progress_receiving_bytes",
+	"site_migration.progress_receiving_speed",
+	"site_migration.progress_sending",
+	"site_migration.progress_sending_bytes",
+	"site_migration.progress_sending_speed",
+	"site_migration.progress_extracting",
+	"site_migration.progress_remote_extracting",
+	"site_migration.progress_building_target",
+	"site_migration.progress_activating",
+	"site_migration.progress_processing",
+	"site_migration.progress_decision",
+	"site_migration.progress_retryable_failure",
+	"site_migration.progress_manual_failure",
+	"site_migration.progress_interrupted",
+	"site_migration.start_confirm",
+	"site_migration.started",
+	"site_migration.retry_queued",
+	"site_migration.delete_task",
+	"site_migration.delete_source_task_confirm",
+	"site_migration.delete_target_task_confirm",
+	"site_migration.task_deleted",
+	"site_migration.completed",
+	"site_migration.completed_delete_queued",
+	"site_migration.restore_source_confirm",
+	"site_migration.cancel_migration",
+	"site_migration.cancel_migration_confirm",
+	"site_migration.source_restored_dns_reminder",
+	"site_migration.target_ready_dns_reminder",
+	"site_migration.custom_command_warning",
 	"alert.saving",
 	"alert.send_failed",
 	"alert.sending",
@@ -234,6 +284,11 @@ var i18nKeys = []string{
 	"database.wordpress_password_help",
 	"website.status_paused",
 	"website.status_running",
+	"website.status_migrated",
+	"website.restore_migrated",
+	"website.restore_migrated_detail",
+	"website.restore_migrated_confirm",
+	"website.restore_migrated_success",
 	"website.generic_php_site",
 	"website.auto_detect",
 	"website.detecting",
@@ -1078,6 +1133,55 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	db := database.GetDB()
 	r.Use(middleware.ScanDefense(db, cfg.Panel.RandomSuffix))
 
+	siteMigrationPairing, err := executor.NewSiteMigrationPairingService(db, version, cfg.Panel.TLSCertPath)
+	if err != nil {
+		panic(err)
+	}
+	siteMigrationSource, err := executor.NewSiteMigrationSourceService(db, siteMigrationPairing)
+	if err != nil {
+		panic(err)
+	}
+	siteMigrationRoot := cfg.Panel.DataDir
+	if siteMigrationRoot == "" {
+		siteMigrationRoot = os.TempDir()
+	}
+	siteMigrationPlanner, err := executor.NewSiteMigrationBatchPlanner(db, siteMigrationRoot)
+	if err != nil {
+		panic(err)
+	}
+	var siteMigrationWorkflow *executor.SiteMigrationWorkflowService
+	var siteMigrationControl *executor.SiteMigrationControlService
+	if siteMigrationPreparation, preparationErr := executor.NewSiteMigrationSourcePreparationService(db, cfg, siteMigrationPairing); preparationErr == nil {
+		siteMigrationWorkflow, err = executor.NewSiteMigrationWorkflowService(db, cfg, siteMigrationPairing, siteMigrationPreparation)
+		if err == nil {
+			siteMigrationControl, err = executor.NewSiteMigrationControlService(db, cfg, siteMigrationPairing, siteMigrationWorkflow, filepath.Join(siteMigrationRoot, "site-migration", "target"))
+		}
+		if err != nil {
+			log.Printf("网站搬家操作服务未启用: %v", err)
+		}
+	} else {
+		log.Printf("网站搬家操作服务未启用: %v", preparationErr)
+	}
+	siteMigrationHandler := &handlers.SiteMigrationHandler{Service: siteMigrationPairing, Source: siteMigrationSource, Planner: siteMigrationPlanner, Workflow: siteMigrationWorkflow, Control: siteMigrationControl, DB: db, Version: version}
+	r.POST("/api/site-migration/v1/pair/redeem", siteMigrationHandler.Redeem)
+	r.POST("/api/site-migration/v1/pair/challenge", siteMigrationHandler.Challenge)
+	r.POST("/api/site-migration/v1/peer/revoke", siteMigrationHandler.MachineRevokePeer)
+	r.POST("/api/site-migration/v1/preflight", siteMigrationHandler.MachinePreflight)
+	r.POST("/api/site-migration/v1/target/batches", siteMigrationHandler.MachineCreateTargetBatch)
+	r.POST("/api/site-migration/v1/target/batches/queue", siteMigrationHandler.MachineQueueTargetBatch)
+	r.POST("/api/site-migration/v1/source/manifest", siteMigrationHandler.SourceManifest)
+	r.POST("/api/site-migration/v1/source/chunk", siteMigrationHandler.SourceChunk)
+	r.POST("/api/site-migration/v1/source/file-shard", siteMigrationHandler.SourceFileShard)
+	r.POST("/api/site-migration/v1/source/database", siteMigrationHandler.SourceDatabase)
+	r.POST("/api/site-migration/v1/source/database-chunk", siteMigrationHandler.SourceDatabaseChunk)
+	r.POST("/api/site-migration/v1/source/certificates", siteMigrationHandler.SourceCertificates)
+	r.POST("/api/site-migration/v1/source/certificate-chunk", siteMigrationHandler.SourceCertificateChunk)
+	r.POST("/api/site-migration/v1/source/settings", siteMigrationHandler.SourceSettings)
+	r.POST("/api/site-migration/v1/target/status", siteMigrationHandler.MachineTargetStatus)
+	r.POST("/api/site-migration/v1/target/retry", siteMigrationHandler.MachineTargetRetry)
+	r.POST("/api/site-migration/v1/target/delete-task", siteMigrationHandler.MachineDeleteTargetTask)
+	r.POST("/api/site-migration/v1/source/delete-task", siteMigrationHandler.MachineDeleteSourceTask)
+
 	attemptTracker := middleware.NewLoginAttemptTracker(
 		db,
 		cfg.Security.MaxLoginAttempts,
@@ -1175,6 +1279,18 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/auth/logout", authHandler.Logout)
 	protected.GET("/api/auth/check", authHandler.Check)
 	protected.GET("/api/auth/csrf-token", authHandler.CSRFToken)
+	protected.POST("/api/site-migration/pairing-package", siteMigrationHandler.GeneratePackage)
+	protected.POST("/api/site-migration/peers/connect", siteMigrationHandler.Connect)
+	protected.GET("/api/site-migration/peers", siteMigrationHandler.ListPeers)
+	protected.GET("/api/site-migration/tasks", siteMigrationHandler.ListTasks)
+	protected.DELETE("/api/site-migration/peers/:id", siteMigrationHandler.RevokePeer)
+	protected.POST("/api/site-migration/peers/:id/preflight", siteMigrationHandler.RemotePreflight)
+	protected.POST("/api/site-migration/start", siteMigrationHandler.Start)
+	protected.POST("/api/site-migration/estimate", siteMigrationHandler.Estimate)
+	protected.POST("/api/site-migration/tasks/:id/retry", siteMigrationHandler.Retry)
+	protected.POST("/api/site-migration/tasks/:id/complete", siteMigrationHandler.CompleteSource)
+	protected.POST("/api/site-migration/tasks/:id/restore", siteMigrationHandler.RestoreSource)
+	protected.DELETE("/api/site-migration/tasks/:id", siteMigrationHandler.DeleteTask)
 
 	websiteHandler := &handlers.WebsiteHandler{DB: db}
 	wpInventoryHandler := &handlers.WPInventoryHandler{DB: db}
@@ -1391,6 +1507,9 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	})
 	protected.GET("/websites/new", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "website_new.html", pageData(suffix, "websites", "websites_new_content", c))
+	})
+	protected.GET("/websites/migration", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "site_migration.html", pageData(suffix, "websites", "site_migration_content", c))
 	})
 	protected.GET("/websites/:id", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "website_detail.html", pageData(suffix, "websites", "websites_detail_content", c))

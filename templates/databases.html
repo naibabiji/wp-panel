@@ -31,7 +31,7 @@
                         <tr class="border-b border-gray-700/50 hover:bg-gray-800/50 cursor-pointer" @click="openDatabase(item)">
                             <td class="table-cell">
                                 <div class="text-white" x-text="item.domain"></div>
-                                <span :class="item.status === 'active' ? 'badge-success' : 'badge-warning'" class="text-xs" x-text="item.status === 'active' ? t('website.status_running') : t('website.status_paused')"></span>
+                                <span :class="item.status === 'active' ? 'badge-success' : 'badge-warning'" class="text-xs" x-text="item.status === 'active' ? t('website.status_running') : (item.status === 'migrated' ? t('website.status_migrated') : t('website.status_paused'))"></span>
                             </td>
                             <td class="table-cell font-mono text-sm" x-text="item.db_name"></td>
                             <td class="table-cell font-mono text-sm" x-text="item.db_user"></td>

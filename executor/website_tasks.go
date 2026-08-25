@@ -14,6 +14,7 @@ import (
 
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
+	"github.com/naibabiji/wp-panel/models"
 )
 
 type rollbackStep struct {
@@ -473,6 +474,11 @@ func executeDeleteSite(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "任务参数类型错误"}
 	}
 	site := payload.Site
+	if locked, err := SiteMigrationDeleteBlocked(context.Background(), site.ID, site.Domain); err != nil {
+		return TaskResult{Success: false, Message: "检查站点迁移锁失败"}
+	} else if locked {
+		return TaskResult{Success: false, Message: "该网站仍受网站搬家任务保护，不能从网站列表直接删除。请前往「网站搬家」处理该任务"}
+	}
 	cfg := config.AppConfig
 
 	webRoot, err := managedSubpath(cfg.Paths.WWWRoot, site.WebRoot, "网站目录")
@@ -508,6 +514,18 @@ func executeDeleteSite(task *Task) TaskResult {
 	if err != nil {
 		return TaskResult{Success: false, Message: err.Error()}
 	}
+	db := database.GetDB()
+	maintenancePaths, err := terminalSourceMigrationMaintenancePaths(db, site.ID, cfg.Paths.NginxSitesAvailable)
+	if err != nil {
+		return TaskResult{Success: false, Message: "检查网站搬家维护配置失败"}
+	}
+	if currentTarget, readErr := os.Readlink(enabledPath); readErr == nil && strings.HasPrefix(filepath.Base(currentTarget), ".wp-panel-migration-") {
+		currentTarget, pathErr := managedSubpath(cfg.Paths.NginxSitesAvailable, currentTarget, "迁移维护配置")
+		if pathErr != nil {
+			return TaskResult{Success: false, Message: pathErr.Error()}
+		}
+		maintenancePaths = append(maintenancePaths, currentTarget)
+	}
 
 	if _, err := executeCommand("userdel", "-r", "-f", site.SystemUser); err != nil {
 		fmt.Fprintf(os.Stderr, "删除系统用户警告: %v\n", err)
@@ -529,13 +547,14 @@ func executeDeleteSite(task *Task) TaskResult {
 	os.Remove(phpPoolPath)
 	os.Remove(enabledPath)
 	os.Remove(nginxConfPath)
+	for _, maintenancePath := range maintenancePaths {
+		os.Remove(maintenancePath)
+	}
 
 	exec.Command("nginx", "-s", "reload").Run()
 	exec.Command("systemctl", "reload", "php8.3-fpm").Run()
 
 	os.RemoveAll(certDir)
-
-	db := database.GetDB()
 
 	cronDeleted, err := deleteSiteAndAssociatedCronJobs(db, site.ID)
 	if err != nil {
@@ -548,6 +567,29 @@ func executeDeleteSite(task *Task) TaskResult {
 	}
 
 	return TaskResult{Success: true, Message: "网站 " + site.Domain + " 已删除" + dbCleanupWarning}
+}
+
+func terminalSourceMigrationMaintenancePaths(db *sql.DB, siteID int, nginxRoot string) ([]string, error) {
+	rows, err := db.Query(`SELECT r.identifier FROM site_migration_resources r
+		JOIN site_migration_sites ms ON ms.id=r.migration_site_id AND ms.source_site_id=?
+		WHERE ms.status IN ('completed','abandoned') AND r.resource_type='source_maintenance_config' AND r.status='created'`, siteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		path, err = managedSubpath(nginxRoot, path, "迁移维护配置")
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, path)
+	}
+	return paths, rows.Err()
 }
 
 // deleteSiteAndAssociatedCronJobs 原子删除网站记录和所有仍关联该网站的计划任务。
@@ -564,6 +606,26 @@ func deleteSiteAndAssociatedCronJobs(db *sql.DB, siteID int) (bool, error) {
 			_ = tx.Rollback()
 		}
 	}()
+
+	if _, err := tx.Exec(`UPDATE site_migration_resources SET status='removed',updated_at=CURRENT_TIMESTAMP
+		WHERE resource_type='source_maintenance_config' AND status='created' AND migration_site_id IN (
+			SELECT id FROM site_migration_sites WHERE source_site_id=? AND status IN ('completed','abandoned')
+		)`, siteID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`UPDATE site_migration_locks SET status='released',site_id=NULL,released_at=COALESCE(released_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP
+		WHERE site_id=? AND (status='released' OR (status='active' AND direction='source' AND EXISTS (
+			SELECT 1 FROM site_migration_sites ms WHERE ms.id=site_migration_locks.migration_site_id
+			AND ms.source_site_id=? AND ms.status='completed' AND ms.stage='completed'
+		)))`, siteID, siteID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`UPDATE site_migration_sites SET source_site_id=NULL WHERE source_site_id=? AND status IN ('completed','abandoned','failed_manual')`, siteID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`UPDATE site_migration_sites SET target_site_id=NULL WHERE target_site_id=? AND status IN ('completed','abandoned','failed_manual')`, siteID); err != nil {
+		return false, err
+	}
 
 	res, err := tx.Exec(`DELETE FROM cron_jobs WHERE site_id = ?`, siteID)
 	if err != nil {
@@ -586,6 +648,11 @@ func executePauseSite(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "任务参数类型错误"}
 	}
 	site := payload.Site
+	if locked, err := SiteMigrationLocked(context.Background(), site.ID, site.Domain); err != nil {
+		return TaskResult{Success: false, Message: "检查站点迁移锁失败"}
+	} else if locked {
+		return TaskResult{Success: false, Message: "网站正在迁移维护中"}
+	}
 	cfg := config.AppConfig
 
 	nginxConfPath, err := managedSubpath(cfg.Paths.NginxSitesAvailable, site.NginxConfPath, "Nginx配置")
@@ -632,6 +699,11 @@ func executeEnableSite(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "任务参数类型错误"}
 	}
 	site := payload.Site
+	if locked, err := SiteMigrationLocked(context.Background(), site.ID, site.Domain); err != nil {
+		return TaskResult{Success: false, Message: "检查站点迁移锁失败"}
+	} else if locked {
+		return TaskResult{Success: false, Message: "网站正在迁移维护中"}
+	}
 	cfg := config.AppConfig
 
 	nginxConfPath, err := managedSubpath(cfg.Paths.NginxSitesAvailable, site.NginxConfPath, "Nginx配置")
@@ -647,30 +719,60 @@ func executeEnableSite(task *Task) TaskResult {
 	if target, err := os.Readlink(enabledPath); err == nil {
 		oldTarget = target
 		hadOldLink = true
+	} else if !os.IsNotExist(err) {
+		return TaskResult{Success: false, Message: "检查Nginx启用链接失败: " + err.Error()}
 	}
-	os.Remove(enabledPath)
-	if err := os.Symlink(nginxConfPath, enabledPath); err != nil {
+	maintenancePath := ""
+	if site.Status == models.StatusMigrated {
+		if !hadOldLink {
+			return TaskResult{Success: false, Message: "搬家维护配置不可用"}
+		}
+		if filepath.Clean(oldTarget) != filepath.Clean(nginxConfPath) {
+			if !strings.HasPrefix(filepath.Base(oldTarget), ".wp-panel-migration-") {
+				return TaskResult{Success: false, Message: "搬家维护配置已变化"}
+			}
+			maintenancePath, err = managedSubpath(cfg.Paths.NginxSitesAvailable, oldTarget, "迁移维护配置")
+			if err != nil {
+				return TaskResult{Success: false, Message: err.Error()}
+			}
+		}
+	}
+	if err := atomicReplaceSymlink(enabledPath, nginxConfPath); err != nil {
 		log.Printf("创建软链接失败: %v", err)
 		return TaskResult{Success: false, Message: "创建软链接失败"}
 	}
 
 	if out, err := exec.Command("nginx", "-s", "reload").CombinedOutput(); err != nil {
-		_ = os.Remove(enabledPath)
 		if hadOldLink {
-			if restoreErr := os.Symlink(oldTarget, enabledPath); restoreErr != nil {
+			if restoreErr := atomicReplaceSymlink(enabledPath, oldTarget); restoreErr != nil {
 				log.Printf("启用失败后恢复Nginx启用链接失败 path=%s: %v", enabledPath, restoreErr)
 			} else {
 				exec.Command("nginx", "-s", "reload").Run()
 			}
+		} else {
+			_ = os.Remove(enabledPath)
 		}
 		return TaskResult{Success: false, Message: "Nginx 重载失败: " + string(out)}
 	}
 
 	db := database.GetDB()
-	if _, err := db.Exec("UPDATE websites SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?", site.ID); err != nil {
+	expectedStatus := string(site.Status)
+	result, err := db.Exec("UPDATE websites SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?", site.ID, expectedStatus)
+	if err != nil {
 		return TaskResult{Success: false, Message: "更新网站状态失败: " + err.Error()}
 	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return TaskResult{Success: false, Message: "网站状态已变化"}
+	}
+	if maintenancePath != "" {
+		if err := os.Remove(maintenancePath); err != nil && !os.IsNotExist(err) {
+			log.Printf("恢复已搬家网站后清理维护配置失败 site=%d path=%s: %v", site.ID, maintenancePath, err)
+		}
+	}
 
+	if site.Status == models.StatusMigrated {
+		return TaskResult{Success: true, Message: "网站 " + site.Domain + " 已解除搬家维护模式并恢复运行"}
+	}
 	return TaskResult{Success: true, Message: "网站 " + site.Domain + " 已启用"}
 }
 
