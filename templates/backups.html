@@ -4,10 +4,102 @@
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
         <h2 class="text-xl font-bold text-white">{{t .Lang "nav.backups"}}</h2>
         <div class="flex flex-wrap gap-3">
+            <button @click="openPolicy()" class="btn-primary text-xs py-1 px-3">{{t .Lang "backups.batch_settings"}}</button>
             <a href="/{{.RandomSuffix}}/backups/remote-settings" class="btn-secondary text-xs py-1 px-3">{{t .Lang "backups.remote_settings"}}</a>
             <button @click="reconcileRemoteStatus()" :disabled="reconciling" class="btn-secondary text-xs py-1 px-3" x-text="reconciling ? t('backups.reconciling') : t('backups.reconcile_remote_status')"></button>
             <button @click="expandAll()" class="btn-secondary text-xs py-1 px-3">{{t .Lang "backups.expand_all"}}</button>
             <button @click="collapseAll()" class="btn-secondary text-xs py-1 px-3">{{t .Lang "backups.collapse_all"}}</button>
+        </div>
+    </div>
+
+    <div x-cloak x-show="policyOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" @click.self="closePolicy()" @keydown.escape.window="closePolicy()">
+        <div class="card w-full max-w-6xl max-h-[90vh] flex flex-col" role="dialog" aria-modal="true" aria-labelledby="backup-policy-title">
+            <div class="flex items-start justify-between gap-4 mb-4">
+                <div>
+                    <h3 id="backup-policy-title" class="text-lg font-semibold text-white">{{t .Lang "backups.batch_settings_title"}}</h3>
+                    <p class="text-xs text-gray-400 mt-1">{{t .Lang "backups.batch_settings_help"}}</p>
+                </div>
+                <button @click="closePolicy()" :disabled="policySaving" class="text-gray-400 hover:text-white text-xl">&times;</button>
+            </div>
+            <div class="flex flex-wrap items-center gap-3 mb-4 text-sm">
+                <span>{{t .Lang "backups.remote_status"}}</span>
+                <span :class="policyRemoteEnabled ? 'badge-success' : 'badge-warning'" x-text="policyRemoteEnabled ? t('backups.remote_enabled') : t('backups.remote_disabled')"></span>
+                <span class="text-xs text-gray-500" x-text="policyRemoteEnabled ? t('backups.remote_enabled_help') : t('backups.remote_disabled_help')"></span>
+            </div>
+            <p class="text-xs text-amber-400 mb-4">{{t .Lang "backups.database_schedule_help"}}</p>
+
+            <div x-show="policyLoading" class="py-10 text-center text-gray-500">{{t .Lang "backups.loading"}}</div>
+            <div x-show="!policyLoading" class="overflow-auto border border-gray-700 rounded">
+                <table class="w-full min-w-[980px] text-sm">
+                    <thead class="sticky top-0 z-10 bg-gray-800 text-gray-400 border-b border-gray-700">
+                        <tr>
+                            <th class="px-4 py-3 text-left">{{t .Lang "backups.website"}}</th>
+                            <th class="px-3 py-3 text-left">{{t .Lang "backups.database_auto_backup"}}</th>
+                            <th class="px-3 py-3 text-left">{{t .Lang "backups.keep_count"}}</th>
+                            <th class="px-3 py-3 text-left">{{t .Lang "backups.incremental_file_backup"}}</th>
+                            <th class="px-3 py-3 text-left">{{t .Lang "backups.execution_cycle"}}</th>
+                            <th class="px-3 py-3 text-left">{{t .Lang "backups.full_file_backup"}}</th>
+                            <th class="px-3 py-3 text-left">{{t .Lang "backups.execution_cycle"}}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="site in policySites" :key="site.site_id">
+                            <tr class="border-b border-gray-700/70 bg-gray-900/30 align-top last:border-b-0">
+                                <td class="px-4 py-4 font-semibold text-white break-all" x-text="site.domain"></td>
+                                <td class="px-3 py-4"><input type="checkbox" x-model="site.db_enabled"></td>
+                                <td class="px-3 py-3">
+                                    <label class="flex items-center gap-2 whitespace-nowrap">
+                                        <input type="number" min="1" max="30" x-model.number="site.db_keep_count" class="input-field w-16 py-1 text-sm">
+                                        <span class="text-xs text-gray-500">{{t .Lang "backups.copies"}}</span>
+                                    </label>
+                                </td>
+                                <td class="px-3 py-4">
+                                    <input type="checkbox" x-model="site.incremental.enabled">
+                                    <div x-show="site.incremental.conflict" class="mt-2 max-w-xs text-xs">
+                                        <p class="text-amber-300" x-text="t('backups.duplicate_mode_tasks', { count: site.incremental.task_count })"></p>
+                                        <label class="flex items-start gap-2 text-gray-300 mt-1">
+                                            <input type="checkbox" x-model="site.incremental.rebuild" class="mt-0.5">
+                                            <span x-text="site.incremental.enabled ? t('backups.authorize_rebuild_tasks') : t('backups.authorize_delete_tasks')"></span>
+                                        </label>
+                                    </div>
+                                </td>
+                                <td class="px-3 py-3">
+                                    <select x-model="site.incremental.cycle" :disabled="!site.incremental.enabled" class="input-field min-w-36 text-sm py-1">
+                                        <option value="daily">{{t .Lang "backups.cycle_daily"}}</option>
+                                        <option value="weekly">{{t .Lang "backups.cycle_weekly"}}</option>
+                                        <option value="fortnightly">{{t .Lang "backups.cycle_fortnightly"}}</option>
+                                        <option value="monthly">{{t .Lang "backups.cycle_monthly"}}</option>
+                                        <option x-show="site.incremental.cycle === 'custom'" value="custom">{{t .Lang "backups.cycle_custom"}}</option>
+                                    </select>
+                                    <p x-show="site.incremental.cron_expression" class="text-xs text-gray-500 mt-1 font-mono whitespace-nowrap" x-text="'Cron: ' + site.incremental.cron_expression"></p>
+                                </td>
+                                <td class="px-3 py-4">
+                                    <input type="checkbox" x-model="site.full.enabled">
+                                    <div x-show="site.full.conflict" class="mt-2 max-w-xs text-xs">
+                                        <p class="text-amber-300" x-text="t('backups.duplicate_mode_tasks', { count: site.full.task_count })"></p>
+                                        <label class="flex items-start gap-2 text-gray-300 mt-1">
+                                            <input type="checkbox" x-model="site.full.rebuild" class="mt-0.5">
+                                            <span x-text="site.full.enabled ? t('backups.authorize_rebuild_tasks') : t('backups.authorize_delete_tasks')"></span>
+                                        </label>
+                                    </div>
+                                </td>
+                                <td class="px-3 py-3">
+                                    <select x-model="site.full.cycle" :disabled="!site.full.enabled" class="input-field min-w-36 text-sm py-1">
+                                        <option value="monthly">{{t .Lang "backups.cycle_monthly"}}</option>
+                                        <option value="quarterly">{{t .Lang "backups.cycle_quarterly"}}</option>
+                                        <option x-show="site.full.cycle === 'custom'" value="custom">{{t .Lang "backups.cycle_custom"}}</option>
+                                    </select>
+                                    <p x-show="site.full.cron_expression" class="text-xs text-gray-500 mt-1 font-mono whitespace-nowrap" x-text="'Cron: ' + site.full.cron_expression"></p>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+            <div class="flex justify-end gap-3 mt-5 pt-4 border-t border-gray-700">
+                <button @click="closePolicy()" :disabled="policySaving" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
+                <button @click="savePolicy()" :disabled="policySaving || policyLoading" class="btn-primary" x-text="policySaving ? t('backups.saving') : t('common.save')"></button>
+            </div>
         </div>
     </div>
 
@@ -148,6 +240,11 @@ function backupsOverview() {
         reconciling: false,
         sites: [],
         panelBackups: [],
+        policyOpen: false,
+        policyLoading: false,
+        policySaving: false,
+        policyRemoteEnabled: false,
+        policySites: [],
         async fetchOverview() {
             this.loading = true;
             try {
@@ -158,6 +255,53 @@ function backupsOverview() {
                 }
             } catch (e) {}
             this.loading = false;
+        },
+        async openPolicy() {
+            this.policyOpen = true;
+            this.policyLoading = true;
+            try {
+                const r = await api('/backups/policy');
+                this.policyRemoteEnabled = !!r.data?.remote_backup_enabled;
+                this.policySites = (r.data?.sites || []).map(site => ({
+                    ...site,
+                    incremental: { ...site.incremental, rebuild: false },
+                    full: { ...site.full, rebuild: false }
+                }));
+            } catch(e) {
+                showToast(e.message, 'error');
+                this.policyOpen = false;
+            }
+            this.policyLoading = false;
+        },
+        closePolicy() {
+            if (this.policySaving) return;
+            this.policyOpen = false;
+            this.policySites = [];
+        },
+        async savePolicy() {
+            const destructive = this.policySites.some(site => site.incremental.rebuild || site.full.rebuild);
+            if (destructive && !await confirmModal(t('backups.confirm_rebuild_tasks'))) return;
+            this.policySaving = true;
+            try {
+                const sites = this.policySites.map(site => ({
+                    site_id: site.site_id,
+                    db_enabled: !!site.db_enabled,
+                    db_keep_count: Number(site.db_keep_count),
+                    incremental_enabled: !!site.incremental.enabled,
+                    incremental_cycle: site.incremental.cycle,
+                    incremental_rebuild: !!site.incremental.rebuild,
+                    full_enabled: !!site.full.enabled,
+                    full_cycle: site.full.cycle,
+                    full_rebuild: !!site.full.rebuild
+                }));
+                const r = await api('/backups/policy', { method: 'PUT', body: { sites } });
+                const skipped = Number(r.data?.skipped_conflicts || 0);
+                showToast(skipped ? t('backups.batch_saved_with_skips', { count: skipped }) : t('backups.batch_saved'), skipped ? 'warning' : 'success');
+                this.policyOpen = false;
+                this.policySites = [];
+                await this.fetchOverview();
+            } catch(e) { showToast(e.message, 'error'); }
+            this.policySaving = false;
         },
         async reconcileRemoteStatus() {
             this.reconciling = true;

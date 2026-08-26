@@ -11,6 +11,7 @@ import (
 
 	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/executor"
+	"github.com/naibabiji/wp-panel/i18n"
 	"github.com/naibabiji/wp-panel/models"
 
 	"github.com/gin-gonic/gin"
@@ -72,9 +73,24 @@ func (h *CronHandler) Create(c *gin.Context) {
 	if taskType == "" {
 		taskType = "command"
 	}
+	if taskType == "file_backup" && req.BackupMode == "" {
+		req.BackupMode = "incremental"
+	}
 	if msg := validateCronInput(req.Name, req.CronExpression, req.Command, taskType, req.BackupMode, req.RunAsUser, req.SiteID); msg != "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(msg))
 		return
+	}
+	if taskType == "file_backup" && req.SiteID != nil {
+		exists, err := fileBackupTaskExists(db, *req.SiteID, req.BackupMode, 0)
+		if err != nil {
+			log.Printf("检查重复文件备份任务失败: %v", err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "cron.backup_duplicate_check_failed")))
+			return
+		}
+		if exists {
+			c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "cron.duplicate_backup_task")))
+			return
+		}
 	}
 	notifyFail := 0
 	if req.NotifyFail {
@@ -136,9 +152,24 @@ func (h *CronHandler) Update(c *gin.Context) {
 	if taskType == "" {
 		taskType = "command"
 	}
+	if taskType == "file_backup" && req.BackupMode == "" {
+		req.BackupMode = "incremental"
+	}
 	if msg := validateCronInput(req.Name, req.CronExpression, req.Command, taskType, req.BackupMode, req.RunAsUser, req.SiteID); msg != "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(msg))
 		return
+	}
+	if taskType == "file_backup" && req.SiteID != nil {
+		exists, err := fileBackupTaskExists(db, *req.SiteID, req.BackupMode, id)
+		if err != nil {
+			log.Printf("检查重复文件备份任务失败: %v", err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "cron.backup_duplicate_check_failed")))
+			return
+		}
+		if exists {
+			c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "cron.duplicate_backup_task")))
+			return
+		}
 	}
 	notifyFail := 0
 	if req.NotifyFail != nil && *req.NotifyFail {

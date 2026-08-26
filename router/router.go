@@ -30,6 +30,12 @@ var i18nKeys = []string{
 	"auth.session_expired",
 	"backups.backup_auto",
 	"backups.backup_manual",
+	"backups.authorize_delete_tasks",
+	"backups.authorize_rebuild_tasks",
+	"backups.batch_saved",
+	"backups.batch_saved_with_skips",
+	"backups.confirm_rebuild_tasks",
+	"backups.duplicate_mode_tasks",
 	"backups.actions",
 	"backups.clean_record",
 	"backups.collapse_all",
@@ -51,6 +57,11 @@ var i18nKeys = []string{
 	"backups.reconcile_remote_status",
 	"backups.reconcile_success",
 	"backups.reconciling",
+	"backups.remote_disabled",
+	"backups.remote_disabled_help",
+	"backups.remote_enabled",
+	"backups.remote_enabled_help",
+	"backups.saving",
 	"backups.remote_chain_healthy",
 	"backups.remote_chain_cleanup_pending",
 	"backups.remote_chain_repair_pending",
@@ -70,6 +81,20 @@ var i18nKeys = []string{
 	"common.saving",
 	"common.service_busy",
 	"common.service_exception",
+	"cron.day_separator",
+	"cron.full_backup",
+	"cron.incremental_backup",
+	"cron.schedule_daily",
+	"cron.schedule_monthly",
+	"cron.schedule_quarterly",
+	"cron.schedule_weekly",
+	"cron.weekday_friday",
+	"cron.weekday_monday",
+	"cron.weekday_saturday",
+	"cron.weekday_sunday",
+	"cron.weekday_thursday",
+	"cron.weekday_tuesday",
+	"cron.weekday_wednesday",
 	"database.adminer_active_for",
 	"database.adminer_database_password",
 	"database.adminer_database_password_help",
@@ -1399,6 +1424,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/websites/:id/adminer/enable", adminerHandler.Enable)
 	protected.POST("/api/websites/:id/adminer/disable", adminerHandler.Disable)
 	protected.GET("/api/backups/overview", handlers.GetBackupOverview)
+	protected.GET("/api/backups/policy", handlers.GetBackupPolicy)
+	protected.PUT("/api/backups/policy", handlers.SaveBackupPolicy)
 	protected.POST("/api/backups/reconcile-status", handlers.ReconcileBackupStatus)
 
 	dashboardHandler := &handlers.DashboardHandler{}

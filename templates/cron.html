@@ -26,8 +26,8 @@
                 <tbody>
                     <template x-for="job in jobs" :key="job.id">
                         <tr class="border-b border-gray-700/50">
-                            <td class="table-cell font-medium" x-text="job.name"></td>
-                            <td class="table-cell font-mono text-xs" x-text="job.cron_expression"></td>
+                            <td class="table-cell font-medium" x-text="displayJobName(job)"></td>
+                            <td class="table-cell text-xs whitespace-nowrap" x-text="displaySchedule(job.cron_expression)"></td>
                             <td class="table-cell text-xs" x-text="job.task_type === 'file_backup' ? t('cron.task_type_file_backup') : t('cron.task_type_command')"></td>
                             <td class="table-cell font-mono text-xs max-w-[200px] truncate" x-text="job.task_type === 'file_backup' ? (job.backup_mode === 'full' ? t('cron.full_backup') : t('cron.smart_incremental')) : job.command"></td>
                             <td class="table-cell">
@@ -204,6 +204,29 @@ function cronManager() {
             const site = this.sites.find(s => s.id == this.form.site_id);
             if (site) this.form.name = '[' + prefix + '] ' + site.domain;
         },
+        displayJobName(job) {
+            if (job.task_type !== 'file_backup') return job.name;
+            const match = String(job.name || '').match(/^\[file_backup(?::(?:incremental|full))?\]\s*(.*)$/);
+            if (!match) return job.name;
+            const label = job.backup_mode === 'full' ? t('cron.full_backup') : t('cron.incremental_backup');
+            return '[' + label + '] ' + match[1];
+        },
+        displaySchedule(expression) {
+            const fields = String(expression || '').trim().split(/\s+/);
+            if (fields.length !== 5 || !/^\d+$/.test(fields[0]) || !/^\d+$/.test(fields[1])) return expression;
+            const minute = Number(fields[0]);
+            const hour = Number(fields[1]);
+            if (minute > 59 || hour > 23) return expression;
+            const time = String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0');
+            if (fields[2] === '*' && fields[3] === '*' && fields[4] === '*') return t('cron.schedule_daily', { time });
+            if (fields[2] === '*' && fields[3] === '*' && /^[0-7]$/.test(fields[4])) {
+                const weekdays = [t('cron.weekday_sunday'), t('cron.weekday_monday'), t('cron.weekday_tuesday'), t('cron.weekday_wednesday'), t('cron.weekday_thursday'), t('cron.weekday_friday'), t('cron.weekday_saturday')];
+                return t('cron.schedule_weekly', { weekday: weekdays[Number(fields[4]) % 7], time });
+            }
+            if (fields[3] === '*' && fields[4] === '*' && /^\d+(,\d+)?$/.test(fields[2])) return t('cron.schedule_monthly', { days: fields[2].replace(',', t('cron.day_separator')), time });
+            if (fields[3] === '1,4,7,10' && fields[4] === '*' && /^\d+$/.test(fields[2])) return t('cron.schedule_quarterly', { day: fields[2], time });
+            return expression;
+        },
         onTaskTypeChange() {
             if ((this.form.task_type === "file_backup" || this.form.task_type === "wp_cron") && !this.sites.length) this.fetchSites();
         },
@@ -260,7 +283,7 @@ function cronManager() {
             } catch(e) { this.cronLogContent = t('cron.load_failed_with_error', { error: e.message }); }
         },
         async deleteJob(job) {
-            if (!await confirmModal(t('cron.confirm_delete', { name: job.name }))) return;
+            if (!await confirmModal(t('cron.confirm_delete', { name: this.displayJobName(job) }))) return;
             try { await api('/cron/' + job.id, { method: 'DELETE' }); await this.fetchList(); showToast(t('cron.deleted_success'), 'success'); } catch(e) { showToast(e.message, 'error'); }
         }
     }
