@@ -25,8 +25,8 @@ func TestListBanHistoryLimitsSearchAndPaginationToLatest300(t *testing.T) {
 		if i == 305 {
 			ip = "search-target"
 		}
-		if _, err := database.GetDB().Exec(`INSERT INTO firewall_bans
-			(ip_address, ban_level, reason, source_jail, banned_at, unbanned_at)
+		if _, err := database.GetDB().Exec(`INSERT INTO firewall_ban_history
+			(ip_address, ban_level, reason, source_jail, banned_at, expires_at)
 			VALUES (?, 2, 'test', 'wppanel', ?, ?)`,
 			ip, base.Add(time.Duration(i)*time.Second), base.Add(time.Duration(i+600)*time.Second)); err != nil {
 			t.Fatalf("insert ban %d: %v", i, err)
@@ -36,6 +36,9 @@ func TestListBanHistoryLimitsSearchAndPaginationToLatest300(t *testing.T) {
 	page := requestBanHistory(t, "/firewall/bans?history=1&page=2")
 	if page.Data.Total != firewallBanHistoryLimit || page.Data.TotalPages != 10 || page.Data.Page != 2 {
 		t.Fatalf("pagination = total %d, pages %d, page %d", page.Data.Total, page.Data.TotalPages, page.Data.Page)
+	}
+	if !page.Data.HasMore {
+		t.Fatal("default history window should advertise older retained records")
 	}
 	if len(page.Data.Data) != 30 {
 		t.Fatalf("page data length = %d, want 30", len(page.Data.Data))
@@ -50,6 +53,14 @@ func TestListBanHistoryLimitsSearchAndPaginationToLatest300(t *testing.T) {
 	if excluded.Data.Total != 0 || len(excluded.Data.Data) != 0 {
 		t.Fatalf("old record should be outside latest 300: %+v", excluded.Data)
 	}
+	if !excluded.Data.HasMore {
+		t.Fatal("filtered default window must still allow expanding to older retained history")
+	}
+
+	expanded := requestBanHistory(t, "/firewall/bans?history=1&expanded=1&search=old-only")
+	if expanded.Data.Total != 1 || len(expanded.Data.Data) != 1 || expanded.Data.Data[0].IPAddress != "old-only" {
+		t.Fatalf("expanded history did not include older record: %+v", expanded.Data)
+	}
 }
 
 type banHistoryResponse struct {
@@ -59,6 +70,7 @@ type banHistoryResponse struct {
 		Total      int                  `json:"total"`
 		Page       int                  `json:"page"`
 		TotalPages int                  `json:"total_pages"`
+		HasMore    bool                 `json:"has_more"`
 	} `json:"data"`
 }
 

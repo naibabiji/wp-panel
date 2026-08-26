@@ -125,6 +125,30 @@ var migrations = append([]string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_bans_ip ON firewall_bans(ip_address)`,
 	`CREATE INDEX IF NOT EXISTS idx_bans_status ON firewall_bans(unbanned_at)`,
+	`CREATE TABLE IF NOT EXISTS firewall_ban_history (
+		id               INTEGER PRIMARY KEY AUTOINCREMENT,
+		ip_address       TEXT    NOT NULL,
+		ban_level        INTEGER NOT NULL DEFAULT 2,
+		reason           TEXT    DEFAULT '',
+		source_jail      TEXT    DEFAULT 'panel',
+		banned_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		expires_at       DATETIME,
+		ban_count        INTEGER NOT NULL DEFAULT 1,
+		is_manual        INTEGER NOT NULL DEFAULT 0,
+		duration_seconds INTEGER
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_ban_history_time ON firewall_ban_history(banned_at DESC, id DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_ban_history_ip ON firewall_ban_history(ip_address)`,
+	`CREATE TRIGGER IF NOT EXISTS trim_firewall_ban_history
+		AFTER INSERT ON firewall_ban_history
+		WHEN (SELECT COUNT(*) FROM firewall_ban_history) > 1000
+		BEGIN
+			DELETE FROM firewall_ban_history
+			WHERE id NOT IN (
+				SELECT id FROM firewall_ban_history
+				ORDER BY banned_at DESC, id DESC LIMIT 1000
+			);
+		END`,
 
 	// ============================================================
 	// login_attempts

@@ -14,12 +14,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/naibabiji/wp-panel/database"
 )
 
 var syncMu sync.Mutex
+var sshRecordActionPending atomic.Bool
 var manualAddNginxBan = AddNginxBan
 var manualRemoveNginxBan = RemoveNginxBan
 var syncReplaceNginxBannedIPs = ReplaceNginxBannedIPs
@@ -91,10 +93,11 @@ func deployFail2ban(webWhitelistIPs, sshWhitelistIPs string, maxRetry, findTime,
 	jailPath := filepath.Join(jailDir, "wppanel.conf")
 	localPath := "/etc/fail2ban/fail2ban.local"
 	actionPath := filepath.Join(actionDir, "wppanel-nginx.conf")
+	recordActionPath := filepath.Join(actionDir, "wppanel-record.conf")
 	filterPath := filepath.Join(filterDir, "wppanel.conf")
 	filter404Path := filepath.Join(filterDir, "wppanel-404.conf")
 	filterLoginPath := filepath.Join(filterDir, "wppanel-login.conf")
-	backups, err := backupFail2banConfigFiles(jailPath, actionPath, filterPath, filter404Path, filterLoginPath, localPath)
+	backups, err := backupFail2banConfigFiles(jailPath, actionPath, recordActionPath, filterPath, filter404Path, filterLoginPath, localPath)
 	if err != nil {
 		return err
 	}
@@ -178,6 +181,7 @@ ignoreip = %s
 enabled = true
 filter = sshd
 action = nftables-multiport[name=wppanel-sshd, port="ssh"]
+         wppanel-record[name=wppanel-sshd]
 logpath = /var/log/auth.log
 maxretry = %d
 findtime = %d
@@ -209,6 +213,14 @@ actionunban = /usr/local/bin/wp-panel --unban-fail2ban <ip> --ban-jail <name>
 	if err := os.WriteFile(actionPath, []byte(actionConfig), 0644); err != nil {
 		return rollbackDeploy(fmt.Errorf("写入 nginx action 配置失败: %w", err))
 	}
+	recordActionConfig := `# WP Panel Generated - DO NOT EDIT MANUALLY
+[Definition]
+actionban = /usr/local/bin/wp-panel --record-fail2ban <ip> --ban-jail <name> --ban-bantime <bantime> --ban-count <bancount> --ban-restored=<restored>
+actionunban = /usr/local/bin/wp-panel --unban-fail2ban <ip> --ban-jail <name>
+`
+	if err := os.WriteFile(recordActionPath, []byte(recordActionConfig), 0644); err != nil {
+		return rollbackDeploy(fmt.Errorf("写入记录 action 配置失败: %w", err))
+	}
 
 	if err := os.WriteFile(filterPath, []byte(fail2banFilterConfig), 0644); err != nil {
 		return rollbackDeploy(fmt.Errorf("写入 filter 配置失败: %w", err))
@@ -233,6 +245,9 @@ ignoreregex =
 	}
 	if err := reloadOrStartFail2ban(); err != nil {
 		return rollbackDeploy(fmt.Errorf("重载 fail2ban 失败: %w", err))
+	}
+	if err := ensureFail2banSSHRecordAction(); err != nil {
+		return rollbackDeploy(fmt.Errorf("启用 SSH 封禁记录 action 失败: %w", err))
 	}
 	return nil
 }
@@ -259,6 +274,10 @@ func validateGeneratedFail2banJailConfig(config string) error {
 				return fmt.Errorf("invalid generated Fail2ban jail config: %s: %s", jail, directive)
 			}
 		}
+	}
+	sshdSection := config[strings.Index(config, "[wppanel-sshd]"):]
+	if !strings.Contains(sshdSection, "wppanel-record[name=wppanel-sshd]") {
+		return fmt.Errorf("invalid generated Fail2ban jail config: wppanel-sshd: missing record action")
 	}
 	return nil
 }
@@ -352,6 +371,31 @@ func reloadOrStartFail2ban() error {
 		}
 	}
 	return nil
+}
+
+func ensureFail2banSSHRecordAction() error {
+	out, err := executeCommand("fail2ban-client", "get", "wppanel-sshd", "actions")
+	if err != nil {
+		return err
+	}
+	if strings.Contains(out, "wppanel-record") {
+		sshRecordActionPending.Store(false)
+		return nil
+	}
+	status, err := executeCommand("fail2ban-client", "status", "wppanel-sshd")
+	if err != nil {
+		return err
+	}
+	if len(parseBannedIPs(status)) > 0 {
+		sshRecordActionPending.Store(true)
+		log.Printf("wppanel-sshd 仍有活动封禁，暂缓重启 jail 以启用记录 action")
+		return nil
+	}
+	_, err = executeCommand("fail2ban-client", "reload", "--restart", "wppanel-sshd")
+	if err == nil {
+		sshRecordActionPending.Store(false)
+	}
+	return err
 }
 
 func buildFail2banIgnoreIPs(whitelistIPs string) (string, error) {
@@ -623,14 +667,27 @@ func SyncFail2banBans() {
 			}
 		}
 	}
+	if sshRecordActionPending.Load() && jailStatusRead["wppanel-sshd"] {
+		sshActive := false
+		for pair := range activeJailIPs {
+			if pair.jail == "wppanel-sshd" {
+				sshActive = true
+				break
+			}
+		}
+		if !sshActive {
+			if err := ensureFail2banSSHRecordAction(); err != nil {
+				log.Printf("启用 SSH 封禁记录 action 失败: %v", err)
+			}
+		}
+	}
 
 	db := database.GetDB()
 
 	for pair := range activeJailIPs {
 		var count int
 		db.QueryRow(`SELECT COUNT(*) FROM firewall_bans
-			WHERE ip_address = ? AND source_jail = ? AND unbanned_at IS NULL
-				AND (expires_at IS NULL OR expires_at > datetime('now'))`, pair.ip, pair.jail).Scan(&count)
+			WHERE ip_address = ? AND source_jail = ? AND unbanned_at IS NULL`, pair.ip, pair.jail).Scan(&count)
 		if count > 0 {
 			continue
 		}
@@ -757,9 +814,14 @@ func RecordFail2banBan(ip, jail string, banTime, banCount int, restored bool) er
 	if protectedCount > 0 {
 		return nil
 	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 
 	var activeID, activeLevel int
-	err := db.QueryRow(
+	err = tx.QueryRow(
 		`SELECT id, ban_level
 		 FROM firewall_bans
 		 WHERE ip_address = ? AND source_jail = ? AND is_manual=0 AND unbanned_at IS NULL
@@ -771,7 +833,7 @@ func RecordFail2banBan(ip, jail string, banTime, banCount int, restored bool) er
 		if activeLevel >= 5 {
 			return nil
 		}
-		if _, err := db.Exec(
+		if _, err := tx.Exec(
 			`UPDATE firewall_bans
 			 SET ban_level = ?, reason = ?, source_jail = ?, ban_count = ?,
 			     banned_at = CURRENT_TIMESTAMP, expires_at = datetime('now', ?)
@@ -780,20 +842,37 @@ func RecordFail2banBan(ip, jail string, banTime, banCount int, restored bool) er
 		); err != nil {
 			return err
 		}
-		return nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
-	}
-
-	if _, err := db.Exec(
+	} else if _, err := tx.Exec(
 		`INSERT INTO firewall_bans (ip_address, ban_level, reason, source_jail, ban_count, expires_at)
 		 VALUES (?, ?, ?, ?, ?, datetime('now', ?))`,
 		ip, banLevel, reason, jail, banCount, expiresModifier,
 	); err != nil {
 		return err
 	}
+	if err := insertFirewallBanHistory(tx, ip, banLevel, reason, jail, banCount, false, banTime); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
-	return nil
+func insertFirewallBanHistory(tx *sql.Tx, ip string, level int, reason, jail string, banCount int, manual bool, duration int) error {
+	manualValue := 0
+	if manual {
+		manualValue = 1
+	}
+	if duration < 0 {
+		_, err := tx.Exec(`INSERT INTO firewall_ban_history
+			(ip_address,ban_level,reason,source_jail,ban_count,is_manual,duration_seconds,expires_at)
+			VALUES (?,?,?,?,?,?,NULL,NULL)`, ip, level, reason, jail, banCount, manualValue)
+		return err
+	}
+	modifier := fmt.Sprintf("+%d seconds", duration)
+	_, err := tx.Exec(`INSERT INTO firewall_ban_history
+		(ip_address,ban_level,reason,source_jail,ban_count,is_manual,duration_seconds,expires_at)
+		VALUES (?,?,?,?,?,?,?,datetime('now',?))`, ip, level, reason, jail, banCount, manualValue, duration, modifier)
+	return err
 }
 
 func fail2banBanLevel(banTime int) int {
@@ -1255,11 +1334,25 @@ func executeManualBan(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "封禁失败: " + err.Error()}
 	}
 
-	if _, err := db.Exec(
+	tx, err := db.Begin()
+	if err != nil {
+		_ = manualRemoveNginxBan(ip)
+		return TaskResult{Success: false, Message: "封禁记录写入失败"}
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(
 		`INSERT INTO firewall_bans (ip_address, ban_level, reason, source_jail, is_manual, ban_count, expires_at)
 		 VALUES (?, ?, '管理员手动封禁', ?, 1, 1, ?)`,
 		ip, banLevel, jail, expires,
 	); err != nil {
+		_ = manualRemoveNginxBan(ip)
+		return TaskResult{Success: false, Message: "封禁记录写入失败"}
+	}
+	if err := insertFirewallBanHistory(tx, ip, banLevel, "管理员手动封禁", jail, 1, true, duration); err != nil {
+		_ = manualRemoveNginxBan(ip)
+		return TaskResult{Success: false, Message: "封禁历史写入失败"}
+	}
+	if err := tx.Commit(); err != nil {
 		_ = manualRemoveNginxBan(ip)
 		return TaskResult{Success: false, Message: "封禁记录写入失败"}
 	}

@@ -14,7 +14,10 @@ import (
 
 type FirewallHandler struct{}
 
-const firewallBanHistoryLimit = 300
+const (
+	firewallBanHistoryLimit         = 300
+	firewallBanHistoryExpandedLimit = 1000
+)
 
 func (h *FirewallHandler) ListBans(c *gin.Context) {
 	db := database.GetDB()
@@ -38,8 +41,12 @@ func (h *FirewallHandler) ListBans(c *gin.Context) {
 	var args []interface{}
 
 	if isHistory {
-		where = "id IN (SELECT id FROM firewall_bans ORDER BY banned_at DESC, id DESC LIMIT ?)"
-		args = append(args, firewallBanHistoryLimit)
+		historyLimit := firewallBanHistoryLimit
+		if c.Query("expanded") == "1" {
+			historyLimit = firewallBanHistoryExpandedLimit
+		}
+		where = "id IN (SELECT id FROM firewall_ban_history ORDER BY banned_at DESC, id DESC LIMIT ?)"
+		args = append(args, historyLimit)
 	} else {
 		where = "unbanned_at IS NULL AND (expires_at IS NULL OR expires_at > datetime('now'))"
 	}
@@ -70,11 +77,19 @@ func (h *FirewallHandler) ListBans(c *gin.Context) {
 	var total int
 	countArgs := make([]interface{}, len(args))
 	copy(countArgs, args)
-	db.QueryRow("SELECT COUNT(*) FROM firewall_bans WHERE "+where, countArgs...).Scan(&total)
+	table := "firewall_bans"
+	if isHistory {
+		table = "firewall_ban_history"
+	}
+	db.QueryRow("SELECT COUNT(*) FROM "+table+" WHERE "+where, countArgs...).Scan(&total)
 
 	offset := (page - 1) * perPage
-	query := `SELECT id, ip_address, ban_level, reason, source_jail, banned_at, expires_at, unbanned_at, ban_count, is_manual
-	 FROM firewall_bans WHERE ` + where + ` ORDER BY banned_at DESC, id DESC LIMIT ? OFFSET ?`
+	unbannedColumn := "unbanned_at"
+	if isHistory {
+		unbannedColumn = "NULL"
+	}
+	query := `SELECT id, ip_address, ban_level, reason, source_jail, banned_at, expires_at, ` + unbannedColumn + `, ban_count, is_manual
+			 FROM ` + table + ` WHERE ` + where + ` ORDER BY banned_at DESC, id DESC LIMIT ? OFFSET ?`
 	args = append(args, perPage, offset)
 
 	rows, err := db.Query(query, args...)
@@ -104,12 +119,19 @@ func (h *FirewallHandler) ListBans(c *gin.Context) {
 		totalPages = 1
 	}
 
+	hasMore := false
+	if isHistory && c.Query("expanded") != "1" {
+		_ = db.QueryRow(`SELECT EXISTS(
+			SELECT 1 FROM firewall_ban_history ORDER BY banned_at DESC,id DESC LIMIT 1 OFFSET ?
+		)`, firewallBanHistoryLimit).Scan(&hasMore)
+	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"data":        bans,
 		"total":       total,
 		"page":        page,
 		"per_page":    perPage,
 		"total_pages": totalPages,
+		"has_more":    hasMore,
 	}))
 }
 
@@ -252,9 +274,23 @@ func (h *FirewallHandler) PermanentBan(c *gin.Context) {
 		return
 	}
 
-	if _, err := db.Exec(
-		`UPDATE firewall_bans SET ban_level = 5, expires_at = NULL, is_manual = 1 WHERE id = ?`, id,
-	); err != nil {
+	tx, err := db.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("永久封禁失败"))
+		return
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE firewall_bans SET ban_level = 5, expires_at = NULL, is_manual = 1 WHERE id = ?`, id); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("永久封禁失败"))
+		return
+	}
+	if _, err := tx.Exec(`INSERT INTO firewall_ban_history
+		(ip_address,ban_level,reason,source_jail,ban_count,is_manual,duration_seconds,expires_at)
+		VALUES (?,5,'管理员永久封禁','manual',1,1,NULL,NULL)`, ip); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("永久封禁历史写入失败"))
+		return
+	}
+	if err := tx.Commit(); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("永久封禁失败"))
 		return
 	}

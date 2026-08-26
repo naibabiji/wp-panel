@@ -399,7 +399,7 @@
                         <th class="table-header w-64">{{t .Lang "firewall.reason"}}</th>
                         <th class="table-header">{{t .Lang "firewall.source"}}</th>
                         <th class="table-header">{{t .Lang "firewall.banned_at"}}</th>
-                        <th class="table-header">{{t .Lang "firewall.unbanned_at"}}</th>
+                        <th class="table-header">{{t .Lang "firewall.expected_unban_at"}}</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -416,7 +416,7 @@
                                 <span :class="sourceClass(h)" class="text-xs" x-text="sourceLabel(h)"></span>
                             </td>
                             <td class="table-cell text-xs" x-text="formatTime(h.banned_at)"></td>
-                            <td class="table-cell text-xs" x-text="h.unbanned_at ? formatTime(h.unbanned_at) : (h.ban_level >= 5 ? t('firewall.permanent') : (h.expires_at ? formatTime(h.expires_at) : '--'))"></td>
+                            <td class="table-cell text-xs" x-text="h.ban_level >= 5 ? t('firewall.permanent') : (h.expires_at ? formatTime(h.expires_at) : '--')"></td>
                         </tr>
                     </template>
                     <tr x-show="history.length === 0">
@@ -435,6 +435,9 @@
                 <button @click="historyGoPage(historyPage+1)" :disabled="historyPage >= historyTotalPages" class="px-3 py-1 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed">{{t .Lang "firewall.next_page"}}</button>
             </div>
         </div>
+		<div x-show="historyHasMore && !historyExpanded" class="mt-4 text-center">
+			<button @click="expandHistory()" :disabled="historyLoading" class="btn-secondary text-sm px-4 py-2 disabled:opacity-50">{{t .Lang "firewall.load_more_history"}}</button>
+		</div>
 </div>
 
 <script>
@@ -449,6 +452,8 @@ function firewallManager() {
         historyPage: 1,
         historyTotalPages: 1,
         historyTotal: 0,
+		historyExpanded: false,
+		historyHasMore: false,
         banIP: '',
         banDuration: '600',
         banSubmitting: false,
@@ -508,6 +513,7 @@ function firewallManager() {
             this.historyLoading = true;
             try {
                 let url = '/firewall/bans?history=1&page=' + this.historyPage;
+				if (this.historyExpanded) url += '&expanded=1';
                 if (this.historySearchIP.trim()) url += '&search=' + encodeURIComponent(this.historySearchIP.trim());
                 const r = await api(url, { silent: true });
                 if (r.success) {
@@ -515,6 +521,7 @@ function firewallManager() {
                     this.historyTotal = r.data?.total || this.history.length;
                     this.historyPage = r.data?.page || 1;
                     this.historyTotalPages = r.data?.total_pages || 1;
+					this.historyHasMore = !!r.data?.has_more;
                     this.historyLoaded = true;
                 }
             } catch(e) {}
@@ -530,6 +537,11 @@ function firewallManager() {
             this.historyPage = p;
             this.fetchHistory();
         },
+		expandHistory() {
+			this.historyExpanded = true;
+			this.historyPage = 1;
+			this.fetchHistory();
+		},
         get historyPageNumbers() {
             const pages = [];
             const total = this.historyTotalPages;

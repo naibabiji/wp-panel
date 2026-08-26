@@ -132,12 +132,28 @@ func banScanIP(db *sql.DB, ip string, reason string, hours int) {
 	}
 
 	expires := time.Now().UTC().Add(time.Duration(hours) * time.Hour).Format("2006-01-02 15:04:05")
-	_, err := db.Exec(
+	tx, err := db.Begin()
+	if err != nil {
+		log.Printf("扫描封禁失败 ip=%s: %v", ip, err)
+		return
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(
 		`INSERT INTO firewall_bans (ip_address, ban_level, reason, source_jail, banned_at, expires_at, ban_count)
 		 VALUES (?, 4, ?, 'panel_scan', datetime('now'), ?, 1)`,
 		ip, reason, expires,
 	)
 	if err != nil {
+		log.Printf("扫描封禁失败 ip=%s: %v", ip, err)
+		return
+	}
+	if _, err := tx.Exec(`INSERT INTO firewall_ban_history
+		(ip_address,ban_level,reason,source_jail,expires_at,ban_count,is_manual,duration_seconds)
+		VALUES (?,4,?,'panel_scan',?,1,0,?)`, ip, reason, expires, hours*60*60); err != nil {
+		log.Printf("扫描封禁历史写入失败 ip=%s: %v", ip, err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
 		log.Printf("扫描封禁失败 ip=%s: %v", ip, err)
 		return
 	}

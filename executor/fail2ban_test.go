@@ -211,21 +211,63 @@ func TestFail2banLoginJailIsRecognizedAsWebSource(t *testing.T) {
 
 func TestValidateGeneratedFail2banJailConfigRequiresFixedLadderForAllJails(t *testing.T) {
 	block := "bantime = 600\nbantime.increment = true\nbantime.multipliers = 1 6 36 144 1008\nbantime.maxtime = 7d\nbantime.overalljails = false\n"
-	valid := "[wppanel]\n" + block + "[wppanel-404]\n" + block + "[wppanel-login]\n" + block + "[wppanel-sshd]\n" + block
+	valid := "[wppanel]\n" + block + "[wppanel-404]\n" + block + "[wppanel-login]\n" + block + "[wppanel-sshd]\naction = nftables-multiport\n         wppanel-record[name=wppanel-sshd]\n" + block
 	if err := validateGeneratedFail2banJailConfig(valid); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateGeneratedFail2banJailConfig("[wppanel]\n" + block + "[wppanel-404]\n" + block); err == nil {
 		t.Fatal("config missing one jail ladder was accepted")
 	}
-	misplaced := "[wppanel]\n" + block + "bantime.increment = true\n[wppanel-404]\n" + block + "[wppanel-login]\n" + block + "[wppanel-sshd]\n" + strings.Replace(block, "bantime.increment = true\n", "", 1)
+	misplaced := "[wppanel]\n" + block + "bantime.increment = true\n[wppanel-404]\n" + block + "[wppanel-login]\n" + block + "[wppanel-sshd]\nwppanel-record[name=wppanel-sshd]\n" + strings.Replace(block, "bantime.increment = true\n", "", 1)
 	if err := validateGeneratedFail2banJailConfig(misplaced); err == nil {
 		t.Fatal("globally balanced but misplaced directive was accepted")
+	}
+	if err := validateGeneratedFail2banJailConfig(strings.Replace(valid, "         wppanel-record[name=wppanel-sshd]\n", "", 1)); err == nil {
+		t.Fatal("sshd config missing record action was accepted")
 	}
 	for banTime, want := range map[int]int{600: 2, 3600: 3, 21600: 3, 86400: 3, 604800: 4} {
 		if got := fail2banBanLevel(banTime); got != want {
 			t.Fatalf("ban level for %d = %d, want %d", banTime, got, want)
 		}
+	}
+}
+
+func TestSyncFail2banBansDoesNotSplitLongSSHBanIntoTenMinuteRows(t *testing.T) {
+	openTestDB(t)
+	oldShellExec := shellExec
+	oldReplace := syncReplaceNginxBannedIPs
+	t.Cleanup(func() {
+		shellExec = oldShellExec
+		syncReplaceNginxBannedIPs = oldReplace
+	})
+
+	ip := "203.0.113.97"
+	if _, err := database.GetDB().Exec(`INSERT INTO firewall_bans
+		(ip_address,ban_level,reason,source_jail,ban_count,expires_at)
+		VALUES (?,2,'SSH 暴力破解','wppanel-sshd',1,datetime('now','-10 seconds'))`, ip); err != nil {
+		t.Fatal(err)
+	}
+	shellExec = func(binary string, args ...string) (string, error) {
+		if binary != "fail2ban-client" || len(args) != 2 || args[0] != "status" {
+			return "", errors.New("unexpected command")
+		}
+		if args[1] == "wppanel-sshd" {
+			return "Status\n|- Currently banned: 1\n`- Banned IP list: " + ip, nil
+		}
+		return "Status\n|- Currently banned: 0\n`- Banned IP list:", nil
+	}
+	syncReplaceNginxBannedIPs = func(map[string]bool) error { return nil }
+
+	SyncFail2banBans()
+	SyncFail2banBans()
+
+	var count int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM firewall_bans
+		WHERE ip_address=? AND source_jail='wppanel-sshd'`, ip).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("long SSH ban was split into %d panel rows, want 1", count)
 	}
 }
 
@@ -240,6 +282,12 @@ func TestRecordFail2banRestoredDoesNotCreateHistory(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("restored ban created %d history rows", count)
+	}
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM firewall_ban_history`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("restored ban created %d independent history rows", count)
 	}
 
 	ip := "203.0.113.71"
@@ -298,6 +346,30 @@ func TestRecordFail2banUnbanClosesOnlyMatchingJail(t *testing.T) {
 	}
 }
 
+func TestRecordFail2banUnbanDoesNotRewriteStaticHistory(t *testing.T) {
+	openTestDB(t)
+	ip := "203.0.113.74"
+	if err := RecordFail2banBan(ip, "wppanel-sshd", 3600, 2, false); err != nil {
+		t.Fatal(err)
+	}
+	var beforeExpires int64
+	if err := database.GetDB().QueryRow(`SELECT unixepoch(expires_at) FROM firewall_ban_history WHERE ip_address=?`, ip).Scan(&beforeExpires); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordFail2banUnban(ip, "wppanel-sshd"); err != nil {
+		t.Fatal(err)
+	}
+	var rows int
+	var afterExpires int64
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*),MAX(unixepoch(expires_at))
+		FROM firewall_ban_history WHERE ip_address=?`, ip).Scan(&rows, &afterExpires); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 || afterExpires != beforeExpires {
+		t.Fatalf("unban rewrote static history: rows=%d before=%d after=%d", rows, beforeExpires, afterExpires)
+	}
+}
+
 func TestRecordFail2banKeepsPerJailCountersSeparate(t *testing.T) {
 	openTestDB(t)
 	ip := "203.0.113.72"
@@ -353,6 +425,15 @@ func TestRecordFail2banBanUpdatesActiveRecord(t *testing.T) {
 	}
 	if rows != 1 || level != 3 || jail != "wppanel-404" || count != 3 {
 		t.Fatalf("unexpected incremental active record: rows=%d level=%d jail=%q count=%d", rows, level, jail, count)
+	}
+	var historyRows, minDuration, maxDuration int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*),MIN(duration_seconds),MAX(duration_seconds)
+		FROM firewall_ban_history WHERE ip_address=? AND source_jail='wppanel-404'`, ip).
+		Scan(&historyRows, &minDuration, &maxDuration); err != nil {
+		t.Fatal(err)
+	}
+	if historyRows != 3 || minDuration != 600 || maxDuration != 21600 {
+		t.Fatalf("unexpected independent history: rows=%d min=%d max=%d", historyRows, minDuration, maxDuration)
 	}
 }
 
@@ -607,6 +688,14 @@ func TestExecuteManualBanCreatesSingleManualRecord(t *testing.T) {
 	if level != 3 || isManual != 1 || banCount != 1 || reason != "管理员手动封禁" || jail != "manual" {
 		t.Fatalf("unexpected manual ban record: level=%d manual=%d count=%d reason=%q jail=%q", level, isManual, banCount, reason, jail)
 	}
+	var historyCount, duration int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*),MAX(duration_seconds)
+		FROM firewall_ban_history WHERE ip_address=?`, "203.0.113.88").Scan(&historyCount, &duration); err != nil {
+		t.Fatal(err)
+	}
+	if historyCount != 1 || duration != 86400 {
+		t.Fatalf("unexpected manual history: count=%d duration=%d", historyCount, duration)
+	}
 }
 
 func TestSyncFail2banBansKeepsActiveManualBan(t *testing.T) {
@@ -775,6 +864,83 @@ func TestReloadOrStartFail2banReturnsStartError(t *testing.T) {
 
 	if err := reloadOrStartFail2ban(); !errors.Is(err, startErr) {
 		t.Fatalf("expected start error, got %v", err)
+	}
+}
+
+func TestFail2banRestartReloadCommandIsAllowed(t *testing.T) {
+	if !IsCommandAllowed("fail2ban-client", []string{"reload", "--restart", "wppanel-sshd"}) {
+		t.Fatal("Fail2ban restart reload must be allowed so newly added jail actions take effect")
+	}
+	if IsCommandAllowed("fail2ban-client", []string{"reload", "--restart", "--all"}) {
+		t.Fatal("global --all restart must remain disallowed because it clears active bans")
+	}
+	if IsCommandAllowed("fail2ban-client", []string{"stop", "--restart", "wppanel-sshd"}) ||
+		IsCommandAllowed("fail2ban-client", []string{"reload", "--restart", "wppanel"}) {
+		t.Fatal("--restart must be restricted to the fixed wppanel-sshd reload command")
+	}
+}
+
+func TestEnsureFail2banSSHRecordActionRestartsOnlyWhenMissing(t *testing.T) {
+	oldShellExec := shellExec
+	t.Cleanup(func() {
+		shellExec = oldShellExec
+		sshRecordActionPending.Store(false)
+	})
+
+	var commands []string
+	shellExec = func(binary string, args ...string) (string, error) {
+		command := binary + " " + strings.Join(args, " ")
+		commands = append(commands, command)
+		if command == "fail2ban-client get wppanel-sshd actions" {
+			return "nftables-multiport", nil
+		}
+		if command == "fail2ban-client status wppanel-sshd" {
+			return "Status\n|- Currently banned: 0\n`- Banned IP list:", nil
+		}
+		if command == "fail2ban-client reload --restart wppanel-sshd" {
+			return "OK", nil
+		}
+		return "", errors.New("unexpected command")
+	}
+	if err := ensureFail2banSSHRecordAction(); err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 3 || commands[2] != "fail2ban-client reload --restart wppanel-sshd" {
+		t.Fatalf("unexpected commands: %v", commands)
+	}
+
+	commands = nil
+	shellExec = func(binary string, args ...string) (string, error) {
+		commands = append(commands, binary+" "+strings.Join(args, " "))
+		return "nftables-multiport, wppanel-record", nil
+	}
+	if err := ensureFail2banSSHRecordAction(); err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 1 {
+		t.Fatalf("existing record action caused restart: %v", commands)
+	}
+
+	commands = nil
+	shellExec = func(binary string, args ...string) (string, error) {
+		command := binary + " " + strings.Join(args, " ")
+		commands = append(commands, command)
+		if command == "fail2ban-client get wppanel-sshd actions" {
+			return "nftables-multiport", nil
+		}
+		if command == "fail2ban-client status wppanel-sshd" {
+			return "Status\n|- Currently banned: 1\n`- Banned IP list: 203.0.113.9", nil
+		}
+		return "", errors.New("unexpected command")
+	}
+	if err := ensureFail2banSSHRecordAction(); err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 2 {
+		t.Fatalf("active SSH bans must defer jail restart: %v", commands)
+	}
+	if !sshRecordActionPending.Load() {
+		t.Fatal("deferred SSH action restart was not scheduled for retry")
 	}
 }
 

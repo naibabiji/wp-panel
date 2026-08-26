@@ -1321,7 +1321,9 @@
     "no_current_bans": "当前无封禁记录",
     "prev_page": "上一页",
     "next_page": "下一页",
-    "ban_history": "历史封禁记录（最近300条）",
+    "ban_history": "历史封禁记录",
+    "load_more_history": "查看更多历史记录（最多1000条）",
+    "expected_unban_at": "预计解封时间",
     "unbanned_at": "解封时间",
     "no_history": "暂无历史记录"
   },

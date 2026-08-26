@@ -53,6 +53,13 @@ func IsCommandAllowed(binary string, args []string) bool {
 	if hasUnsafeArgs(binary, args) {
 		return false
 	}
+	if binary == "fail2ban-client" {
+		for _, arg := range args {
+			if arg == "--restart" {
+				return len(args) == 3 && args[0] == "reload" && args[1] == "--restart" && args[2] == "wppanel-sshd"
+			}
+		}
+	}
 	if len(allowedArgs) == 0 {
 		return len(args) == 0 || binary == "cat" || binary == "tee" || binary == "head" || binary == "sha256sum" || binary == "base64"
 	}

@@ -99,6 +99,14 @@ func TestScanDefenseBansNonBrowserProbeAndRecordsRequestSummary(t *testing.T) {
 			t.Fatalf("reason %q missing %q", reason, want)
 		}
 	}
+	var historyJail string
+	var duration int
+	if err := db.QueryRow(`SELECT source_jail,duration_seconds FROM firewall_ban_history LIMIT 1`).Scan(&historyJail, &duration); err != nil {
+		t.Fatalf("query scan history: %v", err)
+	}
+	if historyJail != "panel_scan" || duration != 720*60*60 {
+		t.Fatalf("scan history jail=%q duration=%d", historyJail, duration)
+	}
 }
 
 func TestBanScanIPIgnoresNonPublicAddress(t *testing.T) {
@@ -128,6 +136,20 @@ func newScanDefenseTestDB(t *testing.T) *sql.DB {
 		ban_count INTEGER NOT NULL DEFAULT 1
 	)`); err != nil {
 		t.Fatalf("create firewall_bans: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE firewall_ban_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		ip_address TEXT NOT NULL,
+		ban_level INTEGER NOT NULL,
+		reason TEXT NOT NULL,
+		source_jail TEXT NOT NULL,
+		banned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		expires_at DATETIME,
+		ban_count INTEGER NOT NULL DEFAULT 1,
+		is_manual INTEGER NOT NULL DEFAULT 0,
+		duration_seconds INTEGER
+	)`); err != nil {
+		t.Fatalf("create firewall_ban_history: %v", err)
 	}
 	return db
 }
