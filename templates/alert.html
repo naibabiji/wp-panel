@@ -35,9 +35,25 @@
                     <label class="text-sm text-gray-300 mb-1 block">{{t .Lang "alert.admin_email"}}</label>
                     <input type="text" x-model="cfg.admin_email" class="input-field text-sm" placeholder="admin@example.com">
                 </div>
-                <div class="flex space-x-3">
+                <p class="text-xs text-amber-400 mb-3">{{t .Lang "alert.smtp_transfer_warning"}}</p>
+                <div class="flex flex-wrap gap-3">
                     <button @click="save" :disabled="saving" class="btn-primary text-sm" x-text="saving ? t('alert.saving') : t('common.save')"></button>
                     <button @click="test" :disabled="testing" class="btn-secondary text-sm" x-text="testing ? t('alert.sending') : t('alert.test_send')"></button>
+                    <button @click="copyConfig" :disabled="transferring" class="btn-secondary text-sm" x-text="t('alert.smtp_copy')"></button>
+                    <button @click="openImportModal" :disabled="transferring" class="btn-secondary text-sm" x-text="t('alert.smtp_import')"></button>
+                </div>
+
+                <div x-cloak x-show="importOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" @click.self="closeImportModal()" @keydown.escape.window="closeImportModal()">
+                    <div class="card w-full max-w-xl" role="dialog" aria-modal="true" aria-labelledby="smtp-import-title">
+                        <h3 id="smtp-import-title" class="text-lg font-semibold text-white mb-2">{{t .Lang "alert.smtp_import"}}</h3>
+                        <p class="text-sm text-gray-400 mb-4">{{t .Lang "alert.smtp_import_prompt"}}</p>
+                        <label class="text-sm text-gray-300 mb-1 block" for="smtp-import-code">{{t .Lang "alert.smtp_config_code"}}</label>
+                        <textarea id="smtp-import-code" x-ref="importCode" x-model="importCode" rows="7" class="input-field font-mono text-xs resize-y" placeholder="WPPANEL-SMTP-V1:"></textarea>
+                        <div class="flex justify-end gap-3 mt-5">
+                            <button @click="closeImportModal()" :disabled="transferring" class="btn-secondary text-sm">{{t .Lang "common.cancel"}}</button>
+                            <button @click="importConfig" :disabled="transferring || !importCode.trim()" class="btn-primary text-sm" x-text="t('alert.smtp_import')"></button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -194,6 +210,9 @@ function smtpConfig() {
         cfg: { smtp_host: '', smtp_port: '587', smtp_encryption: 'starttls', smtp_user: '', smtp_pass: '', admin_email: '' },
         saving: false,
         testing: false,
+        transferring: false,
+        importOpen: false,
+        importCode: '',
         async fetch() {
             try {
                 const r = await alertSettings();
@@ -233,6 +252,70 @@ function smtpConfig() {
                 showToast(r.data?.message || t('common.operation_success'), 'success');
             } catch(e) { showToast(e.message || t('alert.send_failed'), 'error'); }
             this.testing = false;
+        },
+        async copyConfig() {
+            this.transferring = true;
+            try {
+                const r = await api('/alert/smtp-config/export', { method: 'POST', body: {} });
+                let copied = false;
+                if (navigator.clipboard?.writeText) {
+                    try {
+                        await navigator.clipboard.writeText(r.data.code);
+                        copied = true;
+                    } catch (_) {}
+                }
+                if (!copied) {
+                    const input = document.createElement('textarea');
+                    input.value = r.data.code;
+                    input.style.position = 'fixed';
+                    input.style.opacity = '0';
+                    document.body.appendChild(input);
+                    input.select();
+                    copied = document.execCommand('copy');
+                    input.remove();
+                }
+                if (!copied) throw new Error(t('alert.smtp_copy_failed'));
+                showToast(t('alert.smtp_copy_success'), 'success');
+            } catch(e) { showToast(e.message || t('alert.smtp_copy_failed'), 'error'); }
+            this.transferring = false;
+        },
+        openImportModal() {
+            this.importCode = '';
+            this.importOpen = true;
+            this.$nextTick(() => this.$refs.importCode.focus());
+        },
+        closeImportModal() {
+            if (this.transferring) return;
+            this.importOpen = false;
+            this.importCode = '';
+        },
+        async importConfig() {
+            const code = this.importCode.trim();
+            if (!code) return;
+            this.transferring = true;
+            try {
+                const r = await api('/alert/smtp-config/import', { method: 'POST', body: { code } });
+                const d = r.data || {};
+                const hasExisting = ['smtp_host', 'smtp_user', 'smtp_pass', 'admin_email'].some(k => String(this.cfg[k] || '').trim() !== '');
+                if (hasExisting && !await confirmModal(t('alert.smtp_overwrite_confirm'))) {
+                    showToast(t('alert.smtp_import_cancelled'), 'info');
+                    this.importOpen = false;
+                    this.importCode = '';
+                    return;
+                }
+                this.cfg = {
+                    smtp_host: d.smtp_host || '',
+                    smtp_port: d.smtp_port || '587',
+                    smtp_encryption: d.smtp_encryption || 'starttls',
+                    smtp_user: d.smtp_user || '',
+                    smtp_pass: d.smtp_pass || '',
+                    admin_email: d.admin_email || ''
+                };
+                this.importOpen = false;
+                this.importCode = '';
+                showToast(t('alert.smtp_import_success'), 'success');
+            } catch(e) { showToast(e.message, 'error'); }
+            finally { this.transferring = false; }
         }
     }
 }

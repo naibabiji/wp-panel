@@ -234,7 +234,15 @@ var i18nKeys = []string{
 	"alert.saving",
 	"alert.send_failed",
 	"alert.sending",
+	"alert.smtp_copy",
+	"alert.smtp_copy_failed",
+	"alert.smtp_copy_success",
 	"alert.smtp_config_saved",
+	"alert.smtp_import",
+	"alert.smtp_import_cancelled",
+	"alert.smtp_import_prompt",
+	"alert.smtp_import_success",
+	"alert.smtp_overwrite_confirm",
 	"alert.test_send",
 	"alert.type_backup_failed",
 	"alert.type_cpu_high_load",
@@ -1421,6 +1429,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	alertHandler := &handlers.AlertHandler{}
 	protected.GET("/api/alert/settings", alertHandler.GetSettings)
 	protected.PUT("/api/alert/settings", alertHandler.SaveSettings)
+	protected.POST("/api/alert/smtp-config/export", alertHandler.ExportSMTPConfig)
+	protected.POST("/api/alert/smtp-config/import", alertHandler.ImportSMTPConfig)
 	protected.POST("/api/alert/test-smtp", alertHandler.TestSMTP)
 	protected.POST("/api/alert/test-webhook", alertHandler.TestWebhook)
 	protected.GET("/api/alert/log", alertHandler.GetLog)
