@@ -75,11 +75,16 @@
                 </thead>
                 <tbody>
                     <template x-for="site in websites" :key="site.id">
-                        <tr class="border-b border-gray-700/50">
+                        <tr class="border-b border-gray-700/50" :class="site.ai_development_enabled ? 'bg-purple-950/40 border-l-2 border-l-purple-500' : ''">
                             <td class="table-cell font-medium">
                                 <a :href="'http://' + site.domain" target="_blank" class="text-blue-400 hover:text-blue-300 hover:underline" x-text="site.domain"></a>
                             </td>
-                            <td class="table-cell"><span :class="site.status === 'active' ? 'badge-success' : 'badge-warning'" x-text="statusText(site.status)"></span></td>
+                            <td class="table-cell">
+                                <div class="flex flex-wrap gap-2">
+                                    <span :class="site.status === 'active' ? 'badge-success' : 'badge-warning'" x-text="statusText(site.status)"></span>
+                                    <span x-show="site.ai_development_enabled" class="text-xs px-2 py-1 rounded bg-purple-900/60 text-purple-200">{{t .Lang "ai_development.active_badge"}}</span>
+                                </div>
+                            </td>
                             <td class="table-cell"><span :class="site.file_lock_enabled ? 'badge-warning' : 'badge-success'" x-text="site.file_lock_enabled ? t('website.file_locked') : t('website.file_unlocked')"></span></td>
                             <td class="table-cell">
                                 <div class="space-y-1">

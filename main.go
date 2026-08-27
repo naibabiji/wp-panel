@@ -131,6 +131,9 @@ func main() {
 	if err := database.RunUpgrades(); err != nil {
 		log.Fatalf("数据库升级失败: %v", err)
 	}
+	if err := executor.NewAIDevelopmentAccessService(database.GetDB()).ReconcilePending(context.Background()); err != nil {
+		log.Printf("AI 开发授权中间状态恢复失败（相关网站将继续保持操作门禁）: %v", err)
+	}
 	executor.ResetStuckImageOptimizationJobs()
 	executor.FinalizePendingPanelUpdate(cfg, Version)
 

@@ -178,6 +178,9 @@ func (h *BackupHandler) Restore(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
+	if rejectIfAIDevelopmentAccessActive(c, id) {
+		return
+	}
 
 	db := database.GetDB()
 	var filename string
@@ -219,6 +222,9 @@ func (h *BackupHandler) UploadRestore(c *gin.Context) {
 	site := getWebsiteByID(id)
 	if site == nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+	if rejectIfAIDevelopmentAccessActive(c, id) {
 		return
 	}
 
@@ -401,6 +407,9 @@ func (h *BackupHandler) ClearDatabase(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
+	if rejectIfAIDevelopmentAccessActive(c, id) {
+		return
+	}
 
 	if site.DBName == "" || len(site.DBName) > 64 || !mysqlIdentifierRe.MatchString(site.DBName) {
 		log.Printf("拒绝清空异常数据库名 site=%d db=%q", id, site.DBName)
@@ -414,7 +423,7 @@ func (h *BackupHandler) ClearDatabase(c *gin.Context) {
 		return
 	}
 
-	if err := executor.ClearDatabaseTables(site.DBName, dbPass); err != nil {
+	if err := executor.ClearDatabaseTables(int64(site.ID), site.DBName, dbPass); err != nil {
 		log.Printf("清空数据库失败 site=%s: %v", site.DBName, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(err.Error()))
 		return

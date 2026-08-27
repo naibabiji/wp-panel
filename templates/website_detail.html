@@ -15,7 +15,7 @@
 
     <!-- Row 1: 基本信息 | 网站运行与配置 -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div class="card">
+        <div class="card" :class="aiAccess.status !== 'disabled' ? 'border border-purple-500 shadow-lg shadow-purple-950/30' : ''">
             <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "website.basic_info"}}</h3>
             <dl class="space-y-3">
                 <div><dt class="text-sm text-gray-400">{{t .Lang "website.domain"}}</dt><dd><a :href="(site.ssl_enabled ? 'https' : 'http') + '://' + site.domain" target="_blank" class="text-blue-400 hover:text-blue-300 hover:underline" x-text="site.domain"></a></dd></div>
@@ -25,11 +25,13 @@
                     <a :href="(document.body.dataset.panelPrefix || '') + '/files?site_id=' + site.id" class="text-sm py-1.5 px-3 rounded ml-2 inline-block" style="background-color: #1e3a5f; color: #93c5fd;">{{t .Lang "nav.files"}}</a>
                     <a :href="(document.body.dataset.panelPrefix || '') + '/databases/' + site.id" class="text-sm py-1.5 px-3 rounded ml-2 inline-block" style="background-color: #1e3a5f; color: #93c5fd;">{{t .Lang "nav.databases"}}</a>
                     <a :href="(document.body.dataset.panelPrefix || '') + '/ai-diagnostics?site_id=' + site.id" class="text-sm py-1.5 px-3 rounded ml-2 inline-block" style="background-color: #14532d; color: #86efac;">{{t .Lang "nav.ai_diagnostics"}}</a>
+                    <button @click="aiDevelopmentModalOpen = true; fetchAIDevelopment()" class="text-sm py-1.5 px-3 rounded ml-2" style="background-color: #581c87; color: #e9d5ff;">{{t .Lang "ai_development.title"}}</button>
                 </div>
                 <div>
                     <dt class="text-sm text-gray-400">{{t .Lang "website.status"}}</dt>
                     <dd class="flex flex-wrap items-center gap-2">
                         <span :class="site.status === 'active' ? 'badge-success' : 'badge-warning'" x-text="site.status === 'active' ? t('website.status_running') : (site.status === 'migrated' ? t('website.status_migrated') : t('website.status_paused'))"></span>
+                        <span x-show="aiAccess.status !== 'disabled'" class="text-xs px-2 py-1 rounded bg-purple-900/60 text-purple-200">{{t .Lang "ai_development.active_badge"}}</span>
                         <button x-show="site.status === 'migrated'" @click="restoreMigrated()" class="text-sm text-blue-400 hover:text-blue-300" x-text="t('website.restore_migrated_detail')"></button>
                     </dd>
                 </div>
@@ -451,6 +453,94 @@ location ^~ /api/ {
     <!-- Modals -->
     <!-- ============================================================ -->
 
+    <!-- AI 开发访问 -->
+    <div x-show="aiDevelopmentModalOpen" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="if (!aiAccess.busy) aiDevelopmentModalOpen = false">
+        <div class="bg-gray-800 rounded-lg p-6 max-w-4xl w-full mx-4 shadow-xl max-h-[80vh] overflow-y-auto" style="border: 1px solid #581c87;">
+            <div class="flex flex-wrap items-start justify-between gap-3 mb-5">
+                <div>
+                    <h3 class="text-lg font-semibold text-white">{{t .Lang "ai_development.title"}}</h3>
+                    <p class="text-sm text-gray-400 mt-1">{{t .Lang "ai_development.description"}}</p>
+                </div>
+                <div class="flex items-center gap-3">
+                    <span class="text-xs px-2 py-1 rounded" :class="aiAccess.enabled ? 'bg-red-900/50 text-red-200' : 'bg-gray-800 text-gray-400'" x-text="aiAccess.enabled ? t('ai_development.enabled') : t('ai_development.disabled_status')"></span>
+                    <button @click="aiDevelopmentModalOpen = false" :disabled="aiAccess.busy" class="text-gray-400 hover:text-white disabled:opacity-40 text-xl leading-none">&times;</button>
+                </div>
+            </div>
+            <div x-show="aiAccess.loading" class="text-sm text-gray-500 py-6 text-center">{{t .Lang "common.loading"}}</div>
+            <div x-show="!aiAccess.loading && !aiAccess.enabled && aiAccess.status === 'disabled'" class="space-y-4">
+                <div class="rounded border border-red-800 bg-red-950/40 p-4 text-sm text-red-100">
+                    <p class="font-semibold mb-2">{{t .Lang "ai_development.risk_title"}}</p>
+                    <p>{{t .Lang "ai_development.risk_body"}}</p>
+                </div>
+                <div>
+                    <p class="text-sm font-medium text-white mb-2">{{t .Lang "ai_development.component_check"}}</p>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div class="rounded border border-gray-700 p-3">
+                            <div class="flex items-center justify-between gap-3">
+                                <span class="text-white">WP-CLI</span>
+                                <span x-show="developmentToolInstalled('wp-cli')" class="text-xs px-2 py-1 rounded bg-green-900/50 text-green-200">{{t .Lang "software.installed"}}</span>
+                            </div>
+                            <label x-show="!developmentToolInstalled('wp-cli')" class="flex items-start gap-2 mt-2 cursor-pointer">
+                                <input type="checkbox" x-model="aiAccess.installWPCLI" class="mt-1">
+                                <span class="text-sm text-gray-300">{{t .Lang "ai_development.install_when_enabling"}}</span>
+                            </label>
+                            <p class="text-xs text-gray-500 mt-2">{{t .Lang "ai_development.wp_cli_help"}}</p>
+                        </div>
+                        <div class="rounded border border-gray-700 p-3">
+                            <div class="flex items-center justify-between gap-3">
+                                <span class="text-white">Node.js + npm</span>
+                                <span x-show="developmentToolInstalled('nodejs')" class="text-xs px-2 py-1 rounded bg-green-900/50 text-green-200">{{t .Lang "software.installed"}}</span>
+                            </div>
+                            <label x-show="!developmentToolInstalled('nodejs')" class="flex items-start gap-2 mt-2 cursor-pointer">
+                                <input type="checkbox" x-model="aiAccess.installNodeJS" class="mt-1">
+                                <span class="text-sm text-gray-300">{{t .Lang "ai_development.install_when_enabling"}}</span>
+                            </label>
+                            <p class="text-xs text-gray-500 mt-2">{{t .Lang "ai_development.node_help"}}</p>
+                        </div>
+                    </div>
+                </div>
+                <label class="block text-sm text-gray-300">
+                    <span>{{t .Lang "ai_development.confirm_domain_label"}}</span>
+                    <input type="text" x-model="aiAccess.confirmDomain" :placeholder="site.domain" class="input-field mt-1 max-w-md">
+                </label>
+                <div class="flex justify-end gap-3 pt-2">
+                    <button @click="aiDevelopmentModalOpen = false" :disabled="aiAccess.busy" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
+                    <button @click="enableAIDevelopment()" :disabled="aiAccess.busy || aiAccess.confirmDomain !== site.domain" class="btn-danger text-sm" x-text="aiAccess.busy ? (aiAccess.stage || t('ai_development.processing')) : t('ai_development.enable_button')"></button>
+                </div>
+            </div>
+            <div x-show="!aiAccess.loading && aiAccess.status !== 'disabled'" class="space-y-4">
+                <dl class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                    <div><dt class="text-gray-500">{{t .Lang "website.system_user"}}</dt><dd class="text-white font-mono" x-text="aiAccess.system_user"></dd></div>
+                    <div><dt class="text-gray-500">{{t .Lang "website.site_root"}}</dt><dd class="text-white font-mono break-all" x-text="aiAccess.web_root"></dd></div>
+                    <div><dt class="text-gray-500">{{t .Lang "ai_development.key_fingerprint"}}</dt><dd class="text-white font-mono break-all" x-text="aiAccess.key_fingerprint || '-'"></dd></div>
+                    <div><dt class="text-gray-500">{{t .Lang "software.status"}}</dt><dd class="text-white" x-text="aiAccess.status"></dd></div>
+                </dl>
+                <p x-show="aiAccess.last_error" class="rounded bg-red-950/40 border border-red-800 p-3 text-sm text-red-200" x-text="aiAccess.last_error"></p>
+                <div x-show="aiAccess.enabled" class="rounded border border-blue-800 bg-blue-950/30 p-4">
+                    <h4 class="text-sm font-semibold text-white mb-3">{{t .Lang "ai_development.usage_title"}}</h4>
+                    <ol class="list-decimal list-inside space-y-2 text-sm text-gray-300">
+                        <li>{{t .Lang "ai_development.usage_step_download"}}</li>
+                        <li>{{t .Lang "ai_development.usage_step_extract"}}</li>
+                        <li>{{t .Lang "ai_development.usage_step_open"}}</li>
+                    </ol>
+                    <label class="block text-xs text-gray-400 mt-4 mb-1">{{t .Lang "ai_development.first_prompt_label"}}</label>
+                    <textarea readonly :value="t('ai_development.first_prompt')" rows="5" class="w-full rounded p-3 text-xs font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;"></textarea>
+                    <div class="flex flex-wrap items-center justify-between gap-3 mt-3">
+                        <p class="text-xs text-yellow-300">{{t .Lang "ai_development.credential_once_warning"}}</p>
+                        <div class="flex flex-wrap gap-2">
+                            <button @click="copyAIDevelopmentFirstPrompt()" class="btn-primary text-sm">{{t .Lang "ai_development.copy_first_prompt"}}</button>
+                            <button @click="downloadAIDevelopmentCredential()" :disabled="aiAccess.busy" class="btn-success text-sm" x-text="aiAccess.busy ? (aiAccess.stage || t('ai_development.processing')) : (aiCredentialPackage && !aiCredentialDownloaded ? t('ai_development.download_package') : t('ai_development.regenerate_package'))"></button>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex flex-wrap justify-end gap-2">
+                    <a :href="(document.body.dataset.panelPrefix || '') + '/software'" class="btn-secondary text-sm">{{t .Lang "ai_development.manage_tools"}}</a>
+                    <button @click="disableAIDevelopment()" :disabled="aiAccess.busy" class="btn-danger text-sm">{{t .Lang "ai_development.disable_button"}}</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 编辑域名 -->
     <div x-show="domainModalOpen" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50" @click.self="domainModalOpen = false">
         <div class="rounded-lg shadow-xl w-full max-w-md p-6" style="background-color: #1e293b; border: 1px solid #334155;">
@@ -578,6 +668,10 @@ function websiteDetail() {
         editDomain: '',
         editAliasesStr: '',
         domainSubmitting: false,
+        aiDevelopmentModalOpen: false,
+        aiCredentialPackage: null,
+        aiCredentialDownloaded: false,
+        aiAccess: { loading: true, enabled: false, status: 'disabled', busy: false, stage: '', installWPCLI: true, installNodeJS: false, confirmDomain: '', tools: [] },
         init() {
             this.fetchDetail();
         },
@@ -613,12 +707,137 @@ function websiteDetail() {
             Promise.allSettled([
                 this.fetchNginxCustom(),
                 this.fetchPluginStatus(),
-                this.fetchCDNGroups()
+                this.fetchCDNGroups(),
+                this.fetchAIDevelopment()
             ]);
             deferTask(() => {
                 this.fetchLogs();
                 this.fetchLogFiles();
             }, 400);
+        },
+        async fetchAIDevelopment() {
+            if (!this.site) return;
+            this.aiAccess.loading = true;
+            try {
+                const r = await api('/websites/' + this.site.id + '/ai-development-access');
+                if (r.success) {
+                    const tools = Array.isArray(r.data.tools) ? r.data.tools : [];
+                    const wpCLIInstalled = tools.some(tool => tool.id === 'wp-cli' && tool.installed);
+                    this.aiAccess = {
+                        ...this.aiAccess,
+                        ...r.data,
+                        tools,
+                        loading: false,
+                        busy: false,
+                        installWPCLI: r.data.status === 'disabled' ? !wpCLIInstalled : false,
+                        installNodeJS: false
+                    };
+                }
+            } catch(e) { this.aiAccess.loading = false; }
+        },
+        developmentToolInstalled(id) {
+            return Array.isArray(this.aiAccess.tools) && this.aiAccess.tools.some(tool => tool.id === id && tool.installed);
+        },
+        async requestAIDevelopmentPackage(path, body) {
+            const prefix = document.body.dataset.panelPrefix || '';
+            const response = await fetch(prefix + '/api' + path, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content || ''
+                },
+                body: JSON.stringify(body || {})
+            });
+            if (!response.ok) {
+                let message = t('common.operation_failed');
+                try { const data = await response.json(); message = data.message || message; } catch(e) {}
+                throw new Error(message);
+            }
+            return await response.blob();
+        },
+        saveAIDevelopmentPackage(blob) {
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = this.site.domain + '-wp-panel-ai.zip';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        },
+        async enableAIDevelopment() {
+            if (this.aiAccess.confirmDomain !== this.site.domain) return;
+            if (!await confirmModal(t('ai_development.enable_confirm', { domain: this.site.domain }))) return;
+            this.aiAccess.busy = true;
+            try {
+                if (this.aiAccess.installWPCLI && !this.developmentToolInstalled('wp-cli')) {
+                    this.aiAccess.stage = t('ai_development.stage_installing_wp_cli');
+                    await api('/software/development-tools/install', { method: 'POST', body: { id: 'wp-cli' }, timeout: 600000 });
+                }
+                if (this.aiAccess.installNodeJS && !this.developmentToolInstalled('nodejs')) {
+                    this.aiAccess.stage = t('ai_development.stage_installing_nodejs');
+                    await api('/software/development-tools/install', { method: 'POST', body: { id: 'nodejs' }, timeout: 600000 });
+                }
+                this.aiAccess.stage = t('ai_development.stage_configuring_access');
+                this.aiCredentialPackage = await this.requestAIDevelopmentPackage('/websites/' + this.site.id + '/ai-development-access', {
+                    confirm_domain: this.aiAccess.confirmDomain,
+                    install_wp_cli: false,
+                    install_nodejs: false
+                });
+                this.aiCredentialDownloaded = false;
+                showToast(t('ai_development.enabled_ready_download'), 'success');
+                await this.fetchAIDevelopment();
+            } catch(e) {
+                showToast(e.message, 'error');
+                await this.fetchAIDevelopment();
+            } finally {
+                this.aiAccess.busy = false;
+                this.aiAccess.stage = '';
+            }
+        },
+        async downloadAIDevelopmentCredential() {
+            if (this.aiCredentialPackage && !this.aiCredentialDownloaded) {
+                this.saveAIDevelopmentPackage(this.aiCredentialPackage);
+                this.aiCredentialPackage = null;
+                this.aiCredentialDownloaded = true;
+                showToast(t('ai_development.package_downloaded'), 'success');
+                return;
+            }
+            if (!await confirmModal(t('ai_development.redownload_rotates_confirm'))) return;
+            this.aiAccess.busy = true;
+            this.aiAccess.stage = t('ai_development.stage_rotating_package');
+            try {
+                this.aiCredentialPackage = await this.requestAIDevelopmentPackage('/websites/' + this.site.id + '/ai-development-access/rotate', {});
+                this.saveAIDevelopmentPackage(this.aiCredentialPackage);
+                this.aiCredentialPackage = null;
+                this.aiCredentialDownloaded = true;
+                showToast(t('ai_development.rotated_downloaded'), 'success');
+                await this.fetchAIDevelopment();
+            } catch(e) { showToast(e.message, 'error'); }
+            finally {
+                this.aiAccess.busy = false;
+                this.aiAccess.stage = '';
+            }
+        },
+        async copyAIDevelopmentFirstPrompt() {
+            try {
+                await navigator.clipboard.writeText(t('ai_development.first_prompt'));
+                showToast(t('ai_development.first_prompt_copied'), 'success');
+            } catch(e) {
+                showToast(t('common.operation_failed'), 'error');
+            }
+        },
+        async disableAIDevelopment() {
+            if (!await confirmModal(t('ai_development.disable_confirm'))) return;
+            this.aiAccess.busy = true;
+            try {
+                await api('/websites/' + this.site.id + '/ai-development-access', { method: 'DELETE' });
+                showToast(t('ai_development.disabled'), 'success');
+                this.aiCredentialPackage = null;
+                this.aiCredentialDownloaded = false;
+                this.aiAccess = { loading: false, enabled: false, status: 'disabled', busy: false, stage: '', installWPCLI: true, installNodeJS: false, confirmDomain: '', tools: [] };
+            } catch(e) { showToast(e.message, 'error'); }
+            finally { this.aiAccess.busy = false; }
         },
         async restoreMigrated() {
             if (!this.site || this.site.status !== 'migrated') return;

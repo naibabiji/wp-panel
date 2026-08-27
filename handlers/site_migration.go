@@ -328,6 +328,11 @@ func (h *SiteMigrationHandler) Start(c *gin.Context) {
 	if !decodeSiteMigrationJSONLimit(c, &req, siteMigrationBatchBodyLimit) {
 		return
 	}
+	for _, siteID := range req.SiteIDs {
+		if siteID <= 0 || rejectIfAIDevelopmentAccessActive(c, int(siteID)) {
+			return
+		}
+	}
 	username, _ := c.Get("session_username")
 	actor, _ := username.(string)
 	if h.Workflow == nil || strings.TrimSpace(actor) == "" {

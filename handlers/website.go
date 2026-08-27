@@ -267,6 +267,14 @@ func (h *WebsiteHandler) List(c *gin.Context) {
 		}
 		websites = append(websites, *w)
 	}
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取网站列表失败"))
+		return
+	}
+	if err := rows.Close(); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取网站列表失败"))
+		return
+	}
 	if websites == nil {
 		websites = []models.Website{}
 	}
@@ -277,6 +285,26 @@ func (h *WebsiteHandler) List(c *gin.Context) {
 		AccessLogMode    string `json:"access_log_mode"`
 		FCacheEnabled    bool   `json:"fastcgi_cache_enabled"`
 		BackupEnabled    bool   `json:"backup_enabled"`
+		AIDevelopment    bool   `json:"ai_development_enabled"`
+	}
+	aiDevelopmentSites := make(map[int]bool)
+	aiRows, err := db.Query("SELECT site_id FROM website_ai_development_access")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询 AI 开发授权状态失败"))
+		return
+	}
+	for aiRows.Next() {
+		var siteID int
+		if err := aiRows.Scan(&siteID); err != nil {
+			aiRows.Close()
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取 AI 开发授权状态失败"))
+			return
+		}
+		aiDevelopmentSites[siteID] = true
+	}
+	if err := aiRows.Close(); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取 AI 开发授权状态失败"))
+		return
 	}
 	result := make([]siteRow, len(websites))
 	for i, w := range websites {
@@ -285,6 +313,7 @@ func (h *WebsiteHandler) List(c *gin.Context) {
 			AccessLogMode:    w.AccessLogMode,
 			FCacheEnabled:    w.FCacheEnabled,
 			AccessLogEnabled: w.AccessLogMode != "off",
+			AIDevelopment:    aiDevelopmentSites[w.ID],
 		}
 		var be int
 		db.QueryRow("SELECT enabled FROM backup_settings WHERE site_id = ?", w.ID).Scan(&be)
@@ -430,6 +459,9 @@ func (h *WebsiteHandler) SetDocumentRoot(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
+	if rejectIfAIDevelopmentAccessActive(c, id) {
+		return
+	}
 	if site.SiteType != "php" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("只有通用 PHP 网站支持修改 Web 入口目录"))
 		return
@@ -470,6 +502,9 @@ func (h *WebsiteHandler) Delete(c *gin.Context) {
 	site := getWebsiteByID(id)
 	if site == nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+	if rejectIfAIDevelopmentAccessActive(c, id) {
 		return
 	}
 	if locked, lockErr := executor.SiteMigrationDeleteBlocked(c.Request.Context(), site.ID, site.Domain); lockErr != nil {
@@ -936,6 +971,9 @@ func (h *WebsiteHandler) UpdateDomains(c *gin.Context) {
 	site := getWebsiteByID(id)
 	if site == nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+	if rejectIfAIDevelopmentAccessActive(c, id) {
 		return
 	}
 
@@ -2247,6 +2285,9 @@ func (h *WebsiteHandler) SetFileLock(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
+	if req.Enabled && rejectIfAIDevelopmentAccessActive(c, id) {
+		return
+	}
 	mode := strings.ToLower(strings.TrimSpace(req.Mode))
 	if req.Enabled {
 		if mode != executor.FileLockModeStandard && mode != executor.FileLockModeStrict {
@@ -2357,6 +2398,9 @@ func (h *WebsiteHandler) ReinstallWordPress(c *gin.Context) {
 	).Scan(&domain, &webRoot, &systemUser, &dbName, &dbUser, &siteType, &fileLockEnabled)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+	if rejectIfAIDevelopmentAccessActive(c, id) {
 		return
 	}
 

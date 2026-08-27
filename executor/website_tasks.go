@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -474,6 +475,11 @@ func executeDeleteSite(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "任务参数类型错误"}
 	}
 	site := payload.Site
+	if blocked, err := database.IsAIDevelopmentAccessBlocking(context.Background(), database.GetDB(), int64(site.ID)); err != nil {
+		return TaskResult{Success: false, Message: "检查 AI 开发授权失败"}
+	} else if blocked {
+		return TaskResult{Success: false, Message: "该网站已开启 AI 开发访问，请先关闭授权"}
+	}
 	if locked, err := SiteMigrationDeleteBlocked(context.Background(), site.ID, site.Domain); err != nil {
 		return TaskResult{Success: false, Message: "检查站点迁移锁失败"}
 	} else if locked {
@@ -783,6 +789,11 @@ func executeUpdateDomains(task *Task) TaskResult {
 	}
 
 	site := payload.Site
+	if blocked, err := database.IsAIDevelopmentAccessBlocking(context.Background(), database.GetDB(), int64(site.ID)); err != nil {
+		return TaskResult{Success: false, Message: "检查 AI 开发授权失败"}
+	} else if blocked {
+		return TaskResult{Success: false, Message: "该网站已开启 AI 开发访问，请先关闭授权"}
+	}
 	cfg := config.AppConfig
 
 	domainChanged := false
@@ -1031,6 +1042,15 @@ func nilIfEmpty(s string) interface{} {
 
 func ReinstallWordPress(ctx context.Context, webRoot, dbName, dbUser, systemUser string, cfg *config.Config,
 	cleanDefaults, removeThemes bool, installThemes, installPlugins []string) error {
+	var siteID int64
+	if err := database.GetDB().QueryRowContext(ctx, `SELECT id FROM websites WHERE web_root=? AND system_user=?`, webRoot, systemUser).Scan(&siteID); err != nil {
+		return fmt.Errorf("检查 AI 开发授权失败: %w", err)
+	}
+	if blocked, err := database.IsAIDevelopmentAccessBlocking(ctx, database.GetDB(), siteID); err != nil {
+		return fmt.Errorf("检查 AI 开发授权失败: %w", err)
+	} else if blocked {
+		return errors.New("该网站已开启 AI 开发访问，请先关闭授权")
+	}
 	webRoot, err := managedSubpath(cfg.Paths.WWWRoot, webRoot, "网站目录")
 	if err != nil {
 		return err

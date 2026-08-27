@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/naibabiji/wp-panel/config"
+	"github.com/naibabiji/wp-panel/database"
 )
 
 type SiteMigrationWorkflowService struct {
@@ -44,6 +46,15 @@ func NewSiteMigrationWorkflowService(db *sql.DB, cfg *config.Config, pairing *Si
 func (s *SiteMigrationWorkflowService) Start(ctx context.Context, peerID, batchID, requestedBy string, siteIDs []int64) (*SiteMigrationBatchPlanResult, error) {
 	if !validSiteMigrationID(peerID) || !validSiteMigrationID(batchID) || !validSiteMigrationRequester(requestedBy) || len(siteIDs) == 0 || len(siteIDs) > 500 {
 		return nil, errors.New("invalid site migration start")
+	}
+	for _, siteID := range siteIDs {
+		blocked, err := database.IsAIDevelopmentAccessBlocking(ctx, s.db, siteID)
+		if err != nil {
+			return nil, fmt.Errorf("check AI development access for site %d: %w", siteID, err)
+		}
+		if blocked {
+			return nil, fmt.Errorf("site %d has active AI development access", siteID)
+		}
 	}
 	plans, declarationsByDomain, err := s.buildPlans(ctx, siteIDs)
 	if err != nil {

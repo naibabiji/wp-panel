@@ -56,8 +56,8 @@ func TestSiteMigrationSchemaUpgradeFrom1053IsIdempotent(t *testing.T) {
 	if err := RunUpgrades(); err != nil {
 		t.Fatalf("second RunUpgrades(): %v", err)
 	}
-	if got := LatestVersion(); got != "1.0.56" {
-		t.Fatalf("LatestVersion()=%q, want 1.0.56", got)
+	if got := LatestVersion(); got != "1.0.57" {
+		t.Fatalf("LatestVersion()=%q, want 1.0.57", got)
 	}
 	var count int
 	if err := DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='site_migration_sites'`).Scan(&count); err != nil || count != 1 {

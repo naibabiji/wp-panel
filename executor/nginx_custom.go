@@ -208,6 +208,11 @@ func executeSetDocumentRoot(task *Task) TaskResult {
 	if site == nil {
 		return TaskResult{Success: false, Message: "网站不存在"}
 	}
+	if blocked, err := database.IsAIDevelopmentAccessBlocking(context.Background(), database.GetDB(), int64(site.ID)); err != nil {
+		return TaskResult{Success: false, Message: "检查 AI 开发授权失败"}
+	} else if blocked {
+		return TaskResult{Success: false, Message: "该网站已开启 AI 开发访问，请先关闭授权"}
+	}
 	if site.SiteType != "php" {
 		return TaskResult{Success: false, Message: "只有通用 PHP 网站支持修改 Web 入口目录"}
 	}

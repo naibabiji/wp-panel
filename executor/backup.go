@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -75,6 +76,14 @@ func executeRestoreBackup(task *Task) TaskResult {
 	}
 
 	site := payload.Site
+	if site == nil {
+		return TaskResult{Success: false, Message: "恢复失败: 网站不存在"}
+	}
+	if blocked, err := database.IsAIDevelopmentAccessBlocking(context.Background(), database.GetDB(), int64(site.ID)); err != nil {
+		return TaskResult{Success: false, Message: "检查 AI 开发授权失败"}
+	} else if blocked {
+		return TaskResult{Success: false, Message: "该网站已开启 AI 开发访问，请先关闭授权"}
+	}
 	if payload.UpdateBackupPath != "" && site != nil {
 		defer ReleaseSiteOpLock(site.ID)
 	}
@@ -122,7 +131,7 @@ func executeRestoreBackup(task *Task) TaskResult {
 	if err := validateRestoreBackupFile(filePath); err != nil {
 		return TaskResult{Success: false, Message: "恢复文件校验失败: " + err.Error()}
 	}
-	if err := ClearDatabaseTables(site.DBName, dbPass); err != nil {
+	if err := ClearDatabaseTables(int64(site.ID), site.DBName, dbPass); err != nil {
 		return TaskResult{Success: false, Message: "清空数据库失败: " + err.Error()}
 	}
 
@@ -611,7 +620,15 @@ func normalizeSQLPrefix(s string) string {
 }
 
 // ClearDatabaseTables 清空指定数据库中的所有表（保留数据库本身）
-func ClearDatabaseTables(dbName, dbPass string) error {
+func ClearDatabaseTables(siteID int64, dbName, dbPass string) error {
+	if siteID <= 0 {
+		return fmt.Errorf("invalid site ID")
+	}
+	if blocked, err := database.IsAIDevelopmentAccessBlocking(context.Background(), database.GetDB(), siteID); err != nil {
+		return fmt.Errorf("检查 AI 开发授权失败: %w", err)
+	} else if blocked {
+		return fmt.Errorf("该网站已开启 AI 开发访问，请先关闭授权")
+	}
 	if !isValidMySQLIdentifier(dbName) {
 		return fmt.Errorf("invalid database name")
 	}

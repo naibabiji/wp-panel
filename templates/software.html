@@ -61,6 +61,28 @@
         </div>
     </div>
 
+    <div class="card mb-6">
+        <div class="mb-4">
+            <h3 class="text-lg font-semibold text-white">{{t .Lang "software.development_tools"}}</h3>
+            <p class="text-xs text-gray-500 mt-1">{{t .Lang "software.development_tools_help"}}</p>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <template x-for="tool in developmentTools" :key="tool.id">
+                <div class="rounded border border-gray-700 p-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <div class="flex items-center gap-2"><span class="font-medium text-white" x-text="tool.name"></span><span x-show="tool.recommended" class="text-xs text-green-400">{{t .Lang "software.recommended"}}</span></div>
+                            <p class="text-xs text-gray-500 mt-1" x-text="tool.id === 'wp-cli' ? t('software.wp_cli_development_help') : t('software.nodejs_development_help')"></p>
+                            <p x-show="tool.installed" class="text-xs text-gray-400 mt-2" x-text="tool.version"></p>
+                        </div>
+                        <button x-show="!tool.installed" @click="installDevelopmentTool(tool)" :disabled="tool._installing" class="btn-primary text-xs" x-text="tool._installing ? t('software.installing') : t('software.install')"></button>
+                        <span x-show="tool.installed" class="badge-success text-xs">{{t .Lang "software.installed"}}</span>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
     <div x-data="processGuard()" x-init="deferTask(() => fetchStatus(), 700)" class="card mb-6">
         <div class="flex items-center justify-between mb-3">
             <h3 class="text-lg font-semibold text-white">{{t .Lang "software.process_guard"}}</h3>
@@ -199,6 +221,7 @@ function processGuard() {
 function softwareManager() {
     return {
         software: [],
+        developmentTools: [],
         showHelp: false,
         clearingOpcache: false,
         logModal: { open: false, title: '', content: '' },
@@ -214,6 +237,23 @@ function softwareManager() {
                     });
                 }
             } catch(e) {}
+            await this.fetchDevelopmentTools();
+        },
+        async fetchDevelopmentTools() {
+            try {
+                const r = await api('/software/development-tools');
+                if (r.success) this.developmentTools = (r.data || []).map(tool => ({ ...tool, _installing: false }));
+            } catch(e) {}
+        },
+        async installDevelopmentTool(tool) {
+            if (!await confirmModal(t('software.development_tool_install_confirm', { tool: tool.name }))) return;
+            tool._installing = true;
+            try {
+                const r = await api('/software/development-tools/install', { method: 'POST', body: { id: tool.id }, timeout: 600000 });
+                showToast(r.data?.message || t('software.development_tool_installed'), 'success');
+                await this.fetchDevelopmentTools();
+            } catch(e) { showToast(e.message, 'error'); }
+            finally { tool._installing = false; }
         },
         async viewLog(name) {
             this.logModal.title = name;

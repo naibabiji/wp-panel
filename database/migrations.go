@@ -64,6 +64,27 @@ var migrations = append([]string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_websites_status ON websites(status)`,
 	`CREATE INDEX IF NOT EXISTS idx_websites_domain ON websites(domain)`,
+	`CREATE TABLE IF NOT EXISTS website_ai_development_access (
+		site_id          INTEGER PRIMARY KEY,
+		status           TEXT NOT NULL,
+		operation        TEXT NOT NULL DEFAULT '',
+		system_user      TEXT NOT NULL,
+		web_root         TEXT NOT NULL,
+		original_shell   TEXT NOT NULL,
+		original_home    TEXT NOT NULL,
+		public_key       TEXT NOT NULL DEFAULT '',
+		key_fingerprint  TEXT NOT NULL DEFAULT '',
+		requested_by     TEXT NOT NULL DEFAULT '',
+		last_error       TEXT NOT NULL DEFAULT '',
+		enabled_at       DATETIME,
+		created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (site_id) REFERENCES websites(id) ON DELETE CASCADE,
+		CHECK (status IN ('enabling','enabled','disabling','error')),
+		CHECK (operation IN ('','rotate'))
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_website_ai_development_access_status
+		ON website_ai_development_access(status, operation)`,
 
 	// ============================================================
 	// cron_jobs

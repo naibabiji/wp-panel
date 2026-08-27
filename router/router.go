@@ -832,6 +832,27 @@ var i18nKeys = []string{
 	"files.target_directory_missing",
 	"files.target_is_directory",
 	"session_username",
+	"ai_development.disable_confirm",
+	"ai_development.disabled",
+	"ai_development.disabled_status",
+	"ai_development.enable_button",
+	"ai_development.enable_confirm",
+	"ai_development.enabled",
+	"ai_development.enabled_downloaded",
+	"ai_development.processing",
+	"ai_development.stage_installing_wp_cli",
+	"ai_development.stage_installing_nodejs",
+	"ai_development.stage_configuring_access",
+	"ai_development.stage_rotating_package",
+	"ai_development.enabled_ready_download",
+	"ai_development.first_prompt",
+	"ai_development.first_prompt_copied",
+	"ai_development.download_package",
+	"ai_development.regenerate_package",
+	"ai_development.package_downloaded",
+	"ai_development.redownload_rotates_confirm",
+	"ai_development.rotate_confirm",
+	"ai_development.rotated_downloaded",
 	"software.action_success",
 	"software.clear_failed",
 	"software.client_max_body_size_hint",
@@ -842,6 +863,13 @@ var i18nKeys = []string{
 	"software.innodb_buffer_pool_size_hint",
 	"software.innodb_buffer_pool_size_label",
 	"software.installed",
+	"software.development_tool_install_confirm",
+	"software.development_tool_installed",
+	"software.install",
+	"software.installing",
+	"software.nodejs_development_help",
+	"software.recommended",
+	"software.wp_cli_development_help",
 	"software.invalid_action",
 	"software.log_cleared",
 	"software.log_empty_or_unreadable",
@@ -1398,6 +1426,11 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/websites/:id/install-plugin", websiteHandler.InstallPlugin)
 	protected.GET("/api/websites/:id/install-plugin/status", websiteHandler.InstallPluginStatus)
 	protected.POST("/api/websites/:id/reinstall-wp", websiteHandler.ReinstallWordPress)
+	aiDevelopmentHandler := &handlers.AIDevelopmentAccessHandler{}
+	protected.GET("/api/websites/:id/ai-development-access", aiDevelopmentHandler.Status)
+	protected.POST("/api/websites/:id/ai-development-access", aiDevelopmentHandler.Enable)
+	protected.POST("/api/websites/:id/ai-development-access/rotate", aiDevelopmentHandler.Rotate)
+	protected.DELETE("/api/websites/:id/ai-development-access", aiDevelopmentHandler.Disable)
 	protected.GET("/api/websites/:id/nginx-custom", websiteHandler.GetNginxCustom)
 	protected.PUT("/api/websites/:id/nginx-custom", websiteHandler.SaveNginxCustom)
 	protected.PUT("/api/websites/:id/access-log", websiteHandler.SetAccessLogMode)
@@ -1606,6 +1639,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 		c.HTML(http.StatusOK, "software.html", pageData(suffix, "software", "software_content", c))
 	})
 	protected.GET("/api/software", softwareHandler.List)
+	protected.GET("/api/software/development-tools", softwareHandler.DevelopmentTools)
+	protected.POST("/api/software/development-tools/install", softwareHandler.InstallDevelopmentTool)
 	protected.GET("/api/software/recommend", softwareHandler.Recommend)
 	protected.POST("/api/software/opcache/clear", softwareHandler.ClearOpcache)
 	protected.GET("/api/software/guard", softwareHandler.GetGuardStatus)

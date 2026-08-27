@@ -78,6 +78,27 @@ func (h *SoftwareHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(items))
 }
 
+func (h *SoftwareHandler) DevelopmentTools(c *gin.Context) {
+	c.JSON(http.StatusOK, models.SuccessResponse(executor.DevelopmentToolsStatus(c.Request.Context())))
+}
+
+func (h *SoftwareHandler) InstallDevelopmentTool(c *gin.Context) {
+	lang := softwareLang(c)
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || (req.ID != "wp-cli" && req.ID != "nodejs") {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "common.invalid_params")))
+		return
+	}
+	if err := executor.InstallDevelopmentTool(c.Request.Context(), req.ID); err != nil {
+		log.Printf("安装开发工具失败 tool=%s: %v", req.ID, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.development_tool_install_failed")))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.T(lang, "software.development_tool_installed")}))
+}
+
 var configDefaults = map[string]string{
 	"memory_limit":            "256M",
 	"upload_max_filesize":     "64M",
