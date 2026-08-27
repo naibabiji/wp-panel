@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"log"
@@ -542,6 +543,13 @@ func executeSetFileLock(task *Task) TaskResult {
 	site := payload.Site
 	if site.SiteType != "" && site.SiteType != "wordpress" {
 		return TaskResult{Success: false, Message: "只有 WordPress 站点支持文件锁定"}
+	}
+	if payload.Enabled {
+		if blocked, err := database.IsAIDevelopmentAccessBlocking(context.Background(), database.GetDB(), int64(site.ID)); err != nil {
+			return TaskResult{Success: false, Message: "检查 AI 开发授权失败"}
+		} else if blocked {
+			return TaskResult{Success: false, Message: "该网站已开启 AI 开发访问，请先关闭授权"}
+		}
 	}
 	if _, err := database.GetDB().Exec(
 		"UPDATE websites SET file_lock_apply_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",

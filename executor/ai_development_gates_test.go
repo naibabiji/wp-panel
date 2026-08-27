@@ -45,3 +45,15 @@ func TestSetDocumentRootExecutorRejectsActiveAIDevelopmentAccess(t *testing.T) {
 		t.Fatalf("executeSetDocumentRoot() result=%+v", result)
 	}
 }
+
+func TestSetFileLockExecutorRejectsActiveAIDevelopmentAccess(t *testing.T) {
+	withAIDevelopmentGateTestDB(t)
+	result := executeSetFileLock(&Task{Payload: &SetFileLockPayload{
+		Site:    &models.Website{ID: 7, SiteType: "wordpress"},
+		Enabled: true,
+		Mode:    FileLockModeStandard,
+	}})
+	if result.Success || !strings.Contains(result.Message, "AI 开发访问") {
+		t.Fatalf("executeSetFileLock() result=%+v", result)
+	}
+}
