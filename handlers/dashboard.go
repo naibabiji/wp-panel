@@ -110,20 +110,13 @@ func queryMetrics(r string) ([]string, []float64, []float64, []float64) {
 	var memory []float64
 	var load []float64
 
-	format := "15:04"
-	if r == "7d" {
-		format = "01-02 15:04"
-	} else if r == "15d" {
-		format = "01-02"
-	}
-
 	for rows.Next() {
 		var ts time.Time
 		var c, m, l float64
 		if err := rows.Scan(&ts, &c, &m, &l); err != nil {
 			continue
 		}
-		labels = append(labels, ts.Format(format))
+		labels = append(labels, formatMetricLabel(ts, r))
 		cpu = append(cpu, c)
 		memory = append(memory, m)
 		load = append(load, l)
@@ -137,6 +130,16 @@ func queryMetrics(r string) ([]string, []float64, []float64, []float64) {
 	}
 
 	return labels, cpu, memory, load
+}
+
+func formatMetricLabel(ts time.Time, r string) string {
+	format := "15:04"
+	if r == "7d" {
+		format = "01-02 15:04"
+	} else if r == "15d" {
+		format = "01-02"
+	}
+	return ts.Local().Format(format)
 }
 
 func GetAnnouncement(c *gin.Context) {
