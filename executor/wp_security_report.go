@@ -85,7 +85,8 @@ var (
 
 	// 敏感文件扫描路径特征（与 fail2ban filter 保持一致）
 	sensitiveFilePatterns = []string{
-		".env", ".git", "config.bak", "wp-config.php", ".sql", ".tar", ".gz", ".zip",
+		".env", ".git", "config.bak", "wp-config.php", "secrets.json", "secrets.yaml", "secrets.yml",
+		"settings.py", "application.properties", "config.toml", ".sql", ".tar", ".gz", ".zip",
 		".old", ".swp", ".save", ".DS_Store",
 	}
 

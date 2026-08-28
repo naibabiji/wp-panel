@@ -39,10 +39,12 @@ var googlebotHTTPClient = &http.Client{Timeout: 15 * time.Second}
 // jail，读取的是 Nginx 基于规范化 $uri 单独生成的 wp-login-security.log，不再
 // 从这里的 access.log 里用 $request 原始文本匹配——避免同一次登录失败被两个
 // jail 分别计数、触发两次独立封禁。
+const fail2banSensitive404Regex = `(?i)^<HOST> - - \[.*\] "(?:GET|POST) .*(?:\.env(?:\.[^/?\s"]+)?|\.git|config\.bak|wp-config\.php|secrets\.(?:json|ya?ml)|settings\.py|application\.properties|config\.toml|\.sql|\.tar|\.gz|\.zip|\.old|\.swp|\.save|\.ds_store)(?:[/?\s"]|$).*" 404 .*$`
+
 const fail2banFilterConfig = `# WP Panel Generated — DO NOT EDIT MANUALLY
 [Definition]
 failregex = ^<HOST> .* ".*" 429 .*$
-            ^<HOST> - - \[.*\] "(GET|POST) .*(\.env|\.git|config\.bak|wp-config\.php|\.sql|\.tar|\.gz|\.zip|\.old|\.swp|\.save|\.DS_Store).*" 404 .*$
+            ` + fail2banSensitive404Regex + `
 ignoreregex =
 `
 

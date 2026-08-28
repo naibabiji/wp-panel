@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -15,6 +16,142 @@ func TestNginxGlobalLogMapConfigPreservesConnectionPeer(t *testing.T) {
 	for _, want := range []string{"log_format wppanel_combined", "$remote_addr", "peer=$realip_remote_addr';"} {
 		if !strings.Contains(config, want) {
 			t.Fatalf("nginxGlobalLogMapConfig() missing %q", want)
+		}
+	}
+}
+
+func TestNginxGlobalLogMapConfigDefinesConservativeScanProtection(t *testing.T) {
+	config := nginxGlobalLogMapConfig()
+	for _, want := range []string{
+		"map $uri $wp_sensitive_path_blocked {",
+		"map $uri $wp_scan_probe_hit {",
+		`~*^/api/(?:env|config|settings)/?$ 1;`,
+		`~*(?:^|/)(?:secrets\.(?:json|ya?ml)|settings\.py|application\.properties|config\.toml)/?$ 1;`,
+		`1 "$server_name:$binary_remote_addr";`,
+		"limit_req_zone $wp_scan_probe_key zone=wp_scan_limit:10m rate=30r/m;",
+		`map "$wp_uri_security_loggable$wp_sqli_probe_hit$wp_fake_search_bot_hit$wp_scan_probe_hit" $wp_security_loggable {`,
+	} {
+		if !strings.Contains(config, want) {
+			t.Fatalf("nginxGlobalLogMapConfig() missing %q", want)
+		}
+	}
+
+	scanMapStart := strings.Index(config, "map $uri $wp_scan_probe_hit {")
+	if scanMapStart < 0 {
+		t.Fatal("could not find wp_scan_probe_hit map")
+	}
+	scanMapEnd := strings.Index(config[scanMapStart:], "\n}\n\nmap $wp_scan_probe_hit")
+	if scanMapEnd < 0 {
+		t.Fatal("could not isolate wp_scan_probe_hit map")
+	}
+	scanMap := config[scanMapStart : scanMapStart+scanMapEnd]
+	for _, forbidden := range []string{
+		`~*\.json`,
+		`~*\.ya?ml`,
+		`~*\.zip`,
+		`~*^/(?:api|config|settings|backup)/`,
+	} {
+		if strings.Contains(scanMap, forbidden) {
+			t.Fatalf("scan protection must not contain broad or spoofable rule %q", forbidden)
+		}
+	}
+	if strings.Contains(config[scanMapStart:], "wordpress_logged_in") {
+		t.Fatal("scan limiter must not use a spoofable WordPress cookie exemption")
+	}
+}
+
+func TestScanRateLimitAppliesOnlyToWordPressTemplates(t *testing.T) {
+	const scanLimit = "limit_req zone=wp_scan_limit burst=20 nodelay;"
+	for name, tmpl := range map[string]string{
+		"wordpress-http":  nginxHTTPTemplate,
+		"wordpress-https": nginxHTTPSTemplate,
+	} {
+		if !strings.Contains(tmpl, scanLimit) {
+			t.Fatalf("%s template missing WordPress scan limit", name)
+		}
+	}
+	for name, tmpl := range map[string]string{
+		"php-http":  phpHTTPTemplate,
+		"php-https": phpHTTPSTemplate,
+	} {
+		if strings.Contains(tmpl, scanLimit) {
+			t.Fatalf("%s template must not apply WordPress scan limit", name)
+		}
+	}
+}
+
+func TestSensitiveRootFileBlockAppliesToAllSiteTypes(t *testing.T) {
+	const rule = "if ($wp_sensitive_path_blocked) { return 404; }"
+	for name, tmpl := range map[string]string{
+		"wordpress-http":  nginxHTTPTemplate,
+		"wordpress-https": nginxHTTPSTemplate,
+		"php-http":        phpHTTPTemplate,
+		"php-https":       phpHTTPSTemplate,
+	} {
+		if !strings.Contains(tmpl, rule) {
+			t.Fatalf("%s template missing conservative sensitive-file block", name)
+		}
+	}
+}
+
+func TestNginxSecurityMapRegexBehavior(t *testing.T) {
+	config := nginxGlobalLogMapConfig()
+
+	assertNginxMapMatches(t, config, "$wp_sensitive_path_blocked", []string{
+		"/.env", "/.ENV.production", "/.git/HEAD", "/secrets.JSON", "/config.toml/",
+	}, []string{
+		"/.gitignore", "/assets/secrets.json", "/api/config", "/data.json", "/archive.zip",
+	})
+	assertNginxMapMatches(t, config, "$wp_scan_probe_hit", []string{
+		"/api/settings/", "/phpinfo.php", "/backend/settings.py", "/PHPTEST.php",
+	}, []string{
+		"/wp-json/wp/v2/posts", "/wp-admin/", "/webhook/settings", "/data.json", "/api/configuration",
+	})
+}
+
+func assertNginxMapMatches(t *testing.T, config, variable string, matches, rejects []string) {
+	t.Helper()
+	startMarker := "map $uri " + variable + " {"
+	start := strings.Index(config, startMarker)
+	if start < 0 {
+		t.Fatalf("missing map %s", variable)
+	}
+	end := strings.Index(config[start:], "\n}")
+	if end < 0 {
+		t.Fatalf("unterminated map %s", variable)
+	}
+
+	var expressions []*regexp.Regexp
+	for _, line := range strings.Split(config[start:start+end], "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 || !strings.HasPrefix(fields[0], "~*") {
+			continue
+		}
+		// These generated maps use PCRE non-capturing groups, while Go's regexp
+		// parser does not. Capturing groups have identical matching behavior here.
+		pattern := strings.ReplaceAll(strings.TrimPrefix(fields[0], "~*"), "(?:", "(")
+		expressions = append(expressions, regexp.MustCompile("(?i)"+pattern))
+	}
+	if len(expressions) == 0 {
+		t.Fatalf("map %s contains no regex rules", variable)
+	}
+
+	matchesAny := func(uri string) bool {
+		for _, expression := range expressions {
+			if expression.MatchString(uri) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, uri := range matches {
+		if !matchesAny(uri) {
+			t.Errorf("map %s should match %q", variable, uri)
+		}
+	}
+	for _, uri := range rejects {
+		if matchesAny(uri) {
+			t.Errorf("map %s should reject %q", variable, uri)
 		}
 	}
 }
@@ -290,7 +427,7 @@ func TestNginxSecurityProbeMapConfigDefinesIndependentVariables(t *testing.T) {
 		`map "$wp_security_claims_googlebot:$wp_security_verified_googlebot_ip" $wp_fake_googlebot_hit {`,
 		`map "$wp_security_claims_bingbot:$wp_security_verified_bingbot_ip" $wp_fake_bingbot_hit {`,
 		`map "$wp_fake_googlebot_hit$wp_fake_bingbot_hit" $wp_fake_search_bot_hit {`,
-		`map "$wp_uri_security_loggable$wp_sqli_probe_hit$wp_fake_search_bot_hit" $wp_security_loggable {`,
+		`map "$wp_uri_security_loggable$wp_sqli_probe_hit$wp_fake_search_bot_hit$wp_scan_probe_hit" $wp_security_loggable {`,
 	} {
 		if !strings.Contains(config, want) {
 			t.Fatalf("nginxGlobalLogMapConfig() missing %q", want)

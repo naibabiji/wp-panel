@@ -34,6 +34,43 @@ func TestGooglebotFetchFallsBackToRelay(t *testing.T) {
 	}
 }
 
+func TestFail2banWebFilterIncludesNewSensitiveFileNames(t *testing.T) {
+	for _, want := range []string{
+		`secrets\.(?:json|ya?ml)`,
+		`settings\.py`,
+		`application\.properties`,
+		`config\.toml`,
+	} {
+		if !strings.Contains(fail2banFilterConfig, want) {
+			t.Fatalf("fail2ban web filter missing %q", want)
+		}
+	}
+}
+
+func TestFail2banSensitive404RegexBehavior(t *testing.T) {
+	pattern := strings.ReplaceAll(fail2banSensitive404Regex, "<HOST>", `[0-9a-f:.]+`)
+	re := regexp.MustCompile(pattern)
+
+	for _, line := range []string{
+		`203.0.113.7 - - [28/Aug/2026:15:45:47 +0800] "GET /.ENV HTTP/1.1" 404 146 "-" "curl/8"`,
+		`2001:db8::7 - - [28/Aug/2026:15:45:47 +0800] "POST /.ds_store HTTP/2.0" 404 146 "-" "curl/8"`,
+		`203.0.113.7 - - [28/Aug/2026:15:45:47 +0800] "GET /SECRETS.YAML HTTP/1.1" 404 146 "-" "curl/8"`,
+	} {
+		if !re.MatchString(line) {
+			t.Fatalf("sensitive 404 regex did not match %q", line)
+		}
+	}
+
+	for _, line := range []string{
+		`203.0.113.7 - - [28/Aug/2026:15:45:47 +0800] "GET /.gitignore HTTP/1.1" 404 146 "-" "curl/8"`,
+		`203.0.113.7 - - [28/Aug/2026:15:45:47 +0800] "GET /.ENV HTTP/1.1" 200 146 "-" "curl/8"`,
+	} {
+		if re.MatchString(line) {
+			t.Fatalf("sensitive 404 regex unexpectedly matched %q", line)
+		}
+	}
+}
+
 func TestNormalizeOfficialIPRangesRejectsUnsafeInput(t *testing.T) {
 	if _, err := NormalizeOfficialIPRanges("0.0.0.0/0"); err == nil {
 		t.Fatal("expected overly broad range to be rejected")

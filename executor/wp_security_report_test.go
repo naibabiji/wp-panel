@@ -160,6 +160,16 @@ func TestClassifySecurityEvent(t *testing.T) {
 			wantRisk: "medium",
 		},
 		{
+			name:     "framework secret file scan",
+			method:   "GET",
+			uri:      "/backend/settings.py",
+			ua:       "curl/8.0",
+			ip:       "203.0.113.7",
+			status:   404,
+			wantType: SecurityEventSensitiveFileScan,
+			wantRisk: "medium",
+		},
+		{
 			name:     "suspicious php probe",
 			method:   "GET",
 			uri:      "/wp-content/uploads/2026/shell.php",

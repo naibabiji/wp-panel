@@ -640,6 +640,7 @@ var i18nKeys = []string{
 	"firewall.type_suspicious_php",
 	"firewall.unbanned",
 	"firewall.unknown",
+	"firewall.view_source_rule",
 	"name",
 	"overwrite",
 	"site_id",

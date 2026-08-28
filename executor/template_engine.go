@@ -120,6 +120,38 @@ map $request_uri $wp_access_log_disabled {
     default 0;
 }
 
+# 只阻断正常网站不应从根目录公开提供的高置信度敏感文件。规则同时用于
+# WordPress 与通用 PHP 站点，故意不包含普通 config/settings/API 路由，
+# 也不按 json/yaml/zip/sql 等通用后缀扩大匹配。
+map $uri $wp_sensitive_path_blocked {
+    default 0;
+    ~*^/\.env(?:\.[^/]+)?/?$ 1;
+    ~*^/\.git(?:/|$) 1;
+    ~*^/\.DS_Store/?$ 1;
+    ~*^/secrets\.(?:json|ya?ml)/?$ 1;
+    ~*^/settings\.py/?$ 1;
+    ~*^/application\.properties/?$ 1;
+    ~*^/config\.toml/?$ 1;
+}
+
+# WordPress 专用的探测请求识别。这里只覆盖高置信度的非 WordPress 配置探测，
+# 不匹配 wp-admin/wp-json/wc-api/webhook 等正常入口，也不使用可伪造的登录 Cookie
+# 作为豁免条件。通用 PHP 模板不引用 wp_scan_limit，因此合法业务路由不受影响。
+# 与敏感文件 map 重叠的条目会先被直接阻断；这里仍保留它们，以写入 wp-security.log。
+map $uri $wp_scan_probe_hit {
+    default 0;
+    ~*^/api/(?:env|config|settings)/?$ 1;
+    ~*(?:^|/)(?:secrets\.(?:json|ya?ml)|settings\.py|application\.properties|config\.toml)/?$ 1;
+    ~*(?:^|/)(?:phpinfo|info|test|phptest|configuration|parameters)\.php/?$ 1;
+}
+
+map $wp_scan_probe_hit $wp_scan_probe_key {
+    default "";
+    1 "$server_name:$binary_remote_addr";
+}
+
+limit_req_zone $wp_scan_probe_key zone=wp_scan_limit:10m rate=30r/m;
+
 map $uri $wp_uri_security_loggable {
     default 0;
     / 0;
@@ -154,9 +186,9 @@ map $uri $wp_uri_security_loggable {
 }
 
 ` + nginxSecurityProbeMapConfig() + `
-map "$wp_uri_security_loggable$wp_sqli_probe_hit$wp_fake_search_bot_hit" $wp_security_loggable {
+map "$wp_uri_security_loggable$wp_sqli_probe_hit$wp_fake_search_bot_hit$wp_scan_probe_hit" $wp_security_loggable {
     default 1;
-    "000" 0;
+    "0000" 0;
 }
 
 # 登录/XML-RPC 认证爆破检测的唯一真实来源：Nginx 已经完成 merge_slashes、
@@ -680,6 +712,9 @@ server {
     {{end}}
 
     if ($wppanel_banned_ip) { return 444; }
+    if ($wp_sensitive_path_blocked) { return 404; }
+
+    limit_req zone=wp_scan_limit burst=20 nodelay;
 
     {{if .RateLimitEnabled}}
     limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
@@ -839,6 +874,9 @@ server {
     {{end}}
 
     if ($wppanel_banned_ip) { return 444; }
+    if ($wp_sensitive_path_blocked) { return 404; }
+
+    limit_req zone=wp_scan_limit burst=20 nodelay;
 
     {{if .RateLimitEnabled}}
     limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
@@ -880,6 +918,9 @@ server {
     {{end}}
 
     if ($wppanel_banned_ip) { return 444; }
+    if ($wp_sensitive_path_blocked) { return 404; }
+
+    limit_req zone=wp_scan_limit burst=20 nodelay;
 
     {{if .RateLimitEnabled}}
     limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;

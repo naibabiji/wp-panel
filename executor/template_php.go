@@ -20,6 +20,7 @@ server {
     {{end}}
 
     if ($wppanel_banned_ip) { return 444; }
+    if ($wp_sensitive_path_blocked) { return 404; }
 
     {{if .RateLimitEnabled}}
     limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
@@ -120,6 +121,7 @@ server {
     {{end}}
 
     if ($wppanel_banned_ip) { return 444; }
+    if ($wp_sensitive_path_blocked) { return 404; }
 
     {{if .RateLimitEnabled}}
     limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
@@ -161,6 +163,7 @@ server {
     {{end}}
 
     if ($wppanel_banned_ip) { return 444; }
+    if ($wp_sensitive_path_blocked) { return 404; }
 
     {{if .RateLimitEnabled}}
     limit_req zone=wp_req_limit burst={{.RateLimitBurst}} nodelay;
