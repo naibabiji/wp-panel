@@ -800,6 +800,7 @@
     "development_tool_install_confirm": "确认在服务器上安装 {{tool}}？",
     "development_tool_installed": "开发工具安装完成",
     "development_tool_install_failed": "开发工具安装失败，请稍后重试或检查 APT/网络状态",
+    "wp_cli_proxy_download_failed": "WP-CLI 下载失败，已尝试 GitHub 官方地址和已配置的 GitHub 反代，请检查反代白名单或服务器网络后重试",
     "running": "● 运行中",
     "stopped": "● 已停止",
     "php_installed_extensions": "已安装 {{count}} 个扩展",

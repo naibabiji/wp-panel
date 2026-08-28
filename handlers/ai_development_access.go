@@ -77,6 +77,10 @@ func (h *AIDevelopmentAccessHandler) Enable(c *gin.Context) {
 	if req.InstallWPCLI {
 		if err := executor.InstallDevelopmentTool(c.Request.Context(), "wp-cli"); err != nil {
 			log.Printf("安装 AI 开发组件失败 tool=wp-cli site=%d: %v", site.ID, err)
+			if errors.Is(err, executor.ErrWPCLIProxyDownloadFailed) {
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "software.wp_cli_proxy_download_failed")))
+				return
+			}
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_development.tool_install_failed", i18n.P{"tool": "WP-CLI"})))
 			return
 		}

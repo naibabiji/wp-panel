@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -93,6 +94,10 @@ func (h *SoftwareHandler) InstallDevelopmentTool(c *gin.Context) {
 	}
 	if err := executor.InstallDevelopmentTool(c.Request.Context(), req.ID); err != nil {
 		log.Printf("安装开发工具失败 tool=%s: %v", req.ID, err)
+		if errors.Is(err, executor.ErrWPCLIProxyDownloadFailed) {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.wp_cli_proxy_download_failed")))
+			return
+		}
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.development_tool_install_failed")))
 		return
 	}

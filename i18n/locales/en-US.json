@@ -800,6 +800,7 @@
     "development_tool_install_confirm": "Install {{tool}} on this server?",
     "development_tool_installed": "Development tool installed",
     "development_tool_install_failed": "Failed to install the development tool. Retry later or check APT/network status.",
+    "wp_cli_proxy_download_failed": "WP-CLI download failed through both GitHub and the configured GitHub proxy. Check the proxy allowlist or server network, then retry.",
     "running": "● Running",
     "stopped": "● Stopped",
     "php_installed_extensions": "Installed {{count}} extensions",
