@@ -26,6 +26,18 @@ func TestAlertRuleSustainedFiring(t *testing.T) {
 	}
 }
 
+func TestWebhookConfiguredByURL(t *testing.T) {
+	if webhookConfigured(nil) {
+		t.Fatal("nil Webhook config should be disabled")
+	}
+	if webhookConfigured(&WebhookConfig{Channel: "wecom"}) {
+		t.Fatal("Webhook config without URL should be disabled")
+	}
+	if !webhookConfigured(&WebhookConfig{Channel: "wecom", URL: "https://example.com/hook"}) {
+		t.Fatal("Webhook config with URL should be enabled")
+	}
+}
+
 func TestAlertRuleSustainedFiringResets(t *testing.T) {
 	start := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
 	r := &alertRule{thresholdDuration: 5 * time.Minute}

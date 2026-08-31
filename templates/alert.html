@@ -60,13 +60,6 @@
             <div class="card" x-data="webhookConfig()" x-init="fetch()">
                 <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "alert.webhook_push"}}</h3>
                 <div class="mb-3">
-                    <label class="text-sm text-gray-300 mb-1 block">{{t .Lang "alert.enable"}}</label>
-                    <label class="flex items-center space-x-2 cursor-pointer">
-                        <input type="checkbox" x-model="cfg.webhook_enabled">
-                        <span class="text-sm text-gray-400">{{t .Lang "alert.enable_webhook_push"}}</span>
-                    </label>
-                </div>
-                <div class="mb-3">
                     <label class="text-sm text-gray-300 mb-1 block">{{t .Lang "alert.push_channel"}}</label>
                     <select x-model="cfg.webhook_channel" class="input-field text-sm">
                         <option value="wecom">{{t .Lang "alert.wecom"}}</option>
@@ -80,6 +73,7 @@
                 <div class="mb-3">
                     <label class="text-sm text-gray-300 mb-1 block">Webhook URL</label>
                     <input type="text" x-model="cfg.webhook_url" class="input-field text-sm" placeholder="https://...">
+                    <p class="text-xs text-gray-500 mt-1">{{t .Lang "alert.webhook_url_help"}}</p>
                 </div>
                 <div class="flex space-x-3">
                     <button @click="save" :disabled="saving" class="btn-primary text-sm" x-text="saving ? t('alert.saving') : t('common.save')"></button>
@@ -170,25 +164,25 @@
     <div class="card">
         <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "alert.recent_logs"}}</h3>
         <div class="overflow-x-auto">
-            <table class="w-full text-sm">
+            <table class="table-fixed w-full min-w-[860px] text-sm">
                 <thead class="border-b border-gray-700 text-gray-400">
                     <tr>
-                        <th class="py-2 text-left">{{t .Lang "alert.time"}}</th>
-                        <th class="py-2 text-left">{{t .Lang "alert.type"}}</th>
-                        <th class="py-2 text-left">{{t .Lang "alert.level"}}</th>
+                        <th class="w-40 py-2 text-left whitespace-nowrap">{{t .Lang "alert.time"}}</th>
+                        <th class="w-36 py-2 text-left whitespace-nowrap">{{t .Lang "alert.type"}}</th>
+                        <th class="w-20 py-2 text-left whitespace-nowrap">{{t .Lang "alert.level"}}</th>
                         <th class="py-2 text-left">{{t .Lang "alert.content"}}</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-800">
                     <template x-for="l in logs" :key="l.id">
                         <tr>
-                            <td class="py-2 text-xs text-gray-400" x-text="fmtTime(l.created_at)"></td>
-                            <td class="py-2 text-sm text-gray-300" x-text="typeLabel(l.alert_type)"></td>
-                            <td class="py-2">
+                            <td class="py-2 text-xs text-gray-400 whitespace-nowrap" x-text="fmtTime(l.created_at)"></td>
+                            <td class="py-2 text-sm text-gray-300 whitespace-nowrap" x-text="typeLabel(l.alert_type)"></td>
+                            <td class="py-2 whitespace-nowrap">
                                 <span x-show="l.level === 'critical'" class="text-red-400 text-xs">{{t .Lang "alert.level_critical"}}</span>
                                 <span x-show="l.level === 'info'" class="text-green-400 text-xs">{{t .Lang "alert.level_info"}}</span>
                             </td>
-                            <td class="py-2 text-sm text-gray-400" x-text="l.message"></td>
+                            <td class="py-2 text-sm text-gray-400" style="white-space: normal; overflow-wrap: anywhere;" x-text="l.message"></td>
                         </tr>
                     </template>
                     <tr x-show="logs.length === 0">
@@ -322,20 +316,16 @@ function smtpConfig() {
 
 function webhookConfig() {
     return {
-        cfg: { webhook_enabled: 'false', webhook_channel: 'wecom', webhook_url: '' },
+        cfg: { webhook_channel: 'wecom', webhook_url: '' },
         saving: false,
         testing: false,
         async fetch() {
-            try { const r = await alertSettings(); if (r.success) { const d = r.data || {}; if (d.webhook_enabled) this.cfg.webhook_enabled = d.webhook_enabled; if (d.webhook_channel) this.cfg.webhook_channel = d.webhook_channel; if (d.webhook_url) this.cfg.webhook_url = d.webhook_url; } } catch(e) {}
+            try { const r = await alertSettings(); if (r.success) { const d = r.data || {}; if (d.webhook_channel) this.cfg.webhook_channel = d.webhook_channel; if (d.webhook_url) this.cfg.webhook_url = d.webhook_url; } } catch(e) {}
         },
         async save() {
             this.saving = true;
             try {
-                const body = { ...this.cfg };
-                if (typeof body.webhook_enabled === 'boolean') {
-                    body.webhook_enabled = body.webhook_enabled ? 'true' : 'false';
-                }
-                await api('/alert/settings', { method: 'PUT', body });
+                await api('/alert/settings', { method: 'PUT', body: { ...this.cfg } });
                 showToast(t('alert.webhook_config_saved'), 'success');
             } catch(e) { showToast(e.message, 'error'); }
             this.saving = false;

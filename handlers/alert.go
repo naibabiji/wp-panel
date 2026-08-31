@@ -106,9 +106,6 @@ func normalizeAlertSetting(key string, val interface{}) (string, bool, error) {
 			}
 		}
 		return v, true, nil
-	case "webhook_enabled":
-		v, err := normalizeBool(val)
-		return v, true, err
 	case "webhook_channel":
 		v, err := normalizePlainString(val, 30, key)
 		if err != nil {

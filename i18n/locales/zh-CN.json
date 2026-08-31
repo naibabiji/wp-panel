@@ -537,8 +537,6 @@
     "password_or_token": "密码/授权码",
     "admin_email": "管理员通知邮箱",
     "webhook_push": "Webhook 推送",
-    "enable": "启用",
-    "enable_webhook_push": "开启 Webhook 推送通知",
     "push_channel": "推送渠道",
     "wecom": "企业微信",
     "dingtalk": "钉钉",
@@ -606,6 +604,7 @@
     "type_system_update": "系统可用更新",
     "type_website_expiry": "网站到期",
     "webhook_config_saved": "Webhook 配置已保存",
+    "webhook_url_help": "保存有效 URL 后自动启用；清空 URL 并保存即可停用。",
     "webhook_url_required": "请填写 Webhook URL"
   },
   "extension": {

@@ -537,8 +537,6 @@
     "password_or_token": "Password / App Password",
     "admin_email": "Administrator Notification Email",
     "webhook_push": "Webhook Push",
-    "enable": "Enable",
-    "enable_webhook_push": "Enable Webhook push notifications",
     "push_channel": "Push Channel",
     "wecom": "WeCom",
     "dingtalk": "DingTalk",
@@ -606,6 +604,7 @@
     "type_system_update": "System update available",
     "type_website_expiry": "Website expiring soon",
     "webhook_config_saved": "Webhook settings saved",
+    "webhook_url_help": "Saving a valid URL enables Webhook automatically. Clear the URL and save to disable it.",
     "webhook_url_required": "Please enter webhook URL"
   },
   "extension": {

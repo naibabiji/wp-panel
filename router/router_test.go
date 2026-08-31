@@ -58,6 +58,38 @@ func TestLogAnalysisPageIncludesContent(t *testing.T) {
 	}
 }
 
+func TestAlertWebhookUsesConfigurationAsEnablement(t *testing.T) {
+	page, err := os.ReadFile("../templates/alert.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(page, []byte("webhook_enabled")) {
+		t.Fatal("Webhook settings should not expose a separate enable flag")
+	}
+	for _, expected := range [][]byte{[]byte(`webhook_channel: 'wecom'`), []byte(`webhook_url: ''`), []byte(`api('/alert/settings', { method: 'PUT'`)} {
+		if !bytes.Contains(page, expected) {
+			t.Fatalf("Webhook settings are missing %q", expected)
+		}
+	}
+}
+
+func TestAlertLogKeepsMetadataColumnsReadable(t *testing.T) {
+	page, err := os.ReadFile("../templates/alert.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range [][]byte{
+		[]byte(`table-fixed w-full min-w-[860px]`),
+		[]byte(`x-text="typeLabel(l.alert_type)"`),
+		[]byte(`py-2 whitespace-nowrap`),
+		[]byte(`style="white-space: normal; overflow-wrap: anywhere;" x-text="l.message"`),
+	} {
+		if !bytes.Contains(page, expected) {
+			t.Fatalf("alert log table is missing %q", expected)
+		}
+	}
+}
+
 func TestFeatureSettingsAreSeparatedFromPanelSettings(t *testing.T) {
 	settings, err := os.ReadFile("../templates/settings.html")
 	if err != nil {

@@ -14,7 +14,6 @@ import (
 )
 
 type WebhookConfig struct {
-	Enabled string
 	Channel string
 	URL     string
 }
@@ -25,10 +24,13 @@ func GetWebhookConfig() *WebhookConfig {
 		return nil
 	}
 	cfg := &WebhookConfig{}
-	db.QueryRow("SELECT svalue FROM security_settings WHERE skey = 'webhook_enabled'").Scan(&cfg.Enabled)
 	db.QueryRow("SELECT svalue FROM security_settings WHERE skey = 'webhook_channel'").Scan(&cfg.Channel)
 	db.QueryRow("SELECT svalue FROM security_settings WHERE skey = 'webhook_url'").Scan(&cfg.URL)
 	return cfg
+}
+
+func webhookConfigured(cfg *WebhookConfig) bool {
+	return cfg != nil && cfg.URL != ""
 }
 
 func isBlockedIP(ip net.IP) bool {
@@ -87,8 +89,8 @@ func safeWebhookClient() *http.Client {
 
 func SendWebhook(subject, body string) error {
 	cfg := GetWebhookConfig()
-	if cfg == nil || cfg.Enabled != "true" || cfg.URL == "" {
-		return fmt.Errorf("Webhook 未启用或未配置")
+	if !webhookConfigured(cfg) {
+		return fmt.Errorf("Webhook 未配置")
 	}
 
 	if err := isSafeWebhookURL(cfg.URL); err != nil {

@@ -121,7 +121,7 @@ func (m *alertManager) runChecks() {
 	hasSMTP := cfg != nil && cfg.Host != "" && cfg.AdminEmail != ""
 
 	wCfg := GetWebhookConfig()
-	hasWebhook := wCfg != nil && wCfg.Enabled == "true" && wCfg.URL != ""
+	hasWebhook := webhookConfigured(wCfg)
 
 	for _, r := range m.rules {
 		if !isRuleEnabled(r.key) {
@@ -299,7 +299,7 @@ func sendAlertMilestone(key, message string) {
 	smtp := GetSMTPConfig()
 	hasSMTP := smtp != nil && smtp.Host != "" && smtp.AdminEmail != ""
 	webhook := GetWebhookConfig()
-	hasWebhook := webhook != nil && webhook.Enabled == "true" && webhook.URL != ""
+	hasWebhook := webhookConfigured(webhook)
 	logAlertEvent(key, "critical", message)
 	deliverAlertNotification(key, message, false, hasSMTP, hasWebhook)
 }
@@ -331,7 +331,7 @@ func sendResolvedAlertEvent(key, title, message, tip string) {
 	if cfg := GetSMTPConfig(); cfg != nil && cfg.Host != "" && cfg.AdminEmail != "" {
 		go SendMail("", subject, formatEmailHTML(title, message, tip, true))
 	}
-	if cfg := GetWebhookConfig(); cfg != nil && cfg.Enabled == "true" && cfg.URL != "" {
+	if cfg := GetWebhookConfig(); webhookConfigured(cfg) {
 		go SendWebhook(subject, message)
 	}
 }
