@@ -135,6 +135,26 @@ func normalizeWPSiteURL(raw string) (string, error) {
 	return value, nil
 }
 
+func replaceWPSiteURLDomain(raw, oldDomain, newDomain string) (string, error) {
+	value, err := normalizeWPSiteURL(raw)
+	if err != nil {
+		return "", err
+	}
+	if value == "" {
+		return "", fmt.Errorf("empty URL")
+	}
+	parsed, _ := url.Parse(value)
+	if !strings.EqualFold(parsed.Hostname(), oldDomain) {
+		return "", fmt.Errorf("URL domain does not match current site domain")
+	}
+	port := parsed.Port()
+	parsed.Host = newDomain
+	if port != "" {
+		parsed.Host += ":" + port
+	}
+	return parsed.String(), nil
+}
+
 func localInterfaceIPs() map[string]bool {
 	result := map[string]bool{}
 	ifaces, err := net.Interfaces()
@@ -978,8 +998,9 @@ func (h *WebsiteHandler) UpdateDomains(c *gin.Context) {
 	}
 
 	var req struct {
-		NewDomain string   `json:"new_domain"`
-		Aliases   []string `json:"aliases"`
+		NewDomain      string   `json:"new_domain"`
+		Aliases        []string `json:"aliases"`
+		SyncWPSiteURLs bool     `json:"sync_wp_site_urls"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
@@ -1013,9 +1034,47 @@ func (h *WebsiteHandler) UpdateDomains(c *gin.Context) {
 		}
 	}
 
-	task := executor.GlobalQueue.Enqueue(executor.TaskUpdateDomains, &executor.UpdateDomainsPayload{
-		Site: site, NewDomain: targetDomain, Aliases: req.Aliases,
-	})
+	payload := &executor.UpdateDomainsPayload{Site: site, NewDomain: targetDomain, Aliases: req.Aliases}
+	if req.SyncWPSiteURLs {
+		if site.SiteType != "wordpress" {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.sync_wp_urls_wordpress_only")))
+			return
+		}
+		if targetDomain == site.Domain {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.sync_wp_urls_domain_unchanged")))
+			return
+		}
+		if site.TablePrefix == "" {
+			if prefix, readErr := executor.ReadWPTablePrefix(site.WebRoot); readErr == nil {
+				site.TablePrefix = prefix
+			}
+		}
+		if site.TablePrefix == "" {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.sync_wp_urls_prefix_required")))
+			return
+		}
+		oldSiteURL, oldHomeURL, readErr := executor.ReadWPSiteURLs(site.DBName, site.TablePrefix, config.AppConfig)
+		if readErr != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "website.sync_wp_urls_read_failed", i18n.P{"error": readErr.Error()})))
+			return
+		}
+		newSiteURL, replaceErr := replaceWPSiteURLDomain(oldSiteURL, site.Domain, targetDomain)
+		if replaceErr != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.sync_wp_siteurl_mismatch")))
+			return
+		}
+		newHomeURL, replaceErr := replaceWPSiteURLDomain(oldHomeURL, site.Domain, targetDomain)
+		if replaceErr != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.sync_wp_home_mismatch")))
+			return
+		}
+		payload.OldWPSiteURL = oldSiteURL
+		payload.OldWPHomeURL = oldHomeURL
+		payload.NewWPSiteURL = newSiteURL
+		payload.NewWPHomeURL = newHomeURL
+	}
+
+	task := executor.GlobalQueue.Enqueue(executor.TaskUpdateDomains, payload)
 	result := <-task.ResultCh
 	if result.Success {
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": result.Message}))
@@ -1203,8 +1262,9 @@ func (h *WebsiteHandler) UpdateWPSiteURLs(c *gin.Context) {
 	}
 
 	var req struct {
-		SiteURL string `json:"siteurl"`
-		HomeURL string `json:"home"`
+		SiteURL         string `json:"siteurl"`
+		HomeURL         string `json:"home"`
+		SyncPanelDomain bool   `json:"sync_panel_domain"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
@@ -1236,6 +1296,57 @@ func (h *WebsiteHandler) UpdateWPSiteURLs(c *gin.Context) {
 	}
 
 	cfg := config.AppConfig
+	if req.SyncPanelDomain {
+		if rejectIfAIDevelopmentAccessActive(c, id) {
+			return
+		}
+		oldSiteURL, oldHomeURL, readErr := executor.ReadWPSiteURLs(site.DBName, site.TablePrefix, cfg)
+		if readErr != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取当前站点 URL 失败: "+readErr.Error()))
+			return
+		}
+		newSiteURL := req.SiteURL
+		if newSiteURL == "" {
+			newSiteURL = oldSiteURL
+		}
+		newHomeURL := req.HomeURL
+		if newHomeURL == "" {
+			newHomeURL = oldHomeURL
+		}
+		targetDomain, domainErr := panelDomainFromWPSiteURLs(newSiteURL, newHomeURL)
+		if domainErr != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(domainErr.Error()))
+			return
+		}
+		if targetDomain == strings.ToLower(site.Domain) {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("WordPress URL 域名与网站主域名相同，无需同步"))
+			return
+		}
+		if conflict, existing := isAliasConflicting(targetDomain, site.ID); conflict {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("域名 "+targetDomain+" 已被站点 "+existing+" 使用"))
+			return
+		}
+		aliases := make([]string, 0)
+		for _, alias := range strings.Split(site.Aliases, "\n") {
+			alias = strings.TrimSpace(alias)
+			if alias != "" && !strings.EqualFold(alias, targetDomain) {
+				aliases = append(aliases, alias)
+			}
+		}
+		payload := &executor.UpdateDomainsPayload{
+			Site: site, NewDomain: targetDomain, Aliases: aliases,
+			OldWPSiteURL: oldSiteURL, OldWPHomeURL: oldHomeURL,
+			NewWPSiteURL: newSiteURL, NewWPHomeURL: newHomeURL,
+		}
+		task := executor.GlobalQueue.Enqueue(executor.TaskUpdateDomains, payload)
+		result := <-task.ResultCh
+		if result.Success {
+			c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": result.Message}))
+		} else {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(result.Message))
+		}
+		return
+	}
 	if err := executor.UpdateWPSiteURLs(site.DBName, site.TablePrefix, req.SiteURL, req.HomeURL, cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新失败: "+err.Error()))
 		return
@@ -1245,6 +1356,32 @@ func (h *WebsiteHandler) UpdateWPSiteURLs(c *gin.Context) {
 	executor.GoSafe(func() { executor.ClearWPSiteRuntimeCaches(site.ID, site.Domain, site.WebRoot) })
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "站点 URL 已更新"}))
+}
+
+func panelDomainFromWPSiteURLs(siteURL, homeURL string) (string, error) {
+	parseHost := func(raw string) (string, error) {
+		parsed, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil || parsed.Hostname() == "" {
+			return "", fmt.Errorf("WordPress URL 缺少有效域名")
+		}
+		host := strings.ToLower(parsed.Hostname())
+		if !executor.IsValidDomain(host) {
+			return "", fmt.Errorf("WordPress URL 中的域名不能作为网站主域名")
+		}
+		return host, nil
+	}
+	siteHost, err := parseHost(siteURL)
+	if err != nil {
+		return "", err
+	}
+	homeHost, err := parseHost(homeURL)
+	if err != nil {
+		return "", err
+	}
+	if siteHost != homeHost {
+		return "", fmt.Errorf("siteurl 与 home 的域名不同，无法自动判断网站主域名")
+	}
+	return siteHost, nil
 }
 
 func prepareWPAdministratorSite(c *gin.Context) *models.Website {

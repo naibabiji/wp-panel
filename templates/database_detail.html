@@ -180,6 +180,21 @@
                 <div><label class="label">{{t .Lang "website.new_home"}}</label><input type="text" x-model="newHomeURL" class="input-field font-mono" placeholder="https://example.com"></div>
                 <button @click="autoFillSiteURL()" type="button" class="btn-secondary text-xs">{{t .Lang "website.auto_fill_panel_domain"}}</button>
             </div>
+            <div x-show="siteURLDomainCandidate()" class="mb-4 p-3 rounded" style="background-color: #0f172a; border: 1px solid #334155;">
+                <label class="flex items-start gap-2 text-sm text-gray-200">
+                    <input type="checkbox" x-model="syncPanelDomain" class="mt-1">
+                    <span>{{t .Lang "database.sync_panel_domain"}}</span>
+                </label>
+                <p class="text-xs text-gray-400 mt-2">{{t .Lang "database.sync_panel_domain_help"}}</p>
+                <div class="mt-2 text-xs font-mono break-all">
+                    <span class="text-gray-400">{{t .Lang "database.website_domain"}}:</span>
+                    <span class="text-gray-300" x-text="site?.domain"></span>
+                    <span class="text-gray-500">→</span>
+                    <span class="text-green-300" x-text="siteURLDomainCandidate()"></span>
+                </div>
+                <p x-show="site?.ssl_enabled" class="text-xs text-amber-300 mt-2">{{t .Lang "database.sync_panel_domain_ssl_warning"}}</p>
+            </div>
+            <div x-show="siteURLDomainMismatch()" class="p-3 rounded text-xs mb-4 bg-yellow-950/40 border border-yellow-900 text-yellow-200">{{t .Lang "database.sync_panel_domain_mismatch"}}</div>
             <div class="p-3 rounded text-xs mb-4 bg-yellow-950/40 border border-yellow-900 text-yellow-200">{{t .Lang "database.site_url_warning"}}</div>
             <div class="flex justify-end gap-2">
                 <button @click="siteURLModal = false" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
@@ -241,6 +256,7 @@ function databaseDetail() {
         currentHomeURL: '',
         newSiteURL: '',
         newHomeURL: '',
+        syncPanelDomain: false,
         siteURLSubmitting: false,
         adminModal: false,
         adminLoading: false,
@@ -348,6 +364,7 @@ function databaseDetail() {
             this.currentHomeURL = '';
             this.newSiteURL = '';
             this.newHomeURL = '';
+            this.syncPanelDomain = false;
             try {
                 const r = await api('/websites/' + this.site.id + '/wp-site-urls');
                 this.currentSiteURL = r.data?.siteurl || '';
@@ -359,6 +376,25 @@ function databaseDetail() {
             this.newSiteURL = url;
             this.newHomeURL = url;
         },
+        effectiveSiteURL() { return this.newSiteURL.trim() || this.currentSiteURL; },
+        effectiveHomeURL() { return this.newHomeURL.trim() || this.currentHomeURL; },
+        siteURLHosts() {
+            try {
+                const siteHost = new URL(this.effectiveSiteURL()).hostname.toLowerCase();
+                const homeHost = new URL(this.effectiveHomeURL()).hostname.toLowerCase();
+                return { siteHost, homeHost };
+            } catch (e) { return { siteHost: '', homeHost: '' }; }
+        },
+        siteURLDomainCandidate() {
+            if (!this.site) return '';
+            const { siteHost, homeHost } = this.siteURLHosts();
+            return siteHost && siteHost === homeHost && siteHost !== this.site.domain.toLowerCase() ? siteHost : '';
+        },
+        siteURLDomainMismatch() {
+            if (!this.site || (!this.newSiteURL.trim() && !this.newHomeURL.trim())) return false;
+            const { siteHost, homeHost } = this.siteURLHosts();
+            return !!siteHost && !!homeHost && siteHost !== homeHost && (siteHost !== this.site.domain.toLowerCase() || homeHost !== this.site.domain.toLowerCase());
+        },
         async updateSiteURLs() {
             if (!this.newSiteURL && !this.newHomeURL) { showToast(t('website.at_least_one_url'), 'error'); return; }
             if (!await confirmModal(t('website.confirm_update_site_urls', { siteurl: this.newSiteURL || t('website.unchanged'), home: this.newHomeURL || t('website.unchanged') }))) return;
@@ -367,9 +403,11 @@ function databaseDetail() {
                 const body = {};
                 if (this.newSiteURL) body.siteurl = this.newSiteURL;
                 if (this.newHomeURL) body.home = this.newHomeURL;
-                await api('/websites/' + this.site.id + '/wp-site-urls', { method: 'PUT', body });
-                showToast(t('website.site_urls_updated'), 'success');
+                body.sync_panel_domain = this.syncPanelDomain && !!this.siteURLDomainCandidate();
+                const r = await api('/websites/' + this.site.id + '/wp-site-urls', { method: 'PUT', body });
+                showToast(r.data?.message || t('website.site_urls_updated'), 'success');
                 this.siteURLModal = false;
+                if (body.sync_panel_domain) await this.fetchDetail();
             } catch (e) { showToast(t('website.update_failed_with_error', { error: e.message }), 'error'); }
             this.siteURLSubmitting = false;
         },

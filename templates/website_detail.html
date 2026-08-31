@@ -21,7 +21,7 @@
                 <div><dt class="text-sm text-gray-400">{{t .Lang "website.domain"}}</dt><dd><a :href="(site.ssl_enabled ? 'https' : 'http') + '://' + site.domain" target="_blank" class="text-blue-400 hover:text-blue-300 hover:underline" x-text="site.domain"></a></dd></div>
                 <div><dt class="text-sm text-gray-400">{{t .Lang "website.aliases"}}</dt><dd class="text-white" x-text="site.aliases || t('common.none')"></dd></div>
                 <div class="pt-2">
-                    <button @click="domainModalOpen = true; editDomain = site.domain; editAliasesStr = site.aliases || ''" class="text-sm py-1.5 px-3 rounded" style="background-color: #1e3a5f; color: #93c5fd;">{{t .Lang "website.edit_domain"}}</button>
+                    <button @click="openDomainModal()" class="text-sm py-1.5 px-3 rounded" style="background-color: #1e3a5f; color: #93c5fd;">{{t .Lang "website.edit_domain"}}</button>
                     <a :href="(document.body.dataset.panelPrefix || '') + '/files?site_id=' + site.id" class="text-sm py-1.5 px-3 rounded ml-2 inline-block" style="background-color: #1e3a5f; color: #93c5fd;">{{t .Lang "nav.files"}}</a>
                     <a :href="(document.body.dataset.panelPrefix || '') + '/databases/' + site.id" class="text-sm py-1.5 px-3 rounded ml-2 inline-block" style="background-color: #1e3a5f; color: #93c5fd;">{{t .Lang "nav.databases"}}</a>
                     <a :href="(document.body.dataset.panelPrefix || '') + '/ai-diagnostics?site_id=' + site.id" class="text-sm py-1.5 px-3 rounded ml-2 inline-block" style="background-color: #14532d; color: #86efac;">{{t .Lang "nav.ai_diagnostics"}}</a>
@@ -557,9 +557,23 @@ location ^~ /api/ {
                 <textarea x-model="editAliasesStr" rows="4" class="w-full rounded p-2 text-sm font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;" placeholder="www.aaa.com&#10;blog.aaa.com"></textarea>
             </div>
             <div x-show="editDomain !== site.domain" class="mb-3 p-3 rounded text-sm" style="background-color: #422006; border: 1px solid #78350f; color: #fbbf24;">
-                主域名变更后将重命名网站目录、日志目录、Nginx配置、PHP-FPM Pool及SSL证书目录。系统用户（<span x-text="site.system_user" class="font-mono"></span>）和数据库名保持不变。<span x-show="site.site_type === 'wordpress'">WordPress 站点 URL 可在数据库卡片内修改</span>
+                <span x-text="t('website.domain_change_resources_warning', { user: site.system_user })"></span>
             </div>
-            <p x-show="site.ssl_enabled" class="text-yellow-400 text-xs mb-3">修改域名后需重新申请 SSL 证书以匹配新域名。</p>
+            <div x-show="site.site_type === 'wordpress'" class="mb-3 p-3 rounded" style="background-color: #0f172a; border: 1px solid #334155;">
+                <label class="flex items-start gap-2 text-sm text-gray-200">
+                    <input type="checkbox" x-model="syncWPSiteURLs" :disabled="wpURLsLoading || !editDomain.trim() || editDomain.trim().toLowerCase() === site.domain.toLowerCase() || !canSyncWPSiteURLs()" class="mt-1">
+                    <span>{{t .Lang "website.sync_wp_site_urls"}}</span>
+                </label>
+                <p class="text-xs text-gray-400 mt-2">{{t .Lang "website.sync_wp_site_urls_help"}}</p>
+                <p x-show="wpURLsLoading" class="text-xs text-gray-400 mt-2">{{t .Lang "website.reading"}}</p>
+                <p x-show="!wpURLsLoading && (!editDomain.trim() || editDomain.trim().toLowerCase() === site.domain.toLowerCase())" class="text-xs text-amber-300 mt-2">{{t .Lang "website.sync_wp_site_urls_enter_domain"}}</p>
+                <div x-show="!wpURLsLoading && editDomain.trim() && editDomain.trim().toLowerCase() !== site.domain.toLowerCase() && canSyncWPSiteURLs()" class="mt-2 space-y-2 text-xs font-mono break-all">
+                    <div><span class="text-gray-400">home:</span> <span class="text-gray-300" x-text="wpHomeURL"></span> <span class="text-gray-500">→</span> <span class="text-green-300" x-text="previewWPURL(wpHomeURL)"></span></div>
+                    <div><span class="text-gray-400">siteurl:</span> <span class="text-gray-300" x-text="wpSiteURL"></span> <span class="text-gray-500">→</span> <span class="text-green-300" x-text="previewWPURL(wpSiteURL)"></span></div>
+                </div>
+                <p x-show="!wpURLsLoading && wpURLsError" class="text-xs text-yellow-300 mt-2" x-text="wpURLsError"></p>
+            </div>
+            <p x-show="site.ssl_enabled" class="text-yellow-400 text-xs mb-3">{{t .Lang "website.domain_change_ssl_warning"}}</p>
             <div class="flex justify-end space-x-3">
                 <button @click="domainModalOpen = false" class="btn-secondary">{{t .Lang "common.cancel"}}</button>
                 <button @click="updateDomains()" :disabled="domainSubmitting" class="btn-primary" x-text="domainSubmitting ? t('website.processing') : t('common.save')"></button>
@@ -668,6 +682,11 @@ function websiteDetail() {
         editDomain: '',
         editAliasesStr: '',
         domainSubmitting: false,
+        syncWPSiteURLs: false,
+        wpURLsLoading: false,
+        wpSiteURL: '',
+        wpHomeURL: '',
+        wpURLsError: '',
         aiDevelopmentModalOpen: false,
         aiCredentialPackage: null,
         aiCredentialDownloaded: false,
@@ -960,7 +979,8 @@ function websiteDetail() {
                 const newDomain = this.editDomain.trim();
                 if (!newDomain) { showToast(t('website.domain_required'), 'error'); this.domainSubmitting = false; return; }
                 const aliases = this.editAliasesStr.split('\n').map(a => a.trim()).filter(a => a);
-                const body = { new_domain: newDomain, aliases };
+                const domainChanged = newDomain.toLowerCase() !== this.site.domain.toLowerCase();
+                const body = { new_domain: newDomain, aliases, sync_wp_site_urls: this.syncWPSiteURLs && domainChanged };
                 const r = await api('/websites/' + this.site.id + '/domains', { method: 'PUT', body });
                 if (r.success) {
                     showToast(r.data?.message || t('website.updated'), 'success');
@@ -971,6 +991,40 @@ function websiteDetail() {
                 }
             } catch(e) { showToast(t('website.operation_failed_with_error', { error: e.message }), 'error'); }
             this.domainSubmitting = false;
+        },
+        async openDomainModal() {
+            this.editDomain = this.site.domain;
+            this.editAliasesStr = this.site.aliases || '';
+            this.syncWPSiteURLs = false;
+            this.wpSiteURL = '';
+            this.wpHomeURL = '';
+            this.wpURLsError = '';
+            this.domainModalOpen = true;
+            if (this.site.site_type !== 'wordpress') return;
+            this.wpURLsLoading = true;
+            try {
+                const r = await api('/websites/' + this.site.id + '/wp-site-urls');
+                this.wpSiteURL = r.data?.siteurl || '';
+                this.wpHomeURL = r.data?.home || '';
+                if (!this.canSyncWPSiteURLs()) this.wpURLsError = t('website.wp_site_urls_domain_mismatch');
+            } catch (e) {
+                this.wpURLsError = t('website.wp_site_urls_read_failed', { error: e.message });
+            } finally {
+                this.wpURLsLoading = false;
+            }
+        },
+        previewWPURL(value) {
+            try {
+                const parsed = new URL(value);
+                if (parsed.hostname.toLowerCase() !== this.site.domain.toLowerCase()) return '';
+                const replacement = this.editDomain.trim().toLowerCase() + (parsed.port ? ':' + parsed.port : '');
+                return value.replace(parsed.host, replacement);
+            } catch (e) {
+                return '';
+            }
+        },
+        canSyncWPSiteURLs() {
+            return !!this.previewWPURL(this.wpSiteURL) && !!this.previewWPURL(this.wpHomeURL);
         },
         async removeSSL() {
             if (!await confirmModal(t('website.confirm_delete_ssl', { domain: this.site.domain }))) return;

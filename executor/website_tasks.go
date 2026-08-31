@@ -829,6 +829,15 @@ func executeUpdateDomains(task *Task) TaskResult {
 	}
 
 	if domainChanged {
+		if payload.NewWPSiteURL != "" || payload.NewWPHomeURL != "" {
+			if err := UpdateWPSiteURLs(site.DBName, site.TablePrefix, payload.NewWPSiteURL, payload.NewWPHomeURL, cfg); err != nil {
+				return taskFailure("同步 WordPress 站点 URL 失败", err)
+			}
+			rollbacks = append(rollbacks, rollbackStep{"恢复 WordPress 站点 URL", func() error {
+				return UpdateWPSiteURLs(site.DBName, site.TablePrefix, payload.OldWPSiteURL, payload.OldWPHomeURL, cfg)
+			}})
+		}
+
 		oldWebRoot := site.WebRoot
 		oldLogDir := site.LogDir
 		oldNginxConf := site.NginxConfPath
@@ -989,6 +998,10 @@ func executeUpdateDomains(task *Task) TaskResult {
 
 		if site.SSLEnabled {
 			msg += "。请重新申请 SSL 证书以匹配新域名"
+		}
+		if payload.NewWPSiteURL != "" || payload.NewWPHomeURL != "" {
+			GoSafe(func() { ClearWPSiteRuntimeCaches(site.ID, newDomain, newWebRoot) })
+			msg += "。WordPress 站点 URL 已同步"
 		}
 		return TaskResult{Success: true, Message: msg}
 	}

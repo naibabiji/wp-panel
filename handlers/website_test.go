@@ -28,6 +28,47 @@ func TestNormalizeWPSiteURL(t *testing.T) {
 	}
 }
 
+func TestReplaceWPSiteURLDomainPreservesURLParts(t *testing.T) {
+	got, err := replaceWPSiteURLDomain("https://old.example.com:8443/wp/", "old.example.com", "new.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "https://new.example.com:8443/wp/"; got != want {
+		t.Fatalf("replaceWPSiteURLDomain() = %q, want %q", got, want)
+	}
+}
+
+func TestReplaceWPSiteURLDomainRejectsDifferentHost(t *testing.T) {
+	if _, err := replaceWPSiteURLDomain("https://cdn.example.com/wp", "old.example.com", "new.example.com"); err == nil {
+		t.Fatal("replaceWPSiteURLDomain() accepted a URL using a different host")
+	}
+}
+
+func TestPanelDomainFromWPSiteURLs(t *testing.T) {
+	got, err := panelDomainFromWPSiteURLs(
+		"https://new.example.com:8443/wp-core",
+		"http://new.example.com/blog",
+	)
+	if err != nil {
+		t.Fatalf("panelDomainFromWPSiteURLs() error = %v", err)
+	}
+	if got != "new.example.com" {
+		t.Fatalf("panelDomainFromWPSiteURLs() = %q, want new.example.com", got)
+	}
+}
+
+func TestPanelDomainFromWPSiteURLsRejectsDifferentHosts(t *testing.T) {
+	if _, err := panelDomainFromWPSiteURLs("https://admin.example.com/wp", "https://www.example.com"); err == nil {
+		t.Fatal("panelDomainFromWPSiteURLs() accepted different hosts")
+	}
+}
+
+func TestPanelDomainFromWPSiteURLsRejectsIP(t *testing.T) {
+	if _, err := panelDomainFromWPSiteURLs("http://192.0.2.1/wp", "http://192.0.2.1"); err == nil {
+		t.Fatal("panelDomainFromWPSiteURLs() accepted an IP address")
+	}
+}
+
 func TestNormalizeWPSiteURLRejectsInvalidValues(t *testing.T) {
 	for _, value := range []string{"example.com", "ftp://example.com", "https://"} {
 		if _, err := normalizeWPSiteURL(value); err == nil {
