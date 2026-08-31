@@ -46,9 +46,12 @@ func executeEnableSSL(task *Task) TaskResult {
 	certDir := filepath.Join(cfg.Paths.Certificates, site.Domain)
 	certPath := filepath.Join(certDir, "fullchain.pem")
 	keyPath := filepath.Join(certDir, "privkey.pem")
+	stageDir := fmt.Sprintf("%s.pending-%d", certDir, time.Now().UnixNano())
+	stageCertPath := filepath.Join(stageDir, "fullchain.pem")
+	stageKeyPath := filepath.Join(stageDir, "privkey.pem")
+	defer os.RemoveAll(stageDir)
 
-	os.RemoveAll(certDir)
-	if err := os.MkdirAll(certDir, 0700); err != nil {
+	if err := os.MkdirAll(stageDir, 0700); err != nil {
 		log.Printf("创建证书目录失败: %v", err)
 		return TaskResult{Success: false, Message: "创建证书目录失败"}
 	}
@@ -60,19 +63,17 @@ func executeEnableSSL(task *Task) TaskResult {
 		if payload.Certificate == "" || payload.PrivateKey == "" {
 			return TaskResult{Success: false, Message: "证书内容和私钥不能为空"}
 		}
-		if err := os.WriteFile(certPath, []byte(payload.Certificate), 0644); err != nil {
+		if err := os.WriteFile(stageCertPath, []byte(payload.Certificate), 0644); err != nil {
 			log.Printf("写入证书文件失败: %v", err)
 			return TaskResult{Success: false, Message: "写入证书文件失败"}
 		}
-		if err := os.WriteFile(keyPath, []byte(payload.PrivateKey), 0600); err != nil {
-			os.Remove(certPath)
+		if err := os.WriteFile(stageKeyPath, []byte(payload.PrivateKey), 0600); err != nil {
+			os.Remove(stageCertPath)
 			log.Printf("写入私钥文件失败: %v", err)
 			return TaskResult{Success: false, Message: "写入私钥文件失败"}
 		}
-		expiry, applyErr = validateCertificate(certPath, site.Domain)
+		expiry, applyErr = validateCertificate(stageCertPath, site.Domain)
 		if applyErr != nil {
-			os.Remove(certPath)
-			os.Remove(keyPath)
 			log.Printf("证书验证失败: %v", applyErr)
 			return TaskResult{Success: false, Message: "证书验证失败"}
 		}
@@ -82,20 +83,40 @@ func executeEnableSSL(task *Task) TaskResult {
 			return taskFailure("准备SSL验证目录失败", err)
 		}
 		expiry, applyErr = obtainLegoCert(site.Domain, site.Aliases,
-			documentRoot, certDir)
+			documentRoot, stageDir)
 		if applyErr != nil {
 			log.Printf("申请 Let's Encrypt 证书失败: %v", applyErr)
-			os.RemoveAll(certDir)
 			msg := FriendlySSLError(applyErr)
 			database.GetDB().Exec("UPDATE websites SET ssl_last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", msg, site.ID)
 			return TaskResult{Success: false, Message: msg}
 		}
 	}
 
+	backupDir := fmt.Sprintf("%s.previous-%d", certDir, time.Now().UnixNano())
+	hadOldCertDir := false
+	if _, err := os.Stat(certDir); err == nil {
+		if err := os.Rename(certDir, backupDir); err != nil {
+			return taskFailure("备份现有证书失败", err)
+		}
+		hadOldCertDir = true
+	}
+	if err := os.Rename(stageDir, certDir); err != nil {
+		if hadOldCertDir {
+			logRecoveryFailure("安装新证书失败后恢复旧证书", os.Rename(backupDir, certDir))
+		}
+		return taskFailure("安装新证书失败", err)
+	}
+
 	if applyErr = applySSLToSite(site, certPath, keyPath, expiry); applyErr != nil {
-		os.RemoveAll(certDir)
+		logRecoveryFailure("应用SSL配置失败后清理新证书", os.RemoveAll(certDir))
+		if hadOldCertDir {
+			logRecoveryFailure("应用SSL配置失败后恢复旧证书", os.Rename(backupDir, certDir))
+		}
 		log.Printf("应用SSL配置失败: %v", applyErr)
 		return taskFailure("应用SSL配置失败", applyErr)
+	}
+	if hadOldCertDir {
+		logRecoveryFailure("清理旧证书备份", os.RemoveAll(backupDir))
 	}
 
 	return TaskResult{

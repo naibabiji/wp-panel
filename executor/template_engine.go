@@ -467,21 +467,39 @@ func (e *TemplateEngine) ApplyNginxConfig(configContent string, targetPath strin
 	} else if locked {
 		return errSiteMigrationBusy
 	}
+	oldConfig, oldConfigErr := os.ReadFile(targetPath)
+	hadOldConfig := oldConfigErr == nil
+	oldEnabledTarget, oldEnabledErr := os.Readlink(enabledPath)
+	hadOldEnabledLink := oldEnabledErr == nil
+	restoreApplyState := func() {
+		logRecoveryFailure("Nginx应用失败后移除新启用链接", os.Remove(enabledPath))
+		if hadOldConfig {
+			logRecoveryFailure("Nginx应用失败后恢复旧配置", os.WriteFile(targetPath, oldConfig, 0644))
+		} else {
+			logRecoveryFailure("Nginx应用失败后清理新配置", os.Remove(targetPath))
+		}
+		if hadOldEnabledLink {
+			logRecoveryFailure("Nginx应用失败后恢复旧启用链接", os.Symlink(oldEnabledTarget, enabledPath))
+		}
+	}
+
 	if err := e.writeNginxConfigFile(configContent, targetPath); err != nil {
 		return err
 	}
 
 	_ = os.Remove(enabledPath)
 	if err := os.Symlink(targetPath, enabledPath); err != nil {
+		restoreApplyState()
 		return fmt.Errorf("创建软链接失败: %w", err)
 	}
 
 	reloadCmd := exec.Command("nginx", "-s", "reload")
 	reloadOut, err := reloadCmd.CombinedOutput()
 	if err != nil {
-		// Reload failed — remove the config and symlink so Nginx can restart cleanly
-		_ = os.Remove(enabledPath)
-		_ = os.Remove(targetPath)
+		// Reload failed: restore the exact pre-apply state. Removing targetPath here
+		// used to delete a site's previously valid config and leave a dangling
+		// sites-enabled link when another broken vhost made the global reload fail.
+		restoreApplyState()
 		return fmt.Errorf("Nginx 重载失败: %s", string(reloadOut))
 	}
 
