@@ -45,25 +45,24 @@ type productionSiteMigrationTargetConfigureOps struct{ cfg *config.Config }
 
 func (o productionSiteMigrationTargetConfigureOps) PublishIdentity(siteRoot, domain, systemUser string, sslEnabled bool) (siteMigrationPublishedIdentity, error) {
 	result := siteMigrationPublishedIdentity{}
-	secretsRoot := "/var/wp-panel/site-secrets"
-	secretDir, err := managedSubpath(secretsRoot, filepath.Join(secretsRoot, domain), "站点密钥目录")
+	secretDir, err := managedSubpath(siteSecretsRoot, sitePluginSecretsDir(domain), "站点密钥目录")
 	if err != nil {
 		return result, err
 	}
 	if _, err := os.Lstat(secretDir); !os.IsNotExist(err) {
 		return result, errors.New("target site secret directory already exists")
 	}
-	if err := os.MkdirAll(secretsRoot, 0711); err != nil {
+	if err := os.MkdirAll(siteSecretsRoot, 0711); err != nil {
 		return result, err
 	}
-	if err := os.Chmod(secretsRoot, 0711); err != nil {
+	if err := os.Chmod(siteSecretsRoot, 0711); err != nil {
 		return result, err
 	}
 	if err := os.Mkdir(secretDir, 0700); err != nil {
 		return result, err
 	}
-	result.SecretPath = filepath.Join(secretDir, "wp-panel-config.json")
-	if err := copyMigrationRegularFile(filepath.Join(siteRoot, "identity", "wp-panel-config.json"), result.SecretPath, 0600); err != nil {
+	result.SecretPath = sitePluginConfigPath(domain)
+	if err := copyMigrationRegularFile(filepath.Join(siteRoot, "identity", sitePluginConfigFileName), result.SecretPath, 0600); err != nil {
 		return result, err
 	}
 	if _, err := executeCommand("chown", "-R", siteOwner(systemUser), secretDir); err != nil {
@@ -95,7 +94,7 @@ func (o productionSiteMigrationTargetConfigureOps) PublishIdentity(siteRoot, dom
 }
 
 func (o productionSiteMigrationTargetConfigureOps) ResetIdentity(domain string, sslEnabled bool) error {
-	secretDir, err := managedSubpath("/var/wp-panel/site-secrets", filepath.Join("/var/wp-panel/site-secrets", domain), "站点密钥目录")
+	secretDir, err := managedSubpath(siteSecretsRoot, sitePluginSecretsDir(domain), "站点密钥目录")
 	if err != nil {
 		return err
 	}
@@ -176,7 +175,7 @@ func (p *SiteMigrationTargetPublisher) ConfigureAndHealth(ctx context.Context, m
 		return p.configureFailed(migrationSiteID, "cdn_group_conflict", err)
 	}
 	publishSSL := sslAvailable && settings.SSLEnabled
-	secretStatus, secretExisting, err := p.beginPublishStep(ctx, migrationSiteID, "site_secret_publish", filepath.Join("/var/wp-panel/site-secrets", spec.Domain))
+	secretStatus, secretExisting, err := p.beginPublishStep(ctx, migrationSiteID, "site_secret_publish", sitePluginSecretsDir(spec.Domain))
 	if err != nil {
 		return err
 	}
@@ -200,7 +199,7 @@ func (p *SiteMigrationTargetPublisher) ConfigureAndHealth(ctx context.Context, m
 			return p.configureFailed(migrationSiteID, "identity_publish_failed", err)
 		}
 		if secretStatus != "published" {
-			if err := p.completePublishStep(ctx, migrationSiteID, "site_secret_publish", filepath.Join("/var/wp-panel/site-secrets", spec.Domain)); err != nil {
+			if err := p.completePublishStep(ctx, migrationSiteID, "site_secret_publish", sitePluginSecretsDir(spec.Domain)); err != nil {
 				return p.publishUnknown(migrationSiteID, err)
 			}
 		}
@@ -252,7 +251,7 @@ func (p *SiteMigrationTargetPublisher) ConfigureAndHealth(ctx context.Context, m
 }
 
 func migrationPublishedIdentity(domain, certificateRoot string, sslEnabled bool) siteMigrationPublishedIdentity {
-	identity := siteMigrationPublishedIdentity{SecretPath: filepath.Join("/var/wp-panel/site-secrets", domain, "wp-panel-config.json"), SSLEnabled: sslEnabled}
+	identity := siteMigrationPublishedIdentity{SecretPath: sitePluginConfigPath(domain), SSLEnabled: sslEnabled}
 	if sslEnabled {
 		identity.CertPath = filepath.Join(certificateRoot, domain, "fullchain.pem")
 		identity.KeyPath = filepath.Join(certificateRoot, domain, "privkey.pem")
@@ -308,7 +307,7 @@ func (p *SiteMigrationTargetPublisher) loadConfigureScope(ctx context.Context, m
 	if strings.Join(snapshot.RuntimeSettings.Aliases, "\n") != strings.Join(spec.Aliases, "\n") || snapshot.RuntimeSettings.DocumentRootSubdir != spec.DocumentRootSubdir {
 		return siteMigrationPublishSpec{}, SiteMigrationRuntimeSettings{}, siteMigrationSiteIdentity{}, false, errors.New("target settings identity mismatch")
 	}
-	siteIdentityPath := filepath.Join(p.stagingRoot, migrationSiteID, "identity", "wp-panel-config.json")
+	siteIdentityPath := filepath.Join(p.stagingRoot, migrationSiteID, "identity", sitePluginConfigFileName)
 	var stagingIdentifier, stagingOwner, identityIdentifier, identityOwner string
 	if err := p.db.QueryRowContext(ctx, `SELECT identifier,ownership_tag FROM site_migration_resources WHERE migration_site_id=? AND resource_type='target_staging_root' AND status='created'`, migrationSiteID).Scan(&stagingIdentifier, &stagingOwner); err != nil || filepath.Clean(stagingIdentifier) != filepath.Join(p.stagingRoot, migrationSiteID) || stagingOwner != migrationSiteID {
 		return siteMigrationPublishSpec{}, SiteMigrationRuntimeSettings{}, siteMigrationSiteIdentity{}, false, errors.New("target configure staging ownership unavailable")

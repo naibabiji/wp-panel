@@ -508,7 +508,7 @@ func executeDeleteSite(task *Task) TaskResult {
 	if err != nil {
 		return TaskResult{Success: false, Message: err.Error()}
 	}
-	secretsDir, err := managedSubpath("/var/wp-panel/site-secrets", filepath.Join("/var/wp-panel/site-secrets", site.Domain), "站点密钥目录")
+	secretsDir, err := managedSubpath(siteSecretsRoot, sitePluginSecretsDir(site.Domain), "站点密钥目录")
 	if err != nil {
 		return TaskResult{Success: false, Message: err.Error()}
 	}
@@ -918,6 +918,22 @@ func executeUpdateDomains(task *Task) TaskResult {
 			}})
 		}
 
+		// 插件身份目录仍随面板主域名管理，但插件通过 PHP-FPM 注入的明确路径读取，
+		// 不再依赖 WordPress home URL。目标目录存在时拒绝覆盖，避免误删其他身份。
+		identityMoved, err := moveSitePluginIdentity(oldDomain, newDomain)
+		if err != nil {
+			rollback()
+			log.Printf("重命名插件密钥目录失败: %v", err)
+			return taskFailure("重命名插件密钥目录失败", err)
+		}
+		if identityMoved {
+			rollbacks = append(rollbacks, rollbackStep{"恢复插件密钥目录", func() error {
+				_, err := moveSitePluginIdentity(newDomain, oldDomain)
+				return err
+			}})
+		}
+
+		// 身份目录搬迁后立即切换 PHP-FPM 指针，缩短旧运行配置与新身份路径不一致的窗口。
 		if err := engine.ApplyPHPFPMPool(phpConfig, newPHPPool, newLogDir); err != nil {
 			rollback()
 			log.Printf("应用 PHP-FPM 配置失败: %v", err)

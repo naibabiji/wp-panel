@@ -448,6 +448,7 @@ func (e *TemplateEngine) RenderPHPFPMPool(data *PHPFPMPoolData) (string, error) 
 	tmpl, err := template.New("php_fpm_pool").Funcs(template.FuncMap{
 		"sitePHPOpenBaseDir":       sitePHPOpenBaseDir,
 		"sitePHPDisabledFunctions": sitePHPDisabledFunctions,
+		"sitePluginConfigPath":     sitePluginConfigPath,
 	}).Parse(phpFPMPoolTemplate)
 	if err != nil {
 		return "", fmt.Errorf("模板解析失败: %w", err)
@@ -1118,6 +1119,8 @@ php_admin_value[memory_limit] = {{.MemoryLimit}}
 php_admin_value[disable_functions] = {{sitePHPDisabledFunctions}}
 php_admin_flag[allow_url_fopen] = On
 php_admin_flag[allow_url_include] = Off
+
+env[` + sitePluginConfigEnvName + `] = {{sitePluginConfigPath .Domain}}
 
 slowlog = /www/wwwlogs/{{.Domain}}/php-slow.log
 request_slowlog_timeout = 30s

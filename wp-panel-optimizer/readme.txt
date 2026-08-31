@@ -37,7 +37,7 @@ WP Panel Optimizer 是 [WP Panel](https://github.com/naibabiji/wp-panel) 的配�
 3. 点击「安装配套插件」按钮，面板自动部署插件到网站 wp-content/plugins/
 4. 在 WordPress 后台激活插件，或面板自动激活
 
-插件安装后，面板会在 Web 目录外的 /var/wp-panel/site-secrets/<domain>/wp-panel-config.json 写入配置文件（含面板地址和 API Key），无需手动填写凭证。
+插件安装后，面板会在 Web 目录外的 /var/wp-panel/site-secrets/<domain>/wp-panel-config.json 写入配置文件（含面板地址和 API Key），并由站点 PHP-FPM pool 向插件提供当前文件路径，无需手动填写凭证，也不依赖 WordPress 站点 URL 推断配置位置。
 
 == Changelog ==
 

@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -2046,29 +2045,10 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 
 	cfg := config.AppConfig
 	panelURL := fmt.Sprintf("https://127.0.0.1:%d/%s", cfg.Panel.TLSPort, cfg.Panel.RandomSuffix)
-	cfgJSON, _ := json.Marshal(map[string]string{
-		"panel_url": panelURL,
-		"api_key":   apiKey,
-	})
-	baseSecretsDir := "/var/wp-panel/site-secrets"
-	secretsDir := filepath.Join(baseSecretsDir, domain)
-	if err := os.MkdirAll(baseSecretsDir, 0711); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建密钥目录失败"))
-		return
-	}
-	if err := os.Chmod(baseSecretsDir, 0711); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("设置密钥目录权限失败"))
-		return
-	}
-	if err := os.MkdirAll(secretsDir, 0700); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建站点密钥目录失败"))
-		return
-	}
-
 	// 清理旧路径下的配置文件（迁移到 Web 目录外之前的位置）
 	os.Remove(filepath.Join(pluginDir, "wp-panel-config.json"))
 
-	if err := os.WriteFile(filepath.Join(secretsDir, "wp-panel-config.json"), cfgJSON, 0600); err != nil {
+	if err := executor.WriteSitePluginIdentity(domain, systemUser, panelURL, apiKey); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("写入插件密钥失败"))
 		return
 	}
@@ -2089,8 +2069,8 @@ func (h *WebsiteHandler) InstallPluginStatus(c *gin.Context) {
 		return
 	}
 
-	var domain, webRoot string
-	err = database.GetDB().QueryRow("SELECT domain, web_root FROM websites WHERE id = ?", id).Scan(&domain, &webRoot)
+	var domain, webRoot, pluginAPIKey string
+	err = database.GetDB().QueryRow("SELECT domain, web_root, plugin_api_key FROM websites WHERE id = ?", id).Scan(&domain, &webRoot, &pluginAPIKey)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
@@ -2102,6 +2082,8 @@ func (h *WebsiteHandler) InstallPluginStatus(c *gin.Context) {
 		status = "installed"
 		if needsUpdate {
 			status = "update_available"
+		} else if !executor.SitePluginIdentityAvailable(domain, pluginAPIKey) {
+			status = "config_missing"
 		}
 	}
 

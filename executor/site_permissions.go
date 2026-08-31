@@ -131,12 +131,12 @@ func HardenSiteSensitivePermissions(domain, webRoot, systemUser string) error {
 	}
 
 	if domain != "" {
-		secretsDir := filepath.Join("/var/wp-panel/site-secrets", domain)
+		secretsDir := sitePluginSecretsDir(domain)
 		if _, err := os.Stat(secretsDir); err == nil {
 			if err := os.Chmod(secretsDir, 0700); err != nil {
 				return err
 			}
-			cfgPath := filepath.Join(secretsDir, "wp-panel-config.json")
+			cfgPath := sitePluginConfigPath(domain)
 			if _, err := os.Stat(cfgPath); err == nil {
 				if err := os.Chmod(cfgPath, 0600); err != nil {
 					return err
@@ -917,10 +917,10 @@ func InstallPluginPermissions(domain, systemUser, pluginDir string) {
 	}
 
 	if domain != "" {
-		secretsDir := filepath.Join("/var/wp-panel/site-secrets", domain)
+		secretsDir := sitePluginSecretsDir(domain)
 		if _, err := os.Stat(secretsDir); err == nil {
 			os.Chmod(secretsDir, 0700)
-			cfgPath := filepath.Join(secretsDir, "wp-panel-config.json")
+			cfgPath := sitePluginConfigPath(domain)
 			if _, err := os.Stat(cfgPath); err == nil {
 				os.Chmod(cfgPath, 0600)
 			}

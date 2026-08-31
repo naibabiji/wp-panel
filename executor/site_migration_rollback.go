@@ -135,7 +135,7 @@ func (s *SiteMigrationTargetRollbackService) Abandon(ctx context.Context, taskID
 		marks []string
 	}{
 		{"certificate_publish", filepath.Join(s.cfg.Paths.Certificates, scope.Spec.Domain), []string{"certificate_publish"}},
-		{"site_secret_publish", filepath.Join("/var/wp-panel/site-secrets", scope.Spec.Domain), []string{"site_secret_publish"}},
+		{"site_secret_publish", sitePluginSecretsDir(scope.Spec.Domain), []string{"site_secret_publish"}},
 		{"web_root", scope.Spec.WebRoot, []string{"web_root", "file_publish"}},
 		{"log_dir", scope.Spec.LogDir, []string{"log_dir"}},
 		{"target_staging_root", filepath.Join(s.stagingRoot, taskID), []string{"target_staging_root", "database_identity", "site_identity"}},
@@ -307,8 +307,8 @@ func (s *SiteMigrationTargetRollbackService) loadResources(ctx context.Context, 
 	want := map[string]string{
 		"target_staging_root": filepath.Join(s.stagingRoot, taskID), "system_user": spec.SystemUser, "web_root": spec.WebRoot, "log_dir": spec.LogDir,
 		"database": spec.DBName, "database_user": spec.DBUser, "database_identity": filepath.Join(s.stagingRoot, taskID, "identity", "database.json"),
-		"site_identity": filepath.Join(s.stagingRoot, taskID, "identity", "wp-panel-config.json"), "database_import": spec.DBName, "file_publish": spec.WebRoot,
-		"site_secret_publish": filepath.Join("/var/wp-panel/site-secrets", spec.Domain), "certificate_publish": filepath.Join(s.cfg.Paths.Certificates, spec.Domain),
+		"site_identity": filepath.Join(s.stagingRoot, taskID, "identity", sitePluginConfigFileName), "database_import": spec.DBName, "file_publish": spec.WebRoot,
+		"site_secret_publish": sitePluginSecretsDir(spec.Domain), "certificate_publish": filepath.Join(s.cfg.Paths.Certificates, spec.Domain),
 		"runtime_config_publish": spec.NginxConfPath, "target_marker_config": spec.NginxConfPath,
 	}
 	for kind, identifiers := range resources {

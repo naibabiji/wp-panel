@@ -186,7 +186,7 @@ func (s *SiteMigrationTargetResourceService) Create(ctx context.Context, migrati
 	if err := s.createAndRecord(ctx, migrationSiteID, "database_user", plan.DBUser, func() error { return nil }, func() error { return nil }); err != nil {
 		return s.handleCreationError(migrationSiteID, err)
 	}
-	siteIdentityPath := filepath.Join(s.stagingRoot, migrationSiteID, "identity", "wp-panel-config.json")
+	siteIdentityPath := filepath.Join(s.stagingRoot, migrationSiteID, "identity", sitePluginConfigFileName)
 	panelURL := fmt.Sprintf("https://127.0.0.1:%d/%s", s.cfg.Panel.TLSPort, s.cfg.Panel.RandomSuffix)
 	if err := s.createAndRecord(ctx, migrationSiteID, "site_identity", siteIdentityPath, func() error {
 		apiKey := s.apiKey()

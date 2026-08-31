@@ -50,20 +50,37 @@ trait WPP_Optimizer_Config_Trait {
         }
         $loaded = true;
 
-        $domain = wp_parse_url(home_url(), PHP_URL_HOST);
-        if (!$domain) return null;
-        $domain = strtolower(trim($domain));
-
         $base = '/var/wp-panel/site-secrets/';
-        $candidates = array($domain);
-        if (strpos($domain, 'www.') === 0) {
-            $candidates[] = substr($domain, 4);
-        } else {
-            $candidates[] = 'www.' . $domain;
+        $files = array();
+
+        // Current WP Panel PHP-FPM pools provide the exact identity path. This
+        // remains correct when the panel domain and WordPress home URL differ.
+        $runtimeFile = getenv('WP_PANEL_CONFIG_PATH');
+        if (is_string($runtimeFile)) {
+            $runtimeFile = str_replace('\\', '/', trim($runtimeFile));
+            if (preg_match('#^/var/wp-panel/site-secrets/[A-Za-z0-9.-]+/wp-panel-config\.json$#', $runtimeFile)) {
+                $files[] = $runtimeFile;
+            }
         }
 
-        foreach ($candidates as $d) {
-            $file = $base . $d . '/wp-panel-config.json';
+        // Compatibility for pools generated before WP_PANEL_CONFIG_PATH was
+        // introduced. These candidates can be removed after the legacy support
+        // window ends; no new code should infer panel identity from home_url().
+        $domain = wp_parse_url(home_url(), PHP_URL_HOST);
+        if ($domain) {
+            $domain = strtolower(trim($domain));
+            $domains = array($domain);
+            if (strpos($domain, 'www.') === 0) {
+                $domains[] = substr($domain, 4);
+            } else {
+                $domains[] = 'www.' . $domain;
+            }
+            foreach ($domains as $candidateDomain) {
+                $files[] = $base . $candidateDomain . '/wp-panel-config.json';
+            }
+        }
+
+        foreach (array_unique($files) as $file) {
             if (!self::is_path_allowed_by_open_basedir($file)) {
                 continue;
             }
@@ -158,7 +175,7 @@ trait WPP_Optimizer_Config_Trait {
         $baseUrl = self::get_panel_url();
         $apiKey  = self::get_api_key();
         if (!$baseUrl || !$apiKey) {
-            return new \WP_Error('config_missing', '面板地址或 API Key 未配置');
+            return new \WP_Error('config_missing', '无法读取 WP Panel 配置。网站域名或运行配置可能已变化，请到 WP Panel 网站详情中重建配套插件配置');
         }
 
         $args = [

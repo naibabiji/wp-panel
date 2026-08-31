@@ -240,9 +240,10 @@ location ^~ /api/ {
                 <button @click="saveWPOptimizations()" :disabled="optimizationSaving || site.file_lock_enabled" class="btn-primary text-sm" x-text="optimizationSaving ? t('common.saving') : t('website.save_settings')"></button>
                 <button x-show="fcacheEnabled" @click="clearFCache()" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">{{t .Lang "website.clear_cache"}}</button>
             </div>
-            <div x-show="(fcacheEnabled || disableWPUpdates || wpDebug) && site.site_type === 'wordpress'" class="flex items-center space-x-3 mb-3">
+            <div x-show="site.site_type === 'wordpress' && (fcacheEnabled || disableWPUpdates || wpDebug || pluginStatus === 'config_missing')" class="flex items-center space-x-3 mb-3">
                 <button x-show="pluginStatus === 'not_installed'" @click="installPlugin()" :disabled="pluginInstalling || site.file_lock_enabled" class="btn-primary text-sm py-1.5" x-text="pluginInstalling ? t('website.installing') : t('website.install_companion_plugin')"></button>
                 <button x-show="pluginStatus === 'update_available'" @click="installPlugin()" :disabled="pluginInstalling || site.file_lock_enabled" class="text-sm py-1.5 px-3 rounded" style="background-color: #166534; color: #bbf7d0;" x-text="pluginInstalling ? t('website.updating') : t('website.update_companion_plugin')"></button>
+                <button x-show="pluginStatus === 'config_missing'" @click="rebuildPluginConfig()" :disabled="pluginInstalling || site.file_lock_enabled" class="text-sm py-1.5 px-3 rounded" style="background-color: #92400e; color: #fef3c7;" x-text="pluginInstalling ? t('website.rebuilding_plugin_config') : t('website.rebuild_plugin_config')"></button>
                 <span x-show="pluginStatus === 'installed'" class="text-xs text-green-400">{{t .Lang "website.plugin_installed"}}</span>
             </div>
             <p x-show="site.file_lock_enabled" class="text-xs text-yellow-300 mb-3">{{t .Lang "website.file_lock_enabled_notice"}}</p>
@@ -1154,6 +1155,10 @@ function websiteDetail() {
                 await this.fetchPluginStatus();
             } catch(e) { showToast(e.message, 'error'); }
             this.pluginInstalling = false;
+        },
+        async rebuildPluginConfig() {
+            if (!await confirmModal(t('website.rebuild_plugin_config_confirm'))) return;
+            await this.installPlugin();
         },
         fileLockStatusText() {
             if (this.fileLockApplyIncomplete()) return t('website.file_lock_apply_failed');
