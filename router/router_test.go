@@ -1504,6 +1504,32 @@ func TestDirectorySizeRouteRegistered(t *testing.T) {
 	}
 }
 
+func TestFileSearchRouteAndInterfaceAreRegistered(t *testing.T) {
+	routerSource, err := os.ReadFile("router.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(routerSource, []byte(`protected.GET("/api/files/search", fileHandler.Search)`)) {
+		t.Fatal("file search route is not registered")
+	}
+	templateSource, err := os.ReadFile("../templates/files.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range [][]byte{
+		[]byte(`x-model.trim="search.query"`),
+		[]byte(`x-model="search.scope"`),
+		[]byte(`'/files/search?site_id='`),
+		[]byte(`@click="goPage(1)"`),
+		[]byte(`@click="goPage(totalPages)"`),
+		[]byte(`downloadPath(f.path)`),
+	} {
+		if !bytes.Contains(templateSource, expected) {
+			t.Fatalf("file search interface is missing %s", expected)
+		}
+	}
+}
+
 func TestPageTitleKeysExist(t *testing.T) {
 	for active, key := range pageTitleKeys {
 		t.Run(active, func(t *testing.T) {

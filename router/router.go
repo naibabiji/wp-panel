@@ -570,6 +570,11 @@ var i18nKeys = []string{
 	"files.remote_import_start",
 	"files.remote_import_url_placeholder",
 	"files.rename_success",
+	"files.search_failed",
+	"files.search_result_path",
+	"files.search_results_for",
+	"files.search_truncated_match_limit",
+	"files.search_truncated_scan_limit",
 	"files.skip_existing_prompt",
 	"files.unknown_size",
 	"files.upload",
@@ -1516,6 +1521,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 
 	fileHandler := &handlers.FileHandler{}
 	protected.GET("/api/files/list", fileHandler.List)
+	protected.GET("/api/files/search", fileHandler.Search)
 	protected.GET("/api/files/size", fileHandler.DirectorySize)
 	protected.POST("/api/files/upload", fileHandler.Upload)
 	protected.POST("/api/files/upload/init", fileHandler.UploadInit)

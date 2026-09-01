@@ -148,8 +148,8 @@
             {{t .Lang "files.file_lock_notice"}}
         </div>
 
-        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-4">
-            <div class="flex items-center space-x-2 text-sm">
+        <div class="flex flex-wrap items-center gap-3 mb-4">
+            <div class="flex items-center space-x-2 overflow-x-auto whitespace-nowrap text-sm" style="flex: 1 0 auto; min-width: 20rem; max-width: 100%;">
                 <template x-for="(seg, idx) in breadcrumbs()" :key="idx">
                     <span>
                         <span class="text-gray-500" x-show="idx > 0"> / </span>
@@ -158,8 +158,17 @@
                     </span>
                 </template>
             </div>
-            <div class="flex flex-wrap items-center gap-2">
-                <button type="button" @click="loadFiles()" :disabled="!hasSelectedRoot() || loadingFiles" class="btn-secondary text-sm">
+            <div class="ml-auto flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2">
+                <form @submit.prevent="startSearch()" class="flex flex-wrap items-center gap-2">
+                    <input type="search" x-model.trim="search.query" maxlength="256" class="input-field w-48 text-sm" placeholder="{{t .Lang "files.search_placeholder"}}">
+                    <select x-model="search.scope" class="input-field w-44 text-sm">
+                        <option value="current">{{t .Lang "files.search_scope_current"}}</option>
+                        <option value="subtree">{{t .Lang "files.search_scope_subtree"}}</option>
+                    </select>
+                    <button type="submit" class="btn-primary text-sm whitespace-nowrap" :disabled="!search.query || loadingFiles">{{t .Lang "files.search"}}</button>
+                    <button x-show="search.active" type="button" @click="clearSearch()" class="btn-secondary text-sm whitespace-nowrap" :disabled="loadingFiles">{{t .Lang "files.clear_search"}}</button>
+                </form>
+                <button type="button" @click="loadEntries()" :disabled="!hasSelectedRoot() || loadingFiles" class="btn-secondary text-sm">
                     <span x-show="loadingFiles">{{t .Lang "files.refreshing"}}</span>
                     <span x-show="!loadingFiles">{{t .Lang "files.refresh"}}</span>
                 </button>
@@ -175,6 +184,9 @@
                 </form>
             </div>
         </div>
+
+        <div x-show="search.active" class="mb-4 p-3 bg-blue-900/20 border border-blue-800 rounded text-sm text-blue-100" x-text="t('files.search_results_for', { query: search.submittedQuery })"></div>
+        <div x-show="search.active && search.truncated" class="mb-4 p-3 bg-yellow-900/30 border border-yellow-700 rounded text-sm text-yellow-100" x-text="searchTruncatedMessage()"></div>
 
         <div x-show="showMkdir" class="flex items-center space-x-2 mb-4 p-3 bg-gray-700/50 rounded">
             <span class="text-sm text-gray-300">{{t .Lang "files.directory_name"}}</span>
@@ -194,7 +206,7 @@
             <table class="w-full">
                 <thead class="border-b border-gray-700">
                     <tr>
-                        <th class="table-header w-10"><input type="checkbox" @change="selectAll($event.target.checked)" :disabled="files.length === 0"></th>
+                        <th class="table-header w-10"><input type="checkbox" @change="selectAll($event.target.checked)" :disabled="search.active || visibleFiles.length === 0"></th>
                         <th class="table-header cursor-pointer hover:text-white select-none" @click="setSort('name')">{{t .Lang "files.name"}}<span class="ml-1 text-xs" x-text="sortMark('name')"></span></th>
                         <th class="table-header cursor-pointer hover:text-white select-none" @click="setSort('type')">{{t .Lang "files.type"}}<span class="ml-1 text-xs" x-text="sortMark('type')"></span></th>
                         <th class="table-header cursor-pointer hover:text-white select-none" @click="setSort('size')">{{t .Lang "files.size"}}<span class="ml-1 text-xs" x-text="sortMark('size')"></span></th>
@@ -207,40 +219,50 @@
                     <tr x-show="currentPath !== '/'" class="border-b border-gray-700/50 cursor-pointer hover:bg-gray-800/50" @click="goUp()">
                         <td class="table-cell text-gray-400" colspan="7">📂 ..</td>
                     </tr>
-                    <template x-for="f in files" :key="f.name">
+                    <template x-for="f in visibleFiles" :key="f.path || f.name">
                         <tr class="border-b border-gray-700/50" :class="isSelected(f.name) ? 'bg-blue-900/20' : ''">
                             <td class="table-cell">
-                                <input type="checkbox" :checked="isSelected(f.name)" @click.stop @change="toggleSelect(f.name, $event.target.checked)">
+                                <input type="checkbox" x-show="!search.active" :checked="isSelected(f.name)" @click.stop @change="toggleSelect(f.name, $event.target.checked)">
                             </td>
                             <td class="table-cell">
-                                <span x-show="f.is_dir" class="cursor-pointer hover:text-blue-400" @click="enterDir(f.name)" x-text="'📁 ' + f.name"></span>
+                                <span x-show="f.is_dir" class="cursor-pointer hover:text-blue-400" @click="search.active ? openSearchResult(f) : enterDir(f.name)" x-text="'📁 ' + f.name"></span>
                                 <span x-show="!f.is_dir" x-text="'📄 ' + f.name"></span>
+                                <div x-show="search.active" class="mt-1 text-xs text-gray-500" x-text="t('files.search_result_path', { path: f.parent_path })"></div>
                             </td>
                             <td class="table-cell text-sm" x-text="f.is_dir ? t('files.file_type_dir') : t('files.file_type_file')"></td>
                             <td class="table-cell text-sm">
                                 <span x-show="!f.is_dir" x-text="formatBytes(f.size)"></span>
-                                <button x-show="f.is_dir" type="button" @click.stop="calculateDirectorySize(selectedSite, pathFor(f.name))" :aria-busy="directorySizeState(selectedSite, pathFor(f.name)).loading" :class="directorySizeState(selectedSite, pathFor(f.name)).loading ? 'text-gray-500' : 'text-blue-400 hover:text-blue-300'" class="cursor-pointer text-xs">
+                                <button x-show="f.is_dir && !search.active" type="button" @click.stop="calculateDirectorySize(selectedSite, pathFor(f.name))" :aria-busy="directorySizeState(selectedSite, pathFor(f.name)).loading" :class="directorySizeState(selectedSite, pathFor(f.name)).loading ? 'text-gray-500' : 'text-blue-400 hover:text-blue-300'" class="cursor-pointer text-xs">
                                     <span x-show="directorySizeState(selectedSite, pathFor(f.name)).loading">{{t .Lang "files.calculating_size"}}</span>
                                     <span x-show="!directorySizeState(selectedSite, pathFor(f.name)).loading && directorySizeState(selectedSite, pathFor(f.name)).size === undefined">{{t .Lang "files.calculate_size"}}</span>
                                     <span x-show="!directorySizeState(selectedSite, pathFor(f.name)).loading && directorySizeState(selectedSite, pathFor(f.name)).size !== undefined" x-text="formatBytes(directorySizeState(selectedSite, pathFor(f.name)).size || 0)"></span>
                                 </button>
-                                <div x-show="f.is_dir && directorySizeState(selectedSite, pathFor(f.name)).calculated_at" class="text-xs text-gray-600 mt-1"><span>{{t .Lang "files.calculated_at"}}</span><span x-text="formatCalculatedTime(directorySizeState(selectedSite, pathFor(f.name)).calculated_at)"></span></div>
+                                <span x-show="f.is_dir && search.active" class="text-gray-500">—</span>
+                                <div x-show="f.is_dir && !search.active && directorySizeState(selectedSite, pathFor(f.name)).calculated_at" class="text-xs text-gray-600 mt-1"><span>{{t .Lang "files.calculated_at"}}</span><span x-text="formatCalculatedTime(directorySizeState(selectedSite, pathFor(f.name)).calculated_at)"></span></div>
                             </td>
                             <td class="table-cell font-mono text-xs" x-text="f.mode"></td>
                             <td class="table-cell text-xs" x-text="f.mod_time"></td>
                             <td class="table-cell">
-                                <div class="flex flex-wrap gap-1">
+                                <div x-show="!search.active" class="flex flex-wrap gap-1">
                                     <button x-show="!f.is_dir" @click="downloadFile(f.name)" class="btn-primary text-xs py-1 px-2">{{t .Lang "files.download"}}</button>
                                     <button @click="startRename(f.name)" class="btn-secondary text-xs py-1 px-2">{{t .Lang "files.rename"}}</button>
                                     <button @click="compressItems([f.name])" :disabled="archiveBusy" class="btn-secondary text-xs py-1 px-2" :title="f.is_dir ? t('files.compress_directory_title') : t('files.compress_file_title')">{{t .Lang "files.compress"}}</button>
                                     <button x-show="isArchive(f.name)" @click="decompressFile(f.name)" :disabled="archiveBusy" class="btn-secondary text-xs py-1 px-2">{{t .Lang "files.extract"}}</button>
                                     <button @click="deleteItems([f.name])" class="btn-danger text-xs py-1 px-2">{{t .Lang "files.delete"}}</button>
                                 </div>
+                                <div x-show="search.active" class="flex flex-wrap gap-1">
+                                    <button x-show="!f.is_dir" @click="downloadPath(f.path)" class="btn-primary text-xs py-1 px-2">{{t .Lang "files.download"}}</button>
+                                    <button x-show="f.is_dir" @click="openSearchResult(f)" class="btn-secondary text-xs py-1 px-2">{{t .Lang "files.open_directory"}}</button>
+                                    <button x-show="!f.is_dir" @click="openSearchResult(f)" class="btn-secondary text-xs py-1 px-2">{{t .Lang "files.search_locate"}}</button>
+                                </div>
                             </td>
                         </tr>
                     </template>
-                    <tr x-show="files.length === 0 && selectedSite">
+                    <tr x-show="!search.active && files.length === 0 && hasSelectedRoot()">
                         <td colspan="7" class="table-cell text-center text-gray-500 py-8">{{t .Lang "files.empty_directory"}}</td>
+                    </tr>
+                    <tr x-show="search.active && search.results.length === 0">
+                        <td colspan="7" class="table-cell text-center text-gray-500 py-8">{{t .Lang "files.search_no_results"}}</td>
                     </tr>
                     <tr x-show="!selectedSite">
                         <td colspan="7" class="table-cell text-center text-gray-500 py-8">{{t .Lang "files.select_website_first"}}</td>
@@ -248,14 +270,16 @@
                 </tbody>
             </table>
         </div>
-        <div x-show="selectedSite && totalPages > 1" class="flex items-center justify-between mt-4 pt-3 border-t border-gray-700/50">
+        <div x-show="hasSelectedRoot() && totalPages > 1" class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mt-4 pt-3 border-t border-gray-700/50">
             <span class="text-sm text-gray-400" x-text="t('files.pagination_summary', { total: total, perPage: perPage })"></span>
-            <div class="flex items-center space-x-1">
+            <div class="flex flex-wrap items-center gap-1">
+                <button @click="goPage(1)" :disabled="page <= 1" class="px-3 py-1 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed">{{t .Lang "files.first_page"}}</button>
                 <button @click="goPage(page - 1)" :disabled="page <= 1" class="px-3 py-1 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed">{{t .Lang "files.prev_page"}}</button>
                 <template x-for="p in pageNumbers" :key="p">
                     <button @click="goPage(p)" :class="p === page ? 'bg-blue-600 text-white' : 'bg-gray-700 hover:bg-gray-600'" class="px-3 py-1 text-sm rounded" x-text="p"></button>
                 </template>
                 <button @click="goPage(page + 1)" :disabled="page >= totalPages" class="px-3 py-1 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed">{{t .Lang "files.next_page"}}</button>
+                <button @click="goPage(totalPages)" :disabled="page >= totalPages" class="px-3 py-1 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed">{{t .Lang "files.last_page"}}</button>
             </div>
         </div>
     </div>
@@ -281,13 +305,22 @@ function fileManager() {
         perPage: 50,
         total: 0,
         totalPages: 1,
+        search: {
+            active: false,
+            query: '',
+            submittedQuery: '',
+            scope: 'current',
+            results: [],
+            truncated: false,
+            truncatedReason: ''
+        },
         loadingFiles: false,
         loadRequestID: 0,
         setSort(field) {
             if (this.sortBy === field) { this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc'; }
             else { this.sortBy = field; this.sortDir = 'asc'; }
             this.page = 1;
-            this.loadFiles();
+            this.loadEntries();
         },
         sortMark(field) {
             if (this.sortBy !== field) return '';
@@ -351,6 +384,9 @@ function fileManager() {
             if (!query) return this.sites;
             return this.sites.filter(site => (site.domain || '').toLowerCase().includes(query) || (site.web_root || '').toLowerCase().includes(query));
         },
+        get visibleFiles() {
+            return this.search.active ? this.search.results : this.files;
+        },
         apiMessage(data, fallback) {
             return data?.message || data?.data?.message || fallback;
         },
@@ -380,6 +416,7 @@ function fileManager() {
             this.showMkdir = false;
             this.showRename = false;
             this.uploadTarget = null;
+            this.resetSearch();
             if (updateURL) {
                 const url = new URL(window.location.href);
                 url.searchParams.set('site_id', this.selectedSite);
@@ -399,6 +436,7 @@ function fileManager() {
             this.showMkdir = false;
             this.showRename = false;
             this.uploadTarget = null;
+            this.resetSearch();
             const url = new URL(window.location.href);
             url.searchParams.delete('site_id');
             window.history.replaceState({}, '', url);
@@ -418,9 +456,50 @@ function fileManager() {
             const bc = this.breadcrumbs();
             this.currentPath = bc[idx].path;
             this.page = 1;
+            this.resetSearch();
             this.loadFiles();
         },
-        async loadFiles() {
+        resetSearch(clearQuery = false) {
+            this.search.active = false;
+            this.search.submittedQuery = '';
+            this.search.results = [];
+            this.search.truncated = false;
+            this.search.truncatedReason = '';
+            if (clearQuery) this.search.query = '';
+        },
+        startSearch() {
+            const query = this.search.query.trim();
+            if (!query) return;
+            this.search.active = true;
+            this.search.submittedQuery = query;
+            this.search.results = [];
+            this.search.truncated = false;
+            this.search.truncatedReason = '';
+            this.page = 1;
+            this.selected = [];
+            this.loadEntries();
+        },
+        clearSearch() {
+            this.resetSearch(true);
+            this.page = 1;
+            this.loadFiles();
+        },
+        searchTruncatedMessage() {
+            return this.search.truncatedReason === 'match_limit'
+                ? t('files.search_truncated_match_limit')
+                : t('files.search_truncated_scan_limit');
+        },
+        openSearchResult(file) {
+            this.currentPath = file.is_dir ? file.path : file.parent_path;
+            this.resetSearch(true);
+            this.page = 1;
+            this.loadFiles();
+        },
+        loadFiles() {
+            this.resetSearch();
+            return this.loadEntries();
+        },
+        async loadEntries() {
             const requestID = ++this.loadRequestID;
             if (!this.hasSelectedRoot()) {
                 this.files = [];
@@ -432,17 +511,36 @@ function fileManager() {
             this.selected = [];
             this.loadingFiles = true;
             try {
-                let url = '/files/list?site_id=' + this.selectedSite
-                    + '&path=' + encodeURIComponent(this.currentPath)
-                    + '&page=' + this.page
-                    + '&per_page=' + this.perPage
-                    + '&sort_by=' + encodeURIComponent(this.sortBy)
-                    + '&sort_dir=' + encodeURIComponent(this.sortDir);
+                let url;
+                if (this.search.active) {
+                    url = '/files/search?site_id=' + encodeURIComponent(this.selectedSite)
+                        + '&path=' + encodeURIComponent(this.currentPath)
+                        + '&q=' + encodeURIComponent(this.search.submittedQuery)
+                        + '&scope=' + encodeURIComponent(this.search.scope)
+                        + '&page=' + this.page
+                        + '&per_page=' + this.perPage
+                        + '&sort_by=' + encodeURIComponent(this.sortBy)
+                        + '&sort_dir=' + encodeURIComponent(this.sortDir);
+                } else {
+                    url = '/files/list?site_id=' + encodeURIComponent(this.selectedSite)
+                        + '&path=' + encodeURIComponent(this.currentPath)
+                        + '&page=' + this.page
+                        + '&per_page=' + this.perPage
+                        + '&sort_by=' + encodeURIComponent(this.sortBy)
+                        + '&sort_dir=' + encodeURIComponent(this.sortDir);
+                }
                 const r = await api(url);
                 if (requestID !== this.loadRequestID) return;
                 if (r.success) {
-                    this.files = r.data.files || [];
-                    this.total = r.data.total || this.files.length;
+                    const entries = r.data.files || [];
+                    if (this.search.active) {
+                        this.search.results = entries;
+                        this.search.truncated = !!r.data.truncated;
+                        this.search.truncatedReason = r.data.truncated_reason || '';
+                    } else {
+                        this.files = entries;
+                    }
+                    this.total = Number.isInteger(r.data.total) ? r.data.total : entries.length;
                     this.page = r.data.page || 1;
                     this.perPage = r.data.per_page || 50;
                     this.totalPages = r.data.total_pages || 1;
@@ -456,7 +554,7 @@ function fileManager() {
         goPage(p) {
             if (p < 1 || p > this.totalPages) return;
             this.page = p;
-            this.loadFiles();
+            this.loadEntries();
         },
         get pageNumbers() {
             const pages = [];
@@ -677,6 +775,10 @@ function fileManager() {
         downloadFile(name) {
             const prefix = document.body.dataset.panelPrefix || '';
             window.open(prefix + '/api/files/download?site_id=' + this.selectedSite + '&path=' + encodeURIComponent(this.currentPath === '/' ? '/' + name : this.currentPath + '/' + name));
+        },
+        downloadPath(path) {
+            const prefix = document.body.dataset.panelPrefix || '';
+            window.open(prefix + '/api/files/download?site_id=' + encodeURIComponent(this.selectedSite) + '&path=' + encodeURIComponent(path));
         },
         startRename(name) {
             this.renameTarget = name;
