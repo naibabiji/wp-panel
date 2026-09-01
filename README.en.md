@@ -39,7 +39,7 @@ WP Panel focuses on one job: **running WordPress sites efficiently on VPS server
 | **Password-recovery protection** | Per-site three-state toggle (allow / disable site-wide / disable for admins only); site-wide disable also hides the "Lost your password?" link on the login page |
 | **Database management** | MariaDB password changes, database backup and restore, upload restore, and automatic backups |
 | **Scheduled tasks** | Visual cron management, WP Cron replacement, incremental file backups, and system task inspection |
-| **File manager** | Upload, download, delete, rename, archive, extract, cut, copy, paste, multi-select, and chunked upload with resume support |
+| **File manager** | Upload, download, delete, rename, archive, extract, cut, copy, paste, multi-select, and chunked upload with resume support; search the current directory or its subdirectories by name, locate and download cross-directory results, and jump directly to the first or last page |
 | **Dashboard** | Live CPU, memory, disk, and load monitoring with 24h/7d/15d historical charts |
 | **System stability safeguards** | Automatic swap buffer creation on low-memory servers, OOM incident alerts, crash/anomaly diagnostics for MariaDB/PHP-FPM/Nginx/Redis, and incident resource snapshots |
 | **AI diagnostics** | One-click site health analysis with follow-up questions and diagnostic history, focused on logs and service-state clues |
