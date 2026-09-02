@@ -15,7 +15,7 @@ var allowedCommands = map[string][]string{
 	"systemctl":       {"start", "stop", "reload", "restart", "enable", "disable", "daemon-reload", "status"},
 	"nginx":           {"-t", "-s", "-c"},
 	"nft":             {"add", "delete", "list", "flush", "create", "insert", "set"},
-	"fail2ban-client": {"-t", "set", "unban", "reload", "status", "banip", "start", "stop", "add", "get"},
+	"fail2ban-client": {"-t", "--with-time", "set", "unban", "reload", "status", "banip", "start", "stop", "add", "get"},
 	"useradd":         {"-r", "-s", "-d", "-m", "-g", "-M", "-U"},
 	"userdel":         {"-r", "-f"},
 	"usermod":         {"-a", "-G", "-g"},
@@ -57,6 +57,9 @@ func IsCommandAllowed(binary string, args []string) bool {
 		for _, arg := range args {
 			if arg == "--restart" {
 				return len(args) == 3 && args[0] == "reload" && args[1] == "--restart" && args[2] == "wppanel-sshd"
+			}
+			if strings.HasPrefix(arg, "--with-time") {
+				return len(args) == 4 && args[0] == "get" && args[2] == "banip" && args[3] == "--with-time" && normalizeFail2banJail(args[1]) != ""
 			}
 		}
 	}

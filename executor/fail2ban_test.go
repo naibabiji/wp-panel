@@ -483,6 +483,47 @@ func TestRecordFail2banRestoredDoesNotCreateHistory(t *testing.T) {
 	}
 }
 
+func TestParseFail2banTicketsWithTime(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	output := "195.178.110.137 \t2026-09-02 18:40:14 + 3600 = 2026-09-02 19:40:14\n" +
+		"invalid line\n" +
+		"203.0.113.8 2026-09-02 18:50:00 + 600 = 2026-09-02 19:00:00\n"
+	tickets := parseFail2banTickets(output, location)
+	if len(tickets) != 2 {
+		t.Fatalf("tickets = %#v", tickets)
+	}
+	ticket := tickets["195.178.110.137"]
+	if ticket.duration != 3600 || ticket.bannedAt.UTC().Format(time.RFC3339) != "2026-09-02T10:40:14Z" || ticket.expiresAt.UTC().Format(time.RFC3339) != "2026-09-02T11:40:14Z" {
+		t.Fatalf("ticket = %+v", ticket)
+	}
+}
+
+func TestRestoreActiveFail2banReceiptUsesTicketTimes(t *testing.T) {
+	openTestDB(t)
+	ip := "203.0.113.81"
+	if _, err := database.GetDB().Exec(`INSERT INTO firewall_bans
+		(ip_address,ban_level,reason,source_jail,ban_count,banned_at,expires_at)
+		VALUES (?,2,'fallback','wppanel',1,'2026-09-02 10:40:36',NULL)`, ip); err != nil {
+		t.Fatal(err)
+	}
+	bannedAt := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
+	expiresAt := bannedAt.Add(time.Hour)
+	found, err := restoreActiveFail2banReceipt(database.GetDB(), fail2banJailIP{jail: "wppanel", ip: ip}, fail2banTicket{
+		bannedAt: bannedAt, expiresAt: expiresAt, duration: 3600,
+	}, true)
+	if err != nil || !found {
+		t.Fatalf("restoreActiveFail2banReceipt() = %v, %v", found, err)
+	}
+	var level int
+	var gotBannedAt, gotExpiresAt time.Time
+	if err := database.GetDB().QueryRow(`SELECT ban_level,banned_at,expires_at FROM firewall_bans WHERE ip_address=?`, ip).Scan(&level, &gotBannedAt, &gotExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if level != 3 || !gotBannedAt.Equal(bannedAt) || !gotExpiresAt.Equal(expiresAt) {
+		t.Fatalf("receipt = level %d, banned %s, expires %s", level, gotBannedAt, gotExpiresAt)
+	}
+}
+
 func TestRecordFail2banUnbanClosesOnlyMatchingJail(t *testing.T) {
 	openTestDB(t)
 	oldRemove := conditionalRemoveNginxBan
@@ -1048,6 +1089,15 @@ func TestFail2banRestartReloadCommandIsAllowed(t *testing.T) {
 	if IsCommandAllowed("fail2ban-client", []string{"stop", "--restart", "wppanel-sshd"}) ||
 		IsCommandAllowed("fail2ban-client", []string{"reload", "--restart", "wppanel"}) {
 		t.Fatal("--restart must be restricted to the fixed wppanel-sshd reload command")
+	}
+}
+
+func TestFail2banBanIPWithTimeIsAllowed(t *testing.T) {
+	if !IsCommandAllowed("fail2ban-client", []string{"get", "wppanel", "banip", "--with-time"}) {
+		t.Fatal("Fail2ban per-IP ticket time query must be allowed")
+	}
+	if IsCommandAllowed("fail2ban-client", []string{"get", "wppanel", "banip", "--with-time=unsafe"}) {
+		t.Fatal("unexpected --with-time variant was allowed")
 	}
 }
 

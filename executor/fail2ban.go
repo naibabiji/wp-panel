@@ -645,8 +645,15 @@ func ApplyFail2banSettings() error {
 
 type fail2banJailIP struct{ jail, ip string }
 
+type fail2banTicket struct {
+	bannedAt  time.Time
+	expiresAt time.Time
+	duration  int
+}
+
 type fail2banSnapshot struct {
 	active         map[fail2banJailIP]bool
+	tickets        map[fail2banJailIP]fail2banTicket
 	jailStatusRead map[string]bool
 	webBanned      map[string]bool
 	webStatusRead  bool
@@ -655,6 +662,7 @@ type fail2banSnapshot struct {
 func readActiveFail2banBans() fail2banSnapshot {
 	snapshot := fail2banSnapshot{
 		active:         make(map[fail2banJailIP]bool),
+		tickets:        make(map[fail2banJailIP]fail2banTicket),
 		jailStatusRead: make(map[string]bool),
 		webBanned:      make(map[string]bool),
 	}
@@ -670,10 +678,23 @@ func readActiveFail2banBans() fail2banSnapshot {
 		if isWebJail {
 			snapshot.webStatusRead = true
 		}
-		for _, ip := range parseBannedIPs(out) {
+		activeIPs := parseBannedIPs(out)
+		for _, ip := range activeIPs {
 			snapshot.active[fail2banJailIP{jail: jail, ip: ip}] = true
 			if isWebJail {
 				snapshot.webBanned[ip] = true
+			}
+		}
+		if len(activeIPs) > 0 {
+			if ticketOut, err := executeCommand("fail2ban-client", "get", jail, "banip", "--with-time"); err == nil {
+				for ip, ticket := range parseFail2banTickets(ticketOut, time.Local) {
+					pair := fail2banJailIP{jail: jail, ip: ip}
+					if snapshot.active[pair] {
+						snapshot.tickets[pair] = ticket
+					}
+				}
+			} else {
+				log.Printf("Fail2ban ticket 时间读取失败 %s：%v", jail, err)
 			}
 		}
 	}
@@ -725,11 +746,18 @@ func syncFail2banSnapshot(snapshot fail2banSnapshot) {
 
 func reconcileFail2banBans(db *sql.DB, snapshot fail2banSnapshot) {
 	for pair := range snapshot.active {
-		found, err := restoreActiveFail2banReceipt(db, pair)
+		ticket, hasTicket := snapshot.tickets[pair]
+		found, err := restoreActiveFail2banReceipt(db, pair, ticket, hasTicket)
 		if err != nil || found {
 			continue
 		}
-		_ = RecordFail2banBan(pair.ip, pair.jail, 600, 1, false)
+		banTime := 600
+		if hasTicket {
+			banTime = ticket.duration
+		}
+		if err := RecordFail2banBan(pair.ip, pair.jail, banTime, 1, false); err == nil && hasTicket {
+			_, _ = restoreActiveFail2banReceipt(db, pair, ticket, true)
+		}
 	}
 
 	rows, err := db.Query(`SELECT id, ip_address, source_jail FROM firewall_bans
@@ -770,7 +798,7 @@ func reconcileFail2banBans(db *sql.DB, snapshot fail2banSnapshot) {
 	return
 }
 
-func restoreActiveFail2banReceipt(db *sql.DB, pair fail2banJailIP) (bool, error) {
+func restoreActiveFail2banReceipt(db *sql.DB, pair fail2banJailIP, ticket fail2banTicket, hasTicket bool) (bool, error) {
 	var id int
 	var expiresAt *time.Time
 	err := db.QueryRow(`SELECT id, expires_at FROM firewall_bans
@@ -786,12 +814,56 @@ func restoreActiveFail2banReceipt(db *sql.DB, pair fail2banJailIP) (bool, error)
 		WHERE ip_address=? AND source_jail=? AND unbanned_at IS NULL AND id<>?`, pair.ip, pair.jail, id); err != nil {
 		return false, err
 	}
+	if hasTicket {
+		var expiry interface{}
+		if ticket.expiresAt.After(time.Now()) {
+			expiry = ticket.expiresAt.UTC().Format("2006-01-02 15:04:05")
+		}
+		_, err := db.Exec(`UPDATE firewall_bans SET banned_at=?,expires_at=?,ban_level=? WHERE id=?`,
+			ticket.bannedAt.UTC().Format("2006-01-02 15:04:05"), expiry, fail2banBanLevel(ticket.duration), id)
+		return true, err
+	}
 	if expiresAt != nil && !expiresAt.After(time.Now()) {
 		if _, err := db.Exec("UPDATE firewall_bans SET expires_at=NULL WHERE id=?", id); err != nil {
 			return false, err
 		}
 	}
 	return true, nil
+}
+
+func parseFail2banTickets(output string, location *time.Location) map[string]fail2banTicket {
+	tickets := make(map[string]fail2banTicket)
+	if location == nil {
+		location = time.Local
+	}
+	for _, line := range strings.Split(output, "\n") {
+		left, right, ok := strings.Cut(strings.TrimSpace(line), " = ")
+		if !ok {
+			continue
+		}
+		plus := strings.LastIndex(left, " + ")
+		if plus < 0 {
+			continue
+		}
+		identityAndTime := strings.Fields(strings.TrimSpace(left[:plus]))
+		if len(identityAndTime) < 3 || net.ParseIP(identityAndTime[0]) == nil {
+			continue
+		}
+		duration, err := strconv.Atoi(strings.TrimSpace(left[plus+3:]))
+		if err != nil || duration < 1 || duration > 7*24*60*60 {
+			continue
+		}
+		bannedAt, err := time.ParseInLocation("2006-01-02 15:04:05", strings.Join(identityAndTime[1:], " "), location)
+		if err != nil {
+			continue
+		}
+		expiresAt, err := time.ParseInLocation("2006-01-02 15:04:05", strings.TrimSpace(right), location)
+		if err != nil || !expiresAt.After(bannedAt) {
+			continue
+		}
+		tickets[identityAndTime[0]] = fail2banTicket{bannedAt: bannedAt, expiresAt: expiresAt, duration: duration}
+	}
+	return tickets
 }
 
 func reconcilePanelManagedBans(db *sql.DB, now time.Time, webBannedSet map[string]bool) {
