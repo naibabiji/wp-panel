@@ -11,12 +11,18 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
 )
 
 const aiDevelopmentHomeRoot = "/var/lib/wp-panel/ai-homes"
+
+const (
+	aiDevelopmentUsermodRetryDelay = 200 * time.Millisecond
+	aiDevelopmentUsermodAttempts   = 76
+)
 
 var aiDevelopmentUserPattern = regexp.MustCompile(`^(wp|php)_[a-z0-9_]{1,28}$`)
 var aiDevelopmentSessionPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
@@ -421,10 +427,36 @@ func (productionAIDevelopmentSystem) Restore(ctx context.Context, systemUser str
 	if !aiDevelopmentUserPattern.MatchString(systemUser) || !filepath.IsAbs(passwd.Home) || !filepath.IsAbs(passwd.Shell) {
 		return errors.New("invalid site user restore metadata")
 	}
-	if err := exec.CommandContext(ctx, "usermod", "-s", passwd.Shell, systemUser).Run(); err != nil {
+	if err := retryAIDevelopmentUsermod(ctx, aiDevelopmentUsermodRetryDelay, aiDevelopmentUsermodAttempts, func() error {
+		return exec.CommandContext(ctx, "usermod", "-s", passwd.Shell, systemUser).Run()
+	}); err != nil {
 		return err
 	}
-	return exec.CommandContext(ctx, "usermod", "-d", passwd.Home, systemUser).Run()
+	return retryAIDevelopmentUsermod(ctx, aiDevelopmentUsermodRetryDelay, aiDevelopmentUsermodAttempts, func() error {
+		return exec.CommandContext(ctx, "usermod", "-d", passwd.Home, systemUser).Run()
+	})
+}
+
+func retryAIDevelopmentUsermod(ctx context.Context, delay time.Duration, attempts int, run func() error) error {
+	for attempt := 1; attempt <= attempts; attempt++ {
+		err := run()
+		if err == nil || !isAIDevelopmentUsermodBusy(err) || attempt == attempts {
+			return err
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil
+}
+
+func isAIDevelopmentUsermodBusy(err error) bool {
+	var exitErr interface{ ExitCode() int }
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 8
 }
 
 func (productionAIDevelopmentSystem) RemoveHome(path string) error {
