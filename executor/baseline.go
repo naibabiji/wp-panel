@@ -111,36 +111,34 @@ innodb_buffer_pool_size = %s
 }
 
 func ensureRedisBaseline() {
-	// Redis doesn't have conf.d, check if already set
 	path := "/etc/redis/redis.conf"
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return
-	}
-	if strings.Contains(string(data), "maxmemory ") && !strings.Contains(string(data), "# maxmemory ") {
+		log.Printf("[WP-Panel] 读取 Redis 基线配置失败: %v", err)
 		return
 	}
 
-	maxmem := fmt.Sprintf("%dmb", RecommendRedisMaxmemoryMB(CollectSystemFacts()))
-
-	// Find commented maxmemory line and uncomment it
 	content := string(data)
-	replaced := false
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "# maxmemory") {
-			lines[i] = "maxmemory " + maxmem
-			replaced = true
-			break
-		}
+	if FindRedisConfigValue(content, "maxmemory-policy") == "" && FindRedisConfigValue(content, "include") != "" {
+		log.Printf("[WP-Panel] Redis 配置包含生效的 include 指令，跳过自动补充 maxmemory-policy，请管理员确认实际淘汰策略")
 	}
-	if !replaced {
-		lines = append(lines, "", "# WP Panel — WordPress 安全基线", "maxmemory "+maxmem)
+	maxmem := fmt.Sprintf("%dmb", RecommendRedisMaxmemoryMB(CollectSystemFacts()))
+	next, changed := BuildRedisBaselineConfig(content, maxmem)
+	if !changed {
+		return
 	}
 
-	os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644)
-	exec.Command("systemctl", "restart", "redis-server").Run()
+	result := SafeApplyRestartConfig(path, next, content, "redis-server", RedisReady)
+	switch {
+	case result.Applied:
+		log.Printf("[WP-Panel] Redis 对象缓存基线已应用")
+	case result.RolledBack && result.RollbackSucceeded:
+		log.Printf("[WP-Panel] Redis 对象缓存基线应用失败，已恢复原配置: %v", result.Err)
+	case result.RolledBack:
+		log.Printf("[WP-Panel] Redis 对象缓存基线应用及回滚均失败，需要管理员立即检查 Redis: %v", result.Err)
+	default:
+		log.Printf("[WP-Panel] Redis 对象缓存基线应用失败，配置未改动: %v", result.Err)
+	}
 }
 
 func getTotalMemoryKB() int64 {

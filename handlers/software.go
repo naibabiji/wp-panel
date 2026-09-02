@@ -145,7 +145,7 @@ func populateConfigValues(item *softwareItem) {
 			val = findNginxValue(content, key)
 		}
 		if val == "" {
-			val = findRedisValue(content, key)
+			val = executor.FindRedisConfigValue(content, key)
 		}
 		if val != "" {
 			item.Configs[i].Value = val
@@ -366,7 +366,7 @@ func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 	var oldValue string
 	switch req.Name {
 	case "Redis":
-		oldValue = findRedisValue(content, req.Key)
+		oldValue = executor.FindRedisConfigValue(content, req.Key)
 	case "Nginx":
 		oldValue = findNginxValue(content, req.Key)
 	default:
@@ -384,7 +384,7 @@ func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 	case "Nginx":
 		newContent = replaceNginxValue(content, req.Key, req.Value)
 	case "Redis":
-		newContent = replaceRedisValue(content, req.Key, req.Value)
+		newContent = executor.ReplaceRedisConfigValue(content, req.Key, req.Value)
 	default:
 		newContent = replaceIniValue(content, req.Key, req.Value)
 	}
@@ -641,39 +641,6 @@ func replaceNginxValue(content, key, value string) string {
 	return strings.Join(lines, "\n")
 }
 
-func replaceRedisValue(content, key, value string) string {
-	lines := strings.Split(content, "\n")
-	// Strip any INI-style comments accidentally written to redis.conf
-	filtered := make([]string, 0, len(lines))
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, ";") || strings.HasPrefix(trimmed, "maxmemory =") {
-			continue
-		}
-		filtered = append(filtered, line)
-	}
-	lines = filtered
-
-	found := false
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		fields := strings.Fields(trimmed)
-		if len(fields) >= 2 && fields[0] == key {
-			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
-			lines[i] = indent + key + " " + value
-			found = true
-			break
-		}
-	}
-	if !found {
-		lines = append(lines, "", "# WP Panel", key+" "+value)
-	}
-	return strings.Join(lines, "\n")
-}
-
 func findPHPIniValue(content, key string) string {
 	for _, line := range strings.Split(content, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -685,23 +652,6 @@ func findPHPIniValue(content, key string) string {
 			if len(parts) == 2 {
 				return strings.TrimSpace(parts[1])
 			}
-		}
-	}
-	return ""
-}
-
-func findRedisValue(content, key string) string {
-	for _, line := range strings.Split(content, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		fields := strings.Fields(trimmed)
-		if len(fields) >= 2 && fields[0] == key {
-			if fields[1] == "=" && len(fields) >= 3 {
-				return fields[2]
-			}
-			return fields[1]
 		}
 	}
 	return ""
