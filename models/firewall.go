@@ -25,6 +25,20 @@ type FirewallBan struct {
 	IsManual   bool       `json:"is_manual"`
 }
 
+type CurrentFirewallBan struct {
+	ID           int        `json:"id"`
+	IPAddress    string     `json:"ip_address"`
+	BanLevel     *BanLevel  `json:"ban_level"`
+	Reason       *string    `json:"reason"`
+	SourceJail   string     `json:"source_jail"`
+	BannedAt     *time.Time `json:"banned_at"`
+	ExpiresAt    *time.Time `json:"expires_at"`
+	BanCount     *int       `json:"ban_count"`
+	IsManual     bool       `json:"is_manual"`
+	Enforced     bool       `json:"enforced"`
+	Verification string     `json:"verification"`
+}
+
 type UpdateWhitelistRequest struct {
 	IPs string `json:"ips" binding:"required"`
 }

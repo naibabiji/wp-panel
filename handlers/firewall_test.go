@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/naibabiji/wp-panel/database"
+	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/models"
 )
 
@@ -94,4 +95,67 @@ func requestBanHistory(t *testing.T, path string) banHistoryResponse {
 		t.Fatalf("response was not successful: %s", rec.Body.String())
 	}
 	return response
+}
+
+func TestBuildCurrentBanViewUsesLiveEnforcementAndKeepsAnomaliesSeparate(t *testing.T) {
+	now := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	level := models.BanLevelTemp24h
+	receipts := []models.FirewallBan{
+		{ID: 1, IPAddress: "203.0.113.10", SourceJail: "wppanel", BanLevel: level, Reason: "web", BannedAt: now, BanCount: 2},
+		{ID: 2, IPAddress: "203.0.113.20", SourceJail: "panel_scan", BanLevel: level, Reason: "scan", BannedAt: now.Add(-time.Minute), BanCount: 1},
+	}
+	state := executor.CurrentBanEnforcement{
+		Fail2ban: map[executor.CurrentBanKey]bool{{IP: "203.0.113.10", Source: "wppanel"}: true},
+		Persist:  map[string]bool{},
+		Nginx:    map[string]bool{"203.0.113.10": true},
+		Status: executor.CurrentBanReadStatus{
+			Fail2ban: map[string]bool{"wppanel": true, "wppanel-404": true, "wppanel-login": true, "wppanel-sshd": true},
+			Nftables: true,
+			Nginx:    true,
+		},
+	}
+	current, anomalies := buildCurrentBanView(receipts, state)
+	if len(current) != 1 || current[0].IPAddress != "203.0.113.10" || current[0].SourceJail != "wppanel" {
+		t.Fatalf("current = %+v", current)
+	}
+	if len(anomalies) != 1 || anomalies[0].IPAddress != "203.0.113.20" || anomalies[0].Verification != "missing" {
+		t.Fatalf("anomalies = %+v", anomalies)
+	}
+}
+
+func TestBuildCurrentBanViewPreservesUnknownLiveIPAndReadFailure(t *testing.T) {
+	receipt := models.FirewallBan{ID: 3, IPAddress: "203.0.113.30", SourceJail: "wppanel-sshd", BanLevel: models.BanLevelTemp10m, BannedAt: time.Now()}
+	state := executor.CurrentBanEnforcement{
+		Fail2ban: map[executor.CurrentBanKey]bool{},
+		Persist:  map[string]bool{"203.0.113.40": true},
+		Nginx:    map[string]bool{},
+		Status:   executor.CurrentBanReadStatus{Fail2ban: map[string]bool{}, Nftables: true, Nginx: true},
+	}
+	current, anomalies := buildCurrentBanView([]models.FirewallBan{receipt}, state)
+	if len(current) != 1 || current[0].IPAddress != "203.0.113.40" || current[0].SourceJail != "nftables" || current[0].BanLevel != nil {
+		t.Fatalf("current = %+v", current)
+	}
+	if len(anomalies) != 1 || anomalies[0].Verification != "unverified" {
+		t.Fatalf("anomalies = %+v", anomalies)
+	}
+}
+
+func TestBuildCurrentBanViewMergesFail2banAndNginxWithoutReceipt(t *testing.T) {
+	state := executor.CurrentBanEnforcement{
+		Fail2ban: map[executor.CurrentBanKey]bool{{IP: "203.0.113.50", Source: "wppanel"}: true},
+		Persist:  map[string]bool{},
+		Nginx:    map[string]bool{"203.0.113.50": true},
+		Status: executor.CurrentBanReadStatus{
+			Fail2ban: map[string]bool{"wppanel": true},
+			Nftables: true,
+			Nginx:    true,
+		},
+	}
+	current, anomalies := buildCurrentBanView(nil, state)
+	if len(current) != 1 || current[0].SourceJail != "wppanel" || current[0].IPAddress != "203.0.113.50" {
+		t.Fatalf("current = %+v", current)
+	}
+	if len(anomalies) != 0 {
+		t.Fatalf("anomalies = %+v", anomalies)
+	}
 }

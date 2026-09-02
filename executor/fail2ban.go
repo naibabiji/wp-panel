@@ -685,6 +685,21 @@ func SyncFail2banBans() {
 	defer syncMu.Unlock()
 
 	snapshot := readActiveFail2banBans()
+	syncFail2banSnapshot(snapshot)
+}
+
+// SyncFail2banBansAndReadEnforcement reconciles lifecycle state and reuses the
+// same Fail2ban snapshot for the current-ban view.
+func SyncFail2banBansAndReadEnforcement() CurrentBanEnforcement {
+	syncMu.Lock()
+	defer syncMu.Unlock()
+
+	snapshot := readActiveFail2banBans()
+	syncFail2banSnapshot(snapshot)
+	return readCurrentBanEnforcement(snapshot)
+}
+
+func syncFail2banSnapshot(snapshot fail2banSnapshot) {
 	if sshRecordActionPending.Load() && snapshot.jailStatusRead["wppanel-sshd"] {
 		sshActive := false
 		for pair := range snapshot.active {

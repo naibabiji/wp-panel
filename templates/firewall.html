@@ -210,6 +210,25 @@
                 <button @click="fetchWPSecurityReport()" :disabled="securityReportLoading" class="btn-secondary text-xs py-1.5 px-3" x-text="securityReportLoading ? t('firewall.analyzing') : t('firewall.refresh_analysis')"></button>
             </div>
         </div>
+        <div x-show="hasCurrentBanReadWarning()" class="mb-4 rounded border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-200">
+            {{t .Lang "firewall.current_bans_partial_read"}}
+        </div>
+        <div x-show="banAnomalies.length > 0" class="mb-4 rounded border border-red-500/40 bg-red-500/10 p-4">
+            <h4 class="font-semibold text-red-300">{{t .Lang "firewall.ban_sync_anomalies"}}</h4>
+            <p class="mt-1 text-xs text-red-200/80">{{t .Lang "firewall.ban_sync_anomalies_help"}}</p>
+            <div class="mt-3 space-y-2">
+                <template x-for="ban in banAnomalies" :key="'anomaly-' + ban.id + '-' + ban.source_jail">
+                    <div class="flex flex-wrap items-center justify-between gap-2 rounded bg-gray-900/50 px-3 py-2 text-sm">
+                        <div>
+                            <span class="font-mono" x-text="ban.ip_address"></span>
+                            <span class="ml-2 text-gray-400" x-text="sourceLabel(ban)"></span>
+                            <span class="ml-2" :class="ban.verification === 'missing' ? 'text-red-300' : 'text-yellow-300'" x-text="ban.verification === 'missing' ? t('firewall.ban_rule_missing') : t('firewall.ban_status_unverified')"></span>
+                        </div>
+                        <button x-show="ban.id > 0" @click="unban(ban)" class="btn-success text-xs py-1 px-2">{{t .Lang "firewall.unban"}}</button>
+                    </div>
+                </template>
+            </div>
+        </div>
         <div class="overflow-x-auto">
             <table class="w-full">
                 <thead class="border-b border-gray-700">
@@ -365,7 +384,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <template x-for="ban in bans" :key="ban.id">
+                    <template x-for="ban in bans" :key="ban.source_jail + '-' + ban.ip_address">
                         <tr class="border-b border-gray-700/50">
                             <td class="table-cell">
                                 <div class="flex items-center gap-2">
@@ -383,11 +402,12 @@
                                 <button type="button" @click="openRules(sourceRuleID(ban))" :class="sourceClass(ban)" class="text-xs underline decoration-dotted underline-offset-4 hover:text-white" :title="t('firewall.view_source_rule')" x-text="sourceLabel(ban)"></button>
                             </td>
                             <td class="table-cell text-xs" x-text="formatTime(ban.banned_at)"></td>
-                            <td class="table-cell text-xs" x-text="ban.ban_level >= 5 ? t('firewall.permanent') : (ban.expires_at ? formatTime(ban.expires_at) : t('firewall.fail2ban_managed'))"></td>
-                            <td class="table-cell" x-text="ban.ban_count"></td>
+                            <td class="table-cell text-xs" :title="!ban.expires_at && ban.source_jail.startsWith('wppanel') ? t('firewall.fail2ban_managed_help') : ''" x-text="ban.ban_level >= 5 ? t('firewall.permanent') : (ban.expires_at ? formatTime(ban.expires_at) : (ban.source_jail.startsWith('wppanel') ? t('firewall.fail2ban_managed') : t('firewall.unknown')))"></td>
+                            <td class="table-cell" x-text="ban.ban_count ?? t('firewall.unknown')"></td>
                             <td class="table-cell">
-                <button @click="unban(ban)" class="btn-success text-xs py-1 px-2">{{t .Lang "firewall.unban"}}</button>
-                                <button x-show="ban.ban_level < 5" @click="permanentBan(ban)" class="btn-danger text-xs py-1 px-2 ml-1">{{t .Lang "firewall.permanent_ban"}}</button>
+                                <button x-show="ban.id > 0" @click="unban(ban)" class="btn-success text-xs py-1 px-2">{{t .Lang "firewall.unban"}}</button>
+                                <button x-show="ban.id > 0 && ban.ban_level < 5" @click="permanentBan(ban)" class="btn-danger text-xs py-1 px-2 ml-1">{{t .Lang "firewall.permanent_ban"}}</button>
+                                <span x-show="!ban.id" class="text-xs text-gray-500">{{t .Lang "firewall.metadata_unknown"}}</span>
                             </td>
                         </tr>
                     </template>
@@ -473,6 +493,8 @@ function firewallManager() {
     return {
         activeTab: 'current',
         bans: [],
+        banAnomalies: [],
+        currentBanReadStatus: null,
         history: [],
         historyLoaded: false,
         historyLoading: false,
@@ -524,6 +546,8 @@ function firewallManager() {
                 const r = await api(url);
                 if (r.success) {
                     this.bans = r.data?.data || r.data || [];
+                    this.banAnomalies = r.data?.anomalies || [];
+                    this.currentBanReadStatus = r.data?.read_status || null;
                     this.total = r.data?.total || this.bans.length;
                     this.page = r.data?.page || 1;
                     this.totalPages = r.data?.total_pages || 1;
@@ -536,6 +560,12 @@ function firewallManager() {
             this.banSourceFilter = '';
             this.page = 1;
             this.fetchBans();
+        },
+        hasCurrentBanReadWarning() {
+            const status = this.currentBanReadStatus;
+            if (!status) return false;
+            const fail2ban = status.fail2ban || {};
+            return !status.nftables || !status.nginx || ['wppanel', 'wppanel-404', 'wppanel-login', 'wppanel-sshd'].some(jail => !fail2ban[jail]);
         },
         async fetchHistory() {
             this.historyLoading = true;
@@ -683,6 +713,8 @@ function firewallManager() {
             if (ban.source_jail === 'panel') return t('firewall.source_panel');
             if (ban.source_jail === 'panel_scan') return t('firewall.source_scan');
             if (ban.source_jail === 'manual') return t('firewall.source_manual');
+            if (ban.source_jail === 'nftables') return t('firewall.source_nftables');
+            if (ban.source_jail === 'nginx') return t('firewall.source_nginx');
             if (ban.ban_level >= 5) return t('firewall.source_nftables');
             return ban.source_jail || '--';
         },
