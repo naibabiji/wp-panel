@@ -383,7 +383,7 @@
                                 <button type="button" @click="openRules(sourceRuleID(ban))" :class="sourceClass(ban)" class="text-xs underline decoration-dotted underline-offset-4 hover:text-white" :title="t('firewall.view_source_rule')" x-text="sourceLabel(ban)"></button>
                             </td>
                             <td class="table-cell text-xs" x-text="formatTime(ban.banned_at)"></td>
-                            <td class="table-cell text-xs" x-text="ban.expires_at ? formatTime(ban.expires_at) : t('firewall.permanent')"></td>
+                            <td class="table-cell text-xs" x-text="ban.ban_level >= 5 ? t('firewall.permanent') : (ban.expires_at ? formatTime(ban.expires_at) : t('firewall.fail2ban_managed'))"></td>
                             <td class="table-cell" x-text="ban.ban_count"></td>
                             <td class="table-cell">
                 <button @click="unban(ban)" class="btn-success text-xs py-1 px-2">{{t .Lang "firewall.unban"}}</button>

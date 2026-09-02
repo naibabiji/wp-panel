@@ -1340,6 +1340,7 @@
     "duration_1h": "1 hour",
     "duration_24h": "24 hours",
     "permanent": "Permanent",
+    "fail2ban_managed": "Managed by Fail2ban",
     "wp_suspicious_access": "WordPress Suspicious Access Analysis",
     "wp_suspicious_access_help": "Based on local WordPress security logs and Nginx error logs. Provides evidence only and does not ban automatically.",
     "wp_suspicious_access_cache_help": "Analysis results are cached for 30 seconds. If there are more than 50 WordPress sites or disk I/O is slow, the first refresh may take longer.",

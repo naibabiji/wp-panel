@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/models"
@@ -305,6 +306,139 @@ func TestSyncFail2banBansDoesNotSplitLongSSHBanIntoTenMinuteRows(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("long SSH ban was split into %d panel rows, want 1", count)
+	}
+	var active int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM firewall_bans
+		WHERE ip_address=? AND source_jail='wppanel-sshd' AND unbanned_at IS NULL
+		AND (expires_at IS NULL OR expires_at > datetime('now'))`, ip).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != 1 {
+		t.Fatalf("active long SSH ban is hidden by an expired receipt: active=%d", active)
+	}
+}
+
+func TestSyncFail2banBansPreservesPanelManagedBan(t *testing.T) {
+	openTestDB(t)
+	oldShellExec := shellExec
+	oldReplace := syncReplaceNginxBannedIPs
+	oldAddPersist := syncAddPersistBan
+	oldRemovePersist := syncRemovePersistBan
+	t.Cleanup(func() {
+		shellExec = oldShellExec
+		syncReplaceNginxBannedIPs = oldReplace
+		syncAddPersistBan = oldAddPersist
+		syncRemovePersistBan = oldRemovePersist
+	})
+
+	shellExec = func(binary string, args ...string) (string, error) {
+		if binary == "fail2ban-client" && len(args) == 2 && args[0] == "status" {
+			return "Status\n|- Currently banned: 0\n`- Banned IP list:", nil
+		}
+		return "", errors.New("unexpected command")
+	}
+	syncReplaceNginxBannedIPs = func(map[string]bool) error { return nil }
+	var added, removed []string
+	syncAddPersistBan = func(ip string) { added = append(added, ip) }
+	syncRemovePersistBan = func(ip string) { removed = append(removed, ip) }
+
+	ip := "203.0.113.96"
+	if _, err := database.GetDB().Exec(`INSERT INTO firewall_bans
+		(ip_address,ban_level,reason,source_jail,ban_count,expires_at)
+		VALUES (?,4,'scan','panel_scan',1,datetime('now','+30 days'))`, ip); err != nil {
+		t.Fatal(err)
+	}
+
+	SyncFail2banBans()
+
+	var active int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM firewall_bans
+		WHERE ip_address=? AND source_jail='panel_scan' AND unbanned_at IS NULL
+		AND expires_at > datetime('now')`, ip).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != 1 {
+		t.Fatalf("panel-managed scan ban was closed by Fail2ban reconciliation: active=%d", active)
+	}
+	if len(added) != 1 || added[0] != ip || len(removed) != 0 {
+		t.Fatalf("persistent ban reconciliation added=%v removed=%v", added, removed)
+	}
+}
+
+func TestReconcilePanelManagedBansDoesNotRemoveIPWithAnotherActiveOwner(t *testing.T) {
+	openTestDB(t)
+	oldAddPersist := syncAddPersistBan
+	oldRemovePersist := syncRemovePersistBan
+	t.Cleanup(func() {
+		syncAddPersistBan = oldAddPersist
+		syncRemovePersistBan = oldRemovePersist
+	})
+
+	ip := "203.0.113.95"
+	for _, expires := range []string{"-1 minute", "+30 days"} {
+		if _, err := database.GetDB().Exec(`INSERT INTO firewall_bans
+			(ip_address,ban_level,reason,source_jail,ban_count,expires_at)
+			VALUES (?,4,'scan','panel_scan',1,datetime('now',?))`, ip, expires); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var removed []string
+	syncAddPersistBan = func(string) {}
+	syncRemovePersistBan = func(ip string) { removed = append(removed, ip) }
+
+	reconcilePanelManagedBans(database.GetDB(), time.Now(), map[string]bool{})
+
+	if len(removed) != 0 {
+		t.Fatalf("shared persistent IP was removed while another owner remained: %v", removed)
+	}
+	var active int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM firewall_bans WHERE ip_address=?
+		AND unbanned_at IS NULL AND expires_at>datetime('now')`, ip).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != 1 {
+		t.Fatalf("active panel-managed owner count = %d, want 1", active)
+	}
+}
+
+func TestCleanExpiredBansDoesNotRemoveIPWithAnotherActiveOwner(t *testing.T) {
+	openTestDB(t)
+	oldRemovePersist := syncRemovePersistBan
+	oldRemoveNginx := conditionalRemoveNginxBan
+	t.Cleanup(func() {
+		syncRemovePersistBan = oldRemovePersist
+		conditionalRemoveNginxBan = oldRemoveNginx
+	})
+
+	ip := "203.0.113.94"
+	for _, row := range []struct {
+		jail, expires string
+	}{
+		{"manual", "-1 minute"},
+		{"manual", "+1 day"},
+	} {
+		if _, err := database.GetDB().Exec(`INSERT INTO firewall_bans
+			(ip_address,ban_level,reason,source_jail,is_manual,ban_count,expires_at)
+			VALUES (?,3,'manual',?,1,1,datetime('now',?))`, ip, row.jail, row.expires); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var persistRemoved, nginxRemoved int
+	syncRemovePersistBan = func(string) { persistRemoved++ }
+	conditionalRemoveNginxBan = func(string) error { nginxRemoved++; return nil }
+
+	CleanExpiredBans()
+
+	if persistRemoved != 0 || nginxRemoved != 0 {
+		t.Fatalf("shared ban was removed while another owner remained: persist=%d nginx=%d", persistRemoved, nginxRemoved)
+	}
+	var active int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM firewall_bans WHERE ip_address=?
+		AND unbanned_at IS NULL AND expires_at>datetime('now')`, ip).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != 1 {
+		t.Fatalf("active panel-managed owner count = %d, want 1", active)
 	}
 }
 

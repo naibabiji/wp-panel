@@ -117,6 +117,30 @@ func TestBanScanIPIgnoresNonPublicAddress(t *testing.T) {
 	}
 }
 
+func TestBanScanIPDoesNotLetExpiredReceiptBlockNewBan(t *testing.T) {
+	db := newScanDefenseTestDB(t)
+	oldAddPersistBan := scanDefenseAddPersistBan
+	scanDefenseAddPersistBan = func(string) {}
+	t.Cleanup(func() { scanDefenseAddPersistBan = oldAddPersistBan })
+
+	ip := "203.0.113.20"
+	if _, err := db.Exec(`INSERT INTO firewall_bans
+		(ip_address,ban_level,reason,source_jail,expires_at,ban_count)
+		VALUES (?,4,'expired','panel_scan',datetime('now','-1 minute'),1)`, ip); err != nil {
+		t.Fatal(err)
+	}
+	banScanIP(db, ip, "new scan", 720)
+
+	var active int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM firewall_bans WHERE ip_address=?
+		AND unbanned_at IS NULL AND expires_at > datetime('now')`, ip).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != 1 {
+		t.Fatalf("fresh scan ban count = %d, want 1", active)
+	}
+}
+
 func newScanDefenseTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")

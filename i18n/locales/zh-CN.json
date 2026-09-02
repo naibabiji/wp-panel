@@ -1399,6 +1399,7 @@
     "duration_1h": "1 小时",
     "duration_24h": "24 小时",
     "permanent": "永久",
+    "fail2ban_managed": "由 Fail2ban 管理",
     "wp_suspicious_access": "WordPress 可疑访问分析",
     "wp_suspicious_access_help": "基于本机 WordPress 安全日志和 Nginx 错误日志统计，仅提供证据整理，不自动封禁。",
     "wp_suspicious_access_cache_help": "分析结果缓存 30 秒；当 WordPress 站点超过 50 个或磁盘 I/O 较慢时，首次刷新可能稍慢。",

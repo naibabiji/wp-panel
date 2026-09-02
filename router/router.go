@@ -621,6 +621,7 @@ var i18nKeys = []string{
 	"firewall.load_wp_report_failed",
 	"firewall.load_more_history",
 	"firewall.permanent",
+	"firewall.fail2ban_managed",
 	"firewall.refresh_analysis",
 	"firewall.refresh_file_security_failed",
 	"firewall.refreshing",

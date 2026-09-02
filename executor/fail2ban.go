@@ -26,6 +26,8 @@ var manualAddNginxBan = AddNginxBan
 var manualRemoveNginxBan = RemoveNginxBan
 var syncReplaceNginxBannedIPs = ReplaceNginxBannedIPs
 var conditionalRemoveNginxBan = RemoveNginxBan
+var syncAddPersistBan = AddPersistBan
+var syncRemovePersistBan = RemovePersistBan
 
 const (
 	googlebotOfficialURL = "https://developers.google.com/crawling/ipranges/common-crawlers.json"
@@ -641,15 +643,21 @@ func ApplyFail2banSettings() error {
 	return nil
 }
 
-func SyncFail2banBans() {
-	syncMu.Lock()
-	defer syncMu.Unlock()
+type fail2banJailIP struct{ jail, ip string }
 
-	type jailIP struct{ jail, ip string }
-	activeJailIPs := make(map[jailIP]bool)
-	jailStatusRead := make(map[string]bool)
-	webBannedSet := make(map[string]bool)
-	webJailStatusRead := false
+type fail2banSnapshot struct {
+	active         map[fail2banJailIP]bool
+	jailStatusRead map[string]bool
+	webBanned      map[string]bool
+	webStatusRead  bool
+}
+
+func readActiveFail2banBans() fail2banSnapshot {
+	snapshot := fail2banSnapshot{
+		active:         make(map[fail2banJailIP]bool),
+		jailStatusRead: make(map[string]bool),
+		webBanned:      make(map[string]bool),
+	}
 
 	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd"} {
 		out, err := executeCommand("fail2ban-client", "status", jail)
@@ -657,21 +665,29 @@ func SyncFail2banBans() {
 			log.Printf("Fail2ban 状态同步跳过 %s：无法读取 jail 状态", jail)
 			continue
 		}
-		jailStatusRead[jail] = true
+		snapshot.jailStatusRead[jail] = true
 		isWebJail := isWebBanSource(jail)
 		if isWebJail {
-			webJailStatusRead = true
+			snapshot.webStatusRead = true
 		}
 		for _, ip := range parseBannedIPs(out) {
-			activeJailIPs[jailIP{jail: jail, ip: ip}] = true
+			snapshot.active[fail2banJailIP{jail: jail, ip: ip}] = true
 			if isWebJail {
-				webBannedSet[ip] = true
+				snapshot.webBanned[ip] = true
 			}
 		}
 	}
-	if sshRecordActionPending.Load() && jailStatusRead["wppanel-sshd"] {
+	return snapshot
+}
+
+func SyncFail2banBans() {
+	syncMu.Lock()
+	defer syncMu.Unlock()
+
+	snapshot := readActiveFail2banBans()
+	if sshRecordActionPending.Load() && snapshot.jailStatusRead["wppanel-sshd"] {
 		sshActive := false
-		for pair := range activeJailIPs {
+		for pair := range snapshot.active {
 			if pair.jail == "wppanel-sshd" {
 				sshActive = true
 				break
@@ -685,19 +701,25 @@ func SyncFail2banBans() {
 	}
 
 	db := database.GetDB()
+	reconcileFail2banBans(db, snapshot)
+	reconcilePanelManagedBans(db, time.Now(), snapshot.webBanned)
+	if snapshot.webStatusRead || len(snapshot.webBanned) > 0 {
+		_ = syncReplaceNginxBannedIPs(snapshot.webBanned)
+	}
+}
 
-	for pair := range activeJailIPs {
-		var count int
-		db.QueryRow(`SELECT COUNT(*) FROM firewall_bans
-			WHERE ip_address = ? AND source_jail = ? AND unbanned_at IS NULL`, pair.ip, pair.jail).Scan(&count)
-		if count > 0 {
+func reconcileFail2banBans(db *sql.DB, snapshot fail2banSnapshot) {
+	for pair := range snapshot.active {
+		found, err := restoreActiveFail2banReceipt(db, pair)
+		if err != nil || found {
 			continue
 		}
 		_ = RecordFail2banBan(pair.ip, pair.jail, 600, 1, false)
 	}
 
-	now := time.Now()
-	rows, err := db.Query("SELECT id, ip_address, ban_level, expires_at, is_manual, source_jail FROM firewall_bans WHERE unbanned_at IS NULL")
+	rows, err := db.Query(`SELECT id, ip_address, source_jail FROM firewall_bans
+		WHERE unbanned_at IS NULL
+		AND source_jail IN ('wppanel','wppanel-404','wppanel-login','wppanel-sshd')`)
 	if err != nil {
 		return
 	}
@@ -705,60 +727,102 @@ func SyncFail2banBans() {
 
 	var expiredIDs []int
 	for rows.Next() {
-		var id, level, isManual int
+		var id int
 		var ip, jail string
-		var expiresAt *time.Time
-		if rows.Scan(&id, &ip, &level, &expiresAt, &isManual, &jail) != nil {
+		if rows.Scan(&id, &ip, &jail) != nil {
 			continue
 		}
-		if isManual == 0 && normalizeFail2banJail(jail) != "" && !jailStatusRead[jail] {
+		if !snapshot.jailStatusRead[jail] {
 			if isWebBanSource(jail) {
-				webBannedSet[ip] = true
+				snapshot.webBanned[ip] = true
 			}
 			continue
 		}
-		if isManual == 0 && activeJailIPs[jailIP{jail: jail, ip: ip}] {
-			if isManual == 0 {
-				removeAutomaticPersistBan(db, ip)
-			}
+		if snapshot.active[fail2banJailIP{jail: jail, ip: ip}] {
+			removePanelManagedPersistBanIfUnused(db, ip)
 			if isWebBanSource(jail) {
-				webBannedSet[ip] = true
+				snapshot.webBanned[ip] = true
 			}
 			continue
 		}
-		if isManual == 1 {
-			if expiresAt != nil && !expiresAt.After(now) {
-				RemovePersistBan(ip)
-				expiredIDs = append(expiredIDs, id)
-				continue
-			}
-			if level >= 3 {
-				AddPersistBan(ip)
-			}
-			if isWebBanSource(jail) {
-				webBannedSet[ip] = true
-			}
-			continue
-		}
-		removeAutomaticPersistBan(db, ip)
+		removePanelManagedPersistBanIfUnused(db, ip)
 		expiredIDs = append(expiredIDs, id)
 	}
 
 	for _, id := range expiredIDs {
 		db.Exec("UPDATE firewall_bans SET unbanned_at = datetime('now') WHERE id = ?", id)
 	}
-	if webJailStatusRead || len(webBannedSet) > 0 {
-		_ = syncReplaceNginxBannedIPs(webBannedSet)
+	return
+}
+
+func restoreActiveFail2banReceipt(db *sql.DB, pair fail2banJailIP) (bool, error) {
+	var id int
+	var expiresAt *time.Time
+	err := db.QueryRow(`SELECT id, expires_at FROM firewall_bans
+		WHERE ip_address=? AND source_jail=? AND unbanned_at IS NULL
+		ORDER BY banned_at DESC,id DESC LIMIT 1`, pair.ip, pair.jail).Scan(&id, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err := db.Exec(`UPDATE firewall_bans SET unbanned_at=datetime('now')
+		WHERE ip_address=? AND source_jail=? AND unbanned_at IS NULL AND id<>?`, pair.ip, pair.jail, id); err != nil {
+		return false, err
+	}
+	if expiresAt != nil && !expiresAt.After(time.Now()) {
+		if _, err := db.Exec("UPDATE firewall_bans SET expires_at=NULL WHERE id=?", id); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func reconcilePanelManagedBans(db *sql.DB, now time.Time, webBannedSet map[string]bool) {
+	rows, err := db.Query(`SELECT id,ip_address,ban_level,expires_at,source_jail FROM firewall_bans
+		WHERE unbanned_at IS NULL AND source_jail IN ('panel','panel_scan','manual')`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	var expiredIDs []int
+	expiredIPs := make(map[string]bool)
+	for rows.Next() {
+		var id, level int
+		var ip, jail string
+		var expiresAt *time.Time
+		if rows.Scan(&id, &ip, &level, &expiresAt, &jail) != nil {
+			continue
+		}
+		if expiresAt != nil && !expiresAt.After(now) {
+			expiredIDs = append(expiredIDs, id)
+			expiredIPs[ip] = true
+			continue
+		}
+		if level >= 3 {
+			syncAddPersistBan(ip)
+		}
+		if isWebBanSource(jail) {
+			webBannedSet[ip] = true
+		}
+	}
+	for _, id := range expiredIDs {
+		db.Exec("UPDATE firewall_bans SET unbanned_at=datetime('now') WHERE id=?", id)
+	}
+	for ip := range expiredIPs {
+		removePanelManagedPersistBanIfUnused(db, ip)
 	}
 }
 
-func removeAutomaticPersistBan(db *sql.DB, ip string) {
-	var manualCount int
+func removePanelManagedPersistBanIfUnused(db *sql.DB, ip string) {
+	var panelManagedCount int
 	_ = db.QueryRow(`SELECT COUNT(*) FROM firewall_bans
-		WHERE ip_address=? AND is_manual=1 AND unbanned_at IS NULL
-		AND (expires_at IS NULL OR expires_at > datetime('now'))`, ip).Scan(&manualCount)
-	if manualCount == 0 {
-		RemovePersistBan(ip)
+		WHERE ip_address=? AND source_jail IN ('panel','panel_scan','manual') AND unbanned_at IS NULL
+		AND ban_level>=3 AND (expires_at IS NULL OR expires_at > datetime('now'))`, ip).Scan(&panelManagedCount)
+	if panelManagedCount == 0 {
+		syncRemovePersistBan(ip)
 	}
 }
 
@@ -1463,9 +1527,9 @@ func CleanExpiredBans() {
 			continue
 		}
 		db.Exec("UPDATE firewall_bans SET unbanned_at = datetime('now') WHERE id = ?", id)
-		RemovePersistBan(ip)
+		removePanelManagedPersistBanIfUnused(db, ip)
 		if isWebBanSource(jail) {
-			_ = RemoveNginxBan(ip)
+			_ = MaybeRemoveNginxBan(ip)
 		}
 	}
 }

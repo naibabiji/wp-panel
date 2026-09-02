@@ -126,7 +126,8 @@ func banScanIP(db *sql.DB, ip string, reason string, hours int) {
 		return
 	}
 	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM firewall_bans WHERE ip_address = ? AND unbanned_at IS NULL`, ip).Scan(&count)
+	db.QueryRow(`SELECT COUNT(*) FROM firewall_bans WHERE ip_address = ? AND unbanned_at IS NULL
+		AND (expires_at IS NULL OR expires_at > datetime('now'))`, ip).Scan(&count)
 	if count > 0 {
 		return
 	}
