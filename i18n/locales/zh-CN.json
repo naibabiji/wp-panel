@@ -747,7 +747,7 @@
     "active_badge": "AI 开发中",
     "usage_title": "把网站交给 AI 开发",
     "usage_step_download": "点击下载 AI 项目包，ZIP 名称会使用“网站域名-wp-panel-ai”。",
-    "usage_step_extract": "把 ZIP 解压到本机安全位置，不要移动或单独发送其中的隐藏凭证目录。",
+    "usage_step_extract": "把 ZIP 解压到本机安全位置。Linux、macOS 或 WSL 的标准连接命令是 bash .wp-panel-ai/connect.sh；即使解压工具未保留权限，脚本也会收紧私钥权限。",
     "usage_step_open": "在 Codex、Claude Code、Cursor 等 AI 工具中，直接选择解压后的文件夹作为项目。AI 会读取根目录说明并连接网站。",
     "first_prompt_label": "打开项目后，第一句发送给 AI",
     "first_prompt": "请先完整阅读项目根目录中的 AGENTS.md，并按照说明连接远程网站。现在先不要修改文件或数据库，不要安装或更新组件，也不要创建账号或测试数据。请先以只读方式检查 WordPress、PHP 和开发工具版本，当前主题与子主题、插件、自定义代码、WooCommerce 相关组件、Git 状态、构建工具和可用日志；可以自行查明的信息不要再询问我，也不要输出或记录任何密码、私钥、Cookie、Token、API 密钥或完整配置文件。检查后请在本地项目根目录创建或更新 AI-CONTEXT.md，用适合新手理解的语言说明你连接到了哪个网站和发现的环境。然后只询问无法自行判断但会影响安全或方案的问题：这是测试站还是正式站、是否已有可恢复备份、本次目标和验收标准、哪些业务不能受影响、是否允许创建测试内容/订单/用户/临时账号、第三方接口是否有测试环境，以及 Git 工作流要求。我回答后，请更新 AI-CONTEXT.md 并创建 DEVELOPMENT-PLAN.md；得到我明确确认前不要修改网站。开发过程中持续维护 AI-CHANGELOG.md，完成后汇报文件、数据库和测试数据变更、验证结果及回滚方法。",

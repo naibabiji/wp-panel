@@ -37,6 +37,22 @@ func TestAIDevelopmentCredentialPackageUsesConfiguredPortAndPrivateMode(t *testi
 	if key == nil || key.Mode().Perm() != 0600 {
 		t.Fatalf("private key mode=%v", key)
 	}
+	for name, want := range map[string]os.FileMode{
+		"AGENTS.md":                  0644,
+		"CLAUDE.md":                  0644,
+		"README.md":                  0644,
+		".gitignore":                 0644,
+		".wp-panel-ai/id_ed25519":    0600,
+		".wp-panel-ai/connect.sh":    0700,
+		".wp-panel-ai/connect.ps1":   0644,
+		".wp-panel-ai/ssh_config":    0600,
+		".wp-panel-ai/CONNECTION.md": 0644,
+	} {
+		file := files[prefix+name]
+		if file == nil || file.Mode().Perm() != want {
+			t.Fatalf("%s mode=%v, want %v", name, file, want)
+		}
+	}
 	privateKey, err := readZipFile(key)
 	if err != nil {
 		t.Fatal(err)
@@ -97,8 +113,11 @@ func TestAIDevelopmentCredentialPackageUsesConfiguredPortAndPrivateMode(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(connectScript), `-i "$credential_dir/id_ed25519"`) {
+	if !strings.Contains(string(connectScript), `-i "$key"`) {
 		t.Fatalf("connect.sh does not resolve the private key from its own directory: %s", connectScript)
+	}
+	if !strings.Contains(string(connectScript), `chmod 600 "$key"`) {
+		t.Fatalf("connect.sh does not secure the private key: %s", connectScript)
 	}
 	powerShellScript, err := readZipFile(files[prefix+".wp-panel-ai/connect.ps1"])
 	if err != nil {
@@ -108,6 +127,59 @@ func TestAIDevelopmentCredentialPackageUsesConfiguredPortAndPrivateMode(t *testi
 		if !strings.Contains(string(powerShellScript), required) {
 			t.Fatalf("connect.ps1 missing %q: %s", required, powerShellScript)
 		}
+	}
+}
+
+func TestAIDevelopmentConnectScriptSecuresPrivateKey(t *testing.T) {
+	credential, err := generateAIDevelopmentCredential()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := buildAIDevelopmentCredentialPackage("example.com", "203.0.113.10", 22, "wp_example", "/var/www/example", credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := make(map[string]*zip.File, len(archive.File))
+	for _, file := range archive.File {
+		files[file.Name] = file
+	}
+	prefix := "example.com-wp-panel-ai/.wp-panel-ai/"
+	dir := t.TempDir()
+	for _, name := range []string{"connect.sh", "id_ed25519", "ssh_config"} {
+		content, err := readZipFile(files[prefix+name])
+		if err != nil {
+			t.Fatal(err)
+		}
+		mode := os.FileMode(0600)
+		if name == "id_ed25519" {
+			mode = 0644
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), content, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fakeBin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(fakeBin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fakeBin, "ssh"), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", filepath.Join(dir, "connect.sh"))
+	cmd.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("connect.sh failed: %v: %s", err, output)
+	}
+	info, err := os.Stat(filepath.Join(dir, "id_ed25519"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("private key mode=%v, want 0600", got)
 	}
 }
 
