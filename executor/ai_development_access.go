@@ -334,13 +334,14 @@ func (p productionAIDevelopmentSystem) Configure(ctx context.Context, site AIDev
 	if err := p.UpdateHandoff(ctx, site, fingerprint); err != nil {
 		return err
 	}
-	if err := exec.CommandContext(ctx, "usermod", "-d", home, site.SystemUser).Run(); err != nil {
+	if err := retryAIDevelopmentUsermod(ctx, aiDevelopmentUsermodRetryDelay, aiDevelopmentUsermodAttempts, func() error {
+		return exec.CommandContext(ctx, "usermod", "-d", home, site.SystemUser).Run()
+	}); err != nil {
 		return err
 	}
-	if err := exec.CommandContext(ctx, "usermod", "-s", "/bin/bash", site.SystemUser).Run(); err != nil {
-		return err
-	}
-	return nil
+	return retryAIDevelopmentUsermod(ctx, aiDevelopmentUsermodRetryDelay, aiDevelopmentUsermodAttempts, func() error {
+		return exec.CommandContext(ctx, "usermod", "-s", "/bin/bash", site.SystemUser).Run()
+	})
 }
 
 func (productionAIDevelopmentSystem) UpdateHandoff(_ context.Context, site AIDevelopmentSite, fingerprint string) error {
