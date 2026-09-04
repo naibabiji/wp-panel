@@ -758,6 +758,8 @@
     "file_lock_enabled": "该网站已开启文件锁定，请先关闭文件锁定再开启 AI 开发访问",
     "tool_install_failed": "{{tool}} 安装失败，AI 开发访问尚未开启",
     "enable_failed": "开启 AI 开发访问失败，请检查网站用户、数据库授权和 SSH 环境",
+    "enable_failed_busy": "网站当前有活跃 PHP 连接，未能完成设置",
+    "enable_busy_force_confirm": "网站当前有访问连接，暂时无法完成设置。可以强制重启该网站的 PHP 处理来继续，过程中网站会有极短暂（通常 1 秒内）的动态请求中断，图片等静态资源不受影响。是否强制继续开启？",
     "disable_failed": "关闭 AI 开发访问失败，授权门禁仍然生效，请重试",
     "rotate_failed": "轮换连接凭证失败，旧密钥保持失效，请重试",
     "package_failed_rotate": "连接包传输失败，请立即轮换连接凭证",

@@ -27,6 +27,11 @@ const (
 var aiDevelopmentUserPattern = regexp.MustCompile(`^(wp|php)_[a-z0-9_]{1,28}$`)
 var aiDevelopmentSessionPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
+// ErrAIDevelopmentSiteBusy means usermod could not change the site user because
+// its PHP-FPM workers never had a fully idle moment during the retry window. The
+// caller may retry with force to terminate those workers before retrying.
+var ErrAIDevelopmentSiteBusy = errors.New("site has active PHP processes")
+
 type AIDevelopmentSite struct {
 	ID         int64
 	Domain     string
@@ -45,7 +50,7 @@ type aiDevelopmentPasswd struct {
 
 type aiDevelopmentSystem interface {
 	LookupPasswd(context.Context, string) (aiDevelopmentPasswd, error)
-	Configure(context.Context, AIDevelopmentSite, string, string) error
+	Configure(ctx context.Context, site AIDevelopmentSite, publicKey, fingerprint string, force bool) error
 	UpdateHandoff(context.Context, AIDevelopmentSite, string) error
 	RevokeKey(context.Context, string) error
 	InstallKey(context.Context, string, string) error
@@ -98,7 +103,7 @@ func (s *AIDevelopmentAccessService) ReconcilePending(ctx context.Context) error
 	return nil
 }
 
-func (s *AIDevelopmentAccessService) Enable(ctx context.Context, site AIDevelopmentSite, publicKey, fingerprint, requestedBy string) error {
+func (s *AIDevelopmentAccessService) Enable(ctx context.Context, site AIDevelopmentSite, publicKey, fingerprint, requestedBy string, force bool) error {
 	if err := validateAIDevelopmentSite(site); err != nil {
 		return err
 	}
@@ -126,7 +131,7 @@ func (s *AIDevelopmentAccessService) Enable(ctx context.Context, site AIDevelopm
 		strings.TrimSpace(publicKey), fingerprint, strings.TrimSpace(requestedBy)); err != nil {
 		return err
 	}
-	if err := s.system.Configure(ctx, site, publicKey, fingerprint); err != nil {
+	if err := s.system.Configure(ctx, site, publicKey, fingerprint, force); err != nil {
 		if rollbackErr := s.system.Restore(ctx, site.SystemUser, passwd); rollbackErr == nil {
 			_ = s.system.RemoveHome(aiDevelopmentHome(site.SystemUser))
 			_, _ = s.db.ExecContext(ctx, `DELETE FROM website_ai_development_access WHERE site_id=?`, site.ID)
@@ -285,7 +290,7 @@ func (productionAIDevelopmentSystem) LookupPasswd(ctx context.Context, name stri
 	return aiDevelopmentPasswd{Home: parts[5], Shell: parts[6], UID: uid, GID: gid}, nil
 }
 
-func (p productionAIDevelopmentSystem) Configure(ctx context.Context, site AIDevelopmentSite, publicKey, fingerprint string) error {
+func (p productionAIDevelopmentSystem) Configure(ctx context.Context, site AIDevelopmentSite, publicKey, fingerprint string, force bool) error {
 	home := aiDevelopmentHome(site.SystemUser)
 	passwd, err := p.LookupPasswd(ctx, site.SystemUser)
 	if err != nil {
@@ -334,14 +339,49 @@ func (p productionAIDevelopmentSystem) Configure(ctx context.Context, site AIDev
 	if err := p.UpdateHandoff(ctx, site, fingerprint); err != nil {
 		return err
 	}
+	if force {
+		if err := p.terminateSitePHPProcesses(ctx, site.SystemUser); err != nil {
+			return err
+		}
+	}
 	if err := retryAIDevelopmentUsermod(ctx, aiDevelopmentUsermodRetryDelay, aiDevelopmentUsermodAttempts, func() error {
 		return exec.CommandContext(ctx, "usermod", "-d", home, site.SystemUser).Run()
 	}); err != nil {
-		return err
+		return wrapAIDevelopmentUsermodBusy(err)
 	}
-	return retryAIDevelopmentUsermod(ctx, aiDevelopmentUsermodRetryDelay, aiDevelopmentUsermodAttempts, func() error {
+	if err := retryAIDevelopmentUsermod(ctx, aiDevelopmentUsermodRetryDelay, aiDevelopmentUsermodAttempts, func() error {
 		return exec.CommandContext(ctx, "usermod", "-s", "/bin/bash", site.SystemUser).Run()
-	})
+	}); err != nil {
+		return wrapAIDevelopmentUsermodBusy(err)
+	}
+	return nil
+}
+
+// terminateSitePHPProcesses ends the site's own PHP-FPM workers so a following
+// usermod attempt does not have to wait for them to go idle on their own. Each
+// site runs under its own dedicated system user with its own PHP-FPM pool, so
+// this only interrupts in-flight requests for this one site; the pool is
+// pm=ondemand and simply forks a fresh worker on the next request.
+func (productionAIDevelopmentSystem) terminateSitePHPProcesses(ctx context.Context, systemUser string) error {
+	if !aiDevelopmentUserPattern.MatchString(systemUser) {
+		return errors.New("invalid site user")
+	}
+	err := exec.CommandContext(ctx, "pkill", "-TERM", "-u", systemUser).Run()
+	if err == nil {
+		return nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return nil
+	}
+	return fmt.Errorf("terminate site PHP processes: %w", err)
+}
+
+func wrapAIDevelopmentUsermodBusy(err error) error {
+	if isAIDevelopmentUsermodBusy(err) {
+		return fmt.Errorf("%w: %v", ErrAIDevelopmentSiteBusy, err)
+	}
+	return err
 }
 
 func (productionAIDevelopmentSystem) UpdateHandoff(_ context.Context, site AIDevelopmentSite, fingerprint string) error {

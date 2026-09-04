@@ -758,6 +758,8 @@
     "file_lock_enabled": "Disable file locking for this site before enabling AI development access",
     "tool_install_failed": "Failed to install {{tool}}. AI development access was not enabled.",
     "enable_failed": "Failed to enable AI development access. Check the site user, database grants, and SSH environment.",
+    "enable_failed_busy": "The site currently has active PHP connections, so setup could not finish.",
+    "enable_busy_force_confirm": "The site currently has active connections, so setup could not finish yet. You can force-restart this site's PHP processing to continue — it causes a very brief (usually under 1 second) interruption to dynamic requests; static assets like images are unaffected. Force continue enabling?",
     "disable_failed": "Failed to disable AI development access. The operation gate remains active; please retry.",
     "rotate_failed": "Failed to rotate the connection credential. The old key remains revoked; please retry.",
     "package_failed_rotate": "The connection package transfer failed. Rotate the connection credential immediately.",

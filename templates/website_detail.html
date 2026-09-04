@@ -770,8 +770,11 @@ function websiteDetail() {
             });
             if (!response.ok) {
                 let message = t('common.operation_failed');
-                try { const data = await response.json(); message = data.message || message; } catch(e) {}
-                throw new Error(message);
+                let code = null;
+                try { const data = await response.json(); message = data.message || message; code = data.data?.code || null; } catch(e) {}
+                const err = new Error(message);
+                err.code = code;
+                throw err;
             }
             return await response.blob();
         },
@@ -785,9 +788,9 @@ function websiteDetail() {
             link.remove();
             URL.revokeObjectURL(url);
         },
-        async enableAIDevelopment() {
+        async enableAIDevelopment(force) {
             if (this.aiAccess.confirmDomain !== this.site.domain) return;
-            if (!await confirmModal(t('ai_development.enable_confirm', { domain: this.site.domain }))) return;
+            if (!force && !await confirmModal(t('ai_development.enable_confirm', { domain: this.site.domain }))) return;
             this.aiAccess.busy = true;
             try {
                 if (this.aiAccess.installWPCLI && !this.developmentToolInstalled('wp-cli')) {
@@ -802,12 +805,21 @@ function websiteDetail() {
                 this.aiCredentialPackage = await this.requestAIDevelopmentPackage('/websites/' + this.site.id + '/ai-development-access', {
                     confirm_domain: this.aiAccess.confirmDomain,
                     install_wp_cli: false,
-                    install_nodejs: false
+                    install_nodejs: false,
+                    force: !!force
                 });
                 this.aiCredentialDownloaded = false;
                 showToast(t('ai_development.enabled_ready_download'), 'success');
                 await this.fetchAIDevelopment();
             } catch(e) {
+                if (!force && e.code === 'ai_development_site_busy') {
+                    this.aiAccess.busy = false;
+                    this.aiAccess.stage = '';
+                    if (await confirmModal(t('ai_development.enable_busy_force_confirm'))) {
+                        return this.enableAIDevelopment(true);
+                    }
+                    return;
+                }
                 showToast(e.message, 'error');
                 await this.fetchAIDevelopment();
             } finally {

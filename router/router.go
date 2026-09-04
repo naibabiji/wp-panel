@@ -860,6 +860,7 @@ var i18nKeys = []string{
 	"ai_development.disabled_status",
 	"ai_development.enable_button",
 	"ai_development.enable_confirm",
+	"ai_development.enable_busy_force_confirm",
 	"ai_development.enabled",
 	"ai_development.enabled_downloaded",
 	"ai_development.processing",

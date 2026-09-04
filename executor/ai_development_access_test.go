@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,10 +13,11 @@ import (
 )
 
 type fakeAIDevelopmentSystem struct {
-	passwd aiDevelopmentPasswd
-	calls  []string
-	errAt  string
-	onCall func(string)
+	passwd       aiDevelopmentPasswd
+	calls        []string
+	errAt        string
+	onCall       func(string)
+	configureErr func(force bool) error
 }
 
 func (f *fakeAIDevelopmentSystem) record(name string) error {
@@ -32,8 +34,18 @@ func (f *fakeAIDevelopmentSystem) record(name string) error {
 func (f *fakeAIDevelopmentSystem) LookupPasswd(context.Context, string) (aiDevelopmentPasswd, error) {
 	return f.passwd, f.record("lookup")
 }
-func (f *fakeAIDevelopmentSystem) Configure(context.Context, AIDevelopmentSite, string, string) error {
-	return f.record("configure")
+func (f *fakeAIDevelopmentSystem) Configure(_ context.Context, _ AIDevelopmentSite, _, _ string, force bool) error {
+	name := "configure"
+	if force {
+		name = "configure-force"
+	}
+	if err := f.record(name); err != nil {
+		return err
+	}
+	if f.configureErr != nil {
+		return f.configureErr(force)
+	}
+	return nil
 }
 func (f *fakeAIDevelopmentSystem) UpdateHandoff(context.Context, AIDevelopmentSite, string) error {
 	return f.record("handoff")
@@ -142,6 +154,46 @@ func TestAIDevelopmentReconcilePendingFailsClosed(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("pending record count=%d", count)
 	}
+}
+
+func TestAIDevelopmentEnableSurfacesBusyErrorAndHonorsForce(t *testing.T) {
+	site := AIDevelopmentSite{ID: 9, Domain: "example.com", SystemUser: "wp_example", WebRoot: t.TempDir(), DBName: "db_example", DBUser: "db_example"}
+	noopVerify := func(context.Context, AIDevelopmentSite) error { return nil }
+
+	t.Run("busy without force is reported as ErrAIDevelopmentSiteBusy", func(t *testing.T) {
+		db := openAIDevelopmentTestDB(t)
+		fake := &fakeAIDevelopmentSystem{
+			passwd: aiDevelopmentPasswd{Home: "/nonexistent", Shell: "/usr/sbin/nologin", UID: 1, GID: 1},
+			configureErr: func(force bool) error {
+				if force {
+					return nil
+				}
+				return fmt.Errorf("%w: exit status 8", ErrAIDevelopmentSiteBusy)
+			},
+		}
+		service := &AIDevelopmentAccessService{db: db, system: fake, verify: noopVerify}
+		err := service.Enable(context.Background(), site, "ssh-ed25519 key", "fingerprint", "tester", false)
+		if !errors.Is(err, ErrAIDevelopmentSiteBusy) {
+			t.Fatalf("Enable() err=%v, want ErrAIDevelopmentSiteBusy", err)
+		}
+		if want := []string{"lookup", "configure", "restore", "remove-home"}; !reflect.DeepEqual(fake.calls, want) {
+			t.Fatalf("calls=%v want=%v", fake.calls, want)
+		}
+	})
+
+	t.Run("force is passed through to Configure and can succeed", func(t *testing.T) {
+		db := openAIDevelopmentTestDB(t)
+		fake := &fakeAIDevelopmentSystem{
+			passwd: aiDevelopmentPasswd{Home: "/nonexistent", Shell: "/usr/sbin/nologin", UID: 1, GID: 1},
+		}
+		service := &AIDevelopmentAccessService{db: db, system: fake, verify: noopVerify}
+		if err := service.Enable(context.Background(), site, "ssh-ed25519 key", "fingerprint", "tester", true); err != nil {
+			t.Fatalf("Enable(force=true) failed: %v", err)
+		}
+		if want := []string{"lookup", "configure-force"}; !reflect.DeepEqual(fake.calls, want) {
+			t.Fatalf("calls=%v want=%v", fake.calls, want)
+		}
+	})
 }
 
 func TestAIDevelopmentRotationDoesNotReportSuccessAfterStateDisappears(t *testing.T) {

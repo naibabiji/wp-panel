@@ -65,6 +65,7 @@ func (h *AIDevelopmentAccessHandler) Enable(c *gin.Context) {
 		ConfirmDomain string `json:"confirm_domain"`
 		InstallWPCLI  bool   `json:"install_wp_cli"`
 		InstallNodeJS bool   `json:"install_nodejs"`
+		Force         bool   `json:"force"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.ConfirmDomain) != site.Domain {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_development.confirm_domain_invalid")))
@@ -99,8 +100,16 @@ func (h *AIDevelopmentAccessHandler) Enable(c *gin.Context) {
 		return
 	}
 	service := executor.NewAIDevelopmentAccessService(database.GetDB())
-	if err := service.Enable(c.Request.Context(), websiteAIDevelopmentSite(site), credential.PublicKey, credential.Fingerprint, sessionUsername(c)); err != nil {
-		log.Printf("开启 AI 开发访问失败 site=%d: %v", site.ID, err)
+	if err := service.Enable(c.Request.Context(), websiteAIDevelopmentSite(site), credential.PublicKey, credential.Fingerprint, sessionUsername(c), req.Force); err != nil {
+		log.Printf("开启 AI 开发访问失败 site=%d force=%v: %v", site.ID, req.Force, err)
+		if !req.Force && errors.Is(err, executor.ErrAIDevelopmentSiteBusy) {
+			c.JSON(http.StatusConflict, models.ApiResponse{
+				Success: false,
+				Message: i18n.TE(c.Request, "ai_development.enable_failed_busy"),
+				Data:    gin.H{"code": "ai_development_site_busy"},
+			})
+			return
+		}
 		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "ai_development.enable_failed")))
 		return
 	}
