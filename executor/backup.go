@@ -668,7 +668,8 @@ func executeAutoBackups() {
 	cfg := config.AppConfig
 
 	rows, err := db.Query(`SELECT bs.site_id, bs.keep_count, w.domain, w.db_name FROM backup_settings bs
-		JOIN websites w ON w.id = bs.site_id WHERE bs.enabled = 1`)
+		JOIN websites w ON w.id = bs.site_id WHERE bs.enabled = 1 AND w.status = 'active'
+		AND NOT EXISTS (SELECT 1 FROM site_migration_locks ml WHERE ml.site_id=w.id AND ml.status='active')`)
 	if err != nil {
 		log.Printf("自动备份: 查询 backup_settings 失败: %v", err)
 		return
@@ -701,6 +702,15 @@ func executeAutoBackups() {
 		keepCount := t.keepCount
 		domain := t.domain
 		dbName := t.dbName
+		allowed, _, checkErr := siteScheduledWorkAllowed(siteID)
+		if checkErr != nil {
+			log.Printf("自动备份: 检查网站运行状态失败 [%s]: %v", domain, checkErr)
+			failCount++
+			continue
+		}
+		if !allowed {
+			continue
+		}
 
 		backupDir := filepath.Join(cfg.Panel.BackupDir, domain, "db")
 		os.MkdirAll(backupDir, 0700)

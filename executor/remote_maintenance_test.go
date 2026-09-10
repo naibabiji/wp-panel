@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/naibabiji/wp-panel/database"
 )
 
 func maintenanceFileRow(id int, filename, mode string) remoteMaintenanceRow {
@@ -157,6 +159,35 @@ func TestMaintainRemoteBackupsWithRebuildsOnlyWhenAllowed(t *testing.T) {
 				t.Fatalf("final state=%q, want healthy", states[len(states)-1])
 			}
 		})
+	}
+}
+
+func TestScheduledRemoteMaintenanceRebuildSkipsPausedSite(t *testing.T) {
+	setupCronGateTest(t)
+
+	err := productionRemoteMaintenanceDeps(true).rebuild(1)
+	if !errors.Is(err, errScheduledWorkNotAllowed) {
+		t.Fatalf("scheduled rebuild for paused site error=%v, want runtime gate", err)
+	}
+	var count int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM file_backups WHERE site_id=1`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("paused scheduled rebuild created %d backup records", count)
+	}
+}
+
+func TestMaintainRemoteBackupsWithDoesNotMarkSkippedRebuildHealthy(t *testing.T) {
+	full := maintenanceFileRow(1, "missing-full.tar.gz", "full")
+	deps := testRemoteMaintenanceDeps([]remoteMaintenanceRow{full}, map[string]bool{})
+	var states []string
+	deps.rebuild = func(int) error { return errScheduledWorkNotAllowed }
+	deps.setState = func(_ int, status, _ string) { states = append(states, status) }
+
+	changed, err := maintainRemoteBackupsWith(true, deps)
+	if err != nil || changed != 0 || len(states) != 1 || states[0] != "rebuild_required" {
+		t.Fatalf("skipped rebuild = changed=%d states=%v err=%v", changed, states, err)
 	}
 }
 

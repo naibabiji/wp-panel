@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -14,7 +15,13 @@ import (
 	"github.com/naibabiji/wp-panel/database"
 )
 
+var errScheduledWorkNotAllowed = errors.New("网站当前不允许运行自动任务")
+
 func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
+	return executeFileBackup(siteID, mode, keepCount, false)
+}
+
+func executeFileBackup(siteID int, mode string, keepCount int, scheduled bool) (string, error) {
 	if keepCount <= 0 {
 		keepCount = 3
 	}
@@ -45,6 +52,15 @@ func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 		return "", fmt.Errorf("等待备份锁超时（有其他备份任务未完成），请稍后重试")
 	}
 	defer os.Remove(lockPath)
+	if scheduled {
+		allowed, _, err := siteScheduledWorkAllowed(siteID)
+		if err != nil {
+			return "", fmt.Errorf("检查网站运行状态失败: %w", err)
+		}
+		if !allowed {
+			return "", errScheduledWorkNotAllowed
+		}
+	}
 
 	db := database.GetDB()
 	var domain, webRoot string

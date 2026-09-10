@@ -146,6 +146,7 @@ function websiteList() {
         },
         async toggleStatus(site) {
             const action = site.status === 'active' ? 'pause' : 'enable';
+            if (action === 'pause' && !await confirmModal(t('website.pause_confirm', { domain: site.domain }))) return;
             try {
                 const resp = await api('/websites/' + site.id + '/status', { method: 'PATCH', body: { action } });
                 if (resp.success) {

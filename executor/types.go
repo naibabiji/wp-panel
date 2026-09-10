@@ -140,8 +140,9 @@ type SetFileLockPayload struct {
 }
 
 type RunCronPayload struct {
-	JobID int    `json:"job_id"`
-	Name  string `json:"name"`
+	JobID         int    `json:"job_id"`
+	Name          string `json:"name"`
+	ConfirmPaused bool   `json:"confirm_paused"`
 }
 
 type ManualBanPayload struct {

@@ -44,6 +44,7 @@ type fileBackupPolicyState struct {
 type backupPolicySiteState struct {
 	SiteID      int                   `json:"site_id"`
 	Domain      string                `json:"domain"`
+	Status      string                `json:"status"`
 	DBEnabled   bool                  `json:"db_enabled"`
 	DBKeepCount int                   `json:"db_keep_count"`
 	Incremental fileBackupPolicyState `json:"incremental"`
@@ -150,7 +151,7 @@ type backupPolicyUserError string
 func (err backupPolicyUserError) Error() string { return string(err) }
 
 func loadBackupPolicy(db *sql.DB) ([]backupPolicySiteState, bool, error) {
-	rows, err := db.Query(`SELECT w.id,w.domain,COALESCE(bs.enabled,0),COALESCE(bs.keep_count,7)
+	rows, err := db.Query(`SELECT w.id,w.domain,w.status,COALESCE(bs.enabled,0),COALESCE(bs.keep_count,7)
 		FROM websites w LEFT JOIN backup_settings bs ON bs.site_id=w.id ORDER BY w.domain`)
 	if err != nil {
 		return nil, false, err
@@ -161,7 +162,7 @@ func loadBackupPolicy(db *sql.DB) ([]backupPolicySiteState, bool, error) {
 	for rows.Next() {
 		var site backupPolicySiteState
 		var enabled int
-		if err := rows.Scan(&site.SiteID, &site.Domain, &enabled, &site.DBKeepCount); err != nil {
+		if err := rows.Scan(&site.SiteID, &site.Domain, &site.Status, &enabled, &site.DBKeepCount); err != nil {
 			return nil, false, err
 		}
 		site.DBEnabled = enabled == 1

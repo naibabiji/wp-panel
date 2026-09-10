@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -40,10 +41,10 @@ type remoteMaintenanceDeps struct {
 	rebuild      func(int) error
 }
 
-func productionRemoteMaintenanceDeps() remoteMaintenanceDeps {
+func productionRemoteMaintenanceDeps(activeSitesOnly bool) remoteMaintenanceDeps {
 	return remoteMaintenanceDeps{
 		enabled:  remoteBackupEnabled,
-		loadRows: loadRemoteMaintenanceRows,
+		loadRows: func() ([]remoteMaintenanceRow, error) { return loadRemoteMaintenanceRows(activeSitesOnly) },
 		loadKeys: loadCurrentRemoteKeys,
 		localRegular: func(row remoteMaintenanceRow) (string, bool) {
 			localPath := filepath.Join(backupsRoot, row.domain, row.subdir, row.filename)
@@ -62,7 +63,7 @@ func productionRemoteMaintenanceDeps() remoteMaintenanceDeps {
 		},
 		setState: setRemoteBackupSiteState,
 		rebuild: func(siteID int) error {
-			_, err := ExecuteFileBackup(siteID, "full", getKeepCount(siteID))
+			_, err := executeFileBackup(siteID, "full", getKeepCount(siteID), activeSitesOnly)
 			return err
 		},
 	}
@@ -90,7 +91,15 @@ func MaintainRemoteBackups(allowRebuild bool) (int, error) {
 		return 0, fmt.Errorf("远程备份维护任务正在运行")
 	}
 	defer remoteMaintenanceMu.Unlock()
-	return maintainRemoteBackupsWith(allowRebuild, productionRemoteMaintenanceDeps())
+	return maintainRemoteBackupsWith(allowRebuild, productionRemoteMaintenanceDeps(false))
+}
+
+func maintainScheduledRemoteBackups(allowRebuild bool) (int, error) {
+	if !remoteMaintenanceMu.TryLock() {
+		return 0, fmt.Errorf("远程备份维护任务正在运行")
+	}
+	defer remoteMaintenanceMu.Unlock()
+	return maintainRemoteBackupsWith(allowRebuild, productionRemoteMaintenanceDeps(true))
 }
 
 func maintainRemoteBackupsWith(allowRebuild bool, deps remoteMaintenanceDeps) (int, error) {
@@ -179,6 +188,9 @@ func maintainRemoteBackupsWith(allowRebuild bool, deps remoteMaintenanceDeps) (i
 		deps.setState(siteID, status, message)
 		if allowRebuild && status == "rebuild_required" {
 			if backupErr := deps.rebuild(siteID); backupErr != nil {
+				if errors.Is(backupErr, errScheduledWorkNotAllowed) {
+					continue
+				}
 				deps.setState(siteID, "rebuild_required", "自动重建全量基线失败: "+backupErr.Error())
 				log.Printf("远程备份自动重建全量基线失败 site_id=%d: %v", siteID, backupErr)
 			} else {
@@ -234,11 +246,16 @@ func remoteRowExists(row remoteMaintenanceRow, backupType, s3Prefix string, remo
 	return remoteKeys[key]
 }
 
-func loadRemoteMaintenanceRows() ([]remoteMaintenanceRow, error) {
+func loadRemoteMaintenanceRows(activeSitesOnly bool) ([]remoteMaintenanceRow, error) {
 	db := database.GetDB()
 	rows := []remoteMaintenanceRow{}
+	statusClause := ""
+	if activeSitesOnly {
+		statusClause = ` WHERE w.status='active' AND NOT EXISTS
+			(SELECT 1 FROM site_migration_locks ml WHERE ml.site_id=w.id AND ml.status='active')`
+	}
 	dbRows, err := db.Query(`SELECT b.id,b.site_id,w.domain,b.filename,b.transport_status,b.created_at
-		FROM db_backups b JOIN websites w ON w.id=b.site_id ORDER BY b.created_at,b.id`)
+		FROM db_backups b JOIN websites w ON w.id=b.site_id` + statusClause + ` ORDER BY b.created_at,b.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +274,7 @@ func loadRemoteMaintenanceRows() ([]remoteMaintenanceRow, error) {
 	}
 	dbRows.Close()
 	fileRows, err := db.Query(`SELECT b.id,b.site_id,w.domain,b.filename,b.mode,b.transport_status,b.created_at
-		FROM file_backups b JOIN websites w ON w.id=b.site_id ORDER BY b.created_at,b.id`)
+		FROM file_backups b JOIN websites w ON w.id=b.site_id` + statusClause + ` ORDER BY b.created_at,b.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -323,7 +340,7 @@ func setRemoteBackupSiteState(siteID int, status, message string) {
 func StartRemoteBackupMaintenanceScheduler() {
 	go func() {
 		time.Sleep(10 * time.Minute)
-		if _, err := MaintainRemoteBackups(false); err != nil {
+		if _, err := maintainScheduledRemoteBackups(false); err != nil {
 			log.Printf("远程备份启动核对跳过: %v", err)
 		}
 		for {
@@ -334,7 +351,7 @@ func StartRemoteBackupMaintenanceScheduler() {
 				next = next.Add(24 * time.Hour)
 			}
 			time.Sleep(next.Sub(now))
-			if _, err := MaintainRemoteBackups(true); err != nil {
+			if _, err := maintainScheduledRemoteBackups(true); err != nil {
 				log.Printf("远程备份自动维护失败: %v", err)
 			}
 		}

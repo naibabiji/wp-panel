@@ -55,6 +55,7 @@ func main() {
 	banRestored := flag.Bool("ban-restored", false, "Fail2ban 重启恢复事件")
 	unbanFail2banIP := flag.String("unban-fail2ban", "", "记录 Fail2ban 解封 IP")
 	fileBackup := flag.String("file-backup", "", "执行文件备份: siteID:mode")
+	runScheduledCron := flag.Int("run-scheduled-cron", 0, "内部使用：执行 WP Panel 受管计划任务")
 	runAutoBackup := flag.Bool("run-auto-backup", false, "手动触发自动备份（测试用）")
 	showInfo := flag.Bool("info", false, "查看面板信息")
 	repairConfigCheck := flag.Bool("repair-config-check", false, "内部使用：只读校验 repair 配置")
@@ -112,6 +113,17 @@ func main() {
 		log.Fatalf("打开数据库失败: %v", err)
 	}
 	defer database.Close()
+
+	// 受管 Cron 的高频短路径：这里只能依赖既有稳定表结构，不能读取需要本次
+	// 主服务启动后才完成迁移的新列或新表，也不能触发迁移、插件部署或调度器。
+	if *runScheduledCron > 0 {
+		result := executor.RunScheduledCron(*runScheduledCron)
+		if !result.Success {
+			log.Print(result.Message)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if *updateWatchdog != "" {
 		executor.RunUpdateWatchdog(cfg, *updateWatchdog)

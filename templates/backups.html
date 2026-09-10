@@ -45,7 +45,10 @@
                     <tbody>
                         <template x-for="site in policySites" :key="site.site_id">
                             <tr class="border-b border-gray-700/70 bg-gray-900/30 align-top last:border-b-0">
-                                <td class="px-4 py-4 font-semibold text-white break-all" x-text="site.domain"></td>
+                                <td class="px-4 py-4 font-semibold text-white break-all">
+                                    <span x-text="site.domain"></span>
+                                    <span x-show="site.status === 'paused'" class="badge-warning ml-2 text-xs">{{t .Lang "backups.held_with_site"}}</span>
+                                </td>
                                 <td class="px-3 py-4"><input type="checkbox" x-model="site.db_enabled"></td>
                                 <td class="px-3 py-3">
                                     <label class="flex items-center gap-2 whitespace-nowrap">
@@ -142,6 +145,7 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                     </svg>
                     <span class="text-lg font-semibold text-white truncate" x-text="site.domain"></span>
+                    <span x-show="site.status === 'paused'" class="badge-warning text-xs whitespace-nowrap">{{t .Lang "backups.held_with_site"}}</span>
                     <span class="text-xs text-gray-400 whitespace-nowrap" x-text="siteSummaryText(site)"></span>
                     <span :class="remoteChainBadgeClass(site)" class="text-xs whitespace-nowrap" :title="site.remote_message || ''" x-text="remoteChainLabel(site)"></span>
                     <span class="text-xs text-gray-500 whitespace-nowrap hidden sm:inline">{{t .Lang "backups.toggle_hint"}}</span>

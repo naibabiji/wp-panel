@@ -31,8 +31,8 @@
                             <td class="table-cell text-xs" x-text="job.task_type === 'file_backup' ? t('cron.task_type_file_backup') : t('cron.task_type_command')"></td>
                             <td class="table-cell font-mono text-xs max-w-[200px] truncate" x-text="job.task_type === 'file_backup' ? (job.backup_mode === 'full' ? t('cron.full_backup') : t('cron.smart_incremental')) : job.command"></td>
                             <td class="table-cell">
-                                <span :class="job.enabled ? 'badge-success' : 'badge-warning'"
-                                      x-text="job.enabled ? t('cron.status_enabled') : t('cron.status_disabled')"></span>
+                                <span :class="job.runtime_suspended ? 'badge-warning' : (job.enabled ? 'badge-success' : 'badge-warning')"
+                                      x-text="job.runtime_reason === 'migration_locked' ? t('cron.status_migration_locked') : (job.runtime_reason === 'paused' ? t('cron.status_site_paused') : (job.enabled ? t('cron.status_enabled') : t('cron.status_disabled')))"></span>
                             </td>
                             <td class="table-cell text-xs text-gray-400" x-text="job.last_run_at || '--'"></td>
                             <td class="table-cell">
@@ -269,9 +269,14 @@ function cronManager() {
             } catch(e) { showToast(e.message, 'error'); }
         },
         async runJob(job) {
+            let confirmedPaused = false;
+            if (job.runtime_reason === 'paused') {
+                if (!await confirmModal(t('cron.confirm_run_paused', { domain: job.runtime_site_domain || '' }))) return;
+                confirmedPaused = true;
+            }
             job.running = true;
             try {
-                const r = await api('/cron/' + job.id + '/run', { method: 'POST' });
+                const r = await api('/cron/' + job.id + '/run' + (confirmedPaused ? '?confirm_paused=1' : ''), { method: 'POST' });
                 if (r.success) { await this.fetchList(); showToast(r.data?.message || t('cron.job_run_success'), 'success'); }
                 else { job.running = false; }
             } catch(e) { job.running = false; showToast(e.message, 'error'); }

@@ -22,10 +22,27 @@ type CronHandler struct{}
 func (h *CronHandler) List(c *gin.Context) {
 	db := database.GetDB()
 	rows, err := db.Query(
-		`SELECT id, name, cron_expression, command, task_type, backup_mode, keep_count, notify_fail,
-		        site_id, run_as_user, enabled, running,
-		        last_run_at, last_status, last_output, created_at, updated_at
-		 FROM cron_jobs ORDER BY created_at DESC`,
+		`WITH user_sites AS (
+			SELECT system_user, COUNT(*) AS site_count, MIN(id) AS site_id,
+			       MIN(domain) AS domain, MIN(status) AS status
+			FROM websites WHERE TRIM(system_user) <> '' GROUP BY system_user
+		)
+		SELECT cj.id, cj.name, cj.cron_expression, cj.command, cj.task_type, cj.backup_mode,
+		       cj.keep_count, cj.notify_fail, cj.site_id, cj.run_as_user, cj.enabled, cj.running,
+		       cj.last_run_at, cj.last_status, cj.last_output, cj.created_at, cj.updated_at,
+		       COALESCE(w.domain, us.domain, ''),
+		       CASE
+		         WHEN cj.site_id IS NOT NULL AND w.id IS NULL THEN 'ownership_error'
+		         WHEN cj.site_id IS NULL AND TRIM(cj.run_as_user) <> '' AND COALESCE(us.site_count, 0) <> 1 THEN 'ownership_error'
+		         WHEN COALESCE(w.status, us.status, 'active') <> 'active' THEN COALESCE(w.status, us.status)
+		         WHEN EXISTS (SELECT 1 FROM site_migration_locks ml
+		                      WHERE ml.site_id=COALESCE(w.id, us.site_id) AND ml.status='active') THEN 'migration_locked'
+		         ELSE ''
+		       END
+		FROM cron_jobs cj
+		LEFT JOIN websites w ON w.id=cj.site_id
+		LEFT JOIN user_sites us ON cj.site_id IS NULL AND TRIM(cj.run_as_user) <> '' AND us.system_user=cj.run_as_user
+		ORDER BY cj.created_at DESC`,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询失败"))
@@ -40,12 +57,13 @@ func (h *CronHandler) List(c *gin.Context) {
 		if err := rows.Scan(&j.ID, &j.Name, &j.CronExpression, &j.Command,
 			&j.TaskType, &j.BackupMode, &j.KeepCount, &notifyFail,
 			&j.SiteID, &j.RunAsUser, &enabled, &running, &j.LastRunAt, &j.LastStatus,
-			&j.LastOutput, &j.CreatedAt, &j.UpdatedAt); err != nil {
+			&j.LastOutput, &j.CreatedAt, &j.UpdatedAt, &j.RuntimeSiteDomain, &j.RuntimeReason); err != nil {
 			continue
 		}
 		j.Enabled = enabled == 1
 		j.NotifyFail = notifyFail == 1
 		j.Running = running == 1
+		j.RuntimeSuspended = j.RuntimeReason == "paused" || j.RuntimeReason == "migration_locked"
 		jobs = append(jobs, j)
 	}
 	if jobs == nil {
@@ -265,6 +283,22 @@ func (h *CronHandler) Run(c *gin.Context) {
 	db := database.GetDB()
 	var name string
 	db.QueryRow("SELECT name FROM cron_jobs WHERE id = ?", id).Scan(&name)
+	suspended, domain, reason, gateErr := executor.CronJobRuntimeSuspended(id)
+	if gateErr != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("检查任务关联网站状态失败"))
+		return
+	}
+	if suspended {
+		if reason == "paused" && c.Query("confirm_paused") == "1" {
+			// Explicit administrator confirmation permits a one-off maintenance run.
+		} else if reason == "paused" {
+			c.JSON(http.StatusConflict, models.ErrorResponse("网站 "+domain+" 已暂停，确认后才能手动执行该任务"))
+			return
+		} else {
+			c.JSON(http.StatusConflict, models.ErrorResponse("关联网站当前不允许运行该任务"))
+			return
+		}
+	}
 
 	dbResult, _ := db.Exec("UPDATE cron_jobs SET running = 1 WHERE id = ? AND running = 0", id)
 	n, _ := dbResult.RowsAffected()
@@ -273,7 +307,7 @@ func (h *CronHandler) Run(c *gin.Context) {
 		return
 	}
 
-	payload := &executor.RunCronPayload{JobID: id, Name: name}
+	payload := &executor.RunCronPayload{JobID: id, Name: name, ConfirmPaused: c.Query("confirm_paused") == "1"}
 	task := executor.GlobalQueue.Enqueue(executor.TaskRunCron, payload)
 	result := <-task.ResultCh
 

@@ -32,6 +32,7 @@ type OverviewFileBackup struct {
 type SiteBackupOverview struct {
 	SiteID                int                  `json:"site_id"`
 	Domain                string               `json:"domain"`
+	Status                string               `json:"status"`
 	RemoteStatus          string               `json:"remote_status"`
 	RemoteRebuildRequired bool                 `json:"remote_rebuild_required"`
 	RemoteMessage         string               `json:"remote_message"`
@@ -48,15 +49,15 @@ func GetBackupOverview(c *gin.Context) {
 	sites := []SiteBackupOverview{}
 	siteIndex := map[int]int{}
 
-	rows, err := db.Query(`SELECT id, domain FROM websites ORDER BY domain`)
+	rows, err := db.Query(`SELECT id, domain, status FROM websites ORDER BY domain`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询网站列表失败"))
 		return
 	}
 	for rows.Next() {
 		var id int
-		var domain string
-		if err := rows.Scan(&id, &domain); err != nil {
+		var domain, status string
+		if err := rows.Scan(&id, &domain, &status); err != nil {
 			log.Printf("备份总览: 扫描网站列表行失败: %v", err)
 			continue
 		}
@@ -64,6 +65,7 @@ func GetBackupOverview(c *gin.Context) {
 		sites = append(sites, SiteBackupOverview{
 			SiteID:       id,
 			Domain:       domain,
+			Status:       status,
 			RemoteStatus: "unknown",
 			DBBackups:    []OverviewDBBackup{},
 			FileBackups:  []OverviewFileBackup{},
