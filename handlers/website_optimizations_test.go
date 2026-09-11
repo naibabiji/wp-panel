@@ -26,6 +26,7 @@ func TestSaveWPOptimizationsRecordsOperationLog(t *testing.T) {
 		"disable_file_editing": false,
 		"xmlrpc_enabled": false,
 		"wp_debug_enabled": true,
+		"wp_debug_display": true,
 		"wp_post_revisions": -1,
 		"wp_memory_limit": ""
 	}`
@@ -50,6 +51,41 @@ func TestSaveWPOptimizationsRecordsOperationLog(t *testing.T) {
 	}
 	if !strings.Contains(message, "WP_DEBUG=开启") {
 		t.Fatalf("message missing WP_DEBUG state: %q", message)
+	}
+	if !strings.Contains(message, "浏览器错误显示=开启") {
+		t.Fatalf("message missing WP_DEBUG_DISPLAY state: %q", message)
+	}
+}
+
+func TestSaveWPOptimizationsPreservesDisplayWhenFieldIsMissing(t *testing.T) {
+	setupWebsiteOptimizationsTestDB(t)
+	var webRoot string
+	if err := database.GetDB().QueryRow(`SELECT web_root FROM websites WHERE id=1`).Scan(&webRoot); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(webRoot, "wp-config.php")
+	config := "<?php\ndefine('WP_DEBUG', true);\ndefine(\"WP_DEBUG_DISPLAY\", true);\n"
+	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.PUT("/api/websites/:id/wp-optimizations", (&WebsiteHandler{}).SaveWPOptimizations)
+	body := `{"fcache_enabled":false,"fcache_ttl":300,"disable_wp_updates":false,"disable_file_editing":false,"xmlrpc_enabled":false,"wp_debug_enabled":true,"wp_post_revisions":-1,"wp_memory_limit":""}`
+	req := httptest.NewRequest(http.MethodPut, "/api/websites/1/wp-optimizations", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	updated, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(updated)
+	if strings.Count(got, "WP_DEBUG_DISPLAY") != 1 || !strings.Contains(got, "define('WP_DEBUG_DISPLAY', true);") {
+		t.Fatalf("missing field did not preserve display state:\n%s", got)
 	}
 }
 

@@ -212,8 +212,15 @@ location ^~ /api/ {
                     <span>{{t .Lang "website.enable_debug_mode"}}</span>
                 </label>
             </div>
-            <div x-show="wpDebug" class="mb-3 ml-6">
+            <div x-show="site.site_type === 'wordpress' && wpDebug" class="mb-3 ml-6">
                 <p class="text-xs text-gray-400">{{t .Lang "website.debug_mode_help"}}</p>
+                <label class="mt-2 flex items-start space-x-2 text-sm text-yellow-300 cursor-pointer">
+                    <input type="checkbox" x-model="wpDebugDisplay" class="mt-0.5">
+                    <span>
+                        <span class="block">{{t .Lang "website.debug_display"}}</span>
+                        <span class="block text-xs text-red-300 mt-1">{{t .Lang "website.debug_display_help"}}</span>
+                    </span>
+                </label>
             </div>
             <div class="flex items-center space-x-3 mb-3" x-show="site.site_type === 'wordpress'">
                 <label class="text-sm text-gray-300">
@@ -656,6 +663,7 @@ function websiteDetail() {
         passwordResetSaving: false,
         xmlrpcEnabled: false,
         wpDebug: false,
+        wpDebugDisplay: false,
         wpPostRevisions: -1,
         wpMemoryLimit: '',
         logRetentionDays: 7,
@@ -710,6 +718,7 @@ function websiteDetail() {
                     this.passwordResetMode = r.data.password_reset_mode || 'allow';
                     this.xmlrpcEnabled = r.data.xmlrpc_enabled || false;
                     this.wpDebug = r.data.wp_debug_enabled || false;
+                    this.wpDebugDisplay = r.data.wp_debug_display || false;
                     this.wpPostRevisions = r.data.wp_post_revisions != null ? r.data.wp_post_revisions : -1;
                     this.wpMemoryLimit = r.data.wp_memory_limit || '';
                     this.logRetentionDays = r.data.log_retention_days || 7;
@@ -1283,6 +1292,7 @@ function websiteDetail() {
                         disable_file_editing: this.disableFileEditing,
                         xmlrpc_enabled: this.xmlrpcEnabled,
                         wp_debug_enabled: this.wpDebug,
+                        wp_debug_display: this.wpDebug && this.wpDebugDisplay,
                         wp_post_revisions: this.wpPostRevisions,
                         wp_memory_limit: this.wpMemoryLimit
                     }

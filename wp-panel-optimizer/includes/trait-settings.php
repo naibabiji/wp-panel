@@ -305,7 +305,7 @@ trait WPP_Optimizer_Settings_Trait {
                             <th><label for="wpp-wp-debug">启用调试模式</label></th>
                             <td>
                                 <label><input id="wpp-wp-debug" name="wp_debug" type="checkbox" value="1" <?php checked($wpDebug); ?>> 开启 <code>WP_DEBUG</code></label>
-                                <p class="description">开启后 PHP 错误和警告将写入 <code>wp-content/debug.log</code>，并开启 <code>WP_DEBUG_LOG</code>、关闭 <code>WP_DEBUG_DISPLAY</code>（错误不显示在页面，仅记录日志）。<br>用于排查网站白屏、500 错误等问题，正常使用时请关闭以免日志文件持续增长。</p>
+                                <p class="description">开启后 PHP 错误和警告将写入 <code>wp-content/debug.log</code>，默认不向访客显示。需要在浏览器临时显示错误时，请到 WP Panel 网站详情页开启。<br>用于排查网站白屏、500 错误等问题，正常使用时请关闭以免日志文件持续增长。</p>
                             </td>
                         </tr>
                         <tr>

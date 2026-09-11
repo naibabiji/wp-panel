@@ -15,6 +15,7 @@ type WPOptimizations struct {
 	DisableUpdates     bool
 	DisableFileEditing bool
 	WPDebug            bool
+	WPDebugDisplay     bool
 	WPPostRevisions    int    // -1 = 不设置, >=0 = define 的值
 	WPMemoryLimit      string // 空 = 不设置, 如 "128M"
 }
@@ -36,7 +37,7 @@ func ApplyWPOptimizations(webRoot string, opts WPOptimizations) error {
 	content = applyBoolConstant(content, "WP_DEBUG", opts.WPDebug)
 	if opts.WPDebug {
 		content = applyBoolConstant(content, "WP_DEBUG_LOG", true)
-		content = applyBoolConstant(content, "WP_DEBUG_DISPLAY", false)
+		content = setBoolConstant(content, "WP_DEBUG_DISPLAY", opts.WPDebugDisplay)
 	} else {
 		content = removeConstant(content, "WP_DEBUG_LOG")
 		content = removeConstant(content, "WP_DEBUG_DISPLAY")
@@ -94,20 +95,40 @@ func SetWPUpdatesDisabled(webRoot string, disabled bool) error {
 }
 
 func constPattern(name string) *regexp.Regexp {
-	return regexp.MustCompile(`(?m)^\s*define\s*\(\s*'` + regexp.QuoteMeta(name) + `'\s*,\s*[^)]+\)\s*;\s*\n?`)
+	return regexp.MustCompile(`(?m)^\s*define\s*\(\s*['"]` + regexp.QuoteMeta(name) + `['"]\s*,\s*[^)]+\)\s*;\s*\n?`)
 }
 
 func applyBoolConstant(content, name string, enable bool) string {
 	re := constPattern(name)
 	has := re.MatchString(content)
 
-	if enable && !has {
-		stmt := fmt.Sprintf("define('%s', %v);\n", name, true)
+	if enable {
+		stmt := fmt.Sprintf("define('%s', true);\n", name)
+		if has {
+			return re.ReplaceAllString(content, stmt)
+		}
 		return insertBeforeMarker(content, stmt)
-	} else if !enable && has {
+	} else if has {
 		return re.ReplaceAllString(content, "")
 	}
 	return content
+}
+
+func setBoolConstant(content, name string, value bool) string {
+	re := constPattern(name)
+	stmt := fmt.Sprintf("define('%s', %v);\n", name, value)
+	if re.MatchString(content) {
+		return re.ReplaceAllString(content, stmt)
+	}
+	return insertBeforeMarker(content, stmt)
+}
+
+func WPDebugDisplayEnabled(webRoot string) bool {
+	data, err := os.ReadFile(filepath.Join(webRoot, "wp-config.php"))
+	if err != nil {
+		return false
+	}
+	return regexp.MustCompile(`(?m)^\s*define\s*\(\s*['"]WP_DEBUG_DISPLAY['"]\s*,\s*true\s*\)\s*;`).Match(data)
 }
 
 func applyIntConstant(content, name string, value int) string {

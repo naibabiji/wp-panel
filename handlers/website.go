@@ -360,6 +360,7 @@ func (h *WebsiteHandler) Get(c *gin.Context) {
 		if prefix, err := executor.ReadWPTablePrefix(w.WebRoot); err == nil {
 			w.TablePrefix = prefix
 		}
+		w.WPDebugDisplay = executor.WPDebugDisplayEnabled(w.WebRoot)
 	}
 	executor.LoadWebsiteCDNRealIPGroups(w)
 
@@ -2154,6 +2155,7 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 		DisableFileEditing bool   `json:"disable_file_editing"`
 		XMLRPCEnabled      bool   `json:"xmlrpc_enabled"`
 		WPDebugEnabled     bool   `json:"wp_debug_enabled"`
+		WPDebugDisplay     *bool  `json:"wp_debug_display"`
 		WPPostRevisions    int    `json:"wp_post_revisions"`
 		WPMemoryLimit      string `json:"wp_memory_limit"`
 	}
@@ -2240,11 +2242,17 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 	// 更新 wp-config.php
 	var webRoot string
 	db.QueryRow("SELECT web_root FROM websites WHERE id = ?", id).Scan(&webRoot)
+	wpDebugDisplay := false
 	if webRoot != "" {
+		wpDebugDisplay = executor.WPDebugDisplayEnabled(webRoot)
+		if req.WPDebugDisplay != nil {
+			wpDebugDisplay = *req.WPDebugDisplay
+		}
 		opts := executor.WPOptimizations{
 			DisableUpdates:     req.DisableWPUpdates,
 			DisableFileEditing: req.DisableFileEditing,
 			WPDebug:            req.WPDebugEnabled,
+			WPDebugDisplay:     wpDebugDisplay,
 			WPPostRevisions:    req.WPPostRevisions,
 			WPMemoryLimit:      req.WPMemoryLimit,
 		}
@@ -2262,7 +2270,7 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 		})
 	}
 	if domain != "" {
-		recordHandlerOperationLog("wp_optimizations", domain, "success", wpOptimizationsLogMessage(req.FCacheEnabled, req.FCacheTTL, req.DisableWPUpdates, req.DisableFileEditing, req.XMLRPCEnabled, req.WPDebugEnabled, req.WPPostRevisions, req.WPMemoryLimit))
+		recordHandlerOperationLog("wp_optimizations", domain, "success", wpOptimizationsLogMessage(req.FCacheEnabled, req.FCacheTTL, req.DisableWPUpdates, req.DisableFileEditing, req.XMLRPCEnabled, req.WPDebugEnabled, wpDebugDisplay, req.WPPostRevisions, req.WPMemoryLimit))
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
@@ -2796,6 +2804,7 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 		DisableWPUpdates   bool   `json:"disable_wp_updates"`
 		DisableFileEditing bool   `json:"disable_file_editing"`
 		WPDebugEnabled     bool   `json:"wp_debug_enabled"`
+		WPDebugDisplay     *bool  `json:"wp_debug_display"`
 		WPPostRevisions    int    `json:"wp_post_revisions"`
 		WPMemoryLimit      string `json:"wp_memory_limit"`
 	}
@@ -2858,11 +2867,17 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 	// 更新 wp-config.php
 	var webRoot string
 	db.QueryRow("SELECT web_root FROM websites WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%') ESCAPE '\\'", req.Domain, escapeLike(req.Domain)).Scan(&webRoot)
+	wpDebugDisplay := false
 	if webRoot != "" {
+		wpDebugDisplay = executor.WPDebugDisplayEnabled(webRoot)
+		if req.WPDebugDisplay != nil {
+			wpDebugDisplay = *req.WPDebugDisplay
+		}
 		opts := executor.WPOptimizations{
 			DisableUpdates:     req.DisableWPUpdates,
 			DisableFileEditing: req.DisableFileEditing,
 			WPDebug:            req.WPDebugEnabled,
+			WPDebugDisplay:     wpDebugDisplay,
 			WPPostRevisions:    req.WPPostRevisions,
 			WPMemoryLimit:      req.WPMemoryLimit,
 		}
@@ -2883,12 +2898,12 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 			})
 		}
 	}
-	recordHandlerOperationLog("wp_optimizations", req.Domain, "success", wpOptimizationsLogMessage(req.Enabled, req.TTL, req.DisableWPUpdates, req.DisableFileEditing, false, req.WPDebugEnabled, req.WPPostRevisions, req.WPMemoryLimit))
+	recordHandlerOperationLog("wp_optimizations", req.Domain, "success", wpOptimizationsLogMessage(req.Enabled, req.TTL, req.DisableWPUpdates, req.DisableFileEditing, false, req.WPDebugEnabled, wpDebugDisplay, req.WPPostRevisions, req.WPMemoryLimit))
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
 }
 
-func wpOptimizationsLogMessage(fcacheEnabled bool, fcacheTTL int, disableUpdates, disableEditing, xmlrpcEnabled, wpDebugEnabled bool, postRevisions int, memoryLimit string) string {
+func wpOptimizationsLogMessage(fcacheEnabled bool, fcacheTTL int, disableUpdates, disableEditing, xmlrpcEnabled, wpDebugEnabled, wpDebugDisplay bool, postRevisions int, memoryLimit string) string {
 	state := func(enabled bool) string {
 		if enabled {
 			return "开启"
@@ -2902,6 +2917,7 @@ func wpOptimizationsLogMessage(fcacheEnabled bool, fcacheTTL int, disableUpdates
 		"禁止文件编辑=" + state(disableEditing),
 		"XML-RPC=" + state(xmlrpcEnabled),
 		"WP_DEBUG=" + state(wpDebugEnabled),
+		"浏览器错误显示=" + state(wpDebugEnabled && wpDebugDisplay),
 		fmt.Sprintf("文章修订=%d", postRevisions),
 	}
 	if strings.TrimSpace(memoryLimit) != "" {

@@ -46,6 +46,7 @@ type Website struct {
 	DisableFileEditing  bool             `json:"disable_file_editing"`
 	XMLRPCEnabled       bool             `json:"xmlrpc_enabled"`
 	WPDebugEnabled      bool             `json:"wp_debug_enabled"`
+	WPDebugDisplay      bool             `json:"wp_debug_display"`
 	WPPostRevisions     int              `json:"wp_post_revisions"`
 	WPMemoryLimit       string           `json:"wp_memory_limit"`
 	FileLockEnabled     bool             `json:"file_lock_enabled"`
