@@ -250,6 +250,24 @@ func TestAIDevelopmentForceRetryStartsAfterOuterBusyCleanup(t *testing.T) {
 	}
 }
 
+func TestWebsiteMaintenanceUsesSinglePasswordField(t *testing.T) {
+	page := renderPage(t, "website_detail.html", "websites_detail_content")
+	if got := bytes.Count(page, []byte(`x-model="maintenancePasswordInput"`)); got != 1 {
+		t.Fatalf("maintenance password field count = %d, want 1", got)
+	}
+	for _, obsolete := range [][]byte{
+		[]byte("maintenanceSavedPassword"),
+		[]byte(`x-ref="maintenancePassword"`),
+	} {
+		if bytes.Contains(page, obsolete) {
+			t.Fatalf("rendered page still contains obsolete maintenance password state %q", obsolete)
+		}
+	}
+	if !bytes.Contains(page, []byte(`password: this.maintenancePasswordInput`)) {
+		t.Fatal("maintenance settings do not submit the unified password field")
+	}
+}
+
 func TestWebsiteLogRoutesRegistered(t *testing.T) {
 	source, err := os.ReadFile("router.go")
 	if err != nil {

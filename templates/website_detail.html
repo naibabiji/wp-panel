@@ -348,18 +348,17 @@ location ^~ /api/ {
                         <select x-model.number="maintenanceMinutes" class="input-field"><option value="3">3</option><option value="5">5</option><option value="10">10</option></select>
                     </label>
                     <label class="block text-sm">{{t .Lang "maintenance.password"}}
-                        <input type="text" x-ref="maintenancePassword" autocomplete="off" minlength="4" maxlength="72" class="input-field w-full">
+                        <input type="text" x-model="maintenancePasswordInput" autocomplete="off" minlength="4" maxlength="72" class="input-field w-full">
                     </label>
-                    <button type="button" class="btn-secondary text-sm" @click="generateMaintenancePassword()">{{t .Lang "maintenance.generate_password"}}</button>
+                    <div class="flex flex-wrap gap-2 items-center">
+                        <button type="button" class="btn-secondary text-sm" @click="generateMaintenancePassword()">{{t .Lang "maintenance.generate_password"}}</button>
+                        <button type="button" class="btn-secondary text-sm" :disabled="!maintenancePasswordInput" @click="copyMaintenancePassword()">{{t .Lang "maintenance.copy_password"}}</button>
+                        <span class="text-xs text-gray-400" x-show="maintenanceSecretError">{{t .Lang "maintenance.secret_error"}}</span>
+                        <span class="text-xs text-gray-400" x-show="maintenance.password_set && !maintenancePasswordInput && !maintenanceSecretError">{{t .Lang "maintenance.legacy_password"}}</span>
+                    </div>
                     <p class="text-xs text-gray-400">{{t .Lang "maintenance.password_help"}}</p>
                     <button type="button" class="btn-primary text-sm" @click="saveMaintenance()" x-text="maintenanceSaving ? t('common.saving') : t('common.save')"></button>
                 </fieldset>
-                <div class="flex flex-wrap gap-2 items-center">
-                    <input type="text" readonly :value="maintenanceSavedPassword" autocomplete="off" class="input-field" aria-label="{{t .Lang "maintenance.saved_password"}}">
-                    <button type="button" class="btn-secondary text-sm" :disabled="!maintenanceSavedPassword" @click="copyMaintenancePassword()">{{t .Lang "maintenance.copy_password"}}</button>
-                    <span class="text-xs text-gray-400" x-show="maintenanceSecretError">{{t .Lang "maintenance.secret_error"}}</span>
-                    <span class="text-xs text-gray-400" x-show="maintenance.password_set && !maintenanceSavedPassword && !maintenanceSecretError">{{t .Lang "maintenance.legacy_password"}}</span>
-                </div>
                 <button type="button" x-show="maintenance.window_id" :disabled="maintenanceSaving" class="btn-primary text-sm" @click="relockMaintenance()">{{t .Lang "maintenance.relock"}}</button>
             </section>
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -676,22 +675,22 @@ function websiteDetail() {
 		maintenanceEnabled: false,
 		maintenanceMinutes: 5,
 		maintenanceSaving: false,
-		maintenanceSavedPassword: '',
+		maintenancePasswordInput: '',
 		maintenanceSecretError: false,
 		async loadMaintenancePassword() {
-			this.maintenanceSavedPassword = ''; this.maintenanceSecretError = false;
+			this.maintenancePasswordInput = ''; this.maintenanceSecretError = false;
 			try {
 				const r = await api('/websites/' + this.site.id + '/maintenance/password', {method:'POST', body:{}});
-				this.maintenanceSavedPassword = r.data.password;
+				this.maintenancePasswordInput = r.data.password;
 			} catch (_) { this.maintenanceSecretError = true; }
 		},
 		async copyMaintenancePassword() {
-			try { await navigator.clipboard.writeText(this.maintenanceSavedPassword); showToast(t('maintenance.copied'), 'success'); }
+			try { await navigator.clipboard.writeText(this.maintenancePasswordInput); showToast(t('maintenance.copied'), 'success'); }
 			catch (_) { showToast(t('common.operation_failed'), 'error'); }
 		},
 		generateMaintenancePassword() {
 			const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-			this.$refs.maintenancePassword.value = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => alphabet[n & 31]).join('');
+			this.maintenancePasswordInput = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => alphabet[n & 31]).join('');
 		},
 		maintenanceTimer: null,
 		maintenanceStateText() {
@@ -711,8 +710,7 @@ function websiteDetail() {
 		async saveMaintenance() {
 			if (this.maintenanceSaving) return;
 			this.maintenanceSaving = true;
-			const body = { enabled: this.maintenanceEnabled, minutes: this.maintenanceMinutes, password: this.$refs.maintenancePassword.value };
-			this.$refs.maintenancePassword.value = '';
+			const body = { enabled: this.maintenanceEnabled, minutes: this.maintenanceMinutes, password: this.maintenancePasswordInput };
 			try {
 				const r = await api('/websites/' + this.site.id + '/maintenance', {method:'PUT', body: JSON.stringify(body)});
 				this.maintenance = r.data; showToast(t('common.saved'), 'success');
