@@ -95,6 +95,7 @@ func (m *alertManager) loop() {
 
 func (m *alertManager) runChecks() {
 	go runWPAnomalyChecks()
+	go runWPCodeIntegrityChecks()
 	// 站点访问和 SSL/CDN 探测可能等待网络。先在后台启动，让资源与服务规则
 	// 立即评估；轮到对应规则时再接收结果，避免网络等待串行叠加。
 	var siteResultCh chan alertCheckResult
@@ -391,6 +392,8 @@ func alertLabel(key string) string {
 		return "面板有新版本"
 	case "alert_wp_fake_search_bot":
 		return "伪装搜索引擎爬虫"
+	case "alert_wp_code_integrity":
+		return "WordPress 代码完整性变化"
 	}
 	return key
 }

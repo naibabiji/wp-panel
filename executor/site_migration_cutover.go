@@ -521,6 +521,10 @@ func (s *SiteMigrationCutoverService) commitActivation(ctx context.Context, task
 
 func (s *SiteMigrationCutoverService) resumeActivationRuntime(ctx context.Context, taskID string) error {
 	_, _ = s.db.ExecContext(ctx, `UPDATE site_migration_sites SET status='running',error_code='',updated_at=? WHERE id=? AND stage='activation_runtime_sync' AND status='failed_retryable'`, s.now().UTC(), taskID)
+	var siteID int
+	if err := s.db.QueryRowContext(ctx, `SELECT target_site_id FROM site_migration_sites WHERE id=? AND stage='activation_runtime_sync'`, taskID).Scan(&siteID); err != nil {
+		return s.activationFailedAtStage(taskID, "activation_runtime_sync", "activation_finalize_failed", err)
+	}
 	if err := s.ops.ReloadCron(); err != nil {
 		return s.activationFailedAtStage(taskID, "activation_runtime_sync", "cron_runtime_sync_failed", err)
 	}
@@ -547,6 +551,7 @@ func (s *SiteMigrationCutoverService) resumeActivationRuntime(ctx context.Contex
 	if err := tx.Commit(); err != nil {
 		return s.activationFailedAtStage(taskID, "activation_runtime_sync", "activation_finalize_failed", err)
 	}
+	refreshWPCodeIntegrityBaselineBestEffort(siteID, "网站搬家目标激活成功")
 	return nil
 }
 

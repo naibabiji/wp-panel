@@ -280,7 +280,7 @@ func FileLockSecurityScanContentDirs(mode, webRoot string) ([]string, error) {
 	for _, dir := range dirs {
 		seen[dir] = struct{}{}
 	}
-	for _, dir := range []string{"uploads", "cache", "languages", "wflogs"} {
+	for _, dir := range []string{"uploads", "cache", "languages", "wflogs", "upgrade", "upgrade-temp-backup"} {
 		if _, ok := seen[dir]; !ok {
 			dirs = append(dirs, dir)
 			seen[dir] = struct{}{}
@@ -597,6 +597,9 @@ func executeSetFileLock(task *Task) TaskResult {
 		if err == nil {
 			err = ApplySiteFileLockMode(site, mode)
 		}
+		if err == nil {
+			err = VerifySiteFileLockMode(site, mode)
+		}
 	} else {
 		err = ApplySiteUnlockedPermissions(site)
 	}
@@ -631,6 +634,13 @@ func executeSetFileLock(task *Task) TaskResult {
 	site.FileLockEnabled = payload.Enabled
 	site.FileLockMode = mode
 	site.FileLockApplyStatus = applyStatus
+	if payload.Enabled {
+		refreshWPCodeIntegrityBaselineBestEffort(site.ID, "启用文件锁成功")
+	} else {
+		if baselineErr := RemoveWPCodeIntegrityBaseline(site.ID); baselineErr != nil {
+			log.Printf("关闭文件锁后清理代码完整性基线失败 site=%d: %v", site.ID, baselineErr)
+		}
+	}
 
 	return TaskResult{Success: true, Message: message, Data: map[string]interface{}{
 		"file_lock_enabled":      payload.Enabled,

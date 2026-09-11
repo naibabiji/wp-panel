@@ -19,7 +19,7 @@ func BackfillWPConfigCacheKeySalts() error {
 	}
 
 	rows, err := database.DB.Query(`
-		SELECT domain, web_root
+		SELECT id, domain, web_root
 		FROM websites
 		WHERE site_type = 'wordpress'
 	`)
@@ -29,8 +29,9 @@ func BackfillWPConfigCacheKeySalts() error {
 	defer rows.Close()
 
 	for rows.Next() {
+		var siteID int
 		var domain, webRoot string
-		if err := rows.Scan(&domain, &webRoot); err != nil {
+		if err := rows.Scan(&siteID, &domain, &webRoot); err != nil {
 			return err
 		}
 
@@ -50,6 +51,7 @@ func BackfillWPConfigCacheKeySalts() error {
 			continue
 		}
 		log.Printf("[upgrade] added cache prefixes for %s", domain)
+		refreshWPCodeIntegrityBaselineBestEffort(siteID, "wp-config 升级迁移成功")
 	}
 
 	return rows.Err()

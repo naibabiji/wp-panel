@@ -707,15 +707,21 @@ function firewallManager() {
         fileEventTypeLabel(event) {
             if (event.event_type === 'runtime_php_access') return t('firewall.event_runtime_php_access');
             if (event.event_type === 'suspicious_runtime_php_file') return t('firewall.event_suspicious_php_file');
+            if (event.event_type === 'code_integrity_added') return t('firewall.event_integrity_added');
+            if (event.event_type === 'code_integrity_modified') return t('firewall.event_integrity_modified');
+            if (event.event_type === 'code_integrity_deleted') return t('firewall.event_integrity_deleted');
+            if (event.event_type === 'code_integrity_link_changed') return t('firewall.event_integrity_link');
+            if (event.event_type === 'code_integrity_unavailable') return t('firewall.event_integrity_unavailable');
             return event.event_type || '--';
         },
         fileEventSourceLabel(event) {
             if (event.source === 'nginx') return event.request_method ? (t('firewall.source_nginx') + ' ' + event.request_method) : t('firewall.source_nginx');
             if (event.source === 'scanner') return t('firewall.source_scanner');
+            if (event.source === 'integrity') return t('firewall.source_integrity');
             return event.source || '--';
         },
         fileEventCountLabel(event) {
-            if (event.event_type === 'suspicious_runtime_php_file') return t('firewall.found');
+            if (event.event_type === 'suspicious_runtime_php_file' || event.source === 'integrity') return t('firewall.found');
             return event.event_count || 0;
         },
         sourceLabel(ban) {

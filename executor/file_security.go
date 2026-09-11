@@ -140,7 +140,7 @@ func GetFileSecuritySummary() (models.FileSecurityRefreshSummary, error) {
 	}
 	if err := db.QueryRow(`
 		SELECT
-			COALESCE(SUM(CASE WHEN event_type = ? AND resolved_at IS NULL THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN (event_type = ? OR source = 'integrity') AND resolved_at IS NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN event_type = ? AND resolved_at IS NULL THEN event_count ELSE 0 END), 0)
 		FROM file_security_events`,
 		FileSecurityEventSuspiciousFile,

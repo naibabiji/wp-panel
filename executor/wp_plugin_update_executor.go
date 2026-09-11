@@ -163,6 +163,9 @@ func (e *wpPluginUpdateExecutor) execute(ctx context.Context, execution wpPlugin
 	controlCtx, cancel = e.controlContext(ctx)
 	err = e.store.markSuccess(controlCtx, taskID, owner, e.now().UTC())
 	cancel()
+	if err == nil && execution.FileLockActive {
+		refreshWPCodeIntegrityBaselineBestEffort(execution.Task.SiteID, "组件更新成功")
+	}
 	return err
 }
 
@@ -234,6 +237,9 @@ func (e *wpPluginUpdateExecutor) rollback(ctx context.Context, execution wpPlugi
 	if rollbackErr != nil {
 		return errors.New("plugin update failed and automatic rollback failed")
 	}
+	if execution.FileLockActive {
+		refreshWPCodeIntegrityBaselineBestEffort(execution.Task.SiteID, "组件更新自动回滚成功")
+	}
 	return fmt.Errorf("plugin update failed at %s and was rolled back", failureStage)
 }
 
@@ -292,6 +298,9 @@ func (e *wpPluginUpdateExecutor) ManualRollback(ctx context.Context, taskID stri
 	}
 	if rollbackErr != nil {
 		return errors.New("manual rollback failed")
+	}
+	if execution.FileLockActive {
+		refreshWPCodeIntegrityBaselineBestEffort(execution.Task.SiteID, "组件更新人工回滚成功")
 	}
 	return nil
 }

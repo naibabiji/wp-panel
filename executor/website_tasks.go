@@ -649,6 +649,9 @@ func deleteSiteAndAssociatedCronJobs(db *sql.DB, siteID int) (bool, error) {
 		return false, err
 	}
 	committed = true
+	if err := RemoveWPCodeIntegrityBaseline(siteID); err != nil {
+		log.Printf("删除网站后清理代码完整性基线失败 site=%d: %v", siteID, err)
+	}
 	return cronRows > 0, nil
 }
 
@@ -1027,6 +1030,7 @@ func executeUpdateDomains(task *Task) TaskResult {
 			GoSafe(func() { ClearWPSiteRuntimeCaches(site.ID, newDomain, newWebRoot) })
 			msg += "。WordPress 站点 URL 已同步"
 		}
+		refreshWPCodeIntegrityBaselineBestEffort(site.ID, "网站目录迁移成功")
 		return TaskResult{Success: true, Message: msg}
 	}
 
@@ -1080,8 +1084,12 @@ func nilIfEmpty(s string) interface{} {
 func ReinstallWordPress(ctx context.Context, webRoot, dbName, dbUser, systemUser string, cfg *config.Config,
 	cleanDefaults, removeThemes bool, installThemes, installPlugins []string) error {
 	var siteID int64
-	if err := database.GetDB().QueryRowContext(ctx, `SELECT id FROM websites WHERE web_root=? AND system_user=?`, webRoot, systemUser).Scan(&siteID); err != nil {
+	var fileLockEnabled bool
+	if err := database.GetDB().QueryRowContext(ctx, `SELECT id,file_lock_enabled FROM websites WHERE web_root=? AND system_user=?`, webRoot, systemUser).Scan(&siteID, &fileLockEnabled); err != nil {
 		return fmt.Errorf("检查 AI 开发授权失败: %w", err)
+	}
+	if fileLockEnabled {
+		return errors.New("该网站已启用文件锁，请先关闭文件锁")
 	}
 	if blocked, err := database.IsAIDevelopmentAccessBlocking(ctx, database.GetDB(), siteID); err != nil {
 		return fmt.Errorf("检查 AI 开发授权失败: %w", err)

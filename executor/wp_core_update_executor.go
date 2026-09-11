@@ -89,6 +89,9 @@ func (e *wpCoreUpdateExecutor) Execute(ctx context.Context, taskID, owner string
 	if err := e.store.markSuccess(ctx, taskID, owner, e.now().UTC()); err != nil {
 		return err
 	}
+	if execution.FileLockActive {
+		refreshWPCodeIntegrityBaselineBestEffort(execution.Task.SiteID, "核心更新成功")
+	}
 	// Reflect the new version in cached inventory so the next "check core
 	// update" does not re-offer the version we just installed. This is
 	// best-effort: the update already succeeded, so a refresh failure must
@@ -143,6 +146,9 @@ func (e *wpCoreUpdateExecutor) rollback(ctx context.Context, execution wpCoreUpd
 	}
 	if rollbackErr != nil {
 		return errors.New("core update failed and automatic rollback failed")
+	}
+	if execution.FileLockActive {
+		refreshWPCodeIntegrityBaselineBestEffort(execution.Task.SiteID, "核心更新回滚成功")
 	}
 	return fmt.Errorf("core update failed at %s and was rolled back", failureStage)
 }

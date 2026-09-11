@@ -198,6 +198,8 @@ func deploySiteCompanionOwned(siteID int, files map[string][]byte, version strin
 	}
 	if !site.FileLockEnabled {
 		InstallPluginPermissions(site.Domain, site.SystemUser, pluginDir)
+	} else {
+		refreshWPCodeIntegrityBaselineBestEffort(site.ID, "配套插件更新成功")
 	}
 	return true, nil
 }

@@ -2345,6 +2345,9 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 	if domain != "" {
 		recordHandlerOperationLog("wp_optimizations", domain, "success", wpOptimizationsLogMessage(req.FCacheEnabled, req.FCacheTTL, req.DisableWPUpdates, req.DisableFileEditing, req.XMLRPCEnabled, req.WPDebugEnabled, wpDebugDisplay, req.WPPostRevisions, req.WPMemoryLimit))
 	}
+	if site.FileLockEnabled && site.FileLockApplyStatus == executor.FileLockApplyStatusReady {
+		executor.RefreshWPCodeIntegrityBaselineBestEffort(id, "WordPress 优化设置保存成功")
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
 }
@@ -2666,7 +2669,8 @@ func reinstallWordPressErrorMessage(err error) string {
 		stage = strings.TrimSpace(stage[:idx])
 	}
 	switch stage {
-	case "网站目录路径为空",
+	case "该网站已启用文件锁，请先关闭文件锁",
+		"网站目录路径为空",
 		"网站目录路径校验失败",
 		"网站目录路径不在允许目录内",
 		"创建临时网站目录失败",
@@ -3001,6 +3005,9 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 		}
 	}
 	recordHandlerOperationLog("wp_optimizations", req.Domain, "success", wpOptimizationsLogMessage(req.Enabled, req.TTL, req.DisableWPUpdates, req.DisableFileEditing, false, req.WPDebugEnabled, wpDebugDisplay, req.WPPostRevisions, req.WPMemoryLimit))
+	if site.FileLockEnabled && site.FileLockApplyStatus == executor.FileLockApplyStatusReady {
+		executor.RefreshWPCodeIntegrityBaselineBestEffort(site.ID, "WordPress 优化设置保存成功")
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
 }

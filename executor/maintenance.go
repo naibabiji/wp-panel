@@ -519,6 +519,7 @@ func (m *MaintenanceManager) relockOwned(id int, site *models.Website, state *ma
 		if err = m.save(id, *state, raw, "locked"); err == nil {
 			m.markUncertain(id, false)
 			m.event(id, "relock", fmt.Sprintf("success window=%s mode=%s reason=%s", w.ID, w.Mode, w.Reason))
+			refreshWPCodeIntegrityBaselineBestEffort(id, "维护回锁成功")
 			return nil
 		}
 	}
