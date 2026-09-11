@@ -235,6 +235,21 @@ func TestRenderedPageScriptsParse(t *testing.T) {
 	}
 }
 
+func TestAIDevelopmentForceRetryStartsAfterOuterBusyCleanup(t *testing.T) {
+	page := string(renderPage(t, "website_detail.html", "websites_detail_content"))
+	start := strings.Index(page, "async enableAIDevelopment(force)")
+	end := strings.Index(page[start:], "async downloadAIDevelopmentCredential()")
+	if start < 0 || end < 0 {
+		t.Fatal("AI development enable function missing")
+	}
+	body := page[start : start+end]
+	cleanup := strings.Index(body, "} finally {")
+	retry := strings.Index(body, "if (retryForce) return this.enableAIDevelopment(true)")
+	if cleanup < 0 || retry < cleanup {
+		t.Fatal("forced retry can be cleared by the outer finally")
+	}
+}
+
 func TestWebsiteLogRoutesRegistered(t *testing.T) {
 	source, err := os.ReadFile("router.go")
 	if err != nil {

@@ -3,9 +3,17 @@ package executor
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 )
+
+func TestAIDevelopmentPHPKillArgsTargetsOnlyPHPFPMWorkers(t *testing.T) {
+	want := []string{"-KILL", "-u", "wp_example", "-f", `^php-fpm: pool `}
+	if got := aiDevelopmentPHPKillArgs("KILL", "wp_example"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("args=%q want=%q", got, want)
+	}
+}
 
 type aiDevelopmentExitError int
 

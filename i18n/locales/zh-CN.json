@@ -782,6 +782,7 @@
     "install_when_enabling": "未安装，开启时安装",
     "confirm_domain_label": "输入当前网站完整域名以确认",
     "processing": "处理中...",
+    "processing_help": "请保持此窗口打开。高流量网站可能需要等待数秒，完成或失败后会自动显示结果。",
     "stage_installing_wp_cli": "正在安装 WP-CLI...",
     "stage_installing_nodejs": "正在安装 Node.js + npm，可能需要几分钟...",
     "stage_configuring_access": "正在配置 SSH 授权并生成连接包...",

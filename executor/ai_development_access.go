@@ -349,16 +349,43 @@ func (p productionAIDevelopmentSystem) Configure(ctx context.Context, site AIDev
 		}
 	}
 	if err := retryAIDevelopmentUsermod(ctx, aiDevelopmentUsermodRetryDelay, aiDevelopmentUsermodAttempts, func() error {
+		if force {
+			if err := p.killSitePHPProcesses(ctx, site.SystemUser); err != nil {
+				return err
+			}
+		}
 		return exec.CommandContext(ctx, "usermod", "-d", home, site.SystemUser).Run()
 	}); err != nil {
 		return wrapAIDevelopmentUsermodBusy(err)
 	}
 	if err := retryAIDevelopmentUsermod(ctx, aiDevelopmentUsermodRetryDelay, aiDevelopmentUsermodAttempts, func() error {
+		if force {
+			if err := p.killSitePHPProcesses(ctx, site.SystemUser); err != nil {
+				return err
+			}
+		}
 		return exec.CommandContext(ctx, "usermod", "-s", "/bin/bash", site.SystemUser).Run()
 	}); err != nil {
 		return wrapAIDevelopmentUsermodBusy(err)
 	}
 	return nil
+}
+
+// killSitePHPProcesses closes the race where PHP-FPM immediately replaces a
+// gracefully terminated worker while forced usermod is waiting to run.
+func (productionAIDevelopmentSystem) killSitePHPProcesses(ctx context.Context, systemUser string) error {
+	if !aiDevelopmentUserPattern.MatchString(systemUser) {
+		return errors.New("invalid site user")
+	}
+	err := exec.CommandContext(ctx, "pkill", aiDevelopmentPHPKillArgs("KILL", systemUser)...).Run()
+	if err == nil {
+		return nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return nil
+	}
+	return fmt.Errorf("force terminate site PHP processes: %w", err)
 }
 
 // terminateSitePHPProcesses ends the site's own PHP-FPM workers so a following
@@ -370,7 +397,7 @@ func (productionAIDevelopmentSystem) terminateSitePHPProcesses(ctx context.Conte
 	if !aiDevelopmentUserPattern.MatchString(systemUser) {
 		return errors.New("invalid site user")
 	}
-	err := exec.CommandContext(ctx, "pkill", "-TERM", "-u", systemUser).Run()
+	err := exec.CommandContext(ctx, "pkill", aiDevelopmentPHPKillArgs("TERM", systemUser)...).Run()
 	if err == nil {
 		return nil
 	}
@@ -379,6 +406,10 @@ func (productionAIDevelopmentSystem) terminateSitePHPProcesses(ctx context.Conte
 		return nil
 	}
 	return fmt.Errorf("terminate site PHP processes: %w", err)
+}
+
+func aiDevelopmentPHPKillArgs(signal, systemUser string) []string {
+	return []string{"-" + signal, "-u", systemUser, "-f", `^php-fpm: pool `}
 }
 
 func wrapAIDevelopmentUsermodBusy(err error) error {

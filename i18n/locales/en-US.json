@@ -782,6 +782,7 @@
     "install_when_enabling": "Not installed — install when enabling",
     "confirm_domain_label": "Enter the full current domain to confirm",
     "processing": "Processing...",
+    "processing_help": "Keep this window open. High-traffic sites may take several seconds; the result will appear automatically.",
     "stage_installing_wp_cli": "Installing WP-CLI...",
     "stage_installing_nodejs": "Installing Node.js + npm; this may take a few minutes...",
     "stage_configuring_access": "Configuring SSH access and generating the connection package...",

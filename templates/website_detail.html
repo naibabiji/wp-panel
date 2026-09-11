@@ -505,7 +505,12 @@ location ^~ /api/ {
                 </div>
             </div>
             <div x-show="aiAccess.loading" class="text-sm text-gray-500 py-6 text-center">{{t .Lang "common.loading"}}</div>
-            <div x-show="!aiAccess.loading && !aiAccess.enabled && aiAccess.status === 'disabled'" class="space-y-4">
+            <div x-show="!aiAccess.loading && aiAccess.busy" class="rounded border border-purple-700 bg-purple-950/40 px-5 py-10 text-center">
+                <div class="mx-auto mb-4 h-9 w-9 animate-spin rounded-full border-4 border-purple-300 border-t-transparent"></div>
+                <p class="text-base font-semibold text-purple-100" x-text="aiAccess.stage || t('ai_development.processing')"></p>
+                <p class="mt-2 text-xs text-gray-400">{{t .Lang "ai_development.processing_help"}}</p>
+            </div>
+            <div x-show="!aiAccess.loading && !aiAccess.busy && !aiAccess.enabled && aiAccess.status === 'disabled'" class="space-y-4">
                 <div class="rounded border border-red-800 bg-red-950/40 p-4 text-sm text-red-100">
                     <p class="font-semibold mb-2">{{t .Lang "ai_development.risk_title"}}</p>
                     <p>{{t .Lang "ai_development.risk_body"}}</p>
@@ -546,7 +551,7 @@ location ^~ /api/ {
                     <button @click="enableAIDevelopment()" :disabled="aiAccess.busy || aiAccess.confirmDomain !== site.domain" class="btn-danger text-sm" x-text="aiAccess.busy ? (aiAccess.stage || t('ai_development.processing')) : t('ai_development.enable_button')"></button>
                 </div>
             </div>
-            <div x-show="!aiAccess.loading && aiAccess.status !== 'disabled'" class="space-y-4">
+            <div x-show="!aiAccess.loading && !aiAccess.busy && aiAccess.status !== 'disabled'" class="space-y-4">
                 <dl class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                     <div><dt class="text-gray-500">{{t .Lang "website.system_user"}}</dt><dd class="text-white font-mono" x-text="aiAccess.system_user"></dd></div>
                     <div><dt class="text-gray-500">{{t .Lang "website.site_root"}}</dt><dd class="text-white font-mono break-all" x-text="aiAccess.web_root"></dd></div>
@@ -894,6 +899,7 @@ function websiteDetail() {
             if (this.aiAccess.confirmDomain !== this.site.domain) return;
             if (!force && !await confirmModal(t('ai_development.enable_confirm', { domain: this.site.domain }))) return;
             this.aiAccess.busy = true;
+            let retryForce = false;
             try {
                 if (this.aiAccess.installWPCLI && !this.developmentToolInstalled('wp-cli')) {
                     this.aiAccess.stage = t('ai_development.stage_installing_wp_cli');
@@ -917,17 +923,16 @@ function websiteDetail() {
                 if (!force && e.code === 'ai_development_site_busy') {
                     this.aiAccess.busy = false;
                     this.aiAccess.stage = '';
-                    if (await confirmModal(t('ai_development.enable_busy_force_confirm'))) {
-                        return this.enableAIDevelopment(true);
-                    }
-                    return;
+                    retryForce = await confirmModal(t('ai_development.enable_busy_force_confirm'));
+                } else {
+                    showToast(e.message, 'error');
+                    await this.fetchAIDevelopment();
                 }
-                showToast(e.message, 'error');
-                await this.fetchAIDevelopment();
             } finally {
                 this.aiAccess.busy = false;
                 this.aiAccess.stage = '';
             }
+            if (retryForce) return this.enableAIDevelopment(true);
         },
         async downloadAIDevelopmentCredential() {
             if (this.aiCredentialPackage && !this.aiCredentialDownloaded) {
