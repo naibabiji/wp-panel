@@ -503,13 +503,33 @@ func (productionAIDevelopmentSystem) Restore(ctx context.Context, systemUser str
 	if !aiDevelopmentUserPattern.MatchString(systemUser) || !filepath.IsAbs(passwd.Home) || !filepath.IsAbs(passwd.Shell) {
 		return errors.New("invalid site user restore metadata")
 	}
-	if err := retryAIDevelopmentUsermod(ctx, aiDevelopmentUsermodRetryDelay, aiDevelopmentUsermodAttempts, func() error {
+	restore := func(run func() error) error {
+		return retryAIDevelopmentUsermodAfterTerminate(ctx, aiDevelopmentUsermodRetryDelay, aiDevelopmentUsermodAttempts, func() error {
+			return productionAIDevelopmentSystem{}.terminateSitePHPProcesses(ctx, systemUser)
+		}, run)
+	}
+	if err := restore(func() error {
 		return exec.CommandContext(ctx, "usermod", "-s", passwd.Shell, systemUser).Run()
 	}); err != nil {
 		return err
 	}
-	return retryAIDevelopmentUsermod(ctx, aiDevelopmentUsermodRetryDelay, aiDevelopmentUsermodAttempts, func() error {
+	return restore(func() error {
 		return exec.CommandContext(ctx, "usermod", "-d", passwd.Home, systemUser).Run()
+	})
+}
+
+func retryAIDevelopmentUsermodAfterTerminate(ctx context.Context, delay time.Duration, attempts int, terminate, run func() error) error {
+	terminateBeforeRun := false
+	return retryAIDevelopmentUsermod(ctx, delay, attempts, func() error {
+		if terminateBeforeRun {
+			if err := terminate(); err != nil {
+				return err
+			}
+			terminateBeforeRun = false
+		}
+		err := run()
+		terminateBeforeRun = isAIDevelopmentUsermodBusy(err)
+		return err
 	})
 }
 
