@@ -262,6 +262,16 @@ function wp_panel_inventory_collect(): array
     );
 }
 
+function wp_panel_inventory_anomaly_sample(array $query): array
+{
+    if (is_multisite()) return array('error'=>'multisite_unsupported');
+    if (!in_array('wp-panel-optimizer/wp-panel-optimizer.php', (array)get_option('active_plugins', array()), true)
+        || !is_callable(array('WP_Panel_Optimizer', 'collect_anomaly_sample'))) {
+        return array('error'=>'plugin_required');
+    }
+    return WP_Panel_Optimizer::collect_anomaly_sample($query['since'], $query['until'], $query['known_ids']);
+}
+
 $token = (string) getenv('WP_PANEL_RUNNER_TOKEN');
 $wpPanelInventoryState['protocol'] = @fopen('php://fd/3', 'wb');
 if (PHP_SAPI !== 'cli' || !preg_match('/^[0-9a-f]{32}$/', $token) || !is_resource($wpPanelInventoryState['protocol'])) {
@@ -308,6 +318,11 @@ define('DISABLE_WP_CRON', true);
 try {
     require $realWpLoad;
     $inventory = wp_panel_inventory_collect();
+    $anomalyQuery = getenv('WP_PANEL_ANOMALY_QUERY');
+    if (is_string($anomalyQuery) && $anomalyQuery !== '') {
+        $query = json_decode($anomalyQuery, true, 8, JSON_THROW_ON_ERROR);
+        $inventory['anomaly'] = wp_panel_inventory_anomaly_sample($query);
+    }
     wp_panel_inventory_emit(array('ok' => true, 'data' => $inventory));
 } catch (OverflowException | LengthException | UnexpectedValueException $error) {
     wp_panel_inventory_fail('inventory_limit_exceeded');

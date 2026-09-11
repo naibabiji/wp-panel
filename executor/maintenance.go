@@ -30,6 +30,7 @@ type maintenanceSecurity struct {
 	Enabled        bool                       `json:"enabled"`
 	Minutes        int                        `json:"minutes"`
 	Hash           string                     `json:"hash,omitempty"`
+	Ciphertext     string                     `json:"password_ciphertext,omitempty"`
 	Failures       []int64                    `json:"failures,omitempty"`
 	FrozenUntil    int64                      `json:"frozen_until,omitempty"`
 	Window         *maintenanceWindow         `json:"window,omitempty"`
@@ -230,7 +231,7 @@ func (m *MaintenanceManager) Configure(id int, enabled bool, minutes int, passwo
 	if minutes != 3 && minutes != 5 && minutes != 10 {
 		return ErrMaintenanceValidation
 	}
-	if len(password) > 72 || (password != "" && len(password) < 12) {
+	if len(password) > 72 || (password != "" && len([]rune(password)) < 4) {
 		return ErrMaintenanceValidation
 	}
 	if !tryAcquireMaintenanceOp(id) {
@@ -253,6 +254,11 @@ func (m *MaintenanceManager) Configure(id int, enabled bool, minutes int, passwo
 			return ErrMaintenanceValidation
 		}
 		state.Hash = string(hash)
+		sealed, err := m.sealPassword(id, password)
+		if err != nil {
+			return ErrMaintenanceUnknown
+		}
+		state.Ciphertext = sealed
 	}
 	if enabled && state.Hash == "" {
 		return ErrMaintenanceValidation

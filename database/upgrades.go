@@ -701,6 +701,11 @@ var upgrades = []Upgrade{
 		Description: "新增站点临时维护安全配置与可恢复窗口",
 		Func:        ensureMaintenanceSecurityColumn,
 	},
+	{
+		Version:     "1.0.59",
+		Description: "新增 WordPress 轻量异常监控状态",
+		SQL:         []string{wpAnomalySchema},
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

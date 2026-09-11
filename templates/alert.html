@@ -136,10 +136,7 @@
                     <input type="checkbox" x-model="rules.alert_panel_update" @change="save">
                     <span>{{t .Lang "alert.rule_panel_update"}}</span>
                 </label>
-                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer mb-3">
-                    <input type="checkbox" x-model="rules.alert_wp_sqli_probe" @change="save">
-                    <span>{{t .Lang "alert.rule_wp_sqli_probe"}}</span>
-                </label>
+                <p class="text-xs text-gray-400 mb-3">{{t .Lang "alert.sqli_moved"}}</p>
                 <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer mb-3">
                     <input type="checkbox" x-model="rules.alert_wp_fake_search_bot" @change="save">
                     <span>{{t .Lang "alert.rule_wp_fake_search_bot"}}</span>
@@ -357,7 +354,7 @@ function alertManager() {
                         // alert_wp_security_threshold / alert_wp_security_window_hours
                         // 是数值键，不能走布尔 rules 通道，否则 "10" 会被 !== 'false'
                         // 判成 true，下次 save() 又把 true 写回去覆盖数值。
-                        if (k.startsWith('alert_') && k !== 'alert_wp_security_threshold' && k !== 'alert_wp_security_window_hours') {
+                        if (k.startsWith('alert_') && k !== 'alert_wp_sqli_probe' && k !== 'alert_wp_security_threshold' && k !== 'alert_wp_security_window_hours') {
                             this.rules[k] = d[k] !== 'false';
                         }
                     }
@@ -409,7 +406,9 @@ function alertManager() {
                 alert_system_update: t('alert.type_system_update'),
                 alert_panel_update: t('alert.type_panel_update'),
                 alert_wp_sqli_probe: t('alert.type_wp_sqli_probe'),
-                alert_wp_fake_search_bot: t('alert.type_wp_fake_search_bot')
+                alert_wp_fake_search_bot: t('alert.type_wp_fake_search_bot'),
+                alert_wp_admin_change: t('alert.type_wp_admin_change'),
+                alert_wp_post_volume: t('alert.type_wp_post_volume')
             };
             return m[alertType] || alertType;
         }

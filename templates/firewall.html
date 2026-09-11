@@ -1,6 +1,18 @@
 {{template "base" .}}
 {{define "firewall_content"}}
 <div x-data="firewallManager()" x-init="init()">
+    <section class="card mb-6" x-data="sqliSettings()" x-init="load()">
+        <h3 class="text-lg font-semibold mb-2">{{t .Lang "firewall.sqli_title"}}</h3>
+        <p class="text-xs text-gray-400 mb-3">{{t .Lang "firewall.sqli_help"}}</p>
+        <fieldset :disabled="busy || !loaded" class="flex flex-wrap items-center gap-3">
+            <label><input type="checkbox" x-model="enabled"> {{t .Lang "firewall.sqli_enable"}}</label>
+            <label>{{t .Lang "alert.wp_security_threshold_label"}} <input type="number" min="1" max="10000" x-model.number="threshold" class="input-field w-20"></label>
+            <label>{{t .Lang "alert.wp_security_window_label"}} <input type="number" min="1" max="168" x-model.number="hours" class="input-field w-20"></label>
+            <button type="button" class="btn-primary" @click="save()">{{t .Lang "common.save"}}</button>
+        </fieldset>
+        <button type="button" class="btn-secondary mt-3" @click="typeFilter='sqli_probe'; loadTab('wp')">{{t .Lang "firewall.sqli_evidence"}}</button>
+        <button type="button" class="btn-secondary mt-3" @click="load()" :disabled="busy">{{t .Lang "website.refresh"}}</button>
+    </section>
     <div class="flex items-center justify-between mb-6">
         <h2 class="text-xl font-bold text-white">{{t .Lang "nav.firewall"}}</h2>
         <button @click="openRules('rules-overview')" class="btn-secondary text-sm">{{t .Lang "firewall.rules_help"}}</button>
@@ -489,6 +501,30 @@
 </div>
 
 <script>
+function sqliSettings() {
+    return {
+        enabled:false, threshold:10, hours:24, busy:false, loaded:false,
+        async load() {
+            this.busy = true; this.loaded = false;
+            try {
+                const r = await api('/alert/settings');
+                this.enabled = r.data.alert_wp_sqli_probe === 'true';
+                this.threshold = Number(r.data.alert_wp_security_threshold || 10);
+                this.hours = Number(r.data.alert_wp_security_window_hours || 24);
+                this.loaded = true;
+            } catch (e) { showToast(e.message || t('common.operation_failed'), 'error'); }
+            finally { this.busy = false; }
+        },
+        async save() {
+            this.busy = true;
+            try {
+                await api('/alert/settings', {method:'PUT', body:{alert_wp_sqli_probe:String(this.enabled), alert_wp_security_threshold:String(this.threshold), alert_wp_security_window_hours:String(this.hours)}});
+                showToast(t('common.saved'), 'success');
+            } catch (e) { showToast(e.message || t('common.operation_failed'), 'error'); }
+            finally { this.busy = false; }
+        }
+    };
+}
 function firewallManager() {
     return {
         activeTab: 'current',

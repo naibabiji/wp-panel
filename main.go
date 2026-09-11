@@ -293,6 +293,7 @@ func main() {
 	}
 	executor.StartProcessGuard()
 	executor.StartAlertMonitor(Version)
+	executor.DefaultWPAnomalyMonitor(cfg)
 	executor.StartOOMMonitor()
 	executor.StartTelemetry(Version)
 	executor.StartPanelAutoUpdateScheduler(Version, *configPath, cfg)

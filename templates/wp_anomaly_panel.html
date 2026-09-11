@@ -1,0 +1,52 @@
+{{define "wp_anomaly_panel"}}
+<template x-if="site.site_type === 'wordpress'">
+    <section x-data="wpAnomalyMonitor(site.id)" x-init="load()">
+        <hr class="my-5 border-gray-700">
+        <h4 class="text-sm font-medium text-white mb-2">{{t .Lang "anomaly.title"}}</h4>
+        <p class="text-xs text-gray-400 mb-3">{{t .Lang "anomaly.help"}}</p>
+        <label class="flex items-center gap-2 text-sm text-gray-300 mb-2"><input type="checkbox" x-model="enabled" :disabled="busy || !state"><span>{{t .Lang "anomaly.enable"}}</span></label>
+        <label class="block text-xs text-gray-400 mb-2">{{t .Lang "anomaly.threshold"}}<input type="number" x-model.number="threshold" min="1" max="10000" :disabled="busy || !state" class="input-field w-24 text-sm py-1 ml-2"></label>
+        <div class="flex flex-wrap gap-2 mb-3">
+            <button type="button" class="btn-primary text-sm" @click="save()" :disabled="busy || !state">{{t .Lang "common.save"}}</button>
+            <button type="button" class="btn-secondary text-sm" @click="check()" :disabled="busy || !state || !state.enabled">{{t .Lang "anomaly.check"}}</button>
+            <a href="/{{.RandomSuffix}}/alert" class="text-blue-400 text-sm">{{t .Lang "anomaly.alerts"}}</a>
+        </div>
+        <p x-show="busy" class="text-xs text-gray-400">{{t .Lang "anomaly.checking"}}</p>
+        <p x-show="error" x-text="error" class="text-xs text-yellow-300 mb-2" role="alert"></p>
+        <template x-if="state"><div class="text-xs text-gray-400 space-y-2">
+            <p x-text="!state.enabled ? t('anomaly.disabled') : state.last_success ? t('anomaly.last_success', {time:timeText(state.last_success)}) : t('anomaly.pending')"></p>
+            <p x-show="state.last_success" x-text="t('anomaly.post_count', {count:state.post_count})"></p>
+            <p>{{t .Lang "anomaly.baseline_help"}}</p>
+            <ul class="space-y-1"><template x-for="admin in state.admins" :key="admin.id"><li class="break-all" x-text="'#' + admin.id + ' ' + admin.login + ' · ' + admin.roles.join(', ')"></li></template></ul>
+        </div></template>
+    </section>
+</template>
+{{end}}
+{{define "wp_anomaly_script"}}
+<script>
+function wpAnomalyMonitor(siteID) {
+    return {
+        state:null, enabled:false, threshold:5, busy:false, error:'',
+        timeText(value) { return new Date(value * 1000).toLocaleString(currentLocale()); },
+        errorText(code) {
+            const keys = {plugin_required:'anomaly.plugin_required', multisite_unsupported:'anomaly.multisite_unsupported', site_busy:'anomaly.site_busy', site_unavailable:'anomaly.site_unavailable', anomaly_busy:'anomaly.busy', anomaly_invalid:'anomaly.invalid', anomaly_disabled:'anomaly.disabled'};
+            return t(keys[code] || 'anomaly.failed');
+        },
+        async request(path, options, saving = false) {
+            if (this.busy) return;
+            this.busy = true; this.error = '';
+            try {
+                const r = await api('/websites/' + siteID + '/anomaly-monitor' + path, options);
+                this.state = r.data; this.enabled = r.data.enabled; this.threshold = r.data.threshold;
+                if (r.data.last_error) this.error = this.errorText(r.data.last_error);
+                if (saving) showToast(t('common.saved'), 'success');
+            } catch (e) { this.error = this.errorText(e.message); }
+            finally { this.busy = false; }
+        },
+        load() { return this.request('', {}); },
+        save() { return this.request('', {method:'PUT', body:JSON.stringify({enabled:this.enabled,threshold:Number(this.threshold)})}, true); },
+        check() { return this.request('/check', {method:'POST'}); }
+    };
+}
+</script>
+{{end}}

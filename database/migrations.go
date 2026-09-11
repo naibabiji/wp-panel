@@ -1,6 +1,7 @@
 package database
 
 var migrations = append([]string{
+	wpAnomalySchema,
 	// ============================================================
 	// admin_users
 	// ============================================================

@@ -31,14 +31,14 @@ import (
 )
 
 const (
-	wpInventoryProtocol               = "wp-panel-inventory"
-	wpInventoryRunnerVersion          = "1"
-	wpInventorySchemaVersion          = 1
-	wpInventoryRunnerRoot             = "/var/wp-panel/runners/wp-inventory"
-	wpInventoryPHPPath                = "/usr/bin/php8.3"
-	wpInventoryRunuserPath            = "/usr/sbin/runuser"
-	wpInventoryLockWait               = 10 * time.Second
-	wpInventoryExecutionTimeout       = 5 * time.Second
+	wpInventoryProtocol         = "wp-panel-inventory"
+	wpInventoryRunnerVersion    = "1"
+	wpInventorySchemaVersion    = 1
+	wpInventoryRunnerRoot       = "/var/wp-panel/runners/wp-inventory"
+	wpInventoryPHPPath          = "/usr/bin/php8.3"
+	wpInventoryRunuserPath      = "/usr/sbin/runuser"
+	wpInventoryLockWait         = 10 * time.Second
+	wpInventoryExecutionTimeout = 5 * time.Second
 	// wpInventoryForceUpdateTimeout bounds a scan that also triggers a live
 	// WordPress update check (core/plugins/themes API calls). The check makes
 	// several outbound requests to api.wordpress.org, so it needs far more
@@ -50,15 +50,15 @@ const (
 	// a normal plugin load (WooCommerce, page builders, SEO/cache plugins
 	// routinely need well over that just to bootstrap) — it's still a hard,
 	// enforced ceiling, just a more realistic one.
-	wpInventoryRunnerMemoryLimit = "256M"
-	wpInventoryStreamLimit      int64 = 64 * 1024
-	wpInventoryProtocolLimit    int64 = 1024 * 1024
-	wpInventorySourceLimit            = 256 * 1024
-	wpInventoryPluginLimit            = 2000
-	wpInventoryThemeLimit             = 1000
-	wpInventoryUpdateLimit            = 3000
-	wpInventoryNameLimit              = 512
-	wpInventoryVersionLimit           = 128
+	wpInventoryRunnerMemoryLimit       = "256M"
+	wpInventoryStreamLimit       int64 = 64 * 1024
+	wpInventoryProtocolLimit     int64 = 1024 * 1024
+	wpInventorySourceLimit             = 256 * 1024
+	wpInventoryPluginLimit             = 2000
+	wpInventoryThemeLimit              = 1000
+	wpInventoryUpdateLimit             = 3000
+	wpInventoryNameLimit               = 512
+	wpInventoryVersionLimit            = 128
 )
 
 var (
@@ -155,6 +155,7 @@ type WPInventoryWarning string
 const WPInventoryWarningStaleCleanupFailed WPInventoryWarning = "stale_runner_cleanup_failed"
 
 type WPInventory struct {
+	Anomaly      *WPAnomalySample         `json:"anomaly,omitempty"`
 	WordPress    WPInventoryWordPress     `json:"wordpress"`
 	Plugins      []WPInventoryPlugin      `json:"plugins"`
 	Themes       []WPInventoryTheme       `json:"themes"`
@@ -237,19 +238,20 @@ type wpInventoryRunnerOptions struct {
 }
 
 type WPInventoryRunner struct {
-	source      []byte
-	hash        string
-	runnerRoot  string
-	trustedRoot string
-	phpPath     string
-	runuserPath string
-	phpDir      string
-	runuserDir  string
-	requireRoot bool
-	ownerUID    int
-	ownerGID    int
-	lookupUser  func(string) (*user.User, error)
-	now         func() time.Time
+	anomalyQuery *wpAnomalyQuery // Only set on a fresh monitor-owned runner, never a shared inventory runner.
+	source       []byte
+	hash         string
+	runnerRoot   string
+	trustedRoot  string
+	phpPath      string
+	runuserPath  string
+	phpDir       string
+	runuserDir   string
+	requireRoot  bool
+	ownerUID     int
+	ownerGID     int
+	lookupUser   func(string) (*user.User, error)
+	now          func() time.Time
 }
 
 func NewWPInventoryRunner() (*WPInventoryRunner, error) {
@@ -699,6 +701,13 @@ func (r *WPInventoryRunner) execute(ctx context.Context, input wpInventoryValida
 		forceEnv = "WP_PANEL_FORCE_UPDATE_CHECK=1"
 	}
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "HOME=" + input.user.HomeDir, "USER=" + input.user.Name, "LOGNAME=" + input.user.Name, "TMPDIR=/tmp", "WP_PANEL_RUNNER_TOKEN=" + token, forceEnv}
+	if r.anomalyQuery != nil {
+		query, err := json.Marshal(r.anomalyQuery)
+		if err != nil {
+			return WPInventoryRunResult{}, err
+		}
+		cmd.Env = append(cmd.Env, "WP_PANEL_ANOMALY_QUERY="+string(query))
+	}
 	stdout := newCountingSink(wpInventoryStreamLimit, false)
 	stderr := newCountingSink(wpInventoryStreamLimit, false)
 	protocol := newCountingSink(wpInventoryProtocolLimit, true)

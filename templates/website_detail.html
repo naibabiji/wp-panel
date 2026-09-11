@@ -247,11 +247,16 @@ location ^~ /api/ {
                 <button @click="saveWPOptimizations()" :disabled="optimizationSaving || site.file_lock_enabled" class="btn-primary text-sm" x-text="optimizationSaving ? t('common.saving') : t('website.save_settings')"></button>
                 <button x-show="fcacheEnabled" @click="clearFCache()" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">{{t .Lang "website.clear_cache"}}</button>
             </div>
-            <div x-show="site.site_type === 'wordpress' && (fcacheEnabled || disableWPUpdates || wpDebug || pluginStatus === 'config_missing')" class="flex items-center space-x-3 mb-3">
+            <div x-show="site.site_type === 'wordpress'" id="companion-plugin-controls" class="flex flex-wrap items-center gap-3 mb-3">
                 <button x-show="pluginStatus === 'not_installed'" @click="installPlugin()" :disabled="pluginInstalling || site.file_lock_enabled" class="btn-primary text-sm py-1.5" x-text="pluginInstalling ? t('website.installing') : t('website.install_companion_plugin')"></button>
                 <button x-show="pluginStatus === 'update_available'" @click="installPlugin()" :disabled="pluginInstalling || !!maintenance.window_id || fileLockApplyIncomplete()" class="text-sm py-1.5 px-3 rounded" style="background-color: #166534; color: #bbf7d0;" x-text="pluginInstalling ? t('website.updating') : t('website.update_companion_plugin')"></button>
                 <button x-show="pluginStatus === 'config_missing'" @click="rebuildPluginConfig()" :disabled="pluginInstalling || site.file_lock_enabled" class="text-sm py-1.5 px-3 rounded" style="background-color: #92400e; color: #fef3c7;" x-text="pluginInstalling ? t('website.rebuilding_plugin_config') : t('website.rebuild_plugin_config')"></button>
-                <span x-show="pluginStatus === 'installed'" class="text-xs text-green-400">{{t .Lang "website.plugin_installed"}}</span>
+                <span x-show="pluginStatus === 'installed'" class="text-xs text-green-400">{{t .Lang "website.companion_active"}}</span>
+                <span x-show="pluginStatus === 'inactive'" class="text-xs text-yellow-300">{{t .Lang "website.companion_inactive"}}</span>
+                <span x-show="pluginStatus === 'unknown' && !pluginStatusLoading" class="text-xs text-gray-400">{{t .Lang "website.companion_unknown"}}</span>
+                <button @click="fetchPluginStatus()" :disabled="pluginStatusLoading || pluginInstalling" class="btn-secondary text-sm py-1.5">{{t .Lang "website.companion_refresh"}}</button>
+                <span x-show="pluginStatusLoading" class="text-xs text-gray-400">{{t .Lang "website.companion_checking"}}</span>
+                <span x-show="pluginStatus === 'not_installed' && site.file_lock_enabled" class="text-xs text-yellow-300">{{t .Lang "website.companion_unlock_install"}}</span>
             </div>
             <p x-show="site.file_lock_enabled" class="text-xs text-yellow-300 mb-3">{{t .Lang "website.file_lock_enabled_notice"}}</p>
 
@@ -265,6 +270,7 @@ location ^~ /api/ {
                 </ul>
                 <p class="text-gray-500 mt-2" x-show="site.site_type === 'wordpress'">{{t .Lang "website.wp_optimizer_plugin_help"}}</p>
             </div>
+            {{template "wp_anomaly_panel" .}}
         </div>
 
         <div x-show="site.site_type === 'wordpress'" class="card">
@@ -342,11 +348,18 @@ location ^~ /api/ {
                         <select x-model.number="maintenanceMinutes" class="input-field"><option value="3">3</option><option value="5">5</option><option value="10">10</option></select>
                     </label>
                     <label class="block text-sm">{{t .Lang "maintenance.password"}}
-                        <input type="password" x-ref="maintenancePassword" autocomplete="new-password" minlength="12" maxlength="72" class="input-field w-full">
+                        <input type="text" x-ref="maintenancePassword" autocomplete="off" minlength="4" maxlength="72" class="input-field w-full">
                     </label>
+                    <button type="button" class="btn-secondary text-sm" @click="generateMaintenancePassword()">{{t .Lang "maintenance.generate_password"}}</button>
                     <p class="text-xs text-gray-400">{{t .Lang "maintenance.password_help"}}</p>
                     <button type="button" class="btn-primary text-sm" @click="saveMaintenance()" x-text="maintenanceSaving ? t('common.saving') : t('common.save')"></button>
                 </fieldset>
+                <div class="flex flex-wrap gap-2 items-center">
+                    <input type="text" readonly :value="maintenanceSavedPassword" autocomplete="off" class="input-field" aria-label="{{t .Lang "maintenance.saved_password"}}">
+                    <button type="button" class="btn-secondary text-sm" :disabled="!maintenanceSavedPassword" @click="copyMaintenancePassword()">{{t .Lang "maintenance.copy_password"}}</button>
+                    <span class="text-xs text-gray-400" x-show="maintenanceSecretError">{{t .Lang "maintenance.secret_error"}}</span>
+                    <span class="text-xs text-gray-400" x-show="maintenance.password_set && !maintenanceSavedPassword && !maintenanceSecretError">{{t .Lang "maintenance.legacy_password"}}</span>
+                </div>
                 <button type="button" x-show="maintenance.window_id" :disabled="maintenanceSaving" class="btn-primary text-sm" @click="relockMaintenance()">{{t .Lang "maintenance.relock"}}</button>
             </section>
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -649,6 +662,7 @@ location ^~ /api/ {
 
 </div>
 
+{{template "wp_anomaly_script" .}}
 <script>
 function websiteDetail() {
     return {
@@ -657,6 +671,23 @@ function websiteDetail() {
 		maintenanceEnabled: false,
 		maintenanceMinutes: 5,
 		maintenanceSaving: false,
+		maintenanceSavedPassword: '',
+		maintenanceSecretError: false,
+		async loadMaintenancePassword() {
+			this.maintenanceSavedPassword = ''; this.maintenanceSecretError = false;
+			try {
+				const r = await api('/websites/' + this.site.id + '/maintenance/password', {method:'POST', body:{}});
+				this.maintenanceSavedPassword = r.data.password;
+			} catch (_) { this.maintenanceSecretError = true; }
+		},
+		async copyMaintenancePassword() {
+			try { await navigator.clipboard.writeText(this.maintenanceSavedPassword); showToast(t('maintenance.copied'), 'success'); }
+			catch (_) { showToast(t('common.operation_failed'), 'error'); }
+		},
+		generateMaintenancePassword() {
+			const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+			this.$refs.maintenancePassword.value = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => alphabet[n & 31]).join('');
+		},
 		maintenanceTimer: null,
 		maintenanceStateText() {
 			return ({ locked:t('maintenance.locked'), unlocked:t('maintenance.unlocked'), unlocked_permanent:t('maintenance.unlocked_permanent'), unlocking:t('maintenance.unlocking'), relocking:t('maintenance.relocking'), relock_failed:t('maintenance.relock_failed'), unknown:t('maintenance.unknown') })[this.maintenance.state] || t('maintenance.unknown');
@@ -669,7 +700,7 @@ function websiteDetail() {
 				if (r.data.state === 'locked') { this.site.file_lock_enabled = true; this.site.file_lock_apply_status = 'ready'; }
 				else if (r.data.state === 'unlocked' || r.data.state === 'unlocked_permanent') { this.site.file_lock_enabled = false; this.site.file_lock_apply_status = ''; }
 				else { this.site.file_lock_apply_status = r.data.state === 'relock_failed' ? 'failed' : 'applying'; }
-				if (initial) { this.maintenanceEnabled = r.data.enabled; this.maintenanceMinutes = r.data.minutes; }
+				if (initial) { this.maintenanceEnabled = r.data.enabled; this.maintenanceMinutes = r.data.minutes; await this.loadMaintenancePassword(); }
 			} catch (_) { this.maintenance.state = 'unknown'; }
 		},
 		async saveMaintenance() {
@@ -680,7 +711,8 @@ function websiteDetail() {
 			try {
 				const r = await api('/websites/' + this.site.id + '/maintenance', {method:'PUT', body: JSON.stringify(body)});
 				this.maintenance = r.data; showToast(t('common.saved'), 'success');
-			} catch (error) { showToast(t(error.message === 'lock_mode_required' ? 'maintenance.lock_mode_required' : 'maintenance.operation_unavailable'), 'error'); }
+				await this.loadMaintenancePassword();
+			} catch (error) { showToast(t(error.message === 'lock_mode_required' ? 'maintenance.lock_mode_required' : error.message === 'verification_failed' ? 'maintenance.invalid_configuration' : error.message === 'operation_unavailable' ? 'maintenance.operation_unavailable' : 'maintenance.state_unknown'), 'error'); }
 			finally { delete body.password; this.maintenanceSaving = false; }
 		},
 		async relockMaintenance() {
@@ -728,7 +760,8 @@ function websiteDetail() {
         fileLockMode: 'standard',
         fileLockPreview: null,
         fileLockPreviewLoading: false,
-        pluginStatus: 'not_installed',
+        pluginStatus: 'unknown',
+        pluginStatusLoading: false,
         pluginInstalling: false,
         monitoringEnabled: false,
         monitoringInterval: 5,
@@ -1223,10 +1256,18 @@ function websiteDetail() {
             } catch(e) { showToast(t('website.operation_failed_with_error', { error: e.message }), 'error'); }
         },
         async fetchPluginStatus() {
+            if (!this.site || this.site.site_type !== 'wordpress' || this.pluginStatusLoading) return;
+            this.pluginStatusLoading = true;
+            this.pluginStatus = 'unknown';
             try {
                 const r = await api('/websites/' + this.site.id + '/install-plugin/status');
-                if (r.success) this.pluginStatus = r.data.status;
-            } catch(e) {}
+                const statuses = ['not_installed', 'inactive', 'installed', 'update_available', 'config_missing', 'unknown'];
+                if (r.success && statuses.includes(r.data?.status)) this.pluginStatus = r.data.status;
+            } catch(e) {
+                this.pluginStatus = 'unknown';
+            } finally {
+                this.pluginStatusLoading = false;
+            }
         },
         async installPlugin() {
             this.pluginInstalling = true;

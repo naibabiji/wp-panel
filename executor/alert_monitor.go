@@ -95,6 +95,7 @@ func (m *alertManager) loop() {
 }
 
 func (m *alertManager) runChecks() {
+	go runWPAnomalyChecks()
 	// 站点访问和 SSL/CDN 探测可能等待网络。先在后台启动，让资源与服务规则
 	// 立即评估；轮到对应规则时再接收结果，避免网络等待串行叠加。
 	var siteResultCh chan alertCheckResult
@@ -355,6 +356,10 @@ func isRuleEnabled(key string) bool {
 
 func alertLabel(key string) string {
 	switch key {
+	case "alert_wp_admin_change":
+		return "WordPress 管理员变化"
+	case "alert_wp_post_volume":
+		return "WordPress 文章发布量异常"
 	case "alert_cpu":
 		return "CPU 高负载"
 	case "alert_memory":

@@ -2103,21 +2103,34 @@ func (h *WebsiteHandler) InstallPluginStatus(c *gin.Context) {
 		return
 	}
 
-	var domain, webRoot, pluginAPIKey string
-	err = database.GetDB().QueryRow("SELECT domain, web_root, plugin_api_key FROM websites WHERE id = ?", id).Scan(&domain, &webRoot, &pluginAPIKey)
-	if err != nil {
+	site := getWebsiteByID(id)
+	if site == nil || site.SiteType != "wordpress" {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
 
-	installed, needsUpdate := executor.PluginNeedsUpdate(webRoot)
-	status := "not_installed"
-	if installed {
-		status = "installed"
-		if needsUpdate {
-			status = "update_available"
-		} else if !executor.SitePluginIdentityAvailable(domain, pluginAPIKey) {
-			status = "config_missing"
+	status := "unknown"
+	if executor.TryAcquireSiteOpLock(id, "companion_status") {
+		defer executor.ReleaseSiteOpLock(id)
+		site = getWebsiteByID(id)
+		if site != nil {
+			var migration bool
+			err = database.GetDB().QueryRow(`SELECT EXISTS(SELECT 1 FROM site_migration_locks WHERE (site_id=? OR domain=?) AND status='active')`, id, site.Domain).Scan(&migration)
+			if err == nil && !migration {
+				status = executor.CompanionPluginStatus(c.Request.Context(), config.AppConfig, site)
+				if status == "installed" {
+					var pluginAPIKey string
+					if err = database.GetDB().QueryRow("SELECT plugin_api_key FROM websites WHERE id=?", id).Scan(&pluginAPIKey); err != nil {
+						status = "unknown"
+					} else if installed, needsUpdate := executor.PluginNeedsUpdate(site.WebRoot); !installed {
+						status = "unknown"
+					} else if needsUpdate {
+						status = "update_available"
+					} else if !executor.SitePluginIdentityAvailable(site.Domain, pluginAPIKey) {
+						status = "config_missing"
+					}
+				}
+			}
 		}
 	}
 

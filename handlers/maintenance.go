@@ -15,6 +15,19 @@ import (
 
 type MaintenanceHandler struct{ Manager *executor.MaintenanceManager }
 
+func (h *MaintenanceHandler) Password(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		c.Status(400)
+		return
+	}
+	password, err := h.manager().RevealPassword(id)
+	if maintenanceResult(c, err) {
+		c.JSON(200, gin.H{"success": true, "data": gin.H{"password": password}})
+	}
+}
+
 func (h *MaintenanceHandler) manager() *executor.MaintenanceManager {
 	if h.Manager != nil {
 		return h.Manager

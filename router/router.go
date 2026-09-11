@@ -24,10 +24,15 @@ import (
 var panelVersion string
 
 var i18nKeys = []string{
+	"anomaly.disabled", "anomaly.pending", "anomaly.last_success", "anomaly.post_count",
+	"anomaly.plugin_required", "anomaly.multisite_unsupported", "anomaly.site_busy", "anomaly.site_unavailable",
+	"anomaly.busy", "anomaly.invalid", "anomaly.failed",
+	"alert.type_wp_admin_change", "alert.type_wp_post_volume",
 	"maintenance.locked", "maintenance.unlocked", "maintenance.unlocked_permanent", "maintenance.unlocking",
 	"maintenance.relocking", "maintenance.relock_failed", "maintenance.unknown", "maintenance.state_unknown",
 	"maintenance.operation_unavailable", "maintenance.verification_failed", "maintenance.password_required",
 	"maintenance.lock_mode_required",
+	"maintenance.copied", "maintenance.invalid_configuration",
 	"auth.connect_failed",
 	"auth.login_failed",
 	"auth.missing_credentials",
@@ -1367,6 +1372,11 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/websites/:id/maintenance", maintenanceHandler.Panel)
 	protected.PUT("/api/websites/:id/maintenance", maintenanceHandler.Panel)
 	protected.POST("/api/websites/:id/maintenance/relock", maintenanceHandler.Panel)
+	protected.POST("/api/websites/:id/maintenance/password", maintenanceHandler.Password)
+	anomalyHandler := &handlers.WPAnomalyHandler{Monitor: executor.DefaultWPAnomalyMonitor(cfg)}
+	protected.GET("/api/websites/:id/anomaly-monitor", anomalyHandler.Handle)
+	protected.PUT("/api/websites/:id/anomaly-monitor", anomalyHandler.Handle)
+	protected.POST("/api/websites/:id/anomaly-monitor/check", anomalyHandler.Handle)
 
 	// Adminer has its own CSRF tokens. Keep it behind both panel authentication
 	// layers, but do not apply the panel API CSRF header requirement to its HTML forms.
