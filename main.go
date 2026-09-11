@@ -143,7 +143,9 @@ func main() {
 		maintenanceCtx, stopMaintenance := context.WithCancel(context.Background())
 		defer stopMaintenance()
 		// Start 同步完成第一轮回锁，然后才启动周期检查；必须先于站点写入和 worker。
-		executor.DefaultMaintenanceManager().Start(maintenanceCtx)
+		if err := executor.DefaultMaintenanceManager().Start(maintenanceCtx); err != nil {
+			log.Printf("维护窗口启动恢复未完成（相关网站将保持写操作门禁并自动重试）: %v", err)
+		}
 	}
 	executor.AutoDeployPluginUpdates(PluginFS)
 	// 异步补装不应排在维护窗口启动恢复之前。

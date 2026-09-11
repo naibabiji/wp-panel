@@ -39,6 +39,7 @@ func TestMaintenanceFailedRequestReplay(t *testing.T) {
 			next.now = m.now
 			next.unlock = m.unlock
 			next.lock = m.lock
+			next.verifyLock = m.verifyLock
 			next.alert = m.alert
 			req.Password = testMaintenancePassword
 			if err := invoke(next, req); !errors.Is(err, ErrMaintenanceValidation) {

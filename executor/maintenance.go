@@ -90,6 +90,7 @@ type MaintenanceManager struct {
 	now        func() time.Time
 	unlock     func(*models.Website) error
 	lock       func(*models.Website, string) error
+	verifyLock func(*models.Website, string) error
 	alert      func(int, string)
 	mu         sync.Mutex
 	uncertain  map[int]bool
@@ -114,7 +115,7 @@ func DefaultMaintenanceManager() *MaintenanceManager {
 }
 
 func NewMaintenanceManager(db *sql.DB) *MaintenanceManager {
-	return &MaintenanceManager{db: db, now: time.Now, unlock: ApplySiteUnlockedPermissions, lock: ApplySiteFileLockMode,
+	return &MaintenanceManager{db: db, now: time.Now, unlock: ApplySiteUnlockedPermissions, lock: ApplySiteFileLockMode, verifyLock: VerifySiteFileLockMode,
 		uncertain: map[int]bool{}, retry: map[int]int64{}, alerted: map[int]bool{},
 		alert: func(id int, code string) {
 			sendResolvedAlertEvent("alert_wp_maintenance", "WordPress 维护告警", fmt.Sprintf("site=%d event=%s", id, code), "请核查网站维护状态及操作日志。")
@@ -400,13 +401,19 @@ func (m *MaintenanceManager) Unlock(id int, req MaintenanceRequest) error {
 func (m *MaintenanceManager) compensateUnlock(id int, site *models.Website, state *maintenanceSecurity, raw *string) {
 	m.markUncertain(id, true)
 	m.event(id, "unlock", "failed; compensating")
-	if err := m.lock(site, state.Window.Mode); err != nil {
+	failure := "permissions"
+	err := m.lock(site, state.Window.Mode)
+	if err == nil {
+		failure = "verification"
+		err = m.verifyLock(site, state.Window.Mode)
+	}
+	if err != nil {
 		retryAt := m.now().Unix() + 60
 		m.mu.Lock()
 		m.retry[id], m.alerted[id] = retryAt, true
 		m.mu.Unlock()
 		state.Window.State, state.Window.RetryAt, state.Window.Alerted = "relock_failed", retryAt, true
-		state.Window.Failure = "permissions"
+		state.Window.Failure = failure
 		_ = m.save(id, *state, raw, "failed")
 		m.alert(id, "relock_failed")
 	} else {
@@ -496,9 +503,6 @@ func (m *MaintenanceManager) relockOwned(id int, site *models.Website, state *ma
 		m.markUncertain(id, true)
 		return ErrMaintenanceUnknown
 	}
-	if err := m.conflicts(id); err != nil {
-		return err
-	}
 	w.State = "relocking"
 	if err := m.save(id, *state, raw, "relocking"); err != nil {
 		m.markUncertain(id, true)
@@ -506,6 +510,10 @@ func (m *MaintenanceManager) relockOwned(id int, site *models.Website, state *ma
 	}
 	err := m.lock(site, w.Mode)
 	failure := "permissions"
+	if err == nil {
+		failure = "verification"
+		err = m.verifyLock(site, w.Mode)
+	}
 	if err == nil {
 		failure = "state_commit"
 		if err = m.save(id, *state, raw, "locked"); err == nil {
@@ -543,11 +551,12 @@ func (m *MaintenanceManager) event(id int, op, result string) {
 
 // Startup seals every old window before plugin routes are served. Failure keeps
 // the service fail-closed; Tick retries startup without losing that intention.
-func (m *MaintenanceManager) Start(ctx context.Context) {
+func (m *MaintenanceManager) Start(ctx context.Context) error {
 	m.mu.Lock()
 	m.restarting = true
 	m.mu.Unlock()
 	m.Tick()
+	startupErr := m.startupRecoveryError()
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
@@ -560,6 +569,24 @@ func (m *MaintenanceManager) Start(ctx context.Context) {
 			}
 		}
 	}()
+	return startupErr
+}
+
+func (m *MaintenanceManager) startupRecoveryError() error {
+	m.mu.Lock()
+	restarting := m.restarting
+	m.mu.Unlock()
+	if restarting {
+		return fmt.Errorf("maintenance restart intent is not persisted")
+	}
+	var pending int
+	if err := m.db.QueryRow(`SELECT COUNT(*) FROM websites WHERE json_extract(maintenance_security,'$.window.id') IS NOT NULL`).Scan(&pending); err != nil {
+		return fmt.Errorf("inspect maintenance restart recovery: %w", err)
+	}
+	if pending != 0 {
+		return fmt.Errorf("%d site maintenance window(s) remain blocked for recovery", pending)
+	}
+	return nil
 }
 
 func (m *MaintenanceManager) Tick() {

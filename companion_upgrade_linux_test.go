@@ -12,6 +12,7 @@ import (
 
 	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/executor"
+	"github.com/naibabiji/wp-panel/models"
 )
 
 // Explicit root-only test, confined to temporary files and SQLite. No service,
@@ -115,6 +116,9 @@ func TestLockedCompanionUpgradeRealPermissions(t *testing.T) {
 			}
 			if !enabled || gotMode != mode || gotKey != key {
 				t.Fatal("lock mode or identity changed")
+			}
+			if err := executor.VerifySiteFileLockMode(&models.Website{WebRoot: root, SystemUser: "nobody"}, mode); err != nil {
+				t.Fatalf("locked site verification failed: %v", err)
 			}
 			first, _ := os.Stat(plugin)
 			executor.AutoDeployPluginUpdates(PluginFS)

@@ -134,6 +134,66 @@ func TestApplyWPFileModsLockBlockRejectsExistingFalseConstant(t *testing.T) {
 	}
 }
 
+func TestApplyWPFileModsLockBlockRejectsNonLiteralExistingConstant(t *testing.T) {
+	content := "<?php\n" +
+		"define('DISALLOW_FILE_MODS', WP_DEBUG);\n" +
+		"/* That's all, stop editing! Happy publishing. */\n"
+
+	if _, err := applyWPFileModsLockBlock(content, true); err == nil {
+		t.Fatal("apply lock error = nil, want rejection for non-literal constant")
+	}
+}
+
+func TestApplyWPFileModsLockBlockAcceptsCommentedTrueConstant(t *testing.T) {
+	content := "<?php\n" +
+		"define('DISALLOW_FILE_MODS', true); // managed by owner\n" +
+		"/* That's all, stop editing! Happy publishing. */\n"
+
+	locked, err := applyWPFileModsLockBlock(content, true)
+	if err != nil {
+		t.Fatalf("apply commented true lock: %v", err)
+	}
+	if strings.Count(locked, "DISALLOW_FILE_MODS") != 1 || !strings.Contains(locked, "define('FS_METHOD', 'direct');") {
+		t.Fatalf("commented true constant was not preserved safely: %s", locked)
+	}
+}
+
+func TestWPFileModsDefinitionClassificationIsStrict(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    wpFileModsDefinition
+	}{
+		{name: "literal true", content: "define('DISALLOW_FILE_MODS', true);\n", want: wpFileModsLiteralTrue},
+		{name: "uppercase function", content: "DEFINE('DISALLOW_FILE_MODS', TRUE);\n", want: wpFileModsLiteralTrue},
+		{name: "lowercase constant is distinct", content: "define('disallow_file_mods', true);\n", want: wpFileModsUndefined},
+		{name: "false", content: "define('DISALLOW_FILE_MODS', false);\n", want: wpFileModsConflicting},
+		{name: "variable", content: "define('DISALLOW_FILE_MODS', WP_DEBUG);\n", want: wpFileModsConflicting},
+		{name: "nested expression", content: "define('DISALLOW_FILE_MODS', defined('WP_DEBUG'));\n", want: wpFileModsConflicting},
+		{name: "duplicate true", content: "define('DISALLOW_FILE_MODS', true);\ndefine('DISALLOW_FILE_MODS', true);\n", want: wpFileModsConflicting},
+		{name: "expression before true", content: "define('DISALLOW_FILE_MODS', WP_DEBUG);\ndefine('DISALLOW_FILE_MODS', true);\n", want: wpFileModsConflicting},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyWPFileModsDefinition(tt.content); got != tt.want {
+				t.Fatalf("classification = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyWPFileModsLockBlockRejectsDuplicateAndExpressionDefinitions(t *testing.T) {
+	for _, content := range []string{
+		"<?php\ndefine('DISALLOW_FILE_MODS', defined('WP_DEBUG'));\n",
+		"<?php\ndefine('DISALLOW_FILE_MODS', true);\ndefine('DISALLOW_FILE_MODS', true);\n",
+		"<?php\ndefine('DISALLOW_FILE_MODS', WP_DEBUG);\ndefine('DISALLOW_FILE_MODS', true);\n",
+	} {
+		if _, err := applyWPFileModsLockBlock(content, true); err == nil {
+			t.Fatalf("expected conflicting definition to be rejected: %q", content)
+		}
+	}
+}
+
 func TestWPConfigHasUserFileModsLockIgnoresManagedBlock(t *testing.T) {
 	webRoot := t.TempDir()
 	configPath := filepath.Join(webRoot, "wp-config.php")
@@ -157,6 +217,51 @@ func TestWPConfigHasUserFileModsLockIgnoresManagedBlock(t *testing.T) {
 	}
 	if !wpConfigHasUserFileModsLock(webRoot) {
 		t.Fatal("user-defined DISALLOW_FILE_MODS=true should be reported")
+	}
+	commented := "<?php\n" +
+		"define('DISALLOW_FILE_MODS', true); // owner policy\n" +
+		"/* That's all, stop editing! Happy publishing. */\n"
+	if err := os.WriteFile(configPath, []byte(commented), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !wpConfigHasUserFileModsLock(webRoot) {
+		t.Fatal("commented user-defined DISALLOW_FILE_MODS=true should be reported")
+	}
+	for _, conflicting := range []string{
+		"<?php\ndefine('DISALLOW_FILE_MODS', false);\n",
+		"<?php\ndefine('DISALLOW_FILE_MODS', WP_DEBUG);\n",
+		"<?php\ndefine('DISALLOW_FILE_MODS', defined('WP_DEBUG'));\n",
+		"<?php\ndefine('DISALLOW_FILE_MODS', true);\ndefine('DISALLOW_FILE_MODS', true);\n",
+	} {
+		if err := os.WriteFile(configPath, []byte(conflicting), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if !wpConfigHasUserFileModsLock(webRoot) {
+			t.Fatalf("conflicting DISALLOW_FILE_MODS should block an unlock: %q", conflicting)
+		}
+	}
+	if err := os.WriteFile(configPath, []byte("<?php\ndefine('disallow_file_mods', true);\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if wpConfigHasUserFileModsLock(webRoot) {
+		t.Fatal("differently cased PHP constant should not be treated as DISALLOW_FILE_MODS")
+	}
+}
+
+func TestVerifySiteFileLockModeRejectsUnsupportedSiteAndCriticalSymlink(t *testing.T) {
+	if err := VerifySiteFileLockMode(&models.Website{SiteType: "php"}, FileLockModeStrict); err == nil {
+		t.Fatal("non-WordPress site accepted")
+	}
+	root := t.TempDir()
+	target := filepath.Join(t.TempDir(), "wp-config.php")
+	if err := os.WriteFile(target, []byte("<?php"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "wp-config.php")); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifySiteFileLockMode(&models.Website{SiteType: "wordpress", WebRoot: root}, FileLockModeStrict); err == nil {
+		t.Fatal("critical wp-config.php symlink accepted")
 	}
 }
 

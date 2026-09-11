@@ -22,7 +22,7 @@ const testMaintenancePassword = "correct-maintenance-password"
 func TestMaintenanceRestartProcessHelper(t *testing.T) {
 	dbPath := os.Getenv("WPP_MAINTENANCE_RESTART_TEST_DB")
 	if dbPath == "" {
-		return
+		t.Skip("helper runs only in the restart subprocess")
 	}
 	if err := database.Open(dbPath); err != nil {
 		t.Fatal(err)
@@ -32,6 +32,13 @@ func TestMaintenanceRestartProcessHelper(t *testing.T) {
 	m.alert = func(int, string) {}
 	m.lock = func(site *models.Website, _ string) error {
 		return os.Chmod(filepath.Join(site.WebRoot, "probe"), 0444)
+	}
+	m.verifyLock = func(site *models.Website, _ string) error {
+		info, err := os.Stat(filepath.Join(site.WebRoot, "probe"))
+		if err != nil || info.Mode().Perm() != 0444 {
+			return errors.New("probe is not locked")
+		}
+		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -81,6 +88,7 @@ func maintenanceFixture(t *testing.T) (*MaintenanceManager, int, *time.Time, *in
 	unlocks, locks := 0, 0
 	m.unlock = func(*models.Website) error { unlocks++; return nil }
 	m.lock = func(*models.Website, string) error { locks++; return nil }
+	m.verifyLock = func(*models.Website, string) error { return nil }
 	m.alert = func(int, string) {}
 	if err := m.Configure(id, true, 5, testMaintenancePassword); err != nil {
 		t.Fatal(err)
@@ -165,6 +173,7 @@ func TestMaintenanceSharedFailureFreezePersists(t *testing.T) {
 	next := NewMaintenanceManager(m.db)
 	next.now = m.now
 	next.lock = m.lock
+	next.verifyLock = m.verifyLock
 	next.alert = m.alert
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -222,12 +231,119 @@ func TestMaintenanceRetrySixtySecondsAndStartupRelocks(t *testing.T) {
 	}
 	next := NewMaintenanceManager(m.db)
 	next.lock = m.lock
+	next.verifyLock = m.verifyLock
 	next.now = m.now
 	next.alert = m.alert
 	next.Start(ctx)
 	s, _ = next.Status(id)
 	if s.State != "locked" {
 		t.Fatal(s)
+	}
+}
+
+func TestMaintenanceRelockIgnoresStaleBusinessConflict(t *testing.T) {
+	m, id, _, _, locks := maintenanceFixture(t)
+	s := maintenanceUnlock(t, m, id)
+	_, err := m.db.Exec(`INSERT INTO website_ai_development_access
+		(site_id,status,system_user,web_root,original_shell,original_home)
+		VALUES (?,'enabled','wp_test','/tmp/test','/usr/sbin/nologin','/tmp')`, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Relock(id, s.WindowID); err != nil {
+		t.Fatalf("stale business state blocked safety relock: %v", err)
+	}
+	if *locks != 1 {
+		t.Fatalf("lock calls=%d want 1", *locks)
+	}
+	status, err := m.Status(id)
+	if err != nil || status.State != "locked" {
+		t.Fatalf("status=%+v err=%v", status, err)
+	}
+}
+
+func TestMaintenanceVerificationFailureKeepsRecoveryBarrier(t *testing.T) {
+	m, id, now, _, locks := maintenanceFixture(t)
+	s := maintenanceUnlock(t, m, id)
+	m.verifyLock = func(*models.Website, string) error { return errors.New("unsafe owner") }
+	if err := m.Relock(id, s.WindowID); !errors.Is(err, ErrMaintenanceUnknown) {
+		t.Fatalf("relock error=%v", err)
+	}
+	status, err := m.Status(id)
+	if err != nil || status.State != "relock_failed" || status.WindowID == "" {
+		t.Fatalf("status=%+v err=%v", status, err)
+	}
+	if TryAcquireSiteOpLock(id, "plugin_update") {
+		ReleaseSiteOpLock(id)
+		t.Fatal("write operation entered after lock verification failure")
+	}
+	*now = now.Add(60 * time.Second)
+	m.verifyLock = func(*models.Website, string) error { return nil }
+	m.Tick()
+	if *locks != 2 {
+		t.Fatalf("lock retry calls=%d want 2", *locks)
+	}
+	status, err = m.Status(id)
+	if err != nil || status.State != "locked" {
+		t.Fatalf("recovered status=%+v err=%v", status, err)
+	}
+}
+
+func TestMaintenanceStartReportsIncompleteRecovery(t *testing.T) {
+	m, id, _, _, _ := maintenanceFixture(t)
+	maintenanceUnlock(t, m, id)
+	m.verifyLock = func(*models.Website, string) error { return errors.New("unsafe mode") }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := m.Start(ctx); err == nil {
+		t.Fatal("startup reported success with an unrecovered site")
+	}
+	if TryAcquireSiteOpLock(id, "plugin_deploy") {
+		ReleaseSiteOpLock(id)
+		t.Fatal("startup recovery failure did not preserve the site write barrier")
+	}
+}
+
+func TestMaintenanceStartFailureIsIsolatedBySite(t *testing.T) {
+	m, firstID, _, _, _ := maintenanceFixture(t)
+	result, err := m.db.Exec(`INSERT INTO websites
+		(name,domain,site_type,status,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path,file_lock_enabled,file_lock_mode,file_lock_apply_status)
+		VALUES ('second','second.test','wordpress','active','wp_second','/tmp/second','','','','','',1,'strict','ready')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	insertedID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondID := int(insertedID)
+	if err := m.Configure(secondID, true, 5, testMaintenancePassword); err != nil {
+		t.Fatal(err)
+	}
+	maintenanceUnlock(t, m, firstID)
+	maintenanceUnlock(t, m, secondID)
+	m.verifyLock = func(site *models.Website, _ string) error {
+		if site.ID == firstID {
+			return errors.New("first site remains unsafe")
+		}
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := m.Start(ctx); err == nil {
+		t.Fatal("startup did not report the failed site")
+	}
+	second, err := m.Status(secondID)
+	if err != nil || second.State != "locked" {
+		t.Fatalf("healthy site was not recovered: %+v %v", second, err)
+	}
+	if !TryAcquireSiteOpLock(secondID, "test") {
+		t.Fatal("failed site froze a recovered site")
+	}
+	ReleaseSiteOpLock(secondID)
+	if TryAcquireSiteOpLock(firstID, "test") {
+		ReleaseSiteOpLock(firstID)
+		t.Fatal("failed site lost its write barrier")
 	}
 }
 
@@ -275,6 +391,22 @@ func TestMaintenancePartialUnlockCompensatesDespiteDatabaseFailure(t *testing.T)
 	s, _ := m.Status(id)
 	if s.State != "unknown" || s.WindowID == "" {
 		t.Fatal(s)
+	}
+}
+
+func TestMaintenanceUnlockCompensationRecordsVerificationFailure(t *testing.T) {
+	m, id, _, _, _ := maintenanceFixture(t)
+	m.unlock = func(*models.Website) error { return errors.New("partial permission change") }
+	m.verifyLock = func(*models.Website, string) error { return errors.New("unsafe owner") }
+	if err := m.Unlock(id, MaintenanceRequest{RequestID: uuid.NewString(), Password: testMaintenancePassword}); err == nil {
+		t.Fatal("partial unlock unexpectedly succeeded")
+	}
+	_, state, _, err := m.load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Window == nil || state.Window.Failure != "verification" {
+		t.Fatalf("failure=%+v want verification", state.Window)
 	}
 }
 

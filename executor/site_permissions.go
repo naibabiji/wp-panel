@@ -33,11 +33,29 @@ const (
 )
 
 var (
-	disallowFileModsPattern      = regexp.MustCompile(`(?im)^\s*define\s*\(\s*['"]DISALLOW_FILE_MODS['"]\s*,\s*[^)]+\)\s*;\s*$`)
-	disallowFileModsFalsePattern = regexp.MustCompile(`(?im)^\s*define\s*\(\s*['"]DISALLOW_FILE_MODS['"]\s*,\s*false\s*\)\s*;\s*$`)
-	disallowFileModsTruePattern  = regexp.MustCompile(`(?im)^\s*define\s*\(\s*['"]DISALLOW_FILE_MODS['"]\s*,\s*true\s*\)\s*;\s*$`)
+	disallowFileModsStartPattern = regexp.MustCompile(`(?m)^\s*(?i:define)\s*\(\s*['"]DISALLOW_FILE_MODS['"]\s*,`)
+	disallowFileModsTruePattern  = regexp.MustCompile(`(?m)^\s*(?i:define)\s*\(\s*['"]DISALLOW_FILE_MODS['"]\s*,\s*(?i:true)\s*\)\s*;\s*(?:(?://|#)[^\r\n]*|/\*[^\r\n]*\*/\s*)?$`)
 	fsMethodPattern              = regexp.MustCompile(`(?im)^\s*define\s*\(\s*['"]FS_METHOD['"]\s*,\s*[^)]+\)\s*;\s*$`)
 )
+
+type wpFileModsDefinition int
+
+const (
+	wpFileModsUndefined wpFileModsDefinition = iota
+	wpFileModsLiteralTrue
+	wpFileModsConflicting
+)
+
+func classifyWPFileModsDefinition(content string) wpFileModsDefinition {
+	definitions := disallowFileModsStartPattern.FindAllStringIndex(content, -1)
+	if len(definitions) == 0 {
+		return wpFileModsUndefined
+	}
+	if len(definitions) != 1 || len(disallowFileModsTruePattern.FindAllStringIndex(content, -1)) != 1 {
+		return wpFileModsConflicting
+	}
+	return wpFileModsLiteralTrue
+}
 
 var wpFileLockCodeDirs = map[string]struct{}{
 	"mu-plugins": {},
@@ -656,22 +674,8 @@ func ApplySiteFileLockMode(site *models.Website, mode string) error {
 		return err
 	}
 
-	for _, path := range []string{
-		filepath.Join(webRoot, "wp-config.php"),
-		filepath.Join(webRoot, ".user.ini"),
-		filepath.Join(webRoot, ".htaccess"),
-		filepath.Join(webRoot, "php.ini"),
-		filepath.Join(webRoot, "wordfence-waf.php"),
-		filepath.Join(webRoot, "wp-admin"),
-		filepath.Join(webRoot, "wp-includes"),
-		filepath.Join(webRoot, "wp-content"),
-		filepath.Join(webRoot, "wp-content", "plugins"),
-		filepath.Join(webRoot, "wp-content", "themes"),
-		filepath.Join(webRoot, "wp-content", "mu-plugins"),
-	} {
-		if err := rejectSymlinkPath(path); err != nil {
-			return err
-		}
+	if err := rejectWPFileLockSymlinks(webRoot); err != nil {
+		return err
 	}
 	if err := setWPFileModsLock(webRoot, true); err != nil {
 		return err
@@ -704,6 +708,87 @@ func ApplySiteFileLockMode(site *models.Website, mode string) error {
 			mode = 0440
 		}
 		return applyOwnerMode(path, 0, gid, mode)
+	})
+}
+
+func rejectWPFileLockSymlinks(webRoot string) error {
+	for _, path := range []string{
+		filepath.Join(webRoot, "wp-config.php"),
+		filepath.Join(webRoot, ".user.ini"),
+		filepath.Join(webRoot, ".htaccess"),
+		filepath.Join(webRoot, "php.ini"),
+		filepath.Join(webRoot, "wordfence-waf.php"),
+		filepath.Join(webRoot, "wp-admin"),
+		filepath.Join(webRoot, "wp-includes"),
+		filepath.Join(webRoot, "wp-content"),
+		filepath.Join(webRoot, "wp-content", "plugins"),
+		filepath.Join(webRoot, "wp-content", "themes"),
+		filepath.Join(webRoot, "wp-content", "mu-plugins"),
+	} {
+		if err := rejectSymlinkPath(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// VerifySiteFileLockMode checks the same ownership and mode policy applied by
+// ApplySiteFileLockMode. It is intended for the end of a lock transition, not
+// for routine status polling, because it traverses the complete site tree.
+func VerifySiteFileLockMode(site *models.Website, mode string) error {
+	if site == nil {
+		return fmt.Errorf("site is nil")
+	}
+	if site.SiteType != "" && site.SiteType != "wordpress" {
+		return fmt.Errorf("only WordPress sites support file locking")
+	}
+	webRoot, err := safeSiteWebRoot(site.WebRoot)
+	if err != nil {
+		return err
+	}
+	mode, err = NormalizeFileLockMode(mode)
+	if err != nil || mode == FileLockModeLegacy {
+		return fmt.Errorf("invalid verifiable file lock mode")
+	}
+	if err := rejectWPFileLockSymlinks(webRoot); err != nil {
+		return err
+	}
+	uid, gid, err := siteUserIDs(strings.TrimSpace(site.SystemUser))
+	if err != nil {
+		return err
+	}
+	if !wpConfigFileModsLocked(webRoot) {
+		return fmt.Errorf("DISALLOW_FILE_MODS is not enabled")
+	}
+	return filepath.WalkDir(webRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		wantUID, wantGID := 0, gid
+		wantMode := os.FileMode(0444)
+		if wpFileLockPermissionWritablePath(mode, webRoot, path, d.IsDir()) {
+			wantUID = uid
+			wantMode = modeForWritablePath(d)
+		} else if d.IsDir() {
+			wantMode = 0555
+		} else if filepath.Clean(path) == filepath.Join(webRoot, "wp-config.php") {
+			wantMode = 0440
+		}
+		gotUID, gotGID, err := fileOwnerIDs(info)
+		if err != nil {
+			return err
+		}
+		if gotUID != wantUID || gotGID != wantGID || info.Mode().Perm() != wantMode {
+			return fmt.Errorf("file lock verification failed at %s", path)
+		}
+		return nil
 	})
 }
 
@@ -834,7 +919,12 @@ func wpConfigHasUserFileModsLock(webRoot string) bool {
 		return false
 	}
 	content := removeWPPanelFileLockBlock(string(data))
-	return disallowFileModsTruePattern.MatchString(content)
+	return classifyWPFileModsDefinition(content) != wpFileModsUndefined
+}
+
+func wpConfigFileModsLocked(webRoot string) bool {
+	data, err := os.ReadFile(filepath.Join(webRoot, "wp-config.php"))
+	return err == nil && classifyWPFileModsDefinition(string(data)) == wpFileModsLiteralTrue
 }
 
 func applyWPFileModsLockBlock(content string, enabled bool) (string, error) {
@@ -842,10 +932,10 @@ func applyWPFileModsLockBlock(content string, enabled bool) (string, error) {
 	if !enabled {
 		return content, nil
 	}
-	if disallowFileModsFalsePattern.MatchString(content) {
-		return "", fmt.Errorf("wp-config.php already defines DISALLOW_FILE_MODS as false")
-	}
-	if disallowFileModsPattern.MatchString(content) {
+	switch classifyWPFileModsDefinition(content) {
+	case wpFileModsConflicting:
+		return "", fmt.Errorf("wp-config.php DISALLOW_FILE_MODS must have one literal true definition")
+	case wpFileModsLiteralTrue:
 		content = fsMethodPattern.ReplaceAllString(content, "")
 		block := wpPanelFileLockBegin + "\n" +
 			"define('FS_METHOD', 'direct');\n" +

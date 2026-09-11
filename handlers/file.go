@@ -2041,6 +2041,20 @@ func removeTransferredSource(siteID int, path string) error {
 	return removeFileOrDir(path)
 }
 
+func renameTransferredPath(siteID int, src, dest string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if err := checkSiteFileLockWrite(siteID, src, info.IsDir(), true); err != nil {
+		return err
+	}
+	if err := checkSiteFileLockWrite(siteID, dest, info.IsDir(), false); err != nil {
+		return err
+	}
+	return os.Rename(src, dest)
+}
+
 func cleanupTransferredItems(items []fileTransferItem) []string {
 	failed := []string{}
 	for _, item := range items {
@@ -2102,15 +2116,25 @@ func (h *FileHandler) Move(c *gin.Context) {
 					c.JSON(http.StatusInternalServerError, models.ErrorResponse("移动失败"))
 					return
 				}
-				if err := removeFileOrDir(item.src); err != nil {
+				if err := removeTransferredSource(req.SiteID, item.src); err != nil {
 					log.Printf("移动覆盖后删除源失败 src=%s: %v", item.src, err)
-					c.JSON(http.StatusInternalServerError, models.ErrorResponse("移动未完全完成：目标已更新，但源文件未能删除: "+item.name))
+					status := http.StatusInternalServerError
+					message := "移动未完全完成：目标已更新，但源文件未能删除: " + item.name
+					if isFileLockWriteError(err) {
+						status = http.StatusLocked
+						message += "；" + err.Error()
+					}
+					c.JSON(status, models.ErrorResponse(message))
 					return
 				}
 			} else {
-				if err := os.Rename(item.src, item.dest); err != nil {
+				if err := renameTransferredPath(req.SiteID, item.src, item.dest); err != nil {
 					log.Printf("移动失败 src=%s dest=%s: %v", item.src, item.dest, err)
-					c.JSON(http.StatusInternalServerError, models.ErrorResponse("移动失败"))
+					if isFileLockWriteError(err) {
+						respondFileWriteError(c, err)
+					} else {
+						c.JSON(http.StatusInternalServerError, models.ErrorResponse("移动失败"))
+					}
 					return
 				}
 			}
@@ -2145,14 +2169,22 @@ func (h *FileHandler) Move(c *gin.Context) {
 	}
 
 	deleteFailed := []string{}
+	deleteLockBlocked := false
 	for _, item := range items {
 		if err := removeTransferredSource(req.SiteID, item.src); err != nil {
 			log.Printf("跨站移动删除源失败 src=%s: %v", item.src, err)
 			deleteFailed = append(deleteFailed, item.name)
+			deleteLockBlocked = deleteLockBlocked || isFileLockWriteError(err)
 		}
 	}
 	if len(deleteFailed) > 0 {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("移动未完全完成：目标站点已有文件副本，但源站点文件未能删除: "+joinItemNames(deleteFailed)))
+		status := http.StatusInternalServerError
+		message := "移动未完全完成：目标站点已有文件副本，但源站点文件未能删除: " + joinItemNames(deleteFailed)
+		if deleteLockBlocked {
+			status = http.StatusLocked
+			message = "移动未完全完成：目标站点已有文件副本，但源站点已恢复文件锁定，未删除源文件: " + joinItemNames(deleteFailed)
+		}
+		c.JSON(status, models.ErrorResponse(message))
 		return
 	}
 
