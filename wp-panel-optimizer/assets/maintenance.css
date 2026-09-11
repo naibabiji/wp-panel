@@ -1,0 +1,12 @@
+#wp-admin-bar-wpp-maintenance[data-state="unlocked"] > a,
+#wp-admin-bar-wpp-maintenance[data-state="unlocking"] > a { background: #985800 !important; color: #fff !important; }
+#wp-admin-bar-wpp-maintenance[data-state="warning"] > a,
+#wp-admin-bar-wpp-maintenance[data-state="unknown"] > a,
+#wp-admin-bar-wpp-maintenance[data-state="relock_failed"] > a { background: #a12622 !important; color: #fff !important; }
+#wpp-maintenance-dialog { max-width: 440px; width: calc(100% - 48px); border: 1px solid #777; border-radius: 8px; padding: 24px; }
+#wpp-maintenance-dialog::backdrop { background: #0008; }
+#wpp-maintenance-dialog input { display: block; width: 100%; margin: 8px 0 16px; }
+#wpp-maintenance-dialog input[hidden] { display: none; }
+#wpp-maintenance-dialog button { padding: 8px 12px; cursor: pointer; }
+#wpp-maintenance-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+#wpp-maintenance-message, #wpp-maintenance-warning.wpp-warning { color: #a12622; font-weight: 600; }

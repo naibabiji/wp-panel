@@ -3,7 +3,7 @@
  * Plugin Name: WP Panel Optimizer
  * Plugin URI:  https://github.com/naibabiji/wp-panel
  * Description: 与 WP Panel 面板配合，管理 FastCGI 缓存、预加载、调试模式、文章修订、内存限制等优化项。发布/更新文章自动清除缓存。
- * Version:     1.1.12
+ * Version:     1.1.13
  * Author:      WP Panel
  * Author URI:  https://blog.naibabiji.com
  * License:     GPL-2.0+
@@ -46,6 +46,7 @@ require_once __DIR__ . '/includes/trait-config.php';
 require_once __DIR__ . '/includes/trait-cache.php';
 require_once __DIR__ . '/includes/trait-settings.php';
 require_once __DIR__ . '/includes/trait-image-optimizer.php';
+require_once __DIR__ . '/includes/trait-maintenance.php';
 
 class WP_Panel_Optimizer {
 
@@ -53,8 +54,9 @@ class WP_Panel_Optimizer {
     use WPP_Optimizer_Cache_Trait;
     use WPP_Optimizer_Settings_Trait;
     use WPP_Optimizer_Image_Trait;
+    use WPP_Optimizer_Maintenance_Trait;
 
-    const VERSION = '1.1.12';
+    const VERSION = '1.1.13';
 
     const OPTION_FCACHE_ENABLED = 'wpp_optimizer_fcache_enabled';
     const OPTION_FCACHE_TTL     = 'wpp_optimizer_fcache_ttl';
@@ -80,6 +82,7 @@ class WP_Panel_Optimizer {
 
 add_action('plugins_loaded', ['WP_Panel_Optimizer', 'bootstrap'], 1);
 add_action('init', ['WP_Panel_Optimizer', 'init']);
+add_action('init', ['WP_Panel_Optimizer', 'maintenance_hooks']);
 
 add_action('wp_ajax_wpp_optimizer_verify', function() {
     check_ajax_referer('wpp_optimizer_settings');

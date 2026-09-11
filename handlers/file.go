@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/naibabiji/wp-panel/config"
+	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/i18n"
 	"github.com/naibabiji/wp-panel/models"
@@ -211,13 +212,32 @@ func fileLockSite(siteID int) *models.Website {
 		return nil
 	}
 	site := getWebsiteByID(siteID)
-	if site == nil || !site.FileLockEnabled || site.SiteType != "wordpress" {
+	if site == nil || site.SiteType != "wordpress" {
 		return nil
 	}
 	return site
 }
 
 func checkFileLockWrite(site *models.Website, targetPath string, targetIsDir, allowExecutableCleanup bool) error {
+	if site != nil && site.ID > 0 && site.SiteType == "wordpress" && database.GetDB() != nil {
+		active, err := database.MaintenanceWindowActive(database.GetDB(), site.ID)
+		if err != nil {
+			return newFileLockWriteError()
+		}
+		if active {
+			state, err := executor.DefaultMaintenanceManager().Status(site.ID)
+			if err != nil || state.State != "unlocked" {
+				return newFileLockWriteError()
+			}
+		}
+		// A long copy/extract may outlive a maintenance window. Do not keep
+		// authorizing later entries from the pre-relock Website snapshot.
+		fresh := *site
+		if err := database.GetDB().QueryRow(`SELECT file_lock_enabled,file_lock_mode FROM websites WHERE id=?`, site.ID).Scan(&fresh.FileLockEnabled, &fresh.FileLockMode); err != nil {
+			return newFileLockWriteError()
+		}
+		site = &fresh
+	}
 	if site == nil || !site.FileLockEnabled || site.SiteType != "wordpress" {
 		return nil
 	}
@@ -264,7 +284,7 @@ func checkTransferFileLock(srcSiteID, destSiteID int, items []fileTransferItem, 
 }
 
 func checkFileLockCopyDestination(site *models.Website, src, dest string) error {
-	if site == nil || !site.FileLockEnabled || site.SiteType != "wordpress" {
+	if site == nil || site.SiteType != "wordpress" {
 		return nil
 	}
 	info, err := os.Stat(src)
@@ -1994,7 +2014,7 @@ func chownTransferredPath(destSiteID int, dest string) error {
 	if site == nil {
 		return fmt.Errorf("目标网站不存在")
 	}
-	return executor.ChownSitePath(dest, site.WebRoot, site.SystemUser)
+	return executor.ChownSitePath(dest, site.WebRoot, site.SystemUser, fileCopyWriteGuard(destSiteID))
 }
 
 func removeFileOrDir(path string) error {
@@ -2006,6 +2026,19 @@ func removeFileOrDir(path string) error {
 		return os.RemoveAll(path)
 	}
 	return os.Remove(path)
+}
+
+// Copying and repairing destination permissions may outlive the source window.
+// Recheck the source immediately before deleting each transferred item.
+func removeTransferredSource(siteID int, path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if err := checkSiteFileLockWrite(siteID, path, info.IsDir(), true); err != nil {
+		return err
+	}
+	return removeFileOrDir(path)
 }
 
 func cleanupTransferredItems(items []fileTransferItem) []string {
@@ -2064,7 +2097,7 @@ func (h *FileHandler) Move(c *gin.Context) {
 	if req.SiteID == destSiteID {
 		for _, item := range items {
 			if item.conflict {
-				if err := copyFileOrDirWithOverwrite(srcBase, destBase, item.src, item.dest, true); err != nil {
+				if err := copyFileOrDirWithOverwrite(srcBase, destBase, item.src, item.dest, true, fileCopyWriteGuard(destSiteID)); err != nil {
 					log.Printf("移动覆盖失败 src=%s dest=%s: %v", item.src, item.dest, err)
 					c.JSON(http.StatusInternalServerError, models.ErrorResponse("移动失败"))
 					return
@@ -2088,7 +2121,7 @@ func (h *FileHandler) Move(c *gin.Context) {
 
 	copied := []fileTransferItem{}
 	for _, item := range items {
-		if err := copyFileOrDirWithOverwrite(srcBase, destBase, item.src, item.dest, item.conflict); err != nil {
+		if err := copyFileOrDirWithOverwrite(srcBase, destBase, item.src, item.dest, item.conflict, fileCopyWriteGuard(destSiteID)); err != nil {
 			cleanupFailed := cleanupTransferredItems(copied)
 			log.Printf("跨站移动复制失败 src=%s dest=%s: %v", item.src, item.dest, err)
 			msg := "移动失败"
@@ -2113,7 +2146,7 @@ func (h *FileHandler) Move(c *gin.Context) {
 
 	deleteFailed := []string{}
 	for _, item := range items {
-		if err := removeFileOrDir(item.src); err != nil {
+		if err := removeTransferredSource(req.SiteID, item.src); err != nil {
 			log.Printf("跨站移动删除源失败 src=%s: %v", item.src, err)
 			deleteFailed = append(deleteFailed, item.name)
 		}
@@ -2148,7 +2181,7 @@ func (h *FileHandler) Copy(c *gin.Context) {
 	}
 
 	for _, item := range items {
-		if err := copyFileOrDirWithOverwrite(srcBase, destBase, item.src, item.dest, item.conflict); err != nil {
+		if err := copyFileOrDirWithOverwrite(srcBase, destBase, item.src, item.dest, item.conflict, fileCopyWriteGuard(destSiteID)); err != nil {
 			log.Printf("复制失败 src=%s dest=%s: %v", item.src, item.dest, err)
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("复制失败"))
 			return
@@ -2172,7 +2205,11 @@ func copyFileOrDir(srcBase, destBase, src, dest string) error {
 	return copyFileOrDirWithOverwrite(srcBase, destBase, src, dest, false)
 }
 
-func copyFileOrDirWithOverwrite(srcBase, destBase, src, dest string, overwrite bool) error {
+func fileCopyWriteGuard(siteID int) func(string, bool) error {
+	return func(path string, dir bool) error { return checkSiteFileLockWrite(siteID, path, dir, false) }
+}
+
+func copyFileOrDirWithOverwrite(srcBase, destBase, src, dest string, overwrite bool, guards ...func(string, bool) error) error {
 	if !isPathWithin(srcBase, src) || !isPathWithin(destBase, dest) {
 		return fmt.Errorf("path outside base")
 	}
@@ -2182,6 +2219,11 @@ func copyFileOrDirWithOverwrite(srcBase, destBase, src, dest string, overwrite b
 	info, err := os.Stat(src)
 	if err != nil {
 		return err
+	}
+	for _, guard := range guards {
+		if err := guard(dest, info.IsDir()); err != nil {
+			return err
+		}
 	}
 	if info.IsDir() {
 		if isSamePath(src, dest) || isPathWithin(src, dest) {
@@ -2210,7 +2252,7 @@ func copyFileOrDirWithOverwrite(srcBase, destBase, src, dest string, overwrite b
 			return err
 		}
 		for _, e := range entries {
-			if err := copyFileOrDirWithOverwrite(srcBase, destBase, filepath.Join(src, e.Name()), filepath.Join(dest, e.Name()), overwrite); err != nil {
+			if err := copyFileOrDirWithOverwrite(srcBase, destBase, filepath.Join(src, e.Name()), filepath.Join(dest, e.Name()), overwrite, guards...); err != nil {
 				return err
 			}
 		}
@@ -2221,16 +2263,16 @@ func copyFileOrDirWithOverwrite(srcBase, destBase, src, dest string, overwrite b
 			return fmt.Errorf("cannot overwrite directory with file")
 		}
 		if overwrite {
-			return copyFileOverwrite(src, dest, info.Mode().Perm())
+			return copyFileOverwrite(src, dest, info.Mode().Perm(), guards...)
 		}
 		return fmt.Errorf("destination exists")
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	return copyFileNoOverwrite(src, dest, info.Mode().Perm())
+	return copyFileNoOverwrite(src, dest, info.Mode().Perm(), guards...)
 }
 
-func copyFileNoOverwrite(src, dest string, mode os.FileMode) error {
+func copyFileNoOverwrite(src, dest string, mode os.FileMode, guards ...func(string, bool) error) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -2253,6 +2295,11 @@ func copyFileNoOverwrite(src, dest string, mode os.FileMode) error {
 	if err := out.Close(); err != nil {
 		return err
 	}
+	for _, guard := range guards {
+		if err := guard(dest, false); err != nil {
+			return err
+		}
+	}
 	if err := os.Chmod(dest, mode); err != nil {
 		return err
 	}
@@ -2260,7 +2307,7 @@ func copyFileNoOverwrite(src, dest string, mode os.FileMode) error {
 	return nil
 }
 
-func copyFileOverwrite(src, dest string, mode os.FileMode) error {
+func copyFileOverwrite(src, dest string, mode os.FileMode, guards ...func(string, bool) error) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -2285,6 +2332,11 @@ func copyFileOverwrite(src, dest string, mode os.FileMode) error {
 	}
 	if err := tmp.Close(); err != nil {
 		return err
+	}
+	for _, guard := range guards {
+		if err := guard(dest, false); err != nil {
+			return err
+		}
 	}
 	if err := os.Chmod(tmpPath, mode); err != nil {
 		return err

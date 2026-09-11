@@ -1,4 +1,25 @@
 {
+  "maintenance": {
+    "title": "Temporary WordPress maintenance",
+    "help": "Customers can unlock from the WordPress Admin Bar. Manual extensions: 1/3/5 minutes, password required across each 30-minute boundary. Expiry or panel restart relocks the site and may interrupt an update.",
+    "enable": "Allow WordPress administrators to request temporary unlock",
+    "duration": "Initial duration (minutes)",
+    "password": "Site maintenance password",
+    "password_help": "12–72 bytes. Leave blank to retain the existing password. Configuration cannot change while a window is active.",
+    "relock": "Relock now",
+    "locked": "Locked",
+    "unlocked": "Temporarily unlocked",
+    "unlocked_permanent": "File lock disabled",
+    "unlocking": "Unlocking",
+    "relocking": "Relocking",
+    "relock_failed": "Relock failed; retries at least 60 seconds apart",
+    "unknown": "State unknown",
+    "state_unknown": "State unknown. Refresh or contact the administrator.",
+    "operation_unavailable": "Operation unavailable. Relock any active window first and check the password requirements.",
+    "verification_failed": "Verification failed",
+    "password_required": "Maintenance password required",
+    "lock_mode_required": "Apply Standard or Strict file lock before enabling maintenance."
+  },
   "app": {
     "tagline": "WordPress server management"
   },
@@ -1792,7 +1813,7 @@
     "xmlrpc_help": "Disabled by default. When enabled, /xmlrpc.php can be accessed.",
     "clear_cache": "Clear Cache",
     "plugin_installed": "✓ Plugin installed",
-    "file_lock_enabled_notice": "This site is currently locked. To save optimizations that modify wp-config.php or install/update the companion plugin, unlock it first.",
+    "file_lock_enabled_notice": "This site is locked. The panel can update its installed bundled companion while keeping it read-only. Unlock first for initial installation, identity repair, or optimizations that modify wp-config.php.",
     "enable_lock": "Enable lock",
     "unlock": "Unlock",
     "fastcgi_cache_how_it_works": "How FastCGI Cache Works",

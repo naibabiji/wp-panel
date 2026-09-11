@@ -135,14 +135,20 @@ func main() {
 	}
 	// 先更新插件包，确保后续迁移复制的是最新版本
 	executor.EnsureCacheHelperPlugin(PluginFS)
-	executor.AutoDeployPluginUpdates(PluginFS)
-	// 异步补装图片优化功能需要的 PHP 扩展和系统二进制，不阻塞启动；装好之后
-	// 相应功能会在下次使用时自动感知到，不需要面板重启。
-	executor.GoSafe(executor.EnsurePHPExifExtension)
-	executor.GoSafe(executor.EnsureImageBatchBinaries)
 	if err := database.RunUpgrades(); err != nil {
 		log.Fatalf("数据库升级失败: %v", err)
 	}
+	// CLI 短任务不是服务重启，不能收回另一个主进程管理的维护窗口。
+	if !*resetAdmin && *resetPass == "" && !*refreshWhitelist && !*unbanAll && *fileBackup == "" && !*runAutoBackup {
+		maintenanceCtx, stopMaintenance := context.WithCancel(context.Background())
+		defer stopMaintenance()
+		// Start 同步完成第一轮回锁，然后才启动周期检查；必须先于站点写入和 worker。
+		executor.DefaultMaintenanceManager().Start(maintenanceCtx)
+	}
+	executor.AutoDeployPluginUpdates(PluginFS)
+	// 异步补装不应排在维护窗口启动恢复之前。
+	executor.GoSafe(executor.EnsurePHPExifExtension)
+	executor.GoSafe(executor.EnsureImageBatchBinaries)
 	if err := executor.NewAIDevelopmentAccessService(database.GetDB()).ReconcilePending(context.Background()); err != nil {
 		log.Printf("AI 开发授权中间状态恢复失败（相关网站将继续保持操作门禁）: %v", err)
 	}

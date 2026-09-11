@@ -24,6 +24,10 @@ import (
 var panelVersion string
 
 var i18nKeys = []string{
+	"maintenance.locked", "maintenance.unlocked", "maintenance.unlocked_permanent", "maintenance.unlocking",
+	"maintenance.relocking", "maintenance.relock_failed", "maintenance.unknown", "maintenance.state_unknown",
+	"maintenance.operation_unavailable", "maintenance.verification_failed", "maintenance.password_required",
+	"maintenance.lock_mode_required",
 	"auth.connect_failed",
 	"auth.login_failed",
 	"auth.missing_credentials",
@@ -1342,6 +1346,9 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	pluginGroup := r.Group(prefix)
 	pluginGroup.Use(middleware.RandomPath(suffix))
 	pluginGroup.GET("/api/sites/find", cacheHelper.FindByDomain)
+	maintenanceHandler := &handlers.MaintenanceHandler{}
+	pluginGroup.GET("/api/sites/maintenance", maintenanceHandler.Plugin)
+	pluginGroup.POST("/api/sites/maintenance/:action", maintenanceHandler.Plugin)
 	pluginGroup.GET("/api/sites/ssl/export", cacheHelper.ExportSSLCertificate)
 	pluginGroup.DELETE("/api/sites/clear-cache", cacheHelper.ClearByDomain)
 	pluginGroup.PUT("/api/sites/cache-settings", cacheHelper.UpdateCacheSettings)
@@ -1357,6 +1364,9 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 		c.Next()
 	})
 	protected.Use(middleware.CSRF())
+	protected.GET("/api/websites/:id/maintenance", maintenanceHandler.Panel)
+	protected.PUT("/api/websites/:id/maintenance", maintenanceHandler.Panel)
+	protected.POST("/api/websites/:id/maintenance/relock", maintenanceHandler.Panel)
 
 	// Adminer has its own CSRF tokens. Keep it behind both panel authentication
 	// layers, but do not apply the panel API CSRF header requirement to its HTML forms.

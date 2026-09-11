@@ -475,6 +475,10 @@ func executeDeleteSite(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "任务参数类型错误"}
 	}
 	site := payload.Site
+	if !TryAcquireSiteOpLock(site.ID, "delete") {
+		return TaskResult{Success: false, Message: "网站维护操作尚未结束"}
+	}
+	defer ReleaseSiteOpLock(site.ID)
 	if blocked, err := database.IsAIDevelopmentAccessBlocking(context.Background(), database.GetDB(), int64(site.ID)); err != nil {
 		return TaskResult{Success: false, Message: "检查 AI 开发授权失败"}
 	} else if blocked {
@@ -789,6 +793,10 @@ func executeUpdateDomains(task *Task) TaskResult {
 	}
 
 	site := payload.Site
+	if !TryAcquireSiteOpLock(site.ID, "domains") {
+		return TaskResult{Success: false, Message: "网站维护操作尚未结束"}
+	}
+	defer ReleaseSiteOpLock(site.ID)
 	if blocked, err := database.IsAIDevelopmentAccessBlocking(context.Background(), database.GetDB(), int64(site.ID)); err != nil {
 		return TaskResult{Success: false, Message: "检查 AI 开发授权失败"}
 	} else if blocked {

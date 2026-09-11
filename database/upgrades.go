@@ -696,6 +696,11 @@ var upgrades = []Upgrade{
 				ON website_ai_development_access(status, operation)`,
 		},
 	},
+	{
+		Version:     "1.0.58",
+		Description: "新增站点临时维护安全配置与可恢复窗口",
+		Func:        ensureMaintenanceSecurityColumn,
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

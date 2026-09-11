@@ -59,6 +59,10 @@ func (s *siteMigrationStore) acquireLock(ctx context.Context, migrationSiteID st
 		if *siteID <= 0 {
 			return errors.New("invalid site migration lock site")
 		}
+		if !TryAcquireSiteOpLock(*siteID, "migration_reservation") {
+			return errSiteMigrationBusy
+		}
+		defer ReleaseSiteOpLock(*siteID)
 		nullableSiteID = *siteID
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO site_migration_locks

@@ -1,10 +1,39 @@
 package executor
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestDeployPluginPermissionsPreparedBeforePublish(t *testing.T) {
+	plugins := t.TempDir()
+	dest := filepath.Join(plugins, pluginDirName)
+	if err := deployPluginDirectory(plugins, dest, map[string][]byte{"old.php": []byte("old")}); err != nil {
+		t.Fatal(err)
+	}
+	prepared := false
+	err := deployPluginDirectoryPrepared(plugins, dest, map[string][]byte{"new.php": []byte("new")}, func(stage string) error {
+		prepared = true
+		if _, err := os.Stat(filepath.Join(stage, "new.php")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(dest, "old.php")); err != nil {
+			t.Fatal("old plugin removed before permissions prepared")
+		}
+		return errors.New("injected permission failure")
+	})
+	if err == nil || !prepared {
+		t.Fatal("permission failure ignored")
+	}
+	if _, err := os.Stat(filepath.Join(dest, "old.php")); err != nil {
+		t.Fatal("old plugin not retained")
+	}
+	if _, err := os.Stat(filepath.Join(dest, "new.php")); !os.IsNotExist(err) {
+		t.Fatal("unprepared directory published")
+	}
+}
 
 func readFileString(t *testing.T, path string) string {
 	t.Helper()

@@ -89,6 +89,9 @@ trait WPP_Optimizer_Settings_Trait {
     }
 
     public static function render_settings() {
+		if (current_user_can('manage_options') && !is_multisite()) {
+			echo '<p><button type="button" class="button" data-wpp-maintenance-open>WP Panel: ' . esc_html(strpos(determine_locale(), 'zh') === 0 ? '文件保护 / 临时维护' : 'File protection / maintenance') . '</button></p>';
+		}
         $cfg = self::load_config();
         $panelUrl = self::get_panel_url();
         $apiKey = self::get_api_key();

@@ -94,64 +94,112 @@ func AutoDeployPluginUpdates(pluginFS embed.FS) {
 	}
 
 	db := database.GetDB()
-	rows, err := db.Query(`SELECT id, web_root, system_user, domain, file_lock_enabled FROM websites
+	rows, err := db.Query(`SELECT id FROM websites
 		WHERE site_type = 'wordpress' AND plugin_api_key != ''`)
 	if err != nil {
 		return
 	}
-	defer rows.Close()
-
-	var updated int
+	var ids []int
 	for rows.Next() {
-		var id, fileLockEnabled int
-		var webRoot, systemUser, domain string
-		if err := rows.Scan(&id, &webRoot, &systemUser, &domain, &fileLockEnabled); err != nil {
+		var id int
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	var updated int
+	for _, id := range ids {
+		if !TryAcquireSiteOpLock(id, "companion_upgrade") {
 			continue
 		}
-		if fileLockEnabled == 1 {
-			continue
-		}
-
-		pluginsDir := filepath.Join(webRoot, "wp-content", "plugins")
-		pluginDir := filepath.Join(pluginsDir, pluginDirName)
-
-		// 版本标记一致就直接跳过，避免多余的系统权限调用（chown）
-		if pluginDeployedVersion(pluginDir) == version {
-			continue
-		}
-
-		if err := deployPluginDirectory(pluginsDir, pluginDir, srcFiles); err != nil {
+		changed, err := deploySiteCompanionOwned(id, srcFiles, version)
+		ReleaseSiteOpLock(id)
+		if err != nil {
 			log.Printf("[插件自动更新] 部署失败 site=%d: %v", id, err)
 			continue
 		}
-		InstallPluginPermissions(domain, systemUser, pluginDir)
-		updated++
+		if changed {
+			updated++
+		}
 	}
 	if updated > 0 {
 		log.Printf("[插件自动更新] 已更新 %d 个站点的配套插件", updated)
 	}
 }
 
-// DeployPluginToSite 把面板内置的最新插件版本部署到单个站点，供网站详情页
-// "安装配套插件"按钮使用。跟 AutoDeployPluginUpdates 复用同一套整目录原子部署
-// 逻辑——早期单文件插件时代遗留的"从 /www/server/panel/packages/wp-panel-
-// optimizer.php 读一份 .php 复制过去"的实现，在插件拆分成 includes/trait-*.php
-// 多文件之后就已经不可用了（EnsureCacheHelperPlugin 启动时还会主动清理掉那个
-// 单文件参照副本），这里改成跟自动更新完全一致的路径，不再维护第二套部署逻辑。
-func DeployPluginToSite(webRoot string) error {
-	srcFiles, version, err := embeddedPluginFilesWithVersion(cacheHelperPluginFS)
+// DeploySiteCompanionPluginOwned is restricted to the embedded companion. The
+// caller owns the shared site lock for the entire deployment/identity workflow.
+func DeploySiteCompanionPluginOwned(siteID int) error {
+	files, version, err := embeddedPluginFilesWithVersion(cacheHelperPluginFS)
+	if err != nil || len(files) == 0 {
+		return fmt.Errorf("embedded companion unavailable")
+	}
+	_, err = deploySiteCompanionOwned(siteID, files, version)
+	return err
+}
+
+func deploySiteCompanionOwned(siteID int, files map[string][]byte, version string) (bool, error) {
+	manager := DefaultMaintenanceManager()
+	site, state, _, err := manager.load(siteID)
 	if err != nil {
-		return fmt.Errorf("读取内嵌插件源码失败: %w", err)
+		return false, err
 	}
-	if len(srcFiles) == 0 {
-		return fmt.Errorf("内嵌插件源码为空")
+	if site.SiteType != "wordpress" || state.Window != nil || manager.isUncertain(siteID) || site.FileLockApplyStatus == "applying" || site.FileLockApplyStatus == "failed" {
+		return false, ErrMaintenanceBusy
 	}
-	pluginsDir := filepath.Join(webRoot, "wp-content", "plugins")
+	if err := manager.conflicts(siteID); err != nil {
+		return false, err
+	}
+	root, err := safeSiteWebRoot(site.WebRoot)
+	if err != nil {
+		return false, err
+	}
+	pluginsDir := filepath.Join(root, "wp-content", "plugins")
 	pluginDir := filepath.Join(pluginsDir, pluginDirName)
-	if pluginDeployedVersion(pluginDir) == version {
-		return nil
+	for _, path := range []string{site.WebRoot, filepath.Join(root, "wp-content"), pluginsDir, pluginDir} {
+		if err := rejectSymlinkPath(path); err != nil {
+			return false, err
+		}
 	}
-	return deployPluginDirectory(pluginsDir, pluginDir, srcFiles)
+	if site.FileLockEnabled && site.FileLockApplyStatus != "ready" {
+		return false, ErrMaintenanceUnknown
+	}
+	if pluginDeployedVersion(pluginDir) == version {
+		return false, nil
+	}
+	var prepare func(string) error
+	if site.FileLockEnabled {
+		_, gid, err := siteUserIDs(site.SystemUser)
+		if err != nil {
+			return false, err
+		}
+		prepare = func(staging string) error { return sealCompanionDirectory(staging, gid) }
+	}
+	if err := deployPluginDirectoryPrepared(pluginsDir, pluginDir, files, prepare); err != nil {
+		return false, err
+	}
+	if !site.FileLockEnabled {
+		InstallPluginPermissions(site.Domain, site.SystemUser, pluginDir)
+	}
+	return true, nil
+}
+
+// Publish-ready permissions: no whole-site unlock and no writable published
+// interval. Uses the same owner/mode primitive as the existing file lock.
+func sealCompanionDirectory(dir string, gid int) error {
+	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("companion symlink rejected")
+		}
+		mode := os.FileMode(0444)
+		if entry.IsDir() {
+			mode = 0555
+		}
+		return applyOwnerMode(path, 0, gid, mode)
+	})
 }
 
 // PluginNeedsUpdate 供网站详情页判断该站点已部署的插件是否落后于面板内置版本。
@@ -256,6 +304,10 @@ func pluginDeployedVersion(pluginDir string) string {
 // 的状态；⑤ 成功后删除备份目录。临时/备份目录名以 "." 开头，WordPress 的 get_plugins()
 // 会跳过这类条目，不会被误当成一个插件出现在后台插件列表里。
 func deployPluginDirectory(pluginsDir, pluginDir string, srcFiles map[string][]byte) error {
+	return deployPluginDirectoryPrepared(pluginsDir, pluginDir, srcFiles, nil)
+}
+
+func deployPluginDirectoryPrepared(pluginsDir, pluginDir string, srcFiles map[string][]byte, prepare func(string) error) error {
 	recoverOrCleanupStalePluginDirs(pluginsDir, pluginDir)
 
 	suffix := NewCacheKey()
@@ -265,6 +317,12 @@ func deployPluginDirectory(pluginsDir, pluginDir string, srcFiles map[string][]b
 	if err := writePluginFiles(stagingDir, srcFiles); err != nil {
 		os.RemoveAll(stagingDir)
 		return fmt.Errorf("构建临时目录失败: %w", err)
+	}
+	if prepare != nil {
+		if err := prepare(stagingDir); err != nil {
+			os.RemoveAll(stagingDir)
+			return fmt.Errorf("准备插件权限失败: %w", err)
+		}
 	}
 
 	targetExists := false

@@ -2034,15 +2034,40 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
-	if site.FileLockEnabled {
-		c.JSON(http.StatusLocked, models.ErrorResponse(fileLockBlockedMessage))
+	if !executor.TryAcquireSiteOpLock(id, "plugin_deploy") {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "maintenance.operation_unavailable")))
+		return
+	}
+	defer executor.ReleaseSiteOpLock(id)
+	// Reload under the operation lock; a previous permission task may have
+	// completed after the first lookup.
+	site = getWebsiteByID(id)
+	if site == nil {
+		c.Status(http.StatusNotFound)
 		return
 	}
 	domain, webRoot, systemUser := site.Domain, site.WebRoot, site.SystemUser
 
 	pluginDir := filepath.Join(webRoot, "wp-content", "plugins", "wp-panel-optimizer")
-	if err := executor.DeployPluginToSite(webRoot); err != nil {
+	if site.FileLockEnabled {
+		// The exception upgrades an existing companion; installation and
+		// credential repair keep their existing explicit-unlock prerequisite.
+		var key string
+		err := database.GetDB().QueryRow(`SELECT plugin_api_key FROM websites WHERE id=?`, id).Scan(&key)
+		_, statErr := os.Stat(filepath.Join(pluginDir, "wp-panel-optimizer.php"))
+		if err != nil || statErr != nil || !executor.SitePluginIdentityAvailable(domain, key) {
+			c.JSON(http.StatusLocked, models.ErrorResponse(fileLockBlockedMessage))
+			return
+		}
+	}
+	if err := executor.DeploySiteCompanionPluginOwned(id); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("部署插件文件失败: "+err.Error()))
+		return
+	}
+	if site.FileLockEnabled {
+		// Trusted upgrade only: preserve the existing identity and never run the
+		// normal installer chown against the read-only published directory.
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.TE(c.Request, "website.installed"), "path": "wp-content/plugins/wp-panel-optimizer/"}))
 		return
 	}
 
@@ -2145,6 +2170,11 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
 		return
 	}
+	if !executor.TryAcquireSiteOpLock(id, "wp_settings") {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "maintenance.operation_unavailable")))
+		return
+	}
+	defer executor.ReleaseSiteOpLock(id)
 	lock := wpOptimizationSiteLock(id)
 	lock.Lock()
 	defer lock.Unlock()
@@ -2293,6 +2323,11 @@ func (h *WebsiteHandler) SetWPUpdateChecks(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.invalid_site_id")))
 		return
 	}
+	if !executor.TryAcquireSiteOpLock(id, "wp_update_settings") {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "maintenance.operation_unavailable")))
+		return
+	}
+	defer executor.ReleaseSiteOpLock(id)
 	lock := wpOptimizationSiteLock(id)
 	lock.Lock()
 	defer lock.Unlock()
@@ -2356,6 +2391,11 @@ func (h *WebsiteHandler) SetFileEditingProtection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.invalid_site_id")))
 		return
 	}
+	if !executor.TryAcquireSiteOpLock(id, "file_edit_settings") {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "maintenance.operation_unavailable")))
+		return
+	}
+	defer executor.ReleaseSiteOpLock(id)
 	lock := wpOptimizationSiteLock(id)
 	lock.Lock()
 	defer lock.Unlock()
@@ -2534,6 +2574,11 @@ func (h *WebsiteHandler) ReinstallWordPress(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
 		return
 	}
+	if !executor.TryAcquireSiteOpLock(id, "reinstall") {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "maintenance.operation_unavailable")))
+		return
+	}
+	defer executor.ReleaseSiteOpLock(id)
 
 	var domain, webRoot, systemUser, dbName, dbUser, siteType string
 	var fileLockEnabled int
@@ -2843,6 +2888,11 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 	if req.TTL > 86400 {
 		req.TTL = 86400
 	}
+	if !executor.TryAcquireSiteOpLock(site.ID, "wp_settings") {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "maintenance.operation_unavailable")))
+		return
+	}
+	defer executor.ReleaseSiteOpLock(site.ID)
 	lock := wpOptimizationSiteLock(site.ID)
 	lock.Lock()
 	defer lock.Unlock()

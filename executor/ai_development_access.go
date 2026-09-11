@@ -104,6 +104,10 @@ func (s *AIDevelopmentAccessService) ReconcilePending(ctx context.Context) error
 }
 
 func (s *AIDevelopmentAccessService) Enable(ctx context.Context, site AIDevelopmentSite, publicKey, fingerprint, requestedBy string, force bool) error {
+	if !TryAcquireSiteOpLock(int(site.ID), "ai_development") {
+		return ErrMaintenanceBusy
+	}
+	defer ReleaseSiteOpLock(int(site.ID))
 	if err := validateAIDevelopmentSite(site); err != nil {
 		return err
 	}

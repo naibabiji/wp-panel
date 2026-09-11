@@ -79,6 +79,12 @@ func executeRestoreBackup(task *Task) TaskResult {
 	if site == nil {
 		return TaskResult{Success: false, Message: "恢复失败: 网站不存在"}
 	}
+	if payload.UpdateBackupPath == "" {
+		if !TryAcquireSiteOpLock(site.ID, "restore") {
+			return TaskResult{Success: false, Message: "网站维护操作尚未结束"}
+		}
+		defer ReleaseSiteOpLock(site.ID)
+	}
 	if blocked, err := database.IsAIDevelopmentAccessBlocking(context.Background(), database.GetDB(), int64(site.ID)); err != nil {
 		return TaskResult{Success: false, Message: "检查 AI 开发授权失败"}
 	} else if blocked {

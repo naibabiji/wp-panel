@@ -490,7 +490,7 @@ func PreviewSiteFileLock(site *models.Website, mode string) (FileLockPreview, er
 	return preview, nil
 }
 
-func ChownSitePath(path, allowedRoot, systemUser string) error {
+func ChownSitePath(path, allowedRoot, systemUser string, guards ...func(string, bool) error) error {
 	path = filepath.Clean(strings.TrimSpace(path))
 	allowedRoot = filepath.Clean(strings.TrimSpace(allowedRoot))
 	systemUser = strings.TrimSpace(systemUser)
@@ -525,11 +525,21 @@ func ChownSitePath(path, allowedRoot, systemUser string) error {
 		return err
 	}
 	if !info.IsDir() {
+		for _, guard := range guards {
+			if err := guard(path, false); err != nil {
+				return err
+			}
+		}
 		return os.Chown(path, uid, gid)
 	}
-	return filepath.Walk(path, func(p string, _ os.FileInfo, err error) error {
+	return filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
+		}
+		for _, guard := range guards {
+			if err := guard(p, info.IsDir()); err != nil {
+				return err
+			}
 		}
 		return os.Chown(p, uid, gid)
 	})
@@ -551,6 +561,10 @@ func executeSetFileLock(task *Task) TaskResult {
 			return TaskResult{Success: false, Message: "该网站已开启 AI 开发访问，请先关闭授权"}
 		}
 	}
+	if !TryAcquireSiteOpLock(site.ID, "file_lock") {
+		return TaskResult{Success: false, Message: "网站维护窗口或操作尚未结束，请先重新锁定"}
+	}
+	defer ReleaseSiteOpLock(site.ID)
 	if _, err := database.GetDB().Exec(
 		"UPDATE websites SET file_lock_apply_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		FileLockApplyStatusApplying, site.ID,

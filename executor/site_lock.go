@@ -1,6 +1,10 @@
 package executor
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/naibabiji/wp-panel/database"
+)
 
 var (
 	wpSiteOpMu   sync.Mutex
@@ -17,7 +21,24 @@ func TryAcquireSiteOpLock(siteID int, reason string) bool {
 	if _, busy := wpSiteOpBusy[siteID]; busy {
 		return false
 	}
+	if db := database.GetDB(); db != nil {
+		active, err := database.MaintenanceWindowActive(db, siteID)
+		if err != nil || active {
+			return false
+		}
+	}
 	wpSiteOpBusy[siteID] = reason
+	return true
+}
+
+// Only the maintenance executor can enter its own persisted window.
+func tryAcquireMaintenanceOp(siteID int) bool {
+	wpSiteOpMu.Lock()
+	defer wpSiteOpMu.Unlock()
+	if _, busy := wpSiteOpBusy[siteID]; busy {
+		return false
+	}
+	wpSiteOpBusy[siteID] = "maintenance"
 	return true
 }
 
