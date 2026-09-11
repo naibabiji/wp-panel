@@ -706,6 +706,11 @@ var upgrades = []Upgrade{
 		Description: "新增 WordPress 轻量异常监控状态",
 		SQL:         []string{wpAnomalySchema},
 	},
+	{
+		Version:     "1.0.60",
+		Description: "扩展 WordPress 内容与关键设置异常监控基线",
+		Func:        ensureWPAnomalyContentColumns,
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

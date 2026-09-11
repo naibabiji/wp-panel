@@ -20,7 +20,9 @@ trait WPP_Optimizer_Anomaly_Monitor_Trait {
             $roles = array_values($user->roles);
             sort($roles, SORT_STRING);
             $admins[] = ['id'=>(int)$user->ID, 'login'=>$user->user_login, 'roles'=>$roles,
-                'email_hash'=>hash_hmac('sha256', strtolower(trim($user->user_email)), wp_salt('auth'))];
+                'email_hash'=>hash_hmac('sha256', strtolower(trim($user->user_email)), wp_salt('auth')),
+                'display_hash'=>hash_hmac('sha256', (string)$user->display_name, wp_salt('auth')),
+                'credential_hash'=>hash_hmac('sha256', (string)$user->user_pass, wp_salt('auth'))];
             $current[(int)$user->ID] = true;
         }
         // Only former administrators are looked up: no full subscriber inventory.
@@ -33,10 +35,47 @@ trait WPP_Optimizer_Anomaly_Monitor_Trait {
             $removed[] = ['id'=>$id, 'deleted'=>$user === false];
         }
         $count = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'post' AND post_status = 'publish' AND post_date_gmt > %s AND post_date_gmt <= %s",
+            "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type IN ('post','page') AND post_status = 'publish' AND post_date_gmt > %s AND post_date_gmt <= %s",
             gmdate('Y-m-d H:i:s', max($since, $until - DAY_IN_SECONDS)), gmdate('Y-m-d H:i:s', $until)
         ));
         if ($wpdb->last_error !== '' || $count === null) return ['error'=>'sample_failed'];
-        return ['admins'=>$admins, 'removed'=>$removed, 'post_count'=>(int)$count];
+        $content = [];
+        $last_id = 0;
+        do {
+            $rows = $wpdb->get_results($wpdb->prepare(
+                "SELECT ID,post_type,post_status,post_title,post_content,post_excerpt,post_name FROM {$wpdb->posts} WHERE post_type IN ('post','page') AND post_status='publish' AND ID > %d ORDER BY ID ASC LIMIT 251",
+                $last_id
+            ), ARRAY_A);
+            if ($wpdb->last_error !== '' || !is_array($rows)) return ['error'=>'sample_failed'];
+            foreach ($rows as $row) {
+                $encoded = wp_json_encode([
+                    (int)$row['ID'], (string)$row['post_type'], (string)$row['post_status'],
+                    (string)$row['post_title'], (string)$row['post_content'],
+                    (string)$row['post_excerpt'], (string)$row['post_name'],
+                ]);
+                if ($encoded === false) return ['error'=>'sample_failed'];
+                $content[] = [
+                    'id'=>(int)$row['ID'],
+                    'type'=>(string)$row['post_type'],
+                    'fingerprint'=>hash_hmac('sha256', $encoded, wp_salt('auth')),
+                ];
+                $last_id = (int)$row['ID'];
+                if (count($content) > 5000) return ['error'=>'sample_failed'];
+            }
+        } while (count($rows) === 251);
+        return [
+            'version'=>2,
+            'admins'=>$admins,
+            'removed'=>$removed,
+            'post_count'=>(int)$count,
+            'content'=>$content,
+            'options'=>[
+                'siteurl'=>(string)get_option('siteurl', ''),
+                'home'=>(string)get_option('home', ''),
+                'users_can_register'=>(bool)get_option('users_can_register', false),
+                'default_role'=>(string)get_option('default_role', 'subscriber'),
+                'front_page_id'=>(int)get_option('page_on_front', 0),
+            ],
+        ];
     }
 }

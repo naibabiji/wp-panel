@@ -360,6 +360,12 @@ func alertLabel(key string) string {
 		return "WordPress 管理员变化"
 	case "alert_wp_post_volume":
 		return "WordPress 文章发布量异常"
+	case "alert_wp_content_change":
+		return "WordPress 存量内容异常"
+	case "alert_wp_content_volume":
+		return "WordPress 内容修改量异常"
+	case "alert_wp_setting_change":
+		return "WordPress 关键设置变化"
 	case "alert_cpu":
 		return "CPU 高负载"
 	case "alert_memory":

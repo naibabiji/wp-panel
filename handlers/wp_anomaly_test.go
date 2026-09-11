@@ -45,6 +45,13 @@ func TestWPAnomalyHandlerScopeAndCSRF(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"threshold":5`) || !strings.Contains(w.Body.String(), `"enabled":false`) {
 		t.Fatal(w.Code, w.Body.String())
 	}
+	if _, err := database.GetDB().Exec(`INSERT INTO site_wp_anomaly_state(site_id,admins) VALUES(1,?) ON CONFLICT(site_id) DO UPDATE SET admins=excluded.admins`, `[{"id":1,"login":"owner","roles":["administrator"],"email_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","credential_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}]`); err != nil {
+		t.Fatal(err)
+	}
+	w = call("GET", "/websites/1/anomaly-monitor", "", false)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"login":"owner"`) || strings.Contains(w.Body.String(), "_hash") {
+		t.Fatal("sensitive anomaly baseline exposed", w.Code, w.Body.String())
+	}
 	if w = call("PUT", "/websites/1/anomaly-monitor", `{"enabled":false,"threshold":10}`, false); w.Code != 403 {
 		t.Fatal(w.Code)
 	}

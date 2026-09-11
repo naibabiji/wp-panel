@@ -19,6 +19,11 @@ func TestWPAnomalyPreservesLegacySecurityAlerts(t *testing.T) {
 	if strings.Contains(code, `x-model="rules.alert_wp_sqli_probe"`) {
 		t.Fatal("SQL switch must move to firewall")
 	}
+	for _, alertType := range []string{"alert_wp_content_change", "alert_wp_content_volume", "alert_wp_setting_change"} {
+		if !strings.Contains(code, alertType) {
+			t.Fatalf("new anomaly alert label missing: %s", alertType)
+		}
+	}
 	firewall := string(renderPage(t, "firewall.html", "firewall_content"))
 	if !strings.Contains(firewall, `x-data="sqliSettings()"`) || !strings.Contains(firewall, "alert_wp_sqli_probe:String(this.enabled)") {
 		t.Fatal("firewall SQL settings missing")

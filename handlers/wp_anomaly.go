@@ -13,6 +13,35 @@ import (
 
 type WPAnomalyHandler struct{ Monitor *executor.WPAnomalyMonitor }
 
+type wpAnomalyPublicAdmin struct {
+	ID    int      `json:"id"`
+	Login string   `json:"login"`
+	Roles []string `json:"roles"`
+}
+
+type wpAnomalyPublicState struct {
+	Enabled       bool                   `json:"enabled"`
+	Threshold     int                    `json:"threshold"`
+	BaselineSince int64                  `json:"baseline_since"`
+	LastSuccess   int64                  `json:"last_success"`
+	NextCheck     int64                  `json:"next_check"`
+	LastError     string                 `json:"last_error"`
+	Admins        []wpAnomalyPublicAdmin `json:"admins"`
+	PostCount     int                    `json:"post_count"`
+}
+
+func publicWPAnomalyState(state executor.WPAnomalyState) wpAnomalyPublicState {
+	result := wpAnomalyPublicState{
+		Enabled: state.Enabled, Threshold: state.Threshold, BaselineSince: state.BaselineSince,
+		LastSuccess: state.LastSuccess, NextCheck: state.NextCheck, LastError: state.LastError,
+		Admins: []wpAnomalyPublicAdmin{}, PostCount: state.PostCount,
+	}
+	for _, admin := range state.Admins {
+		result.Admins = append(result.Admins, wpAnomalyPublicAdmin{ID: admin.ID, Login: admin.Login, Roles: admin.Roles})
+	}
+	return result
+}
+
 func (h *WPAnomalyHandler) Handle(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	id, err := strconv.Atoi(c.Param("id"))
@@ -39,7 +68,7 @@ func (h *WPAnomalyHandler) Handle(c *gin.Context) {
 		var state executor.WPAnomalyState
 		state, err = h.Monitor.Status(id)
 		if err == nil {
-			c.JSON(200, models.SuccessResponse(state))
+			c.JSON(200, models.SuccessResponse(publicWPAnomalyState(state)))
 			return
 		}
 	}
