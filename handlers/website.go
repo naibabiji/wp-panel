@@ -47,6 +47,34 @@ func wpOptimizationSiteLock(id int) *sync.Mutex {
 	return value.(*sync.Mutex)
 }
 
+type wpOptimizationConfig struct {
+	disableUpdates     bool
+	disableFileEditing bool
+	debugEnabled       bool
+	debugDisplay       *bool
+	postRevisions      int
+	memoryLimit        string
+}
+
+func applyWPOptimizationConfig(site *models.Website, cfg wpOptimizationConfig) (bool, func() error, error) {
+	if site.SiteType != "wordpress" {
+		return false, nil, nil
+	}
+	debugDisplay := executor.WPDebugDisplayEnabled(site.WebRoot)
+	if cfg.debugDisplay != nil {
+		debugDisplay = *cfg.debugDisplay
+	}
+	rollback, err := executor.ApplyWPOptimizationsReversible(site.WebRoot, executor.WPOptimizations{
+		DisableUpdates:     cfg.disableUpdates,
+		DisableFileEditing: cfg.disableFileEditing,
+		WPDebug:            cfg.debugEnabled,
+		WPDebugDisplay:     debugDisplay,
+		WPPostRevisions:    cfg.postRevisions,
+		WPMemoryLimit:      cfg.memoryLimit,
+	})
+	return debugDisplay, rollback, err
+}
+
 type siteLogFileInfo struct {
 	Name       string    `json:"name"`
 	Size       int64     `json:"size"`
@@ -2260,27 +2288,18 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 		wpDebug = 1
 	}
 
-	wpDebugDisplay := false
-	var rollbackWPConfig func() error
-	if site.SiteType == "wordpress" {
-		wpDebugDisplay = executor.WPDebugDisplayEnabled(site.WebRoot)
-		if req.WPDebugDisplay != nil {
-			wpDebugDisplay = *req.WPDebugDisplay
-		}
-		opts := executor.WPOptimizations{
-			DisableUpdates:     req.DisableWPUpdates,
-			DisableFileEditing: req.DisableFileEditing,
-			WPDebug:            req.WPDebugEnabled,
-			WPDebugDisplay:     wpDebugDisplay,
-			WPPostRevisions:    req.WPPostRevisions,
-			WPMemoryLimit:      req.WPMemoryLimit,
-		}
-		rollbackWPConfig, err = executor.ApplyWPOptimizationsReversible(site.WebRoot, opts)
-		if err != nil {
-			recordHandlerOperationLog("wp_optimizations", domain, "failed", "写入 wp-config.php 失败: "+err.Error())
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败：无法更新 wp-config.php"))
-			return
-		}
+	wpDebugDisplay, rollbackWPConfig, err := applyWPOptimizationConfig(site, wpOptimizationConfig{
+		disableUpdates:     req.DisableWPUpdates,
+		disableFileEditing: req.DisableFileEditing,
+		debugEnabled:       req.WPDebugEnabled,
+		debugDisplay:       req.WPDebugDisplay,
+		postRevisions:      req.WPPostRevisions,
+		memoryLimit:        req.WPMemoryLimit,
+	})
+	if err != nil {
+		recordHandlerOperationLog("wp_optimizations", domain, "failed", "写入 wp-config.php 失败: "+err.Error())
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败：无法更新 wp-config.php"))
+		return
 	}
 
 	updateQuery := `UPDATE websites SET
@@ -2943,28 +2962,18 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 		wpDebug2 = 1
 	}
 
-	wpDebugDisplay := false
-	var rollbackWPConfig func() error
-	var err error
-	if site.SiteType == "wordpress" {
-		wpDebugDisplay = executor.WPDebugDisplayEnabled(site.WebRoot)
-		if req.WPDebugDisplay != nil {
-			wpDebugDisplay = *req.WPDebugDisplay
-		}
-		opts := executor.WPOptimizations{
-			DisableUpdates:     req.DisableWPUpdates,
-			DisableFileEditing: req.DisableFileEditing,
-			WPDebug:            req.WPDebugEnabled,
-			WPDebugDisplay:     wpDebugDisplay,
-			WPPostRevisions:    req.WPPostRevisions,
-			WPMemoryLimit:      req.WPMemoryLimit,
-		}
-		rollbackWPConfig, err = executor.ApplyWPOptimizationsReversible(site.WebRoot, opts)
-		if err != nil {
-			recordHandlerOperationLog("wp_optimizations", req.Domain, "failed", "写入 wp-config.php 失败: "+err.Error())
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败：无法更新 wp-config.php"))
-			return
-		}
+	wpDebugDisplay, rollbackWPConfig, err := applyWPOptimizationConfig(site, wpOptimizationConfig{
+		disableUpdates:     req.DisableWPUpdates,
+		disableFileEditing: req.DisableFileEditing,
+		debugEnabled:       req.WPDebugEnabled,
+		debugDisplay:       req.WPDebugDisplay,
+		postRevisions:      req.WPPostRevisions,
+		memoryLimit:        req.WPMemoryLimit,
+	})
+	if err != nil {
+		recordHandlerOperationLog("wp_optimizations", req.Domain, "failed", "写入 wp-config.php 失败: "+err.Error())
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败：无法更新 wp-config.php"))
+		return
 	}
 
 	_, err = db.Exec(`UPDATE websites SET
