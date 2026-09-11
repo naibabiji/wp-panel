@@ -23,7 +23,7 @@ func TestDeployPluginPermissionsPreparedBeforePublish(t *testing.T) {
 			t.Fatal("old plugin removed before permissions prepared")
 		}
 		return errors.New("injected permission failure")
-	})
+	}, nil)
 	if err == nil || !prepared {
 		t.Fatal("permission failure ignored")
 	}

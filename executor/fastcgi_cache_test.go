@@ -2,6 +2,7 @@ package executor
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,106 @@ func installStubNginx(t *testing.T) {
 		t.Fatalf("write stub nginx: %v", err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestCompanionAutomaticUpgradeRequiresExistingPluginAndActiveSite(t *testing.T) {
+	openTestDB(t)
+	root := t.TempDir()
+	pluginsDir := filepath.Join(root, "wp-content", "plugins")
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	result, err := database.GetDB().Exec(`INSERT INTO websites
+		(name,domain,status,site_type,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path,plugin_api_key)
+		VALUES ('site','site.test','active','wordpress','nobody',?,'','','','','','managed-key')`, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string][]byte{"wp-panel-optimizer.php": []byte("new")}
+	changed, err := deploySiteCompanionOwned(int(id), files, "new-version", true)
+	if err != nil || changed {
+		t.Fatalf("deleted plugin auto deployment = %v, %v", changed, err)
+	}
+	if _, err := os.Lstat(filepath.Join(pluginsDir, pluginDirName)); !os.IsNotExist(err) {
+		t.Fatalf("deleted plugin was installed again: %v", err)
+	}
+
+	pluginDir := filepath.Join(pluginsDir, pluginDirName)
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mainFile := filepath.Join(pluginDir, pluginDirName+".php")
+	target := filepath.Join(t.TempDir(), "plugin.php")
+	if err := os.WriteFile(target, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, mainFile); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := deploySiteCompanionOwned(int(id), files, "new-version", true); err == nil || changed {
+		t.Fatalf("symlink plugin auto deployment = %v, %v", changed, err)
+	}
+	if err := os.Remove(mainFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(mainFile, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := deploySiteCompanionOwned(int(id), files, "new-version", true); err == nil || changed {
+		t.Fatalf("directory plugin entry auto deployment = %v, %v", changed, err)
+	}
+	if err := os.Remove(mainFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mainFile, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{"paused", "migrated"} {
+		if _, err := database.GetDB().Exec(`UPDATE websites SET status=? WHERE id=?`, status, id); err != nil {
+			t.Fatal(err)
+		}
+		if changed, err := deploySiteCompanionOwned(int(id), files, "new-version", true); err == nil || changed {
+			t.Fatalf("%s plugin auto deployment = %v, %v", status, changed, err)
+		}
+	}
+	content, err := os.ReadFile(mainFile)
+	if err != nil || string(content) != "old" {
+		t.Fatalf("inactive-site plugin changed: %q, %v", content, err)
+	}
+}
+
+func TestCompanionAutomaticUpgradeStopsWhenPluginRemovedBeforePublish(t *testing.T) {
+	pluginsDir := t.TempDir()
+	pluginDir := filepath.Join(pluginsDir, pluginDirName)
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, pluginDirName+".php"), []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := deployPluginDirectoryPrepared(pluginsDir, pluginDir, map[string][]byte{pluginDirName + ".php": []byte("new")}, nil, func() error {
+		if err := os.RemoveAll(pluginDir); err != nil {
+			return err
+		}
+		return requireExistingCompanion(pluginDir)
+	})
+	if !errors.Is(err, errCompanionRemovedBeforePublish) {
+		t.Fatalf("publish error = %v", err)
+	}
+	if _, err := os.Lstat(pluginDir); !os.IsNotExist(err) {
+		t.Fatalf("removed plugin was published again: %v", err)
+	}
+	entries, err := os.ReadDir(pluginsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("staging directory was not cleaned: %#v", entries)
+	}
 }
 
 func insertRegenTestWebsite(t *testing.T, domain, nginxConfPath, status string) int {

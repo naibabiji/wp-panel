@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -24,6 +25,8 @@ import (
 )
 
 const pluginDirName = "wp-panel-optimizer"
+
+var errCompanionRemovedBeforePublish = errors.New("installed companion was removed before publish")
 
 const cacheConfPath = "/etc/nginx/conf.d/wppanel-cache.conf"
 
@@ -84,8 +87,9 @@ func EnsureCacheHelperPlugin(pluginFS embed.FS) {
 	})
 }
 
-// AutoDeployPluginUpdates 扫描所有已安装配套插件的 WordPress 站点，
-// 若 plugin_api_key 非空且站点上的插件目录内容落后于面板内置版本，则自动更新。
+// AutoDeployPluginUpdates 扫描所有运行中且仍安装配套插件的 WordPress 站点，
+// 不论插件是否启用，只要目录内容落后于面板内置版本就自动更新。
+// plugin_api_key 只用于筛选受管站点，不能作为插件仍然存在的证据。
 // 每次面板启动时调用，实现插件无感自动升级。
 func AutoDeployPluginUpdates(pluginFS embed.FS) {
 	srcFiles, version, err := embeddedPluginFilesWithVersion(pluginFS)
@@ -95,7 +99,7 @@ func AutoDeployPluginUpdates(pluginFS embed.FS) {
 
 	db := database.GetDB()
 	rows, err := db.Query(`SELECT id FROM websites
-		WHERE site_type = 'wordpress' AND plugin_api_key != ''`)
+		WHERE site_type = 'wordpress' AND status = 'active' AND plugin_api_key != ''`)
 	if err != nil {
 		return
 	}
@@ -112,7 +116,7 @@ func AutoDeployPluginUpdates(pluginFS embed.FS) {
 		if !TryAcquireSiteOpLock(id, "companion_upgrade") {
 			continue
 		}
-		changed, err := deploySiteCompanionOwned(id, srcFiles, version)
+		changed, err := deploySiteCompanionOwned(id, srcFiles, version, true)
 		ReleaseSiteOpLock(id)
 		if err != nil {
 			log.Printf("[插件自动更新] 部署失败 site=%d: %v", id, err)
@@ -134,17 +138,17 @@ func DeploySiteCompanionPluginOwned(siteID int) error {
 	if err != nil || len(files) == 0 {
 		return fmt.Errorf("embedded companion unavailable")
 	}
-	_, err = deploySiteCompanionOwned(siteID, files, version)
+	_, err = deploySiteCompanionOwned(siteID, files, version, false)
 	return err
 }
 
-func deploySiteCompanionOwned(siteID int, files map[string][]byte, version string) (bool, error) {
+func deploySiteCompanionOwned(siteID int, files map[string][]byte, version string, requireExisting bool) (bool, error) {
 	manager := DefaultMaintenanceManager()
 	site, state, _, err := manager.load(siteID)
 	if err != nil {
 		return false, err
 	}
-	if site.SiteType != "wordpress" || state.Window != nil || manager.isUncertain(siteID) || site.FileLockApplyStatus == "applying" || site.FileLockApplyStatus == "failed" {
+	if site.SiteType != "wordpress" || site.Status != models.StatusActive || state.Window != nil || manager.isUncertain(siteID) || site.FileLockApplyStatus == "applying" || site.FileLockApplyStatus == "failed" {
 		return false, ErrMaintenanceBusy
 	}
 	if err := manager.conflicts(siteID); err != nil {
@@ -158,6 +162,13 @@ func deploySiteCompanionOwned(siteID int, files map[string][]byte, version strin
 	pluginDir := filepath.Join(pluginsDir, pluginDirName)
 	for _, path := range []string{site.WebRoot, filepath.Join(root, "wp-content"), pluginsDir, pluginDir} {
 		if err := rejectSymlinkPath(path); err != nil {
+			return false, err
+		}
+	}
+	if requireExisting {
+		if err := requireExistingCompanion(pluginDir); errors.Is(err, errCompanionRemovedBeforePublish) {
+			return false, nil
+		} else if err != nil {
 			return false, err
 		}
 	}
@@ -175,13 +186,31 @@ func deploySiteCompanionOwned(siteID int, files map[string][]byte, version strin
 		}
 		prepare = func(staging string) error { return sealCompanionDirectory(staging, gid) }
 	}
-	if err := deployPluginDirectoryPrepared(pluginsDir, pluginDir, files, prepare); err != nil {
+	var beforePublish func() error
+	if requireExisting {
+		beforePublish = func() error { return requireExistingCompanion(pluginDir) }
+	}
+	if err := deployPluginDirectoryPrepared(pluginsDir, pluginDir, files, prepare, beforePublish); err != nil {
+		if errors.Is(err, errCompanionRemovedBeforePublish) {
+			return false, nil
+		}
 		return false, err
 	}
 	if !site.FileLockEnabled {
 		InstallPluginPermissions(site.Domain, site.SystemUser, pluginDir)
 	}
 	return true, nil
+}
+
+func requireExistingCompanion(pluginDir string) error {
+	info, err := os.Lstat(filepath.Join(pluginDir, pluginDirName+".php"))
+	if os.IsNotExist(err) {
+		return errCompanionRemovedBeforePublish
+	}
+	if err != nil || !info.Mode().IsRegular() {
+		return fmt.Errorf("installed companion entry unavailable")
+	}
+	return nil
 }
 
 // Publish-ready permissions: no whole-site unlock and no writable published
@@ -304,10 +333,10 @@ func pluginDeployedVersion(pluginDir string) string {
 // 的状态；⑤ 成功后删除备份目录。临时/备份目录名以 "." 开头，WordPress 的 get_plugins()
 // 会跳过这类条目，不会被误当成一个插件出现在后台插件列表里。
 func deployPluginDirectory(pluginsDir, pluginDir string, srcFiles map[string][]byte) error {
-	return deployPluginDirectoryPrepared(pluginsDir, pluginDir, srcFiles, nil)
+	return deployPluginDirectoryPrepared(pluginsDir, pluginDir, srcFiles, nil, nil)
 }
 
-func deployPluginDirectoryPrepared(pluginsDir, pluginDir string, srcFiles map[string][]byte, prepare func(string) error) error {
+func deployPluginDirectoryPrepared(pluginsDir, pluginDir string, srcFiles map[string][]byte, prepare func(string) error, beforePublish func() error) error {
 	recoverOrCleanupStalePluginDirs(pluginsDir, pluginDir)
 
 	suffix := NewCacheKey()
@@ -322,6 +351,12 @@ func deployPluginDirectoryPrepared(pluginsDir, pluginDir string, srcFiles map[st
 		if err := prepare(stagingDir); err != nil {
 			os.RemoveAll(stagingDir)
 			return fmt.Errorf("准备插件权限失败: %w", err)
+		}
+	}
+	if beforePublish != nil {
+		if err := beforePublish(); err != nil {
+			os.RemoveAll(stagingDir)
+			return err
 		}
 	}
 
