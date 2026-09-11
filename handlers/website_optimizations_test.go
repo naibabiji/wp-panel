@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/naibabiji/wp-panel/database"
@@ -86,6 +88,227 @@ func TestSaveWPOptimizationsPreservesDisplayWhenFieldIsMissing(t *testing.T) {
 	got := string(updated)
 	if strings.Count(got, "WP_DEBUG_DISPLAY") != 1 || !strings.Contains(got, "define('WP_DEBUG_DISPLAY', true);") {
 		t.Fatalf("missing field did not preserve display state:\n%s", got)
+	}
+}
+
+func TestSaveWPOptimizationsDoesNotUpdateDatabaseWhenWPConfigWriteFails(t *testing.T) {
+	setupWebsiteOptimizationsTestDB(t)
+	var webRoot string
+	if err := database.GetDB().QueryRow(`SELECT web_root FROM websites WHERE id=1`).Scan(&webRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(webRoot, "wp-config.php")); err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.PUT("/api/websites/:id/wp-optimizations", (&WebsiteHandler{}).SaveWPOptimizations)
+	body := `{"fcache_enabled":false,"fcache_ttl":300,"disable_wp_updates":false,"disable_file_editing":false,"xmlrpc_enabled":false,"wp_debug_enabled":true,"wp_post_revisions":-1,"wp_memory_limit":""}`
+	req := httptest.NewRequest(http.MethodPut, "/api/websites/1/wp-optimizations", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var enabled int
+	if err := database.GetDB().QueryRow(`SELECT wp_debug_enabled FROM websites WHERE id=1`).Scan(&enabled); err != nil {
+		t.Fatal(err)
+	}
+	if enabled != 0 {
+		t.Fatalf("wp_debug_enabled=%d, want unchanged 0", enabled)
+	}
+}
+
+func TestSaveWPOptimizationsRestoresWPConfigWhenDatabaseUpdateFails(t *testing.T) {
+	setupWebsiteOptimizationsTestDB(t)
+	var webRoot string
+	if err := database.GetDB().QueryRow(`SELECT web_root FROM websites WHERE id=1`).Scan(&webRoot); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(webRoot, "wp-config.php")
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.GetDB().Exec(`CREATE TRIGGER reject_optimization_update BEFORE UPDATE ON websites BEGIN SELECT RAISE(FAIL, 'test failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.PUT("/api/websites/:id/wp-optimizations", (&WebsiteHandler{}).SaveWPOptimizations)
+	body := `{"fcache_enabled":false,"fcache_ttl":300,"disable_wp_updates":false,"disable_file_editing":false,"xmlrpc_enabled":false,"wp_debug_enabled":true,"wp_post_revisions":-1,"wp_memory_limit":""}`
+	req := httptest.NewRequest(http.MethodPut, "/api/websites/1/wp-optimizations", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("wp-config.php was not restored:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestPluginOptimizationsFailureKeepsDatabaseAndRestoresConfig(t *testing.T) {
+	t.Run("wp-config write failure keeps database", func(t *testing.T) {
+		setupWebsiteOptimizationsTestDB(t)
+		var webRoot string
+		if err := database.GetDB().QueryRow(`SELECT web_root FROM websites WHERE id=1`).Scan(&webRoot); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.GetDB().Exec(`UPDATE websites SET plugin_api_key='secret' WHERE id=1`); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(filepath.Join(webRoot, "wp-config.php")); err != nil {
+			t.Fatal(err)
+		}
+		rec := performPluginOptimizationRequest(t)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		var enabled int
+		if err := database.GetDB().QueryRow(`SELECT wp_debug_enabled FROM websites WHERE id=1`).Scan(&enabled); err != nil {
+			t.Fatal(err)
+		}
+		if enabled != 0 {
+			t.Fatalf("wp_debug_enabled=%d, want unchanged 0", enabled)
+		}
+	})
+
+	t.Run("database failure restores wp-config", func(t *testing.T) {
+		setupWebsiteOptimizationsTestDB(t)
+		var webRoot string
+		if err := database.GetDB().QueryRow(`SELECT web_root FROM websites WHERE id=1`).Scan(&webRoot); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.GetDB().Exec(`UPDATE websites SET plugin_api_key='secret' WHERE id=1`); err != nil {
+			t.Fatal(err)
+		}
+		configPath := filepath.Join(webRoot, "wp-config.php")
+		before, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.GetDB().Exec(`CREATE TRIGGER reject_plugin_optimization_update BEFORE UPDATE ON websites BEGIN SELECT RAISE(FAIL, 'test failure'); END`); err != nil {
+			t.Fatal(err)
+		}
+		rec := performPluginOptimizationRequest(t)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		after, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != string(before) {
+			t.Fatalf("wp-config.php was not restored:\nbefore:\n%s\nafter:\n%s", before, after)
+		}
+	})
+}
+
+func TestSaveWPOptimizationsAllowsPHPWithoutWPConfig(t *testing.T) {
+	setupWebsiteOptimizationsTestDB(t)
+	var webRoot string
+	if err := database.GetDB().QueryRow(`SELECT web_root FROM websites WHERE id=1`).Scan(&webRoot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.GetDB().Exec(`UPDATE websites SET site_type='php' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(webRoot, "wp-config.php")); err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.PUT("/api/websites/:id/wp-optimizations", (&WebsiteHandler{}).SaveWPOptimizations)
+	body := `{"fcache_enabled":false,"fcache_ttl":600,"disable_wp_updates":false,"disable_file_editing":false,"xmlrpc_enabled":false,"wp_debug_enabled":false,"wp_post_revisions":-1,"wp_memory_limit":""}`
+	req := httptest.NewRequest(http.MethodPut, "/api/websites/1/wp-optimizations", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var ttl int
+	if err := database.GetDB().QueryRow(`SELECT fastcgi_cache_ttl FROM websites WHERE id=1`).Scan(&ttl); err != nil {
+		t.Fatal(err)
+	}
+	if ttl != 600 {
+		t.Fatalf("fastcgi_cache_ttl=%d, want 600", ttl)
+	}
+}
+
+func performPluginOptimizationRequest(t *testing.T) *httptest.ResponseRecorder {
+	t.Helper()
+	router := gin.New()
+	router.PUT("/api/sites/optimizer-settings", (&CacheHelperHandler{}).UpdateOptimizerSettings)
+	body := `{"domain":"example.com","enabled":false,"ttl":300,"disable_wp_updates":false,"disable_file_editing":false,"wp_debug_enabled":true,"wp_post_revisions":-1,"wp_memory_limit":""}`
+	req := httptest.NewRequest(http.MethodPut, "/api/sites/optimizer-settings", strings.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-WP-Panel-Key", "secret")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestWPOptimizationEndpointsSerializeBySite(t *testing.T) {
+	setupWebsiteOptimizationsTestDB(t)
+	if _, err := database.GetDB().Exec(`UPDATE websites SET plugin_api_key='secret' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	lock := wpOptimizationSiteLock(1)
+	lock.Lock()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- performPluginOptimizationRequest(t)
+	}()
+	select {
+	case <-done:
+		lock.Unlock()
+		t.Fatal("plugin optimization request bypassed the site lock")
+	case <-time.After(50 * time.Millisecond):
+	}
+	lock.Unlock()
+	select {
+	case rec := <-done:
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("plugin optimization request did not continue after unlocking")
+	}
+}
+
+func TestWPOptimizationRollbackFailureIsReportedAndAudited(t *testing.T) {
+	setupWebsiteOptimizationsTestDB(t)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	respondWPOptimizationFailure(
+		context,
+		func() error { return errors.New("restore denied") },
+		"example.com",
+		http.StatusConflict,
+		"保存冲突",
+		errors.New("database conflict"),
+	)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "wp-config.php 恢复失败") {
+		t.Fatalf("response does not report rollback failure: %s", recorder.Body.String())
+	}
+	var status, message string
+	if err := database.GetDB().QueryRow(`SELECT status, message FROM operation_logs ORDER BY id DESC LIMIT 1`).Scan(&status, &message); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || !strings.Contains(message, "rollback failed: restore denied") {
+		t.Fatalf("status=%q message=%q", status, message)
 	}
 }
 

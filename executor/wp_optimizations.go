@@ -62,6 +62,27 @@ func ApplyWPOptimizations(webRoot string, opts WPOptimizations) error {
 	return os.WriteFile(configPath, []byte(content), 0600)
 }
 
+// ApplyWPOptimizationsReversible applies the wp-config.php change and returns
+// a function that restores the exact previous contents. Existing file permissions
+// remain unchanged; the captured mode is used only if the file must be recreated.
+func ApplyWPOptimizationsReversible(webRoot string, opts WPOptimizations) (func() error, error) {
+	configPath := filepath.Join(webRoot, "wp-config.php")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := ApplyWPOptimizations(webRoot, opts); err != nil {
+		return nil, err
+	}
+	return func() error {
+		return os.WriteFile(configPath, data, info.Mode().Perm())
+	}, nil
+}
+
 // SetWPFileEditingDisabled updates only the WordPress dashboard file editor
 // setting without rewriting unrelated optimization constants.
 func SetWPFileEditingDisabled(webRoot string, disabled bool) error {

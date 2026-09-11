@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/naibabiji/wp-panel/config"
@@ -38,6 +39,13 @@ const websiteCols = `id, name, domain, aliases, status, system_user, web_root, d
 		log_retention_days, cdn_realip_enabled, php_fpm_max_children, expires_at, created_at, updated_at`
 
 const fileLockBlockedMessage = "该站点已开启文件锁定，请先解除文件锁定后再执行此维护操作"
+
+var wpOptimizationSiteLocks sync.Map // siteID(int) -> *sync.Mutex
+
+func wpOptimizationSiteLock(id int) *sync.Mutex {
+	value, _ := wpOptimizationSiteLocks.LoadOrStore(id, &sync.Mutex{})
+	return value.(*sync.Mutex)
+}
 
 type siteLogFileInfo struct {
 	Name       string    `json:"name"`
@@ -2137,6 +2145,9 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的网站ID"))
 		return
 	}
+	lock := wpOptimizationSiteLock(id)
+	lock.Lock()
+	defer lock.Unlock()
 	site := getWebsiteByID(id)
 	if site == nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
@@ -2169,7 +2180,6 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 	if req.FCacheTTL > 86400 {
 		req.FCacheTTL = 86400
 	}
-
 	db := database.GetDB()
 
 	// 检查 FastCGI / XML-RPC 配置是否变化，决定是否重载 Nginx
@@ -2207,6 +2217,29 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 		wpDebug = 1
 	}
 
+	wpDebugDisplay := false
+	var rollbackWPConfig func() error
+	if site.SiteType == "wordpress" {
+		wpDebugDisplay = executor.WPDebugDisplayEnabled(site.WebRoot)
+		if req.WPDebugDisplay != nil {
+			wpDebugDisplay = *req.WPDebugDisplay
+		}
+		opts := executor.WPOptimizations{
+			DisableUpdates:     req.DisableWPUpdates,
+			DisableFileEditing: req.DisableFileEditing,
+			WPDebug:            req.WPDebugEnabled,
+			WPDebugDisplay:     wpDebugDisplay,
+			WPPostRevisions:    req.WPPostRevisions,
+			WPMemoryLimit:      req.WPMemoryLimit,
+		}
+		rollbackWPConfig, err = executor.ApplyWPOptimizationsReversible(site.WebRoot, opts)
+		if err != nil {
+			recordHandlerOperationLog("wp_optimizations", domain, "failed", "写入 wp-config.php 失败: "+err.Error())
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败：无法更新 wp-config.php"))
+			return
+		}
+	}
+
 	updateQuery := `UPDATE websites SET
 		fastcgi_cache_enabled = ?, fastcgi_cache_ttl = ?,
 		disable_wp_updates = ?, disable_file_editing = ?, xmlrpc_enabled = ?,
@@ -2224,40 +2257,18 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 	}
 	result, err := db.Exec(updateQuery, updateArgs...)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败"))
+		respondWPOptimizationFailure(c, rollbackWPConfig, domain, http.StatusInternalServerError, "保存失败", err)
 		return
 	}
 	if req.ExpectedWPUpdates != nil {
-		affected, err := result.RowsAffected()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败"))
+		affected, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			respondWPOptimizationFailure(c, rollbackWPConfig, domain, http.StatusInternalServerError, "保存失败", rowsErr)
 			return
 		}
 		if affected == 0 {
-			c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "website.optimization_conflict")))
+			respondWPOptimizationFailure(c, rollbackWPConfig, domain, http.StatusConflict, i18n.TE(c.Request, "website.optimization_conflict"), fmt.Errorf("concurrent update conflict"))
 			return
-		}
-	}
-
-	// 更新 wp-config.php
-	var webRoot string
-	db.QueryRow("SELECT web_root FROM websites WHERE id = ?", id).Scan(&webRoot)
-	wpDebugDisplay := false
-	if webRoot != "" {
-		wpDebugDisplay = executor.WPDebugDisplayEnabled(webRoot)
-		if req.WPDebugDisplay != nil {
-			wpDebugDisplay = *req.WPDebugDisplay
-		}
-		opts := executor.WPOptimizations{
-			DisableUpdates:     req.DisableWPUpdates,
-			DisableFileEditing: req.DisableFileEditing,
-			WPDebug:            req.WPDebugEnabled,
-			WPDebugDisplay:     wpDebugDisplay,
-			WPPostRevisions:    req.WPPostRevisions,
-			WPMemoryLimit:      req.WPMemoryLimit,
-		}
-		if err := executor.ApplyWPOptimizations(webRoot, opts); err != nil {
-			log.Printf("ApplyWPOptimizations 失败 (site %d): %v", id, err)
 		}
 	}
 
@@ -2282,6 +2293,9 @@ func (h *WebsiteHandler) SetWPUpdateChecks(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.invalid_site_id")))
 		return
 	}
+	lock := wpOptimizationSiteLock(id)
+	lock.Lock()
+	defer lock.Unlock()
 	site := getWebsiteByID(id)
 	if site == nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "website.not_found")))
@@ -2342,6 +2356,9 @@ func (h *WebsiteHandler) SetFileEditingProtection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.invalid_site_id")))
 		return
 	}
+	lock := wpOptimizationSiteLock(id)
+	lock.Lock()
+	defer lock.Unlock()
 	site := getWebsiteByID(id)
 	if site == nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "website.not_found")))
@@ -2680,7 +2697,6 @@ func (h *CacheHelperHandler) UpdateCacheSettings(c *gin.Context) {
 	if req.TTL > 86400 {
 		req.TTL = 86400
 	}
-
 	db := database.GetDB()
 	_, err := db.Exec("UPDATE websites SET fastcgi_cache_ttl = ? WHERE (domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%') ESCAPE '\\')", req.TTL, req.Domain, escapeLike(req.Domain))
 	if err != nil {
@@ -2827,6 +2843,18 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 	if req.TTL > 86400 {
 		req.TTL = 86400
 	}
+	lock := wpOptimizationSiteLock(site.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	site = getWebsiteByID(site.ID)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+	if site.FileLockEnabled {
+		c.JSON(http.StatusLocked, models.ErrorResponse(fileLockBlockedMessage))
+		return
+	}
 
 	db := database.GetDB()
 
@@ -2852,24 +2880,11 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 		wpDebug2 = 1
 	}
 
-	_, err := db.Exec(`UPDATE websites SET
-		fastcgi_cache_enabled = ?, fastcgi_cache_ttl = ?,
-		disable_wp_updates = ?, disable_file_editing = ?,
-		wp_debug_enabled = ?, wp_post_revisions = ?, wp_memory_limit = ?
-		WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%') ESCAPE '\'`,
-		fcEnabled, req.TTL, disableUpdates, disableEditing, wpDebug2, req.WPPostRevisions, req.WPMemoryLimit, req.Domain, escapeLike(req.Domain))
-	if err != nil {
-		log.Printf("UpdateOptimizerSettings DB 更新失败 (site %s): %v", req.Domain, err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败: "+err.Error()))
-		return
-	}
-
-	// 更新 wp-config.php
-	var webRoot string
-	db.QueryRow("SELECT web_root FROM websites WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%') ESCAPE '\\'", req.Domain, escapeLike(req.Domain)).Scan(&webRoot)
 	wpDebugDisplay := false
-	if webRoot != "" {
-		wpDebugDisplay = executor.WPDebugDisplayEnabled(webRoot)
+	var rollbackWPConfig func() error
+	var err error
+	if site.SiteType == "wordpress" {
+		wpDebugDisplay = executor.WPDebugDisplayEnabled(site.WebRoot)
 		if req.WPDebugDisplay != nil {
 			wpDebugDisplay = *req.WPDebugDisplay
 		}
@@ -2881,9 +2896,24 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 			WPPostRevisions:    req.WPPostRevisions,
 			WPMemoryLimit:      req.WPMemoryLimit,
 		}
-		if err := executor.ApplyWPOptimizations(webRoot, opts); err != nil {
-			log.Printf("ApplyWPOptimizations 失败 (site %s): %v", req.Domain, err)
+		rollbackWPConfig, err = executor.ApplyWPOptimizationsReversible(site.WebRoot, opts)
+		if err != nil {
+			recordHandlerOperationLog("wp_optimizations", req.Domain, "failed", "写入 wp-config.php 失败: "+err.Error())
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败：无法更新 wp-config.php"))
+			return
 		}
+	}
+
+	_, err = db.Exec(`UPDATE websites SET
+		fastcgi_cache_enabled = ?, fastcgi_cache_ttl = ?,
+		disable_wp_updates = ?, disable_file_editing = ?,
+		wp_debug_enabled = ?, wp_post_revisions = ?, wp_memory_limit = ?
+		WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%') ESCAPE '\'`,
+		fcEnabled, req.TTL, disableUpdates, disableEditing, wpDebug2, req.WPPostRevisions, req.WPMemoryLimit, req.Domain, escapeLike(req.Domain))
+	if err != nil {
+		log.Printf("UpdateOptimizerSettings DB 更新失败 (site %s): %v", req.Domain, err)
+		respondWPOptimizationFailure(c, rollbackWPConfig, req.Domain, http.StatusInternalServerError, "保存失败: "+err.Error(), err)
+		return
 	}
 
 	// FastCGI 配置变化时重载 Nginx
@@ -2924,6 +2954,19 @@ func wpOptimizationsLogMessage(fcacheEnabled bool, fcacheTTL int, disableUpdates
 		parts = append(parts, "PHP内存限制="+strings.TrimSpace(memoryLimit))
 	}
 	return strings.Join(parts, "；")
+}
+
+func respondWPOptimizationFailure(c *gin.Context, rollback func() error, target string, status int, message string, cause error) {
+	detail := cause.Error()
+	if rollback != nil {
+		if err := rollback(); err != nil {
+			detail += "; wp-config.php rollback failed: " + err.Error()
+			message += "；wp-config.php 恢复失败，请立即检查网站配置"
+			status = http.StatusInternalServerError
+		}
+	}
+	recordHandlerOperationLog("wp_optimizations", target, "failed", detail)
+	c.JSON(status, models.ErrorResponse(message))
 }
 
 func (h *WebsiteHandler) SetLogRetention(c *gin.Context) {
