@@ -17,7 +17,7 @@ async function scenario(failure, sameID) {
     const element = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
     const requests = [];
     const context = {
-        window: {WPPMaintenance:{url:'/mock',nonce:'fixture',text:{unlock:'unlock',warning:'warning'}}},
+        window: {WPPMaintenance:{url:'/mock',nonce:'fixture',text:{unlock:'unlock',warning:'warning',verification_frozen:'Paused for 10 minutes'}}},
         document: {getElementById:element,querySelector:()=>element('bar'),querySelectorAll:()=>[],createElement:()=>new Element()},
         crypto:webcrypto, URLSearchParams, Date, setInterval(){},
         fetch:async (_, options)=>{
@@ -36,12 +36,14 @@ async function scenario(failure, sameID) {
         element('wpp-maintenance-password').value='test-only-password';
         await element('wpp-maintenance-actions').children[0].events.click();
         assert.equal(element('wpp-maintenance-password').value,'');
+        if (failure==='verification_frozen') assert.equal(element('wpp-maintenance-message').textContent,'Paused for 10 minutes');
     }
     assert.equal(requests.length,2);
     assert.equal(requests[0]===requests[1],sameID,failure);
 }
 (async()=>{
     await scenario('verification_failed',false);
+    await scenario('verification_frozen',false);
     await scenario('password_required',false);
     await scenario('state_unknown',true);
     await scenario('network',true);

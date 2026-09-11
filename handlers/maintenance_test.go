@@ -61,7 +61,11 @@ func TestMaintenanceHandlersIdentitySchemaAndSecrets(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		body, _ := json.Marshal(map[string]any{"request_id": uuid.NewString(), "password": "wrong", "actor": "1"})
 		w := call("POST", "/maintenance/unlock", string(body), "127.0.0.1:2345", key)
-		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "verification_failed") {
+		want := "verification_failed"
+		if i >= 4 {
+			want = "verification_frozen"
+		}
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("failure %d %s", w.Code, w.Body.String())
 		}
 	}

@@ -11,7 +11,7 @@ function wp_unslash($s) { return stripslashes($s); }
 function absint($v) { return abs((int)$v); }
 function get_current_user_id() { return 42; }
 function wp_json_encode($v) { return json_encode($v); }
-function wp_remote_request($url,$args) { $GLOBALS['calls'][]=[$url,$args];return ['body'=>json_encode(['success'=>true,'data'=>['state'=>'locked']])]; }
+function wp_remote_request($url,$args) { $GLOBALS['calls'][]=[$url,$args];return ['body'=>json_encode($GLOBALS['response']??['success'=>true,'data'=>['state'=>'locked']])]; }
 function is_wp_error($v) { return false; }
 function wp_remote_retrieve_body($v) { return $v['body']; }
 function delete_transient($key) {}
@@ -38,4 +38,9 @@ $payload=json_decode($calls[0][1]['body'],true);
 verify($payload['actor']==='42' && !isset($payload['site_id']) && !isset($payload['domain']),'site identity');
 verify($payload['password']==='secret-in-request','password only forwarded');
 $_POST['operation']='shell';verify(!run()['success'] && count($calls)===1,'operation allowlist');
+$_POST['operation']='unlock';
+foreach (['verification_failed','verification_frozen'] as $code) {
+    $response=['success'=>false,'message'=>$code];
+    verify(run()['data']['message']===$code,'validation error forwarded');
+}
 echo "maintenance PHP checks passed\n";

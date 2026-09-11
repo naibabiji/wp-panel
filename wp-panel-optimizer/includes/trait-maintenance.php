@@ -31,7 +31,8 @@ trait WPP_Optimizer_Maintenance_Trait {
                 'warning'=>'更新未完成请提前加时，完成后立即锁定。到期或面板重启会回锁，可能打断更新。',
                 'restart'=>'面板重启，维护窗口已提前结束。继续维护请重新输入密码申请解锁。',
                 'disabled'=>'请联系面板所有者开启临时维护。', 'password_required'=>'请输入维护密码；加时跨 30 分钟区间时须重新验证。',
-                'verification_failed'=>'验证失败', 'operation_unavailable'=>'操作暂不可用，请刷新状态或联系管理员。',
+                'verification_failed'=>'验证失败，请检查维护密码。', 'operation_unavailable'=>'操作暂不可用，请刷新状态或联系管理员。',
+                'verification_frozen'=>'验证失败次数过多，已暂停密码验证 10 分钟，请稍后重试。',
                 'lock_mode_required'=>'请面板所有者先重新应用标准或严格文件锁，再开启临时维护。',
                 'state_unknown'=>'状态未知，请刷新状态或联系管理员。', 'invalid_request'=>'请求无效',
             ] : [
@@ -42,7 +43,8 @@ trait WPP_Optimizer_Maintenance_Trait {
                 'warning'=>'Extend before expiry if the update is unfinished. Relocking at expiry or panel restart may interrupt updates.',
                 'restart'=>'Panel restart ended the maintenance window early. Enter the password again to start a new window.',
                 'disabled'=>'Ask the panel owner to enable maintenance.', 'password_required'=>'Enter the maintenance password; verification is required again across each 30-minute boundary.',
-                'verification_failed'=>'Verification failed', 'operation_unavailable'=>'Operation unavailable. Refresh or contact the administrator.',
+                'verification_failed'=>'Verification failed. Please check the maintenance password.', 'operation_unavailable'=>'Operation unavailable. Refresh or contact the administrator.',
+                'verification_frozen'=>'Too many failed attempts. Password verification has been suspended for 10 minutes. Please try again later.',
                 'lock_mode_required'=>'Ask the panel owner to apply Standard or Strict file lock before enabling maintenance.',
                 'state_unknown'=>'State unknown. Refresh or contact the administrator.', 'invalid_request'=>'Invalid request',
             ],
@@ -84,7 +86,7 @@ trait WPP_Optimizer_Maintenance_Trait {
         if (is_wp_error($response)) wp_send_json_error(['message'=>'state_unknown'], 503);
         $data = json_decode(wp_remote_retrieve_body($response), true);
         if (!is_array($data) || empty($data['success'])) {
-            $allowed = ['password_required','verification_failed','operation_unavailable','state_unknown','invalid_request','lock_mode_required'];
+            $allowed = ['password_required','verification_failed','verification_frozen','operation_unavailable','state_unknown','invalid_request','lock_mode_required'];
             $code = isset($data['message']) && in_array($data['message'], $allowed, true) ? $data['message'] : 'state_unknown';
             wp_send_json_error(['message'=>$code], 409);
         }

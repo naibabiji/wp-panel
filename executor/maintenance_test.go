@@ -156,7 +156,7 @@ func TestMaintenanceSharedFailureFreezePersists(t *testing.T) {
 		t.Fatalf("freeze=%+v alerts=%d", state, alerts)
 	}
 	err := m.Extend(id, MaintenanceRequest{WindowID: s.WindowID, RequestID: uuid.NewString(), Revision: s.Revision, Minutes: 1, Password: testMaintenancePassword})
-	if !errors.Is(err, ErrMaintenanceValidation) {
+	if !errors.Is(err, ErrMaintenanceFrozen) {
 		t.Fatal(err)
 	}
 	if err := m.Relock(id, s.WindowID); err != nil {

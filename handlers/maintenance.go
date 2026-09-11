@@ -45,6 +45,9 @@ func maintenanceResult(c *gin.Context, err error) bool {
 	if errors.Is(err, executor.ErrMaintenanceValidation) {
 		code = "verification_failed"
 	}
+	if errors.Is(err, executor.ErrMaintenanceFrozen) {
+		code = "verification_frozen"
+	}
 	if errors.Is(err, executor.ErrMaintenancePasswordRequired) {
 		code = "password_required"
 	}

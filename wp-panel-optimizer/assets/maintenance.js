@@ -58,7 +58,7 @@
         const result = await response.json();
         if (!result.success) {
             const error = new Error(result.data?.message || 'state_unknown');
-            error.definitive = ['verification_failed', 'password_required', 'invalid_request', 'operation_unavailable', 'lock_mode_required'].includes(error.message);
+            error.definitive = ['verification_failed', 'verification_frozen', 'password_required', 'invalid_request', 'operation_unavailable', 'lock_mode_required'].includes(error.message);
             throw error;
         }
         if (sequence < accepted) return;

@@ -18,6 +18,7 @@ import (
 
 var (
 	ErrMaintenanceValidation       = errors.New("maintenance validation failed")
+	ErrMaintenanceFrozen           = errors.New("maintenance verification frozen")
 	ErrMaintenanceBusy             = errors.New("maintenance operation unavailable")
 	ErrMaintenanceUnknown          = errors.New("maintenance state unknown")
 	ErrMaintenancePasswordRequired = errors.New("maintenance password required")
@@ -262,6 +263,9 @@ func (m *MaintenanceManager) Configure(id int, enabled bool, minutes int, passwo
 
 func (m *MaintenanceManager) password(id int, state *maintenanceSecurity, raw *string, password, operation, requestID string) error {
 	now := m.now().Unix()
+	if state.FrozenUntil > now {
+		return ErrMaintenanceFrozen
+	}
 	// At most five failed validations per rolling window. Replays, even with
 	// changed passwords, return the same failure without validating/counting again.
 	recent := state.FailedRequests[:0]
@@ -274,9 +278,6 @@ func (m *MaintenanceManager) password(id int, state *maintenanceSecurity, raw *s
 		}
 	}
 	state.FailedRequests = recent
-	if state.FrozenUntil > now {
-		return ErrMaintenanceValidation
-	}
 	if password == "" {
 		return ErrMaintenancePasswordRequired
 	}
@@ -302,6 +303,7 @@ func (m *MaintenanceManager) password(id int, state *maintenanceSecurity, raw *s
 	m.event(id, operation, "verification_failed")
 	if frozen {
 		m.alert(id, fmt.Sprintf("password_frozen attempts=5 window_seconds=600 frozen_until=%d", state.FrozenUntil))
+		return ErrMaintenanceFrozen
 	}
 	return ErrMaintenanceValidation
 }

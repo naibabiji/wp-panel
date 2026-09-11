@@ -51,11 +51,32 @@ func TestMaintenanceFailedRequestReplay(t *testing.T) {
 			for i := 0; i < 4; i++ {
 				req.RequestID = uuid.NewString()
 				req.Password = "wrong"
-				_ = invoke(next, req)
+				want := ErrMaintenanceValidation
+				if i == 3 {
+					want = ErrMaintenanceFrozen
+				}
+				if err := invoke(next, req); !errors.Is(err, want) {
+					t.Fatalf("failure %d: %v", i+2, err)
+				}
 			}
 			_, state, _, _ = m.load(id)
 			if len(state.Failures) != 5 || state.FrozenUntil != now.Unix()+600 {
 				t.Fatal("distinct requests must still freeze")
+			}
+			deadline := state.FrozenUntil
+			*now = now.Add(time.Minute)
+			for _, replay := range []bool{true, false} {
+				if !replay {
+					req.RequestID = uuid.NewString()
+				}
+				req.Password = testMaintenancePassword
+				if err := invoke(next, req); !errors.Is(err, ErrMaintenanceFrozen) {
+					t.Fatalf("correct password during freeze: %v", err)
+				}
+			}
+			_, state, _, _ = m.load(id)
+			if state.FrozenUntil != deadline || len(state.Failures) != 5 || len(state.FailedRequests) != 5 {
+				t.Fatal("frozen requests changed deadline or counters")
 			}
 			*now = now.Add(601 * time.Second)
 			if operation == "unlock" {
