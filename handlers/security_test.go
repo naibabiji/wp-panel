@@ -268,6 +268,90 @@ func TestDeleteCDNRealIPGroupReportsRestoreFailure(t *testing.T) {
 	}
 }
 
+func TestUpdateSQLiSettingsAppliesAndPersists(t *testing.T) {
+	setupSecurityTestDB(t)
+	restoreSecurityExecutorHooks(t)
+	nginxCalls, fail2banCalls := 0, 0
+	regenerateAllSitesNginx = func() error { nginxCalls++; return nil }
+	applyFail2banSettings = func() error { fail2banCalls++; return nil }
+
+	rec := performSecurityRequest(http.MethodPut, "/settings", `{"wp_sqli_block_enabled":"false","wp_sqli_autoban_enabled":"false","wp_sqli_ban_threshold":"7","wp_sqli_ban_window_seconds":"900"}`, func(router *gin.Engine, h *SecurityHandler) {
+		router.PUT("/settings", h.UpdateSettings)
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if nginxCalls != 1 || fail2banCalls != 1 {
+		t.Fatalf("nginx/fail2ban calls = %d/%d, want 1/1", nginxCalls, fail2banCalls)
+	}
+	for key, want := range map[string]string{
+		"wp_sqli_block_enabled": "false", "wp_sqli_autoban_enabled": "false",
+		"wp_sqli_ban_threshold": "7", "wp_sqli_ban_window_seconds": "900",
+	} {
+		var got string
+		if err := database.GetDB().QueryRow(`SELECT svalue FROM security_settings WHERE skey=?`, key).Scan(&got); err != nil || got != want {
+			t.Fatalf("%s = %q, err=%v, want %q", key, got, err, want)
+		}
+	}
+}
+
+func TestUpdateSQLiSettingsRollsBackDatabaseAndRuntime(t *testing.T) {
+	setupSecurityTestDB(t)
+	restoreSecurityExecutorHooks(t)
+	nginxCalls, fail2banCalls := 0, 0
+	regenerateAllSitesNginx = func() error { nginxCalls++; return nil }
+	applyFail2banSettings = func() error {
+		fail2banCalls++
+		if fail2banCalls == 1 {
+			return errors.New("injected fail2ban failure")
+		}
+		return nil
+	}
+
+	rec := performSecurityRequest(http.MethodPut, "/settings", `{"wp_sqli_ban_threshold":"9"}`, func(router *gin.Engine, h *SecurityHandler) {
+		router.PUT("/settings", h.UpdateSettings)
+	})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if nginxCalls != 2 || fail2banCalls != 2 {
+		t.Fatalf("nginx/fail2ban calls = %d/%d, want 2/2", nginxCalls, fail2banCalls)
+	}
+	var got string
+	if err := database.GetDB().QueryRow(`SELECT svalue FROM security_settings WHERE skey='wp_sqli_ban_threshold'`).Scan(&got); err != nil || got != "5" {
+		t.Fatalf("threshold after rollback = %q, err=%v, want 5", got, err)
+	}
+}
+
+func TestUpdateSQLiSettingsDatabaseWriteIsAtomic(t *testing.T) {
+	setupSecurityTestDB(t)
+	restoreSecurityExecutorHooks(t)
+	if _, err := database.GetDB().Exec(`CREATE TRIGGER reject_sqli_threshold
+		BEFORE UPDATE ON security_settings
+		WHEN NEW.skey='wp_sqli_ban_threshold' AND NEW.svalue='9'
+		BEGIN SELECT RAISE(ABORT, 'injected write failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	regenerateAllSitesNginx = func() error { t.Fatal("nginx must not run after database failure"); return nil }
+	applyFail2banSettings = func() error { t.Fatal("fail2ban must not run after database failure"); return nil }
+
+	rec := performSecurityRequest(http.MethodPut, "/settings", `{"wp_sqli_block_enabled":"false","wp_sqli_ban_threshold":"9"}`, func(router *gin.Engine, h *SecurityHandler) {
+		router.PUT("/settings", h.UpdateSettings)
+	})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	for key, want := range map[string]string{
+		"wp_sqli_block_enabled": "true",
+		"wp_sqli_ban_threshold": "5",
+	} {
+		var got string
+		if err := database.GetDB().QueryRow(`SELECT svalue FROM security_settings WHERE skey=?`, key).Scan(&got); err != nil || got != want {
+			t.Fatalf("%s after failed transaction = %q, err=%v, want %q", key, got, err, want)
+		}
+	}
+}
+
 func TestNormalizeSecuritySettingAcceptsBotLimitSettings(t *testing.T) {
 	for _, tc := range []struct {
 		key  string

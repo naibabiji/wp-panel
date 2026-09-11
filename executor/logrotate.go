@@ -91,6 +91,7 @@ func renderSiteLogrotateConfig(domain, logDir string, retentionDays int) string 
 %s/error.log
 %s/wp-security.log
 %s/wp-login-security.log
+%s/wp-sqli-security.log
 %s/php-error.log
 %s/php-slow.log {
     daily
@@ -104,5 +105,5 @@ func renderSiteLogrotateConfig(domain, logDir string, retentionDays int) string 
     dateyesterday
     copytruncate
 }
-`, domain, logDir, logDir, logDir, logDir, logDir, logDir, retentionDays)
+`, domain, logDir, logDir, logDir, logDir, logDir, logDir, logDir, retentionDays)
 }

@@ -247,16 +247,30 @@ func TestFail2banLoginJailIsRecognizedAsWebSource(t *testing.T) {
 	}
 }
 
+func TestFail2banSQLiJailIsRecognizedAsWebSource(t *testing.T) {
+	if normalizeFail2banJail("wppanel-sqli") != "wppanel-sqli" {
+		t.Fatal("normalizeFail2banJail should recognize wppanel-sqli")
+	}
+	if !isWebBanSource("wppanel-sqli") {
+		t.Fatal("isWebBanSource should treat wppanel-sqli as a web ban source")
+	}
+	for _, want := range []string{"<HOST>", `"[A-Z]+ [^"]*" 403`} {
+		if !strings.Contains(fail2banSQLiFilterConfig, want) {
+			t.Fatalf("SQLi filter missing %q", want)
+		}
+	}
+}
+
 func TestValidateGeneratedFail2banJailConfigRequiresFixedLadderForAllJails(t *testing.T) {
 	block := "bantime = 600\nbantime.increment = true\nbantime.multipliers = 1 6 36 144 1008\nbantime.maxtime = 7d\nbantime.overalljails = false\n"
-	valid := "[wppanel]\n" + block + "[wppanel-404]\n" + block + "[wppanel-login]\n" + block + "[wppanel-sshd]\naction = nftables-multiport\n         wppanel-record[name=wppanel-sshd]\n" + block
+	valid := "[wppanel]\n" + block + "[wppanel-404]\n" + block + "[wppanel-login]\n" + block + "[wppanel-sshd]\naction = nftables-multiport\n         wppanel-record[name=wppanel-sshd]\n" + block + "[wppanel-sqli]\n" + block
 	if err := validateGeneratedFail2banJailConfig(valid); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateGeneratedFail2banJailConfig("[wppanel]\n" + block + "[wppanel-404]\n" + block); err == nil {
 		t.Fatal("config missing one jail ladder was accepted")
 	}
-	misplaced := "[wppanel]\n" + block + "bantime.increment = true\n[wppanel-404]\n" + block + "[wppanel-login]\n" + block + "[wppanel-sshd]\nwppanel-record[name=wppanel-sshd]\n" + strings.Replace(block, "bantime.increment = true\n", "", 1)
+	misplaced := "[wppanel]\n" + block + "bantime.increment = true\n[wppanel-404]\n" + block + "[wppanel-login]\n" + block + "[wppanel-sshd]\nwppanel-record[name=wppanel-sshd]\n" + strings.Replace(block, "bantime.increment = true\n", "", 1) + "[wppanel-sqli]\n" + block
 	if err := validateGeneratedFail2banJailConfig(misplaced); err == nil {
 		t.Fatal("globally balanced but misplaced directive was accepted")
 	}
@@ -1541,6 +1555,51 @@ func TestNginxTemplateIncludesCDNRealIPCompatibleMode(t *testing.T) {
 		if !strings.Contains(config, want) {
 			t.Fatalf("missing %q in config:\n%s", want, config)
 		}
+	}
+}
+
+func TestSQLiProtectionRenderScopeAndTrustedClientGate(t *testing.T) {
+	openTestDB(t)
+	engine := NewTemplateEngine(t.TempDir())
+	render := func(siteType string, compat bool) string {
+		t.Helper()
+		config, err := engine.RenderNginxConfig(&NginxSiteData{
+			Domain:           "example.com",
+			ServerNames:      "example.com",
+			WebRoot:          "/www/wwwroot/example.com",
+			PHPProxy:         "unix:/run/php/example.sock",
+			TemplateVer:      "v1.0",
+			AccessLogMode:    "error_only",
+			SiteType:         siteType,
+			CDNRealIPEnabled: compat,
+			CDNRealIPHeader:  "X-Forwarded-For",
+			CDNRealIPCompat:  compat,
+		})
+		if err != nil {
+			t.Fatalf("render nginx config: %v", err)
+		}
+		return config
+	}
+
+	direct := render("wordpress", false)
+	if !strings.Contains(direct, "if ($wp_sqli_block_hit) { return 403; }") || !strings.Contains(direct, "wp-sqli-security.log") {
+		t.Fatal("direct WordPress traffic must be blocked and eligible for automatic banning")
+	}
+	compatibleProxy := render("wordpress", true)
+	if !strings.Contains(compatibleProxy, "if ($wp_sqli_block_hit) { return 403; }") || strings.Contains(compatibleProxy, "wp-sqli-security.log") {
+		t.Fatal("compatible real-IP mode must block but must not feed automatic banning")
+	}
+	php := render("php", false)
+	if strings.Contains(php, "$wp_sqli_block_hit") || strings.Contains(php, "wp-sqli-security.log") {
+		t.Fatal("generic PHP templates must not enable WordPress SQL injection protection")
+	}
+
+	if _, err := database.GetDB().Exec(`UPDATE security_settings SET svalue='false' WHERE skey='wp_sqli_block_enabled'`); err != nil {
+		t.Fatal(err)
+	}
+	disabled := render("wordpress", false)
+	if strings.Contains(disabled, "if ($wp_sqli_block_hit) { return 403; }") || strings.Contains(disabled, "wp-sqli-security.log") {
+		t.Fatal("disabled SQL injection protection must neither block nor feed automatic banning")
 	}
 }
 

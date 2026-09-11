@@ -45,6 +45,47 @@ func TestIsSQLiProbe(t *testing.T) {
 	}
 }
 
+func TestIsHighConfidenceSQLiUsesCombinedSignals(t *testing.T) {
+	tests := []struct {
+		name string
+		uri  string
+		want bool
+	}{
+		{"union select from", "/?id=1%20UNION%20SELECT%201,2%20FROM%20users", true},
+		{"time delay", "/?id=1%20AND%20SLEEP%285%29", true},
+		{"stacked destructive statement", "/?id=1%3BDROP%20TABLE%20users%20", true},
+		{"quoted tautology with comment", "/?id=1%27%20OR%201=1%20--", true},
+		{"wordpress search terms", "/?s=union+select", false},
+		{"wordpress search full SQL phrase", "/?s=union+select+from+users", false},
+		{"wordpress search quoted tautology", "/?s=1%27+or+1%3D1--", false},
+		{"wordpress REST search full SQL phrase", "/wp-json/wp/v2/posts?search=union+select+from+users", false},
+		{"search parameter cannot hide another attack parameter", "/?s=normal&id=1%20union%20select%201%20from%20users", true},
+		{"REST search parameter cannot hide another attack parameter", "/wp-json/wp/v2/posts?search=normal&id=1%27%20or%201=1--", true},
+		{"ordinary order parameter", "/?order=update", false},
+		{"single weak keyword", "/?q=information_schema", false},
+		{"double encoded payload is outside current boundary", "/?id=1%2520UNION%2520SELECT%25201%2520FROM%2520users", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isHighConfidenceSQLi(tt.uri); got != tt.want {
+				t.Fatalf("isHighConfidenceSQLi(%q) = %v, want %v", tt.uri, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClassifySecurityEventDistinguishesBlockedFromProbe(t *testing.T) {
+	blocked := "/?id=1%20UNION%20SELECT%201%20FROM%20users"
+	eventType, risk, message := classifySecurityEvent("GET", blocked, "curl", "203.0.113.10", 403, &searchBotIPChecker{})
+	if eventType != SecurityEventSQLiBlocked || risk != "high" || !strings.Contains(message, "PHP 前拒绝") {
+		t.Fatalf("blocked classification = (%q, %q, %q)", eventType, risk, message)
+	}
+	eventType, _, _ = classifySecurityEvent("GET", blocked, "curl", "203.0.113.10", 200, &searchBotIPChecker{})
+	if eventType != SecurityEventSQLiProbe {
+		t.Fatalf("non-403 SQL signal type = %q, want %q", eventType, SecurityEventSQLiProbe)
+	}
+}
+
 func TestIsFakeSearchBot(t *testing.T) {
 	checker := &searchBotIPChecker{
 		googlebot: []string{"66.249.64.0/19"},

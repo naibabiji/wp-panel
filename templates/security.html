@@ -136,6 +136,31 @@
         </div>
 
         <div class="card">
+            <h3 class="text-lg font-semibold text-white mb-2">{{t .Lang "security.sqli_protection"}}</h3>
+            <p class="text-xs text-gray-400 mb-4">{{t .Lang "security.sqli_protection_help"}}</p>
+            <form @submit.prevent="saveSQLi" class="space-y-4">
+                <label class="flex items-center space-x-2 cursor-pointer">
+                    <input type="checkbox" x-model="settings.wp_sqli_block_enabled">
+                    <span class="text-gray-300">{{t .Lang "security.sqli_block_enabled"}}</span>
+                </label>
+                <label class="flex items-center space-x-2 cursor-pointer">
+                    <input type="checkbox" x-model="settings.wp_sqli_autoban_enabled" :disabled="!settings.wp_sqli_block_enabled">
+                    <span class="text-gray-300">{{t .Lang "security.sqli_autoban_enabled"}}</span>
+                </label>
+                <p class="text-xs text-yellow-400">{{t .Lang "security.sqli_proxy_boundary"}}</p>
+                <div>
+                    <label class="label">{{t .Lang "security.sqli_ban_threshold"}}</label>
+                    <input type="number" x-model.number="settings.wp_sqli_ban_threshold" min="1" max="50" class="input-field">
+                </div>
+                <div>
+                    <label class="label">{{t .Lang "security.sqli_ban_window"}}</label>
+                    <input type="number" x-model.number="settings.wp_sqli_ban_window_seconds" min="60" max="3600" class="input-field">
+                </div>
+                <button type="submit" class="btn-primary" :disabled="sqliSaving" x-text="sqliSaving ? t('settings.saving') : t('security.save_settings')"></button>
+            </form>
+        </div>
+
+        <div class="card">
             <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "security.rate_limit"}}</h3>
             <form @submit.prevent="saveRateLimit">
                 <div class="mb-4">
@@ -309,6 +334,7 @@ function securitySettings() {
         showHelp: false,
         cdnGroups: [],
         cdnGroupSaving: false,
+        sqliSaving: false,
         cdnGroupForm: { id: null, name: '', header_name: 'X-Forwarded-For', ip_ranges: '', enabled: true, description: '' },
         async fetchSettings() {
             try {
@@ -317,8 +343,8 @@ function securitySettings() {
                     const map = {};
                     r.data.forEach(s => {
                         let v = s.svalue;
-                        if (['auto_whitelist_enabled','rate_limit_enabled','bot_limit_enabled','telemetry_enabled'].includes(s.skey)) v = v === 'true';
-                        else if (['fail2ban_maxretry','fail2ban_findtime','fail2ban_bantime','rate_limit_rpm','rate_limit_burst','bot_limit_rpm','bot_limit_burst'].includes(s.skey)) v = parseInt(v) || 0;
+                        if (['auto_whitelist_enabled','rate_limit_enabled','bot_limit_enabled','telemetry_enabled','wp_sqli_block_enabled','wp_sqli_autoban_enabled'].includes(s.skey)) v = v === 'true';
+                        else if (['fail2ban_maxretry','fail2ban_findtime','fail2ban_bantime','rate_limit_rpm','rate_limit_burst','bot_limit_rpm','bot_limit_burst','wp_sqli_ban_threshold','wp_sqli_ban_window_seconds'].includes(s.skey)) v = parseInt(v) || 0;
                         map[s.skey] = v;
                     });
                     if (typeof map.bot_limit_enabled === 'undefined') map.bot_limit_enabled = false;
@@ -382,10 +408,24 @@ function securitySettings() {
         },
         async save() {
             try {
-                const { fail2ban_bantime, ...body } = this.settings;
+                const { fail2ban_bantime, wp_sqli_block_enabled, wp_sqli_autoban_enabled, wp_sqli_ban_threshold, wp_sqli_ban_window_seconds, ...body } = this.settings;
                 await api('/security/settings', { method: 'PUT', body });
                 showToast(t('settings.saved'), 'success');
             } catch(e) { showToast(e.message, 'error'); }
+        },
+        async saveSQLi() {
+            this.sqliSaving = true;
+            try {
+                await api('/security/settings', { method: 'PUT', body: {
+                    wp_sqli_block_enabled: this.settings.wp_sqli_block_enabled ? 'true' : 'false',
+                    wp_sqli_autoban_enabled: this.settings.wp_sqli_autoban_enabled ? 'true' : 'false',
+                    wp_sqli_ban_threshold: String(this.settings.wp_sqli_ban_threshold || 5),
+                    wp_sqli_ban_window_seconds: String(this.settings.wp_sqli_ban_window_seconds || 600),
+                } });
+                showToast(t('settings.saved'), 'success');
+                await this.fetchSettings();
+            } catch(e) { showToast(e.message, 'error'); }
+            finally { this.sqliSaving = false; }
         },
         async saveRateLimit() {
             try {

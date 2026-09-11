@@ -29,7 +29,8 @@ func TestNginxGlobalLogMapConfigDefinesConservativeScanProtection(t *testing.T) 
 		`~*(?:^|/)(?:secrets\.(?:json|ya?ml)|settings\.py|application\.properties|config\.toml)/?$ 1;`,
 		`1 "$server_name:$binary_remote_addr";`,
 		"limit_req_zone $wp_scan_probe_key zone=wp_scan_limit:10m rate=30r/m;",
-		`map "$wp_uri_security_loggable$wp_sqli_probe_hit$wp_fake_search_bot_hit$wp_scan_probe_hit" $wp_security_loggable {`,
+		"map $request_uri $wp_sqli_block_hit {",
+		`map "$wp_uri_security_loggable$wp_sqli_probe_hit$wp_sqli_block_hit$wp_fake_search_bot_hit$wp_scan_probe_hit" $wp_security_loggable {`,
 	} {
 		if !strings.Contains(config, want) {
 			t.Fatalf("nginxGlobalLogMapConfig() missing %q", want)
@@ -427,7 +428,8 @@ func TestNginxSecurityProbeMapConfigDefinesIndependentVariables(t *testing.T) {
 		`map "$wp_security_claims_googlebot:$wp_security_verified_googlebot_ip" $wp_fake_googlebot_hit {`,
 		`map "$wp_security_claims_bingbot:$wp_security_verified_bingbot_ip" $wp_fake_bingbot_hit {`,
 		`map "$wp_fake_googlebot_hit$wp_fake_bingbot_hit" $wp_fake_search_bot_hit {`,
-		`map "$wp_uri_security_loggable$wp_sqli_probe_hit$wp_fake_search_bot_hit$wp_scan_probe_hit" $wp_security_loggable {`,
+		"map $request_uri $wp_sqli_block_hit {",
+		`map "$wp_uri_security_loggable$wp_sqli_probe_hit$wp_sqli_block_hit$wp_fake_search_bot_hit$wp_scan_probe_hit" $wp_security_loggable {`,
 	} {
 		if !strings.Contains(config, want) {
 			t.Fatalf("nginxGlobalLogMapConfig() missing %q", want)
@@ -446,6 +448,8 @@ func TestNginxSecurityProbeMapConfigDefinesIndependentVariables(t *testing.T) {
 func TestNginxSecurityProbeMapConfigSQLiPatterns(t *testing.T) {
 	config := nginxSecurityProbeMapConfig()
 	for _, want := range []string{
+		`"~*^/(?:index\.php)?\?s=[^&]*$" 0;`,
+		`"~*^/wp-json/wp/v2/(?:posts|pages)/?\?search=[^&]*$" 0;`,
 		`~*union(?:\s|%20|\+)+select 1;`,
 		`~*sleep\s*\( 1;`,
 		`~*information_schema 1;`,

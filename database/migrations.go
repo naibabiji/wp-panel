@@ -676,7 +676,11 @@ var migrations = append([]string{
 		('alert_wp_sqli_probe',          'false', 'WordPress SQL 注入探测告警（默认关闭）'),
 		('alert_wp_fake_search_bot',     'false', '伪装搜索引擎爬虫告警（默认关闭）'),
 		('alert_wp_security_threshold',  '10',    'WordPress 安全探测告警阈值（每 IP 触发次数，默认 10）'),
-		('alert_wp_security_window_hours','24',   'WordPress 安全探测告警统计窗口（小时，默认 24）')`,
+		('alert_wp_security_window_hours','24',   'WordPress 安全探测告警统计窗口（小时，默认 24）'),
+		('wp_sqli_block_enabled',         'true',  'WordPress 高置信度 SQL 注入请求前置拒绝'),
+		('wp_sqli_autoban_enabled',       'true',  'WordPress SQL 注入重复来源自动临时封禁'),
+		('wp_sqli_ban_threshold',         '5',     'SQL 注入自动封禁阈值'),
+		('wp_sqli_ban_window_seconds',    '600',   'SQL 注入自动封禁统计窗口（秒）')`,
 }, append(wpInventorySchemaStatements, append(wpUpdateSchemaStatements, append(imageOptimizerSchemaStatements, siteMigrationSchemaStatements...)...)...)...)
 
 // wpInventorySchemaStatements 同时供全新安装和 1.0.31 增量升级使用，避免两条路径的

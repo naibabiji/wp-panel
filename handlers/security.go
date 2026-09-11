@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"fmt"
 	"net"
 	"net/http"
@@ -88,6 +89,16 @@ func (h *SecurityHandler) UpdateSettings(c *gin.Context) {
 		delete(normalized, "wp_security_log_whitelist")
 	}
 
+	if hasSQLiSettings(normalized) {
+		if err := applySQLiSettings(db, normalized); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(err.Error()))
+			return
+		}
+		for _, key := range sqliSettingKeys {
+			delete(normalized, key)
+		}
+	}
+
 	for key, strVal := range normalized {
 		if _, err := db.Exec("UPDATE security_settings SET svalue = ?, updated_at = CURRENT_TIMESTAMP WHERE skey = ?", strVal, key); err != nil {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("安全设置保存失败"))
@@ -109,6 +120,84 @@ func (h *SecurityHandler) UpdateSettings(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "安全设置已更新"}))
+}
+
+var sqliSettingKeys = []string{
+	"wp_sqli_block_enabled", "wp_sqli_autoban_enabled",
+	"wp_sqli_ban_threshold", "wp_sqli_ban_window_seconds",
+}
+
+func hasSQLiSettings(settings map[string]string) bool {
+	for _, key := range sqliSettingKeys {
+		if _, ok := settings[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func applySQLiSettings(db *sql.DB, settings map[string]string) error {
+	old := make(map[string]string, len(sqliSettingKeys))
+	for _, key := range sqliSettingKeys {
+		var value string
+		if err := db.QueryRow(`SELECT svalue FROM security_settings WHERE skey=?`, key).Scan(&value); err != nil {
+			return fmt.Errorf("读取 SQL 注入防护设置失败")
+		}
+		old[key] = value
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("SQL 注入防护设置保存失败")
+	}
+	for key, value := range settings {
+		if !containsSecurityKey(sqliSettingKeys, key) {
+			continue
+		}
+		if _, err := tx.Exec(`UPDATE security_settings SET svalue=?,updated_at=CURRENT_TIMESTAMP WHERE skey=?`, value, key); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("SQL 注入防护设置保存失败")
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("SQL 注入防护设置保存失败")
+	}
+	if err := regenerateAllSitesNginx(); err == nil {
+		if err = applyFail2banSettings(); err == nil {
+			return nil
+		}
+	}
+	if err := rollbackSQLiSettings(db, old); err != nil {
+		return fmt.Errorf("SQL 注入防护应用失败，数据库回滚失败")
+	}
+	rollbackNginxErr := regenerateAllSitesNginx()
+	rollbackFail2banErr := applyFail2banSettings()
+	if rollbackNginxErr != nil || rollbackFail2banErr != nil {
+		return fmt.Errorf("SQL 注入防护应用失败，设置已回滚但服务器配置恢复不完整")
+	}
+	return fmt.Errorf("SQL 注入防护应用失败，已恢复修改前设置")
+}
+
+func rollbackSQLiSettings(db *sql.DB, old map[string]string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	for key, value := range old {
+		if _, err := tx.Exec(`UPDATE security_settings SET svalue=?,updated_at=CURRENT_TIMESTAMP WHERE skey=?`, value, key); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func containsSecurityKey(keys []string, target string) bool {
+	for _, key := range keys {
+		if key == target {
+			return true
+		}
+	}
+	return false
 }
 
 func needsFail2banApply(settings map[string]string) bool {
@@ -419,7 +508,11 @@ func normalizeSecuritySetting(key string, val interface{}) (string, bool, error)
 		return normalizeRange(key, val, 5, 300)
 	case "bot_limit_burst":
 		return normalizeRange(key, val, 5, 300)
-	case "auto_whitelist_enabled", "rate_limit_enabled", "bot_limit_enabled":
+	case "wp_sqli_ban_threshold":
+		return normalizeRange(key, val, 1, 50)
+	case "wp_sqli_ban_window_seconds":
+		return normalizeRange(key, val, 60, 3600)
+	case "auto_whitelist_enabled", "rate_limit_enabled", "bot_limit_enabled", "wp_sqli_block_enabled", "wp_sqli_autoban_enabled":
 		v, err := normalizeBool(val)
 		return v, true, err
 	case "whitelist_ips":

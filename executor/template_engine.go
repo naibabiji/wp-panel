@@ -42,6 +42,8 @@ type NginxSiteData struct {
 	CDNRealIPHeader  string
 	CDNRealIPRanges  []string
 	CDNRealIPCompat  bool
+	SQLiBlockEnabled bool
+	SQLiAutoBanLog   bool
 }
 
 type PHPFPMPoolData struct {
@@ -186,9 +188,9 @@ map $uri $wp_uri_security_loggable {
 }
 
 ` + nginxSecurityProbeMapConfig() + `
-map "$wp_uri_security_loggable$wp_sqli_probe_hit$wp_fake_search_bot_hit$wp_scan_probe_hit" $wp_security_loggable {
+map "$wp_uri_security_loggable$wp_sqli_probe_hit$wp_sqli_block_hit$wp_fake_search_bot_hit$wp_scan_probe_hit" $wp_security_loggable {
     default 1;
-    "0000" 0;
+    "00000" 0;
 }
 
 # 登录/XML-RPC 认证爆破检测的唯一真实来源：Nginx 已经完成 merge_slashes、
@@ -223,7 +225,8 @@ func nginxSecurityProbeMapConfig() string {
 	googleFakeRule := fakeBotMapRule(googleGeoEntries)
 	bingFakeRule := fakeBotMapRule(bingGeoEntries)
 
-	return `map $request_uri $wp_sqli_probe_hit {
+	return `# 宽松 SQL 特征只用于留证，不得直接用于拦截或封禁。
+map $request_uri $wp_sqli_probe_hit {
     default 0;
     ~*union(?:\s|%20|\+)+select 1;
     ~*sleep\s*\( 1;
@@ -235,6 +238,23 @@ func nginxSecurityProbeMapConfig() string {
     ~*\binto(?:\s|%20|\+)+outfile\b 1;
     "~*0x[0-9a-f]{16,}" 1;
     "~*(?:;|%3b)(?:\s|%20|\+)*(?:drop|insert|update|delete)(?:\s|%20|\+)+" 1;
+}
+
+# 高置信度 SQL 注入结构。规则要求多个攻击语法元素同时出现，避免将
+# WordPress 搜索中的普通 SQL 词语升级为拦截信号。
+map $request_uri $wp_sqli_block_hit {
+    default 0;
+    # 仅豁免 WordPress 核心的纯搜索请求。不能看到 s/search 参数就整条放行，
+    # 否则攻击者可给其它恶意参数追加搜索参数来绕过拦截。
+    "~*^/(?:index\.php)?\?s=[^&]*$" 0;
+    "~*^/wp-json/wp/v2/(?:posts|pages)/?\?search=[^&]*$" 0;
+    "~*union(?:\s|%20|\+|/\*.*?\*/)+select(?:\s|%20|\+|/\*.*?\*/)+.*(?:from|information_schema)" 1;
+    "~*(?:sleep|pg_sleep)(?:\s|%20|\+)*(?:\(|%28)(?:\s|%20|\+)*[0-9]+(?:\s|%20|\+)*(?:\)|%29)" 1;
+    "~*benchmark(?:\s|%20|\+)*(?:\(|%28)(?:\s|%20|\+)*[0-9]+(?:\s|%20|\+)*(?:,|%2c)" 1;
+    "~*(?:union(?:\s|%20|\+)+select|select(?:\s|%20|\+)+).*information_schema" 1;
+    "~*(?:load_file(?:\s|%20|\+)*(?:\(|%28).*(?:'|%27)|into(?:\s|%20|\+)+outfile(?:\s|%20|\+)+(?:'|%27))" 1;
+    "~*(?:;|%3b)(?:\s|%20|\+)*(?:drop|alter|truncate)(?:\s|%20|\+)+(?:table|database)(?:\s|%20|\+)+" 1;
+    "~*(?:'|%27)(?:\s|%20|\+)*or(?:\s|%20|\+)+(?:'|%27)?[0-9]+(?:'|%27)?(?:\s|%20|\+)*(?:=|%3d)(?:\s|%20|\+)*(?:'|%27)?[0-9]+(?:'|%27)?(?:\s|%20|\+)*(?:--|%2d%2d|#|%23)" 1;
 }
 
 geo $wp_security_verified_googlebot_ip {
@@ -396,6 +416,8 @@ func NewTemplateEngine(backupDir string) *TemplateEngine {
 func (e *TemplateEngine) RenderNginxConfig(data *NginxSiteData) (string, error) {
 	data.RateLimitEnabled, _, data.RateLimitBurst = GetRateLimitSettings()
 	data.BotLimitEnabled, _, data.BotLimitBurst = GetBotRateLimitSettings()
+	data.SQLiBlockEnabled, data.SQLiAutoBanLog = GetSQLiProtectionSettings()
+	data.SQLiAutoBanLog = data.SQLiBlockEnabled && data.SQLiAutoBanLog && (!data.CDNRealIPEnabled || !data.CDNRealIPCompat)
 	tmplName := "nginx_http"
 	if data.UseSSL {
 		tmplName = "nginx_https"
@@ -412,6 +434,23 @@ func (e *TemplateEngine) RenderNginxConfig(data *NginxSiteData) (string, error) 
 	}
 
 	return buf.String(), nil
+}
+
+func GetSQLiProtectionSettings() (blockEnabled, autoBanEnabled bool) {
+	blockEnabled, autoBanEnabled = true, true
+	if database.GetDB() == nil {
+		return
+	}
+	var block, autoBan string
+	_ = database.GetDB().QueryRow(`SELECT svalue FROM security_settings WHERE skey='wp_sqli_block_enabled'`).Scan(&block)
+	_ = database.GetDB().QueryRow(`SELECT svalue FROM security_settings WHERE skey='wp_sqli_autoban_enabled'`).Scan(&autoBan)
+	if block != "" {
+		blockEnabled = block == "true"
+	}
+	if autoBan != "" {
+		autoBanEnabled = autoBan == "true"
+	}
+	return
 }
 
 func (e *TemplateEngine) RenderPHPFPMPool(data *PHPFPMPoolData) (string, error) {
@@ -732,6 +771,7 @@ server {
 
     if ($wppanel_banned_ip) { return 444; }
     if ($wp_sensitive_path_blocked) { return 404; }
+    {{if .SQLiBlockEnabled}}if ($wp_sqli_block_hit) { return 403; }{{end}}
 
     limit_req zone=wp_scan_limit burst=20 nodelay;
 
@@ -758,6 +798,7 @@ server {
 	    {{end}}
     access_log /www/wwwlogs/{{.Domain}}/wp-security.log wppanel_combined if=$wp_security_loggable;
     access_log /www/wwwlogs/{{.Domain}}/wp-login-security.log wppanel_combined if=$wp_login_attempt_loggable;
+    {{if .SQLiAutoBanLog}}access_log /www/wwwlogs/{{.Domain}}/wp-sqli-security.log wppanel_combined if=$wp_sqli_block_hit;{{end}}
 
     {{if .FCacheEnabled}}
     set $wp_skip_cache 0;
@@ -938,6 +979,7 @@ server {
 
     if ($wppanel_banned_ip) { return 444; }
     if ($wp_sensitive_path_blocked) { return 404; }
+    {{if .SQLiBlockEnabled}}if ($wp_sqli_block_hit) { return 403; }{{end}}
 
     limit_req zone=wp_scan_limit burst=20 nodelay;
 
@@ -974,6 +1016,7 @@ server {
 	    {{end}}
     access_log /www/wwwlogs/{{.Domain}}/wp-security.log wppanel_combined if=$wp_security_loggable;
     access_log /www/wwwlogs/{{.Domain}}/wp-login-security.log wppanel_combined if=$wp_login_attempt_loggable;
+    {{if .SQLiAutoBanLog}}access_log /www/wwwlogs/{{.Domain}}/wp-sqli-security.log wppanel_combined if=$wp_sqli_block_hit;{{end}}
 
     {{if .FCacheEnabled}}
     set $wp_skip_cache 0;

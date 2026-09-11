@@ -17,7 +17,7 @@ func TestWPAnomalyPreservesLegacySecurityAlerts(t *testing.T) {
 		}
 	}
 	if strings.Contains(code, `x-model="rules.alert_wp_sqli_probe"`) {
-		t.Fatal("SQL switch must move to firewall")
+		t.Fatal("retired SQL alert switch must not be rendered")
 	}
 	for _, alertType := range []string{"alert_wp_content_change", "alert_wp_content_volume", "alert_wp_setting_change"} {
 		if !strings.Contains(code, alertType) {
@@ -25,8 +25,14 @@ func TestWPAnomalyPreservesLegacySecurityAlerts(t *testing.T) {
 		}
 	}
 	firewall := string(renderPage(t, "firewall.html", "firewall_content"))
-	if !strings.Contains(firewall, `x-data="sqliSettings()"`) || !strings.Contains(firewall, "alert_wp_sqli_probe:String(this.enabled)") {
-		t.Fatal("firewall SQL settings missing")
+	if strings.Contains(firewall, `x-data="sqliSettings()"`) || strings.Contains(firewall, "alert_wp_sqli_probe:String(this.enabled)") {
+		t.Fatal("firewall page must show SQL evidence, not SQL settings")
+	}
+	security := string(renderPage(t, "security.html", "security_content"))
+	for _, marker := range []string{"wp_sqli_block_enabled", "wp_sqli_autoban_enabled", "wp_sqli_ban_threshold", "wp_sqli_ban_window_seconds"} {
+		if !strings.Contains(security, marker) {
+			t.Fatalf("security SQL setting missing: %s", marker)
+		}
 	}
 }
 

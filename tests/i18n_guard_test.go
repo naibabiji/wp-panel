@@ -224,7 +224,8 @@ func walkFiles(t *testing.T, root string, visit func(string, []byte)) {
 			return err
 		}
 		if entry.IsDir() {
-			if entry.Name() == ".git" || entry.Name() == ".gocache" {
+			switch entry.Name() {
+			case ".git", ".gocache", ".codex-deploy", ".playwright-cli", "dist", "output":
 				return filepath.SkipDir
 			}
 			return nil

@@ -255,7 +255,7 @@ func buildCurrentBanView(receipts []models.FirewallBan, enforcement executor.Cur
 	}
 	for ip := range enforcement.Nginx {
 		matched := false
-		for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login"} {
+		for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login", "wppanel-sqli"} {
 			if !enforcement.Fail2ban[executor.CurrentBanKey{IP: ip, Source: jail}] {
 				continue
 			}
@@ -269,7 +269,7 @@ func buildCurrentBanView(receipts []models.FirewallBan, enforcement executor.Cur
 		}
 		if !matched {
 			for _, receipt := range byIP[ip] {
-				if receipt.SourceJail == "wppanel" || receipt.SourceJail == "wppanel-404" || receipt.SourceJail == "wppanel-login" || receipt.SourceJail == "manual" {
+				if receipt.SourceJail == "wppanel" || receipt.SourceJail == "wppanel-404" || receipt.SourceJail == "wppanel-login" || receipt.SourceJail == "wppanel-sqli" || receipt.SourceJail == "manual" {
 					matched = true
 					add(ip, receipt.SourceJail, &receipt)
 				}
@@ -292,7 +292,7 @@ func buildCurrentBanView(receipts []models.FirewallBan, enforcement executor.Cur
 		}
 		verification := "missing"
 		switch receipt.SourceJail {
-		case "wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd":
+		case "wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd", "wppanel-sqli":
 			if !enforcement.Status.Fail2ban[receipt.SourceJail] {
 				verification = "unverified"
 			}
@@ -347,7 +347,7 @@ func sortCurrentBanView(rows []models.CurrentFirewallBan) {
 
 func isAllowedBanSourceFilter(source string) bool {
 	switch source {
-	case "wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd", "panel", "panel_scan", "manual", "nftables", "nginx":
+	case "wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd", "wppanel-sqli", "panel", "panel_scan", "manual", "nftables", "nginx":
 		return true
 	default:
 		return false
@@ -426,7 +426,7 @@ func (h *FirewallHandler) Unban(c *gin.Context) {
 		return
 	}
 
-	if jail == "wppanel" || jail == "wppanel-404" || jail == "wppanel-login" || jail == "wppanel-sshd" {
+	if jail == "wppanel" || jail == "wppanel-404" || jail == "wppanel-login" || jail == "wppanel-sshd" || jail == "wppanel-sqli" {
 		if _, err := executor.Execute("fail2ban-client", "set", jail, "unbanip", ip); err != nil {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Fail2ban 解封失败"))
 			return
@@ -439,7 +439,7 @@ func (h *FirewallHandler) Unban(c *gin.Context) {
 	}
 
 	executor.GoSafe(func() {
-		if jail == "wppanel" || jail == "wppanel-404" || jail == "wppanel-login" || jail == "manual" {
+		if jail == "wppanel" || jail == "wppanel-404" || jail == "wppanel-login" || jail == "wppanel-sqli" || jail == "manual" {
 			_ = executor.MaybeRemoveNginxBan(ip)
 		}
 		_ = executor.MaybeRemovePersistBan(ip)
@@ -506,7 +506,7 @@ func (h *FirewallHandler) PermanentBan(c *gin.Context) {
 	}
 
 	executor.GoSafe(func() { executor.AddPersistBan(ip) })
-	if jail == "wppanel" || jail == "wppanel-404" || jail == "wppanel-login" || jail == "manual" {
+	if jail == "wppanel" || jail == "wppanel-404" || jail == "wppanel-login" || jail == "wppanel-sqli" || jail == "manual" {
 		executor.GoSafe(func() { executor.AddNginxBan(ip) })
 	}
 

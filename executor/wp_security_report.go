@@ -17,10 +17,12 @@ import (
 	"github.com/naibabiji/wp-panel/database"
 )
 
-// WordPress 安全事件类型（只记录、不拦截）
+// WordPress 安全事件类型。sqli_blocked 表示 Nginx 已在 PHP 前拒绝请求；
+// 其它类型仍是调查证据，不能据此断言站点存在漏洞或攻击已经成功。
 const (
 	SecurityEventSensitiveFileScan = "sensitive_file_scan"
 	SecurityEventSQLiProbe         = "sqli_probe"
+	SecurityEventSQLiBlocked       = "sqli_blocked"
 	SecurityEventFakeSearchBot     = "fake_search_bot"
 	SecurityEventSuspiciousPHP     = "suspicious_php"
 )
@@ -81,6 +83,15 @@ var (
 		regexp.MustCompile(`(?i)(?:'|%27)\s*or\s*(?:'|%27)?\s*[0-9]+\s*(?:'|%27)?\s*=\s*(?:'|%27)?\s*[0-9]+`),
 		regexp.MustCompile(`(?i)0x[0-9a-f]{16,}`),
 		regexp.MustCompile(`(?i)(?:;|%3b)\s*(?:drop|insert|update|delete)\s+`),
+	}
+	highConfidenceSQLiPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)union(?:\s|%20|\+|/\*.*?\*/)+select(?:\s|%20|\+|/\*.*?\*/)+.*(?:from|information_schema)`),
+		regexp.MustCompile(`(?i)(?:sleep|pg_sleep)(?:\s|%20|\+)*(?:\(|%28)(?:\s|%20|\+)*[0-9]+(?:\s|%20|\+)*(?:\)|%29)`),
+		regexp.MustCompile(`(?i)benchmark(?:\s|%20|\+)*(?:\(|%28)(?:\s|%20|\+)*[0-9]+(?:\s|%20|\+)*(?:,|%2c)`),
+		regexp.MustCompile(`(?i)(?:union(?:\s|%20|\+)+select|select(?:\s|%20|\+)+).*information_schema`),
+		regexp.MustCompile(`(?i)(?:load_file(?:\s|%20|\+)*(?:\(|%28).*(?:'|%27)|into(?:\s|%20|\+)+outfile(?:\s|%20|\+)+(?:'|%27))`),
+		regexp.MustCompile(`(?i)(?:;|%3b)(?:\s|%20|\+)*(?:drop|alter|truncate)(?:\s|%20|\+)+(?:table|database)(?:\s|%20|\+)+`),
+		regexp.MustCompile(`(?i)(?:'|%27)(?:\s|%20|\+)*or(?:\s|%20|\+)+(?:'|%27)?[0-9]+(?:'|%27)?(?:\s|%20|\+)*(?:=|%3d)(?:\s|%20|\+)*(?:'|%27)?[0-9]+(?:'|%27)?(?:\s|%20|\+)*(?:--|%2d%2d|#|%23)`),
 	}
 
 	// 敏感文件扫描路径特征（与 fail2ban filter 保持一致）
@@ -288,11 +299,14 @@ func addWPSecurityEvent(aggregates map[string]*wpSecurityAggregate, domain, ip s
 	}
 }
 
-// classifySecurityEvent 根据请求特征判断安全事件类型（只记录、不拦截）
+// classifySecurityEvent 根据请求特征和实际响应判断安全事件类型。
 func classifySecurityEvent(method, uri, ua, ip string, status int, checker *searchBotIPChecker) (eventType, riskLevel, message string) {
 	lowerURI := strings.ToLower(uri)
 
 	// 1. SQL 注入探测（优先判断，因为 query string 中可能同时命中其他模式）
+	if status == 403 && isHighConfidenceSQLi(uri) {
+		return SecurityEventSQLiBlocked, "high", "检测到高置信度 SQL 注入请求特征，请求已在 PHP 前拒绝"
+	}
 	if isSQLiProbe(uri) {
 		return SecurityEventSQLiProbe, "high", "SQL 注入探测"
 	}
@@ -322,6 +336,39 @@ func classifySecurityEvent(method, uri, ua, ip string, status int, checker *sear
 	}
 
 	return "", "low", "WordPress 异常路径访问"
+}
+
+func isHighConfidenceSQLi(uri string) bool {
+	if isWordPressCoreSearchRequest(uri) {
+		return false
+	}
+	for _, re := range highConfidenceSQLiPatterns {
+		if re.MatchString(uri) {
+			return true
+		}
+	}
+	return false
+}
+
+func isWordPressCoreSearchRequest(requestURI string) bool {
+	parsed, err := url.ParseRequestURI(requestURI)
+	if err != nil {
+		return false
+	}
+	values := parsed.Query()
+	if len(values) != 1 {
+		return false
+	}
+	switch parsed.Path {
+	case "/", "/index.php":
+		_, ok := values["s"]
+		return ok
+	case "/wp-json/wp/v2/posts", "/wp-json/wp/v2/posts/", "/wp-json/wp/v2/pages", "/wp-json/wp/v2/pages/":
+		_, ok := values["search"]
+		return ok
+	default:
+		return false
+	}
 }
 
 // isSQLiProbe 对 URI 原文和 URL 解码后的形式都做匹配。

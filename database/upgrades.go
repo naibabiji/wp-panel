@@ -711,6 +711,15 @@ var upgrades = []Upgrade{
 		Description: "扩展 WordPress 内容与关键设置异常监控基线",
 		Func:        ensureWPAnomalyContentColumns,
 	},
+	{
+		Version:     "1.0.61",
+		Description: "新增 WordPress SQL 注入请求拦截与自动封禁设置",
+		SQL: []string{`INSERT OR IGNORE INTO security_settings (skey,svalue,description) VALUES
+			('wp_sqli_block_enabled','true','WordPress 高置信度 SQL 注入请求前置拒绝'),
+			('wp_sqli_autoban_enabled','true','WordPress SQL 注入重复来源自动临时封禁'),
+			('wp_sqli_ban_threshold','5','SQL 注入自动封禁阈值'),
+			('wp_sqli_ban_window_seconds','600','SQL 注入自动封禁统计窗口（秒）')`},
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

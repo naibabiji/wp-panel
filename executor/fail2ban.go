@@ -70,6 +70,12 @@ ignoreregex =
               ^<HOST> .* "POST /wp-login\.php\?(?:[A-Za-z0-9_.~-]+=[^&"]*&)*action=(?:confirm_admin_email|postpass|logout|lostpassword|retrievepassword|resetpass|rp|register|checkemail|confirmaction|entered_recovery_mode)(?:&(?!action=)[A-Za-z0-9_.~-]+=[^&"]*)* HTTP/[^"]+" 200 .*$
 `
 
+const fail2banSQLiFilterConfig = `# WP Panel Generated — DO NOT EDIT MANUALLY
+[Definition]
+failregex = ^<HOST> .* "[A-Z]+ [^"]*" 403 .*$
+ignoreregex =
+`
+
 func init() {
 	database.RegisterUpgrade("1.0.26", cleanupDuplicateActiveFirewallBans)
 }
@@ -84,7 +90,7 @@ type fail2banConfigBackup struct {
 	existed bool
 }
 
-func deployFail2ban(webWhitelistIPs, sshWhitelistIPs string, maxRetry, findTime, banTime int) error {
+func deployFail2ban(webWhitelistIPs, sshWhitelistIPs string, maxRetry, findTime, banTime, sqliMaxRetry, sqliFindTime int) error {
 	jailDir := "/etc/fail2ban/jail.d"
 	filterDir := "/etc/fail2ban/filter.d"
 	actionDir := "/etc/fail2ban/action.d"
@@ -101,7 +107,8 @@ func deployFail2ban(webWhitelistIPs, sshWhitelistIPs string, maxRetry, findTime,
 	filterPath := filepath.Join(filterDir, "wppanel.conf")
 	filter404Path := filepath.Join(filterDir, "wppanel-404.conf")
 	filterLoginPath := filepath.Join(filterDir, "wppanel-login.conf")
-	backups, err := backupFail2banConfigFiles(jailPath, actionPath, recordActionPath, filterPath, filter404Path, filterLoginPath, localPath)
+	filterSQLiPath := filepath.Join(filterDir, "wppanel-sqli.conf")
+	backups, err := backupFail2banConfigFiles(jailPath, actionPath, recordActionPath, filterPath, filter404Path, filterLoginPath, filterSQLiPath, localPath)
 	if err != nil {
 		return err
 	}
@@ -132,6 +139,12 @@ func deployFail2ban(webWhitelistIPs, sshWhitelistIPs string, maxRetry, findTime,
 	}
 	if banTime <= 0 {
 		banTime = 600
+	}
+	if sqliMaxRetry <= 0 {
+		sqliMaxRetry = 5
+	}
+	if sqliFindTime <= 0 {
+		sqliFindTime = 600
 	}
 
 	jailConfig := fmt.Sprintf(`# WP Panel Generated — DO NOT EDIT MANUALLY
@@ -196,6 +209,22 @@ bantime.maxtime = 7d
 bantime.overalljails = false
 ignoreip = %s
 `, maxRetry, findTime, banTime, webIgnoreIPs, banTime, webIgnoreIPs, maxRetry, findTime, banTime, webIgnoreIPs, maxRetry, findTime, banTime, sshIgnoreIPs)
+	jailConfig += fmt.Sprintf(`
+[wppanel-sqli]
+enabled = true
+filter = wppanel-sqli
+action = nftables-multiport[name=wppanel-sqli, port="http,https"]
+         wppanel-nginx[name=wppanel-sqli]
+logpath = /www/wwwlogs/*/wp-sqli-security.log
+maxretry = %d
+findtime = %d
+bantime = %d
+bantime.increment = true
+bantime.multipliers = 1 6 36 144 1008
+bantime.maxtime = 7d
+bantime.overalljails = false
+ignoreip = %s
+`, sqliMaxRetry, sqliFindTime, banTime, webIgnoreIPs)
 	if err := validateGeneratedFail2banJailConfig(jailConfig); err != nil {
 		return err
 	}
@@ -243,6 +272,9 @@ ignoreregex =
 	if err := os.WriteFile(filterLoginPath, []byte(fail2banLoginFilterConfig), 0644); err != nil {
 		return rollbackDeploy(fmt.Errorf("写入登录爆破 filter 配置失败: %w", err))
 	}
+	if err := os.WriteFile(filterSQLiPath, []byte(fail2banSQLiFilterConfig), 0644); err != nil {
+		return rollbackDeploy(fmt.Errorf("写入 SQL 注入防护 filter 配置失败: %w", err))
+	}
 
 	if _, err := executeCommand("fail2ban-client", "-t"); err != nil {
 		return rollbackDeploy(fmt.Errorf("Fail2ban 配置校验失败: %w", err))
@@ -257,7 +289,7 @@ ignoreregex =
 }
 
 func validateGeneratedFail2banJailConfig(config string) error {
-	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd"} {
+	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd", "wppanel-sqli"} {
 		header := "[" + jail + "]"
 		start := strings.Index(config, header)
 		if start < 0 {
@@ -403,7 +435,7 @@ func ensureFail2banSSHRecordAction() error {
 }
 
 func buildFail2banIgnoreIPs(whitelistIPs string) (string, error) {
-	ignoreIPs := "127.0.0.1/8"
+	ignoreIPs := "127.0.0.1/8 ::1"
 	if whitelistIPs == "" {
 		return ignoreIPs, nil
 	}
@@ -439,6 +471,7 @@ func ensureLogFiles() {
 			touch("/www/wwwlogs/" + e.Name() + "/error.log")
 			touch("/www/wwwlogs/" + e.Name() + "/wp-security.log")
 			touch("/www/wwwlogs/" + e.Name() + "/wp-login-security.log")
+			touch("/www/wwwlogs/" + e.Name() + "/wp-sqli-security.log")
 			touch("/www/wwwlogs/" + e.Name() + "/php-error.log")
 			touch("/www/wwwlogs/" + e.Name() + "/php-slow.log")
 			hasLogs = true
@@ -450,6 +483,7 @@ func ensureLogFiles() {
 		touch("/www/wwwlogs/_panel_placeholder/error.log")
 		touch("/www/wwwlogs/_panel_placeholder/wp-security.log")
 		touch("/www/wwwlogs/_panel_placeholder/wp-login-security.log")
+		touch("/www/wwwlogs/_panel_placeholder/wp-sqli-security.log")
 		touch("/www/wwwlogs/_panel_placeholder/php-error.log")
 		touch("/www/wwwlogs/_panel_placeholder/php-slow.log")
 	}
@@ -601,12 +635,14 @@ func ApplyFail2banSettings() error {
 	db := database.GetDB()
 
 	var officialIPs, customIPs, cdnRealIPIPs string
-	var maxRetry, findTime string
+	var maxRetry, findTime, sqliMaxRetry, sqliFindTime string
 	db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'official_whitelist_ips'`).Scan(&officialIPs)
 	db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'whitelist_ips'`).Scan(&customIPs)
 	cdnRealIPIPs = CombinedCDNRealIPRangesForFail2ban()
 	db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'fail2ban_maxretry'`).Scan(&maxRetry)
 	db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'fail2ban_findtime'`).Scan(&findTime)
+	db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'wp_sqli_ban_threshold'`).Scan(&sqliMaxRetry)
+	db.QueryRow(`SELECT svalue FROM security_settings WHERE skey = 'wp_sqli_ban_window_seconds'`).Scan(&sqliFindTime)
 
 	baseIPs := strings.TrimSpace(officialIPs)
 	if customIPs != "" {
@@ -628,7 +664,7 @@ func ApplyFail2banSettings() error {
 	// The incremental ladder is intentionally fixed at 10m, 1h, 6h, 24h and 7d.
 	bt := 600
 
-	if err := deployFail2ban(webIPs, baseIPs, mr, ft, bt); err != nil {
+	if err := deployFail2ban(webIPs, baseIPs, mr, ft, bt, parseIntOr(sqliMaxRetry, 5), parseIntOr(sqliFindTime, 600)); err != nil {
 		return err
 	}
 
@@ -667,7 +703,7 @@ func readActiveFail2banBans() fail2banSnapshot {
 		webBanned:      make(map[string]bool),
 	}
 
-	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd"} {
+	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd", "wppanel-sqli"} {
 		out, err := executeCommand("fail2ban-client", "status", jail)
 		if err != nil || out == "" {
 			log.Printf("Fail2ban 状态同步跳过 %s：无法读取 jail 状态", jail)
@@ -762,7 +798,7 @@ func reconcileFail2banBans(db *sql.DB, snapshot fail2banSnapshot) {
 
 	rows, err := db.Query(`SELECT id, ip_address, source_jail FROM firewall_bans
 		WHERE unbanned_at IS NULL
-		AND source_jail IN ('wppanel','wppanel-404','wppanel-login','wppanel-sshd')`)
+		AND source_jail IN ('wppanel','wppanel-404','wppanel-login','wppanel-sshd','wppanel-sqli')`)
 	if err != nil {
 		return
 	}
@@ -958,6 +994,8 @@ func RecordFail2banBan(ip, jail string, banTime, banCount int, restored bool) er
 		reason = "SSH 暴力破解"
 	} else if jail == "wppanel-login" {
 		reason = "登录/XML-RPC 认证爆破"
+	} else if jail == "wppanel-sqli" {
+		reason = "重复高置信度 SQL 注入请求"
 	}
 	expiresModifier := fmt.Sprintf("+%d seconds", banTime)
 
@@ -1065,7 +1103,7 @@ func MaybeRemoveNginxBan(ip string) error {
 	}
 	var activeWebBans int
 	err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM firewall_bans
-		WHERE ip_address=? AND source_jail IN ('wppanel','wppanel-404','wppanel-login','manual')
+		WHERE ip_address=? AND source_jail IN ('wppanel','wppanel-404','wppanel-login','wppanel-sqli','manual')
 		AND unbanned_at IS NULL AND (expires_at IS NULL OR expires_at > datetime('now'))`, ip).Scan(&activeWebBans)
 	if err != nil || activeWebBans > 0 {
 		return err
@@ -1185,7 +1223,7 @@ func deduplicateActiveFirewallBanIP(db *sql.DB, ip, jail string) error {
 
 func normalizeFail2banJail(jail string) string {
 	switch strings.TrimSpace(jail) {
-	case "wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd":
+	case "wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd", "wppanel-sqli":
 		return strings.TrimSpace(jail)
 	default:
 		return ""
@@ -1193,11 +1231,11 @@ func normalizeFail2banJail(jail string) string {
 }
 
 func isWebBanSource(jail string) bool {
-	return jail == "wppanel" || jail == "wppanel-404" || jail == "wppanel-login" || jail == "manual"
+	return jail == "wppanel" || jail == "wppanel-404" || jail == "wppanel-login" || jail == "wppanel-sqli" || jail == "manual"
 }
 
 func detectFail2banJail(ip string) string {
-	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login"} {
+	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login", "wppanel-sqli"} {
 		out, err := executeCommand("fail2ban-client", "status", jail)
 		if err != nil {
 			continue
@@ -1577,7 +1615,7 @@ func UnbanAllIPs() string {
 	exec.Command("bash", "-c", "nft flush set ip wppanel_persist banned_ips 2>/dev/null; true").Run()
 	_ = ReplaceNginxBannedIPs(map[string]bool{})
 
-	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd"} {
+	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd", "wppanel-sqli"} {
 		out, err := executeCommand("fail2ban-client", "status", jail)
 		if err == nil && out != "" {
 			for _, ip := range parseBannedIPs(out) {

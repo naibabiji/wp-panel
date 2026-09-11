@@ -442,9 +442,9 @@ func TestCheckWPSecurityEventThresholdReturnsFalseWhenNoOffenders(t *testing.T) 
 	openTestDB(t)
 	seedWPSecurityEventSite(t, t.TempDir())
 
-	firing, msg := checkWPSQLiProbeThreshold()
+	firing, msg := checkWPSecurityEventThreshold(SecurityEventSQLiProbe, "SQL 注入探测")
 	if firing {
-		t.Fatalf("checkWPSQLiProbeThreshold() firing = true with no data, want false (msg=%q)", msg)
+		t.Fatalf("checkWPSecurityEventThreshold() firing = true with no data, want false (msg=%q)", msg)
 	}
 }
 
@@ -457,9 +457,9 @@ func TestCheckWPSecurityEventThresholdFiresAndIncludesIPAndPaths(t *testing.T) {
 		insertWPSecurityEvent(t, "217.216.37.82", SecurityEventSQLiProbe, "/index.php", recent)
 	}
 
-	firing, msg := checkWPSQLiProbeThreshold()
+	firing, msg := checkWPSecurityEventThreshold(SecurityEventSQLiProbe, "SQL 注入探测")
 	if !firing {
-		t.Fatal("checkWPSQLiProbeThreshold() firing = false, want true once threshold reached")
+		t.Fatal("checkWPSecurityEventThreshold() firing = false, want true once threshold reached")
 	}
 	if !strings.Contains(msg, "217.216.37.82") {
 		t.Fatalf("alert message = %q, want it to mention the offending IP", msg)
@@ -489,9 +489,9 @@ func TestCheckWPSecurityEventThresholdTruncatesLargeOffenderList(t *testing.T) {
 		}
 	}
 
-	firing, msg := checkWPSQLiProbeThreshold()
+	firing, msg := checkWPSecurityEventThreshold(SecurityEventSQLiProbe, "SQL 注入探测")
 	if !firing {
-		t.Fatal("checkWPSQLiProbeThreshold() firing = false, want true")
+		t.Fatal("checkWPSecurityEventThreshold() firing = false, want true")
 	}
 	if !strings.Contains(msg, fmt.Sprintf("还有 %d 个 IP 未列出", offenderCount-wpSecurityAlertMaxOffenders)) {
 		t.Fatalf("alert message = %q, want it to mention the omitted offender count", msg)
@@ -598,9 +598,9 @@ func TestCheckWPSecurityEventThresholdUsesConfiguredThreshold(t *testing.T) {
 		insertWPSecurityEvent(t, "217.216.37.82", SecurityEventSQLiProbe, "/index.php", recent)
 	}
 
-	firing, msg := checkWPSQLiProbeThreshold()
+	firing, msg := checkWPSecurityEventThreshold(SecurityEventSQLiProbe, "SQL 注入探测")
 	if !firing {
-		t.Fatal("checkWPSQLiProbeThreshold() firing = false, want true with configured threshold=3 and 3 events")
+		t.Fatal("checkWPSecurityEventThreshold() firing = false, want true with configured threshold=3 and 3 events")
 	}
 	if !strings.Contains(msg, "达到阈值（3 次）") {
 		t.Fatalf("alert message = %q, want it to mention configured threshold 3", msg)

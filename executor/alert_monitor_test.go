@@ -73,9 +73,6 @@ func TestAlertResendIntervalsByAlertClass(t *testing.T) {
 	if got := alertResendInterval("alert_cron_fail"); got != 24*time.Hour {
 		t.Fatalf("operational alerts should resend daily, got %v", got)
 	}
-	if got := alertResendInterval("alert_wp_sqli_probe"); got != 24*time.Hour {
-		t.Fatalf("wp sqli probe alert should resend daily to avoid spamming during a sustained attack, got %v", got)
-	}
 	if got := alertResendInterval("alert_wp_fake_search_bot"); got != 24*time.Hour {
 		t.Fatalf("wp fake search bot alert should resend daily to avoid spamming during a sustained attack, got %v", got)
 	}

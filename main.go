@@ -254,7 +254,9 @@ func main() {
 
 	collector.Start()
 
-	executor.ApplyFail2banSettings()
+	if err := executor.ApplyFail2banSettings(); err != nil {
+		log.Printf("Fail2ban 配置应用失败: %v", err)
+	}
 	executor.EnsureOperationLogRetention()
 	if err := executor.ApplyRateLimitSettings(); err != nil {
 		log.Printf("Nginx 限速配置跳过: %v", err)

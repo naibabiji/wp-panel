@@ -354,7 +354,7 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.60" {
+	if got := LatestVersion(); got != "1.0.61" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
 	for _, column := range []string{"database_backup_mode", "database_backup_source_id", "auto_rollback", "batch_id"} {
@@ -399,6 +399,48 @@ func TestUpgradeAddsRemoteBackupIsolationWithoutChangingLegacyTarget(t *testing.
 	}
 	if mode != "legacy" || username != "wpbackup" || authType != "password" || password != "secret" || remotePath != "/mnt/backup/old" || s3Prefix != "legacy-prefix" {
 		t.Fatalf("legacy remote backup changed after upgrade: mode=%q username=%q auth=%q password=%q path=%q s3=%q", mode, username, authType, password, remotePath, s3Prefix)
+	}
+}
+
+func TestSQLiProtectionSettingsExistForNewInstallAndUpgrade(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initialize schema version: %v", err)
+	}
+	assertSQLiProtectionSettings(t)
+
+	if _, err := DB.Exec(`DELETE FROM security_settings WHERE skey LIKE 'wp_sqli_%'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`DELETE FROM schema_version`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`INSERT INTO schema_version(version) VALUES ('1.0.60')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades: %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("repeated RunUpgrades: %v", err)
+	}
+	assertSQLiProtectionSettings(t)
+}
+
+func assertSQLiProtectionSettings(t *testing.T) {
+	t.Helper()
+	wants := map[string]string{
+		"wp_sqli_block_enabled": "true", "wp_sqli_autoban_enabled": "true",
+		"wp_sqli_ban_threshold": "5", "wp_sqli_ban_window_seconds": "600",
+	}
+	for key, want := range wants {
+		var got string
+		if err := DB.QueryRow(`SELECT svalue FROM security_settings WHERE skey=?`, key).Scan(&got); err != nil || got != want {
+			t.Fatalf("%s = %q, err=%v, want %q", key, got, err, want)
+		}
 	}
 }
 

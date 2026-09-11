@@ -1,18 +1,6 @@
 {{template "base" .}}
 {{define "firewall_content"}}
 <div x-data="firewallManager()" x-init="init()">
-    <section class="card mb-6" x-data="sqliSettings()" x-init="load()">
-        <h3 class="text-lg font-semibold mb-2">{{t .Lang "firewall.sqli_title"}}</h3>
-        <p class="text-xs text-gray-400 mb-3">{{t .Lang "firewall.sqli_help"}}</p>
-        <fieldset :disabled="busy || !loaded" class="flex flex-wrap items-center gap-3">
-            <label><input type="checkbox" x-model="enabled"> {{t .Lang "firewall.sqli_enable"}}</label>
-            <label>{{t .Lang "alert.wp_security_threshold_label"}} <input type="number" min="1" max="10000" x-model.number="threshold" class="input-field w-20"></label>
-            <label>{{t .Lang "alert.wp_security_window_label"}} <input type="number" min="1" max="168" x-model.number="hours" class="input-field w-20"></label>
-            <button type="button" class="btn-primary" @click="save()">{{t .Lang "common.save"}}</button>
-        </fieldset>
-        <button type="button" class="btn-secondary mt-3" @click="typeFilter='sqli_probe'; loadTab('wp')">{{t .Lang "firewall.sqli_evidence"}}</button>
-        <button type="button" class="btn-secondary mt-3" @click="load()" :disabled="busy">{{t .Lang "website.refresh"}}</button>
-    </section>
     <div class="flex items-center justify-between mb-6">
         <h2 class="text-xl font-bold text-white">{{t .Lang "nav.firewall"}}</h2>
         <button @click="openRules('rules-overview')" class="btn-secondary text-sm">{{t .Lang "firewall.rules_help"}}</button>
@@ -34,6 +22,10 @@
                 <button type="button" @click="focusRule('rules-login')" class="text-left rounded border border-pink-500/30 bg-pink-500/10 p-3 hover:bg-pink-500/20">
                     <span class="block text-sm font-semibold text-pink-300">{{t .Lang "firewall.source_login"}}</span>
                     <span class="block text-xs text-gray-400 mt-1">{{t .Lang "firewall.rule_summary_login"}}</span>
+                </button>
+                <button type="button" @click="focusRule('rules-sqli')" class="text-left rounded border border-red-500/30 bg-red-500/10 p-3 hover:bg-red-500/20">
+                    <span class="block text-sm font-semibold text-red-300">{{t .Lang "firewall.source_sqli"}}</span>
+                    <span class="block text-xs text-gray-400 mt-1">{{t .Lang "firewall.rule_summary_sqli"}}</span>
                 </button>
                 <button type="button" @click="focusRule('rules-ssh')" class="text-left rounded border border-green-500/30 bg-green-500/10 p-3 hover:bg-green-500/20">
                     <span class="block text-sm font-semibold text-green-300">{{t .Lang "firewall.source_ssh"}}</span>
@@ -60,6 +52,11 @@
                         <li><code class="text-gray-300">POST /xmlrpc.php</code> 返回 <span class="text-gray-300">HTTP 403</span> — 仅在面板禁用 XML-RPC 时出现，视为无条件的攻击信号</li>
                     </ul>
                     <p class="text-gray-500 mt-1">判定依据是 Nginx 路由完成后已规范化的请求路径，任意数量的多余斜杠或 URL 编码变体（如 <code class="text-gray-300">//wp-login.php</code>、<code class="text-gray-300">%2Fwp-login.php</code>）只要最终被路由到登录/XML-RPC 入口，都会统一计数，不存在换个写法就不计数的空子。使用独立的 <code class="text-gray-300">wppanel-login</code> jail，和下方「Web防护」的全站限流/探测信号分开累计，互不影响触发阈值。</p>
+                </div>
+                <div id="rules-sqli" class="scroll-mt-4 rounded p-2 -mx-2">
+                    <p class="text-white font-semibold mb-1">{{t .Lang "firewall.rule_sqli_title"}}</p>
+                    <p>{{t .Lang "firewall.rule_sqli_detail"}}</p>
+                    <p class="text-gray-500 mt-1">{{t .Lang "firewall.rule_sqli_boundary"}}</p>
                 </div>
                 <div id="rules-web" class="scroll-mt-4 rounded p-2 -mx-2">
                     <p class="text-white font-semibold mb-1">触发条件 — 来源标注为「Web防护」（命中以下任一规则计为 1 次违规）</p>
@@ -97,7 +94,7 @@
                 <div id="rules-ssh" class="scroll-mt-4 rounded p-2 -mx-2">
                     <p class="text-white font-semibold mb-1">封禁机制</p>
                     <ul class="space-y-1 ml-2">
-                        <li><span class="text-blue-400">Fail2ban</span> — 管理来源「Web防护」封禁（jail: <code class="text-gray-300">wppanel</code>）、来源「登录防护」封禁（jail: <code class="text-gray-300">wppanel-login</code>）、来源「404防御」封禁（jail: <code class="text-gray-300">wppanel-404</code>）和来源「SSH防护」封禁（jail: <code class="text-gray-300">wppanel-sshd</code>，复用与 Web防护相同的阈值，检测 <code class="text-gray-300">/var/log/auth.log</code> 中的 SSH 登录失败），到期自动释放</li>
+                        <li><span class="text-blue-400">Fail2ban</span> — 管理来源「Web防护」封禁（jail: <code class="text-gray-300">wppanel</code>）、来源「登录防护」封禁（jail: <code class="text-gray-300">wppanel-login</code>）、来源「404防御」封禁（jail: <code class="text-gray-300">wppanel-404</code>）、来源「SQL 注入防护」封禁（jail: <code class="text-gray-300">wppanel-sqli</code>）和来源「SSH防护」封禁（jail: <code class="text-gray-300">wppanel-sshd</code>，复用与 Web防护相同的阈值，检测 <code class="text-gray-300">/var/log/auth.log</code> 中的 SSH 登录失败），到期自动释放</li>
                         <li><span class="text-purple-400">Nftables 持久</span> — 管理管理员手动永久封禁、来源「扫描防御」封禁（jail: <code class="text-gray-300">panel_scan</code>）和来源「面板」封禁（jail: <code class="text-gray-300">panel</code>），独立于 Fail2ban；有期限的记录到期解除，手动永久封禁需管理员解封</li>
                         <li><span class="text-green-400">Nginx 黑名单</span> — 与 Fail2ban 联动，Web 防护 jail 封禁时同步写入 Nginx geo 黑名单，被禁 IP 直接返回 <code class="text-gray-300">444</code>（关闭连接），确保 Cloudflare 代理场景下也能有效拦截</li>
                     </ul>
@@ -216,6 +213,7 @@
                     <option value="">{{t .Lang "firewall.all_types"}}</option>
                     <option value="sensitive_file_scan">{{t .Lang "firewall.type_sensitive_file_scan"}}</option>
                     <option value="sqli_probe">{{t .Lang "firewall.type_sqli_probe"}}</option>
+                    <option value="sqli_blocked">{{t .Lang "firewall.type_sqli_blocked"}}</option>
                     <option value="fake_search_bot">{{t .Lang "firewall.type_fake_search_bot"}}</option>
                     <option value="suspicious_php">{{t .Lang "firewall.type_suspicious_php"}}</option>
                 </select>
@@ -372,6 +370,7 @@
                     <option value="wppanel">{{t .Lang "firewall.source_web_protect"}}</option>
                     <option value="wppanel-login">{{t .Lang "firewall.source_login"}}</option>
                     <option value="wppanel-404">{{t .Lang "firewall.source_404"}}</option>
+                    <option value="wppanel-sqli">{{t .Lang "firewall.source_sqli"}}</option>
                     <option value="wppanel-sshd">{{t .Lang "firewall.source_ssh"}}</option>
                     <option value="panel">{{t .Lang "firewall.source_panel"}}</option>
                     <option value="panel_scan">{{t .Lang "firewall.source_scan"}}</option>
@@ -501,30 +500,6 @@
 </div>
 
 <script>
-function sqliSettings() {
-    return {
-        enabled:false, threshold:10, hours:24, busy:false, loaded:false,
-        async load() {
-            this.busy = true; this.loaded = false;
-            try {
-                const r = await api('/alert/settings');
-                this.enabled = r.data.alert_wp_sqli_probe === 'true';
-                this.threshold = Number(r.data.alert_wp_security_threshold || 10);
-                this.hours = Number(r.data.alert_wp_security_window_hours || 24);
-                this.loaded = true;
-            } catch (e) { showToast(e.message || t('common.operation_failed'), 'error'); }
-            finally { this.busy = false; }
-        },
-        async save() {
-            this.busy = true;
-            try {
-                await api('/alert/settings', {method:'PUT', body:{alert_wp_sqli_probe:String(this.enabled), alert_wp_security_threshold:String(this.threshold), alert_wp_security_window_hours:String(this.hours)}});
-                showToast(t('common.saved'), 'success');
-            } catch (e) { showToast(e.message || t('common.operation_failed'), 'error'); }
-            finally { this.busy = false; }
-        }
-    };
-}
 function firewallManager() {
     return {
         activeTab: 'current',
@@ -601,7 +576,7 @@ function firewallManager() {
             const status = this.currentBanReadStatus;
             if (!status) return false;
             const fail2ban = status.fail2ban || {};
-            return !status.nftables || !status.nginx || ['wppanel', 'wppanel-404', 'wppanel-login', 'wppanel-sshd'].some(jail => !fail2ban[jail]);
+            return !status.nftables || !status.nginx || ['wppanel', 'wppanel-404', 'wppanel-login', 'wppanel-sshd', 'wppanel-sqli'].some(jail => !fail2ban[jail]);
         },
         async fetchHistory() {
             this.historyLoading = true;
@@ -718,12 +693,14 @@ function firewallManager() {
         securityEventTypeLabel(type) {
             if (type === 'sensitive_file_scan') return t('firewall.type_sensitive_file_scan');
             if (type === 'sqli_probe') return t('firewall.type_sqli_probe');
+            if (type === 'sqli_blocked') return t('firewall.type_sqli_blocked');
             if (type === 'fake_search_bot') return t('firewall.type_fake_search_bot');
             if (type === 'suspicious_php') return t('firewall.type_suspicious_php');
             return type;
         },
         securityEventTypeClass(type) {
-            if (type === 'sqli_probe') return 'badge-danger';
+            if (type === 'sqli_blocked') return 'badge-danger';
+            if (type === 'sqli_probe') return 'badge-warning';
             if (type === 'fake_search_bot' || type === 'sensitive_file_scan') return 'badge-warning';
             return 'badge-info';
         },
@@ -744,6 +721,7 @@ function firewallManager() {
         sourceLabel(ban) {
             if (ban.source_jail === 'wppanel') return t('firewall.source_web_protect');
             if (ban.source_jail === 'wppanel-login') return t('firewall.source_login');
+            if (ban.source_jail === 'wppanel-sqli') return t('firewall.source_sqli');
             if (ban.source_jail === 'wppanel-404') return t('firewall.source_404');
             if (ban.source_jail === 'wppanel-sshd') return t('firewall.source_ssh');
             if (ban.source_jail === 'panel') return t('firewall.source_panel');
@@ -757,6 +735,7 @@ function firewallManager() {
         sourceClass(ban) {
             if (ban.source_jail === 'wppanel') return 'text-blue-400';
             if (ban.source_jail === 'wppanel-login') return 'text-pink-400';
+            if (ban.source_jail === 'wppanel-sqli') return 'text-red-400';
             if (ban.source_jail === 'wppanel-404') return 'text-yellow-400';
             if (ban.source_jail === 'wppanel-sshd') return 'text-green-400';
             if (ban.source_jail === 'manual') return 'text-purple-400';
@@ -766,6 +745,7 @@ function firewallManager() {
         sourceRuleID(ban) {
             if (ban.source_jail === 'wppanel') return 'rules-web';
             if (ban.source_jail === 'wppanel-login') return 'rules-login';
+            if (ban.source_jail === 'wppanel-sqli') return 'rules-sqli';
             if (ban.source_jail === 'wppanel-404') return 'rules-404';
             if (ban.source_jail === 'wppanel-sshd') return 'rules-ssh';
             if (ban.source_jail === 'panel_scan') return 'rules-scan';

@@ -11,6 +11,7 @@ func TestRenderSiteLogrotateConfigIncludesAllSiteLogs(t *testing.T) {
 		"/www/wwwlogs/example.com/access.log",
 		"/www/wwwlogs/example.com/error.log",
 		"/www/wwwlogs/example.com/wp-security.log",
+		"/www/wwwlogs/example.com/wp-sqli-security.log",
 		"/www/wwwlogs/example.com/php-error.log",
 		"/www/wwwlogs/example.com/php-slow.log",
 		"rotate 7",

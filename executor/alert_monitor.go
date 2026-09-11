@@ -70,7 +70,6 @@ func StartAlertMonitor(currentVersion string) {
 		{key: "alert_site", checkFn: checkSites, sendRecovery: true},
 		{key: "alert_system_update", checkFn: checkSystemUpdate},
 		{key: "alert_panel_update", checkFn: checkPanelUpdate},
-		{key: "alert_wp_sqli_probe", checkFn: checkWPSQLiProbeThreshold},
 		{key: "alert_wp_fake_search_bot", checkFn: checkWPFakeSearchBotThreshold},
 	}
 	loadAlertRuntimeState(alertMgr.rules)
@@ -231,7 +230,7 @@ func alertResendInterval(key string) time.Duration {
 	case "alert_ssl", "alert_backup", "alert_remote_backup", "alert_cron_fail",
 		"alert_system_update", "alert_panel_update":
 		return 24 * time.Hour
-	case "alert_wp_sqli_probe", "alert_wp_fake_search_bot":
+	case "alert_wp_fake_search_bot":
 		// 判定条件本身就是"过去 24 小时内达到阈值"的滚动窗口，只要攻击没有停止，
 		// 这个条件会持续成立一整天；用默认的 30 分钟重发会在攻击期间连续发出
 		// 几十封"持续中"邮件，这里和系统/面板更新一样按 24 小时重发一次。
@@ -390,8 +389,6 @@ func alertLabel(key string) string {
 		return "系统有可用更新"
 	case "alert_panel_update":
 		return "面板有新版本"
-	case "alert_wp_sqli_probe":
-		return "WordPress SQL 注入探测"
 	case "alert_wp_fake_search_bot":
 		return "伪装搜索引擎爬虫"
 	}
@@ -446,8 +443,6 @@ func getEmailTip(key string, isRecovery bool) string {
 		return "请在合适的维护窗口执行系统更新。"
 	case "alert_panel_update":
 		return "请在面板设置页查看并执行更新。"
-	case "alert_wp_sqli_probe":
-		return "面板不会自动封禁；请在安全防御页面核对来源。"
 	case "alert_wp_fake_search_bot":
 		return "面板不会自动封禁；请在安全防御页面核对来源。"
 	}
@@ -1111,10 +1106,6 @@ func getWPSecurityAlertConfig() wpSecurityAlertConfig {
 		}
 	}
 	return cfg
-}
-
-func checkWPSQLiProbeThreshold() (bool, string) {
-	return checkWPSecurityEventThreshold(SecurityEventSQLiProbe, "SQL 注入探测")
 }
 
 func checkWPFakeSearchBotThreshold() (bool, string) {
