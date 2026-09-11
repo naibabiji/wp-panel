@@ -695,6 +695,11 @@ func checkBackup() (bool, string) {
 	rows, err := db.Query(`SELECT w.domain FROM backup_settings bs
 		JOIN websites w ON w.id = bs.site_id
 		WHERE bs.enabled = 1
+		AND w.status = 'active'
+		AND NOT EXISTS (
+			SELECT 1 FROM site_migration_locks ml
+			WHERE ml.site_id = bs.site_id AND ml.status = 'active'
+		)
 		AND EXISTS (
 			SELECT 1 FROM db_backups b
 			WHERE b.site_id = bs.site_id AND b.auto = 1

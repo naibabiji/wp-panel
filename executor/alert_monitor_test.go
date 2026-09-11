@@ -364,20 +364,26 @@ func TestCheckPanelUpdateUsesCachedMessage(t *testing.T) {
 
 func TestCheckBackupReportsOnlyStaleEnabledSites(t *testing.T) {
 	db := openAlertTestDB(t)
-	mustExec(t, db, `CREATE TABLE websites (id INTEGER PRIMARY KEY, domain TEXT)`)
+	mustExec(t, db, `CREATE TABLE websites (id INTEGER PRIMARY KEY, domain TEXT, status TEXT)`)
 	mustExec(t, db, `CREATE TABLE backup_settings (site_id INTEGER, enabled INTEGER)`)
 	mustExec(t, db, `CREATE TABLE db_backups (site_id INTEGER, auto INTEGER, created_at DATETIME)`)
-	mustExec(t, db, `INSERT INTO websites (id, domain) VALUES
-		(1, 'stale.example'),
-		(2, 'recent.example'),
-		(3, 'never.example'),
-		(4, 'disabled.example')`)
+	mustExec(t, db, `CREATE TABLE site_migration_locks (site_id INTEGER, status TEXT)`)
+	mustExec(t, db, `INSERT INTO websites (id, domain, status) VALUES
+		(1, 'stale.example', 'active'),
+		(2, 'recent.example', 'active'),
+		(3, 'never.example', 'active'),
+		(4, 'disabled.example', 'active'),
+		(5, 'paused.example', 'paused'),
+		(6, 'migrating.example', 'active')`)
 	mustExec(t, db, `INSERT INTO backup_settings (site_id, enabled) VALUES
-		(1, 1), (2, 1), (3, 1), (4, 0)`)
+		(1, 1), (2, 1), (3, 1), (4, 0), (5, 1), (6, 1)`)
 	mustExec(t, db, `INSERT INTO db_backups (site_id, auto, created_at) VALUES
 		(1, 1, datetime('now', '-2 days')),
 		(2, 1, datetime('now', '-1 hour')),
-		(4, 1, datetime('now', '-2 days'))`)
+		(4, 1, datetime('now', '-2 days')),
+		(5, 1, datetime('now', '-2 days')),
+		(6, 1, datetime('now', '-2 days'))`)
+	mustExec(t, db, `INSERT INTO site_migration_locks (site_id, status) VALUES (6, 'active')`)
 
 	firing, msg := checkBackup()
 	if !firing {
@@ -386,7 +392,7 @@ func TestCheckBackupReportsOnlyStaleEnabledSites(t *testing.T) {
 	if !strings.Contains(msg, "stale.example") {
 		t.Fatalf("message should include stale site, got %q", msg)
 	}
-	for _, domain := range []string{"recent.example", "never.example", "disabled.example"} {
+	for _, domain := range []string{"recent.example", "never.example", "disabled.example", "paused.example", "migrating.example"} {
 		if strings.Contains(msg, domain) {
 			t.Fatalf("message should not include %s, got %q", domain, msg)
 		}
