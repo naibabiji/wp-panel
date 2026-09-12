@@ -20,40 +20,33 @@ trait WPP_Optimizer_Maintenance_Trait {
         $base = plugin_dir_url(WPP_OPTIMIZER_PLUGIN_FILE);
         wp_enqueue_style('wpp-maintenance', $base . 'assets/maintenance.css', [], self::VERSION);
         wp_enqueue_script('wpp-maintenance', $base . 'assets/maintenance.js', [], self::VERSION, true);
-        $zh = strpos(determine_locale(), 'zh') === 0;
         wp_localize_script('wpp-maintenance', 'WPPMaintenance', [
             'url' => admin_url('admin-ajax.php'), 'nonce' => wp_create_nonce('wpp_maintenance'),
-            'text' => $zh ? [
-                'locked'=>'已锁定', 'unlocked'=>'已解锁', 'unlocked_permanent'=>'未开启文件锁',
-                'unlocking'=>'正在解锁', 'relocking'=>'正在重新锁定', 'relock_failed'=>'重新锁定失败，请联系管理员',
-                'unknown'=>'状态未知', 'unlock'=>'临时解锁', 'relock'=>'立即重新锁定', 'close'=>'关闭',
-                'password'=>'维护密码', 'extend'=>'增加', 'minute'=>'分钟', 'busy'=>'正在处理…',
-                'warning'=>'更新未完成请提前加时，完成后立即锁定。到期或面板重启会回锁，可能打断更新。',
-                'restart'=>'面板重启，维护窗口已提前结束。继续维护请重新输入密码申请解锁。',
-                'disabled'=>'请联系面板所有者开启临时维护。', 'password_required'=>'请输入维护密码；加时跨 30 分钟区间时须重新验证。',
-                'verification_failed'=>'验证失败，请检查维护密码。', 'operation_unavailable'=>'操作暂不可用，请刷新状态或联系管理员。',
-                'verification_frozen'=>'验证失败次数过多，已暂停密码验证 10 分钟，请稍后重试。',
-                'lock_mode_required'=>'请面板所有者先重新应用标准或严格文件锁，再开启临时维护。',
-                'state_unknown'=>'状态未知，请刷新状态或联系管理员。', 'invalid_request'=>'请求无效',
-            ] : [
-                'locked'=>'Locked', 'unlocked'=>'Unlocked', 'unlocked_permanent'=>'File lock disabled',
-                'unlocking'=>'Unlocking', 'relocking'=>'Relocking', 'relock_failed'=>'Relock failed — contact administrator',
-                'unknown'=>'State unknown', 'unlock'=>'Temporary unlock', 'relock'=>'Relock now', 'close'=>'Close',
-                'password'=>'Maintenance password', 'extend'=>'Add', 'minute'=>'minutes', 'busy'=>'Processing…',
-                'warning'=>'Extend before expiry if the update is unfinished. Relocking at expiry or panel restart may interrupt updates.',
-                'restart'=>'Panel restart ended the maintenance window early. Enter the password again to start a new window.',
-                'disabled'=>'Ask the panel owner to enable maintenance.', 'password_required'=>'Enter the maintenance password; verification is required again across each 30-minute boundary.',
-                'verification_failed'=>'Verification failed. Please check the maintenance password.', 'operation_unavailable'=>'Operation unavailable. Refresh or contact the administrator.',
-                'verification_frozen'=>'Too many failed attempts. Password verification has been suspended for 10 minutes. Please try again later.',
-                'lock_mode_required'=>'Ask the panel owner to apply Standard or Strict file lock before enabling maintenance.',
-                'state_unknown'=>'State unknown. Refresh or contact the administrator.', 'invalid_request'=>'Invalid request',
+            'text' => [
+                'locked'=>__('Locked', 'wp-panel-optimizer'), 'unlocked'=>__('Unlocked', 'wp-panel-optimizer'), 'unlocked_permanent'=>__('File lock disabled', 'wp-panel-optimizer'),
+                'unlocking'=>__('Unlocking', 'wp-panel-optimizer'), 'relocking'=>__('Relocking', 'wp-panel-optimizer'), 'relock_failed'=>__('Relock failed — contact administrator', 'wp-panel-optimizer'),
+                'unknown'=>__('State unknown', 'wp-panel-optimizer'), 'unlock'=>__('Temporary unlock', 'wp-panel-optimizer'), 'relock'=>__('Relock now', 'wp-panel-optimizer'), 'close'=>__('Close', 'wp-panel-optimizer'),
+                'password'=>__('Maintenance password', 'wp-panel-optimizer'), 'extend'=>__('Add', 'wp-panel-optimizer'), 'minute'=>__('minutes', 'wp-panel-optimizer'), 'busy'=>__('Processing…', 'wp-panel-optimizer'),
+                'warning'=>__('Extend before expiry if the update is unfinished. Relocking at expiry or panel restart may interrupt updates.', 'wp-panel-optimizer'),
+                'restart'=>__('Panel restart ended the maintenance window early. Enter the password again to start a new window.', 'wp-panel-optimizer'),
+                'disabled'=>__('Ask the panel owner to enable maintenance.', 'wp-panel-optimizer'), 'password_required'=>__('Enter the maintenance password; verification is required again across each 30-minute boundary.', 'wp-panel-optimizer'),
+                'verification_failed'=>__('Verification failed. Please check the maintenance password.', 'wp-panel-optimizer'), 'operation_unavailable'=>__('Operation unavailable. Refresh or contact the administrator.', 'wp-panel-optimizer'),
+                'verification_frozen'=>__('Too many failed attempts. Password verification has been suspended for 10 minutes. Please try again later.', 'wp-panel-optimizer'),
+                'lock_mode_required'=>__('Ask the panel owner to apply Standard or Strict file lock before enabling maintenance.', 'wp-panel-optimizer'),
+                'state_unknown'=>__('State unknown. Refresh or contact the administrator.', 'wp-panel-optimizer'), 'invalid_request'=>__('Invalid request', 'wp-panel-optimizer'),
             ],
         ]);
     }
 
     public static function maintenance_dialog() {
         if (!current_user_can('manage_options') || is_multisite()) return;
-        echo '<dialog id="wpp-maintenance-dialog" aria-labelledby="wpp-maintenance-title"><h2 id="wpp-maintenance-title">WP Panel</h2><p id="wpp-maintenance-state" role="status"></p><p id="wpp-maintenance-warning"></p><form id="wpp-maintenance-form"><label id="wpp-maintenance-password-label" for="wpp-maintenance-password"></label><input id="wpp-maintenance-password" type="password" autocomplete="off" maxlength="72"><div id="wpp-maintenance-actions"></div></form><p id="wpp-maintenance-message" role="alert"></p><button type="button" id="wpp-maintenance-close"></button></dialog>';
+        $title = __('File protection / maintenance', 'wp-panel-optimizer');
+        $intro = __('File protection is managed by WP Panel. Temporarily unlock it with the maintenance password when installing, updating, or changing plugins and themes.', 'wp-panel-optimizer');
+        echo '<dialog id="wpp-maintenance-dialog" aria-labelledby="wpp-maintenance-title">'
+            . '<header class="wpp-maintenance-head"><img src="' . esc_url(plugin_dir_url(WPP_OPTIMIZER_PLUGIN_FILE) . 'assets/wp-panel-logo.png') . '" alt=""><div><span>WP PANEL · MANAGED WORDPRESS</span><h2 id="wpp-maintenance-title">' . esc_html($title) . '</h2></div></header>'
+            . '<div class="wpp-maintenance-body"><p class="wpp-maintenance-intro">' . esc_html($intro) . '</p><p id="wpp-maintenance-state" role="status"></p><p id="wpp-maintenance-warning"></p>'
+            . '<form id="wpp-maintenance-form"><label id="wpp-maintenance-password-label" for="wpp-maintenance-password"></label><input id="wpp-maintenance-password" type="password" autocomplete="off" maxlength="72"><div id="wpp-maintenance-actions"></div></form><p id="wpp-maintenance-message" role="alert"></p></div>'
+            . '<footer class="wpp-maintenance-foot"><button type="button" id="wpp-maintenance-close"></button></footer></dialog>';
     }
 
     public static function maintenance_ajax() {

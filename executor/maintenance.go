@@ -334,6 +334,26 @@ func (m *MaintenanceManager) conflicts(id int) error {
 	return nil
 }
 
+// companionDeployConflicts excludes AI development access by design. The
+// companion directory is panel-owned and is replaced from the embedded copy.
+func (m *MaintenanceManager) companionDeployConflicts(id int) error {
+	var n int
+	queries := []string{
+		`SELECT COUNT(*) FROM wp_update_tasks WHERE site_id=? AND (status IN ('preparing','queued','running') OR (requires_attention=1 AND manual_disposition=''))`,
+		`SELECT COUNT(*) FROM site_migration_locks WHERE site_id=? AND status='active'`,
+		`SELECT COUNT(*) FROM site_image_optimization_jobs WHERE site_id=? AND status IN ('queued','running')`,
+	}
+	for _, query := range queries {
+		if err := m.db.QueryRow(query, id).Scan(&n); err != nil {
+			return ErrMaintenanceUnknown
+		}
+		if n != 0 {
+			return ErrMaintenanceBusy
+		}
+	}
+	return nil
+}
+
 func validMaintenanceID(id string) bool { _, err := uuid.Parse(id); return err == nil && len(id) == 36 }
 
 func maintenanceLockModeAllowed(site *models.Website) bool {

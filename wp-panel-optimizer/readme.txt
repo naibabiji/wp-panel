@@ -1,9 +1,9 @@
 === WP Panel Optimizer ===
 Contributors: naibabiji
 Requires at least: 5.0
-Tested up to: 7.0
+Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 1.1.12
+Stable tag: 1.1.21
 License: GPL-2.0+
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -11,9 +11,9 @@ License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
 == Description ==
 
-WP Panel Optimizer 是 [WP Panel](https://github.com/naibabiji/wp-panel) 的配套插件，通过面板 API 与服务器端面板实时同步优化设置。
+WP Panel Optimizer 是 [WP Panel](https://wp-panel.org/) 的配套插件，通过面板 API 与服务器端面板实时同步优化设置。
 
-作者：[naibabiji](https://blog.naibabiji.com) | 插件地址：[GitHub](https://github.com/naibabiji/wp-panel)
+官网：[WP Panel](https://wp-panel.org/) | 问题反馈：[GitHub Issues](https://github.com/naibabiji/wp-panel/issues)
 
 = 功能 =
 
@@ -40,6 +40,14 @@ WP Panel Optimizer 是 [WP Panel](https://github.com/naibabiji/wp-panel) 的配�
 插件安装后，面板会在 Web 目录外的 /var/wp-panel/site-secrets/<domain>/wp-panel-config.json 写入配置文件（含面板地址和 API Key），并由站点 PHP-FPM pool 向插件提供当前文件路径，无需手动填写凭证，也不依赖 WordPress 站点 URL 推断配置位置。
 
 == Changelog ==
+
+= 1.1.21 =
+* 新增面板内嵌版本检测和“立即更新”入口；更新仍由 WP Panel 执行并保持插件启停状态
+* 明确配套插件目录由 WP Panel 托管，AI 开发访问或临时维护期间也可能被面板版本覆盖
+
+= 1.1.20 =
+* 重新设计插件设置页视觉，强化面板连接、文件保护和自动更新状态展示，并改善桌面与移动端布局
+* 完善“关于与面板同步”，增加同步机制、凭据保护、官网和 Bug 反馈说明
 
 = 1.1.12 =
 * 设置页改为标签页布局（缓存与性能 / 图片优化 / 安全与维护 / 关于与面板同步），并修复标签页改造引入的一个 bug：部分表单曾被错误嵌套导致"保存设置"按钮无效

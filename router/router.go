@@ -1373,6 +1373,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	pluginGroup := r.Group(prefix)
 	pluginGroup.Use(middleware.RandomPath(suffix))
 	pluginGroup.GET("/api/sites/find", cacheHelper.FindByDomain)
+	pluginGroup.POST("/api/sites/companion/update", cacheHelper.UpdateCompanionPlugin)
 	maintenanceHandler := &handlers.MaintenanceHandler{}
 	pluginGroup.GET("/api/sites/maintenance", maintenanceHandler.Plugin)
 	pluginGroup.POST("/api/sites/maintenance/:action", maintenanceHandler.Plugin)

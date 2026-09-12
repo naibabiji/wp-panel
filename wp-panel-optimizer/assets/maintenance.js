@@ -24,6 +24,7 @@
     function button(label, operation, minutes = 0) {
         const el = document.createElement('button');
         el.type = 'button'; el.textContent = label; el.disabled = busy;
+        el.className = 'wpp-maintenance-button' + (operation === 'unlock' || operation === 'relock' ? ' is-primary' : '');
         el.addEventListener('click', () => run(operation, minutes));
         actions.appendChild(el);
     }
@@ -33,9 +34,10 @@
         if (state.state === 'unlocked') label += ' · ' + Math.floor(remaining / 60) + ':' + String(remaining % 60).padStart(2, '0');
         if (bar) {
             bar.textContent = 'WP Panel: ' + label;
-            bar.parentElement.dataset.state = remaining <= 60 && state.state === 'unlocked' ? 'warning' : state.state;
+            if (bar.parentElement.dataset) bar.parentElement.dataset.state = remaining <= 60 && state.state === 'unlocked' ? 'warning' : state.state;
         }
         stateLabel.textContent = busy ? text.busy : label;
+        if (dialog.dataset) dialog.dataset.state = remaining <= 60 && state.state === 'unlocked' ? 'warning' : state.state;
         warning.textContent = (state.notice === 'restart' ? text.restart + ' ' : '') + text.warning;
         warning.classList.toggle('wpp-warning', state.state === 'unlocked' && remaining <= 60);
         const key = [busy, state.state, state.enabled, remaining > 0, state.window_id].join('|');

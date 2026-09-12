@@ -73,7 +73,7 @@ trait WPP_Optimizer_Image_Trait {
     public static function ajax_image_batch_start() {
         check_ajax_referer('wpp_optimizer_settings');
         if (!current_user_can('manage_options')) {
-            wp_send_json(['success' => false, 'data' => ['message' => '权限不足']]);
+            wp_send_json(['success' => false, 'data' => ['message' => __('Insufficient permissions', 'wp-panel-optimizer')]]);
             return;
         }
         $domain = wp_parse_url(home_url(), PHP_URL_HOST);
@@ -85,7 +85,7 @@ trait WPP_Optimizer_Image_Trait {
     public static function ajax_image_batch_status() {
         check_ajax_referer('wpp_optimizer_settings');
         if (!current_user_can('manage_options')) {
-            wp_send_json(['success' => false, 'data' => ['message' => '权限不足']]);
+            wp_send_json(['success' => false, 'data' => ['message' => __('Insufficient permissions', 'wp-panel-optimizer')]]);
             return;
         }
         $domain = wp_parse_url(home_url(), PHP_URL_HOST);
@@ -97,7 +97,7 @@ trait WPP_Optimizer_Image_Trait {
     public static function ajax_image_batch_stop() {
         check_ajax_referer('wpp_optimizer_settings');
         if (!current_user_can('manage_options')) {
-            wp_send_json(['success' => false, 'data' => ['message' => '权限不足']]);
+            wp_send_json(['success' => false, 'data' => ['message' => __('Insufficient permissions', 'wp-panel-optimizer')]]);
             return;
         }
         $domain = wp_parse_url(home_url(), PHP_URL_HOST);
@@ -113,7 +113,7 @@ trait WPP_Optimizer_Image_Trait {
         }
         $data = json_decode($resp, true);
         if (!is_array($data) || empty($data['success'])) {
-            wp_send_json(['success' => false, 'data' => ['message' => ($data['message'] ?? '面板返回错误')]]);
+            wp_send_json(['success' => false, 'data' => ['message' => ($data['message'] ?? __('The panel returned an error', 'wp-panel-optimizer'))]]);
             return;
         }
         wp_send_json(['success' => true, 'data' => $data['data'] ?? null]);

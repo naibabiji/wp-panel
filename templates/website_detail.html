@@ -512,7 +512,6 @@ location ^~ /api/ {
             </div>
             <div x-show="aiAccess.loading" class="text-sm text-gray-500 py-6 text-center">{{t .Lang "common.loading"}}</div>
             <div x-show="!aiAccess.loading && aiAccess.busy" class="rounded border border-purple-700 bg-purple-950/40 px-5 py-10 text-center">
-                <div class="mx-auto mb-4 h-9 w-9 animate-spin rounded-full border-4 border-purple-300 border-t-transparent"></div>
                 <p class="text-base font-semibold text-purple-100" x-text="aiAccess.stage || t('ai_development.processing')"></p>
                 <p class="mt-2 text-xs text-gray-400">{{t .Lang "ai_development.processing_help"}}</p>
             </div>

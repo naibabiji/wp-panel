@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -2063,7 +2064,18 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
-	if !executor.TryAcquireSiteOpLock(id, "plugin_deploy") {
+	pluginDir := filepath.Join(site.WebRoot, "wp-content", "plugins", "wp-panel-optimizer")
+	var existingKey string
+	_ = database.GetDB().QueryRow(`SELECT plugin_api_key FROM websites WHERE id=?`, id).Scan(&existingKey)
+	mainInfo, mainErr := os.Lstat(filepath.Join(pluginDir, "wp-panel-optimizer.php"))
+	managedUpgrade := mainErr == nil && mainInfo.Mode().IsRegular() && executor.SitePluginIdentityAvailable(site.Domain, existingKey)
+	locked := false
+	if managedUpgrade {
+		locked = executor.TryAcquireCompanionDeployLock(id)
+	} else {
+		locked = executor.TryAcquireSiteOpLock(id, "plugin_deploy")
+	}
+	if !locked {
 		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "maintenance.operation_unavailable")))
 		return
 	}
@@ -2077,7 +2089,21 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 	}
 	domain, webRoot, systemUser := site.Domain, site.WebRoot, site.SystemUser
 
-	pluginDir := filepath.Join(webRoot, "wp-content", "plugins", "wp-panel-optimizer")
+	if managedUpgrade {
+		changed, version, err := executor.UpdateExistingSiteCompanionPluginOwned(id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("部署插件文件失败: "+err.Error()))
+			return
+		}
+		if !changed {
+			if installed, _ := executor.PluginNeedsUpdate(webRoot); !installed {
+				c.JSON(http.StatusNotFound, models.ErrorResponse("配套插件已被删除，不会自动重新安装"))
+				return
+			}
+		}
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.TE(c.Request, "website.installed"), "version": version}))
+		return
+	}
 	if site.FileLockEnabled {
 		// The exception upgrades an existing companion; installation and
 		// credential repair keep their existing explicit-unlock prerequisite.
@@ -2862,14 +2888,39 @@ func (h *CacheHelperHandler) FindByDomain(c *gin.Context) {
 	}
 
 	var siteID, fcacheEnabled, fcacheTTL, disableUpdates, disableEditing, xmlrpcEnabled, disableApplicationPasswords, wpDebugEnabled, wpPostRevisions, fileLockEnabled int
-	var wpMemoryLimit string
+	var anomalyEnabled int
+	var anomalyLastSuccess int64
+	var wpMemoryLimit, passwordResetMode, anomalyLastError string
 	err := database.GetDB().QueryRow(
-		"SELECT id, fastcgi_cache_enabled, fastcgi_cache_ttl, disable_wp_updates, disable_file_editing, xmlrpc_enabled, disable_application_passwords, wp_debug_enabled, wp_post_revisions, wp_memory_limit, file_lock_enabled FROM websites WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%') ESCAPE '\\'",
+		`SELECT id, fastcgi_cache_enabled, fastcgi_cache_ttl, disable_wp_updates,
+			disable_file_editing, xmlrpc_enabled, disable_application_passwords,
+			wp_debug_enabled, wp_post_revisions, wp_memory_limit, file_lock_enabled,
+			COALESCE(password_reset_mode, 'allow'),
+			COALESCE((SELECT enabled FROM site_wp_anomaly_state WHERE site_id = websites.id), 0),
+			COALESCE((SELECT last_success FROM site_wp_anomaly_state WHERE site_id = websites.id), 0),
+			COALESCE((SELECT last_error FROM site_wp_anomaly_state WHERE site_id = websites.id), '')
+		 FROM websites
+		 WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%') ESCAPE '\'`,
 		domain, escapeLike(domain),
-	).Scan(&siteID, &fcacheEnabled, &fcacheTTL, &disableUpdates, &disableEditing, &xmlrpcEnabled, &disableApplicationPasswords, &wpDebugEnabled, &wpPostRevisions, &wpMemoryLimit, &fileLockEnabled)
+	).Scan(&siteID, &fcacheEnabled, &fcacheTTL, &disableUpdates, &disableEditing, &xmlrpcEnabled, &disableApplicationPasswords, &wpDebugEnabled, &wpPostRevisions, &wpMemoryLimit, &fileLockEnabled, &passwordResetMode, &anomalyEnabled, &anomalyLastSuccess, &anomalyLastError)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
+	}
+
+	anomalyStatus := "disabled"
+	if anomalyEnabled == 1 {
+		switch {
+		case anomalyLastError != "":
+			anomalyStatus = "error"
+		case anomalyLastSuccess == 0:
+			anomalyStatus = "pending"
+		default:
+			anomalyStatus = "active"
+		}
+	}
+	if passwordResetMode != executor.PasswordResetModeAll && passwordResetMode != executor.PasswordResetModeAdmin {
+		passwordResetMode = executor.PasswordResetModeAllow
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
@@ -2885,7 +2936,59 @@ func (h *CacheHelperHandler) FindByDomain(c *gin.Context) {
 		"wp_post_revisions":             wpPostRevisions,
 		"wp_memory_limit":               wpMemoryLimit,
 		"file_lock_enabled":             fileLockEnabled == 1,
+		"anomaly_monitor_status":        anomalyStatus,
+		"password_reset_mode":           passwordResetMode,
+		"companion_latest_version":      executor.CompanionPluginVersion(),
 	}))
+}
+
+func (h *CacheHelperHandler) UpdateCompanionPlugin(c *gin.Context) {
+	var req struct {
+		Domain string `json:"domain"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		return
+	}
+	req.Domain = strings.ToLower(strings.TrimSpace(req.Domain))
+	if req.Domain == "" || !executor.IsValidDomain(req.Domain) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
+		return
+	}
+	site, ok := h.pluginSiteByDomain(req.Domain, c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse("API Key 无效"))
+		return
+	}
+	if site.Status != models.StatusActive {
+		c.JSON(http.StatusConflict, models.ErrorResponse("网站当前未启用，请先在 WP Panel 启用网站"))
+		return
+	}
+	if !executor.TryAcquireCompanionDeployLock(site.ID) {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "maintenance.operation_unavailable")))
+		return
+	}
+	defer executor.ReleaseSiteOpLock(site.ID)
+
+	changed, version, err := executor.UpdateExistingSiteCompanionPluginOwned(site.ID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, executor.ErrMaintenanceBusy) || errors.Is(err, executor.ErrMaintenanceUnknown) {
+			status = http.StatusConflict
+		}
+		recordHandlerOperationLog("companion_plugin_update", site.Domain, "failed", err.Error())
+		c.JSON(status, models.ErrorResponse("配套插件更新失败，请稍后重试"))
+		return
+	}
+	if !changed {
+		installed, _ := executor.PluginNeedsUpdate(site.WebRoot)
+		if !installed {
+			c.JSON(http.StatusNotFound, models.ErrorResponse("配套插件文件不存在，请在 WP Panel 重新安装"))
+			return
+		}
+	}
+	recordHandlerOperationLog("companion_plugin_update", site.Domain, "success", "version="+version)
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"updated": changed, "version": version}))
 }
 
 func (h *CacheHelperHandler) ExportSSLCertificate(c *gin.Context) {

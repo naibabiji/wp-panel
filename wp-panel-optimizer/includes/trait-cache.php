@@ -14,9 +14,9 @@ trait WPP_Optimizer_Cache_Trait {
         if (isset($_GET['wpp_cleared'])) {
             if (!isset($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'wpp_clear_notice')) return;
             if ($_GET['wpp_cleared'] === '1') {
-                echo '<div class="notice notice-success is-dismissible"><p>Nginx 缓存已清除，旧页面将在几分钟内更新。</p></div>';
+                echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('The Nginx cache was cleared. Each page will be cached again the next time it is visited.', 'wp-panel-optimizer') . '</p></div>';
             } else {
-                echo '<div class="notice notice-error is-dismissible"><p>清除缓存失败，请检查面板连接是否正常。</p></div>';
+                echo '<div class="notice notice-error is-dismissible"><p>' . esc_html__('Failed to clear the cache. Please check the panel connection.', 'wp-panel-optimizer') . '</p></div>';
             }
         }
 
@@ -25,11 +25,11 @@ trait WPP_Optimizer_Cache_Trait {
             $state = sanitize_key(wp_unslash($_GET['wpp_preload']));
             $count = isset($_GET['count']) ? intval($_GET['count']) : 0;
             if ($state === 'queued') {
-                echo '<div class="notice notice-success is-dismissible"><p>缓存预加载已加入队列，共 ' . esc_html($count) . ' 个 URL。</p></div>';
+                echo '<div class="notice notice-success is-dismissible"><p>' . esc_html(sprintf(__('Cache preload queued: %d URLs.', 'wp-panel-optimizer'), $count)) . '</p></div>';
             } elseif ($state === 'stopped') {
-                echo '<div class="notice notice-warning is-dismissible"><p>缓存预加载已停止，当前队列已清空。</p></div>';
+                echo '<div class="notice notice-warning is-dismissible"><p>' . esc_html__('Cache preload stopped and the queue has been emptied.', 'wp-panel-optimizer') . '</p></div>';
             } else {
-                echo '<div class="notice notice-error is-dismissible"><p>缓存预加载启动失败，请确认 FastCGI 缓存已开启。</p></div>';
+                echo '<div class="notice notice-error is-dismissible"><p>' . esc_html__('Failed to start cache preload. Please confirm the FastCGI cache is enabled.', 'wp-panel-optimizer') . '</p></div>';
             }
         }
     }
@@ -39,7 +39,7 @@ trait WPP_Optimizer_Cache_Trait {
         if (!self::get_panel_url()) return;
         $bar->add_node([
             'id'    => 'wpp-clear-cache',
-            'title' => '清除 Nginx 缓存',
+            'title' => __('Clear Nginx cache', 'wp-panel-optimizer'),
             'href'  => wp_nonce_url(admin_url('admin-post.php?action=wpp_cache_clear'), 'wpp_cache_clear'),
         ]);
     }
@@ -82,7 +82,7 @@ trait WPP_Optimizer_Cache_Trait {
         $status['running'] = false;
         $status['queued'] = 0;
         $status['finished_at'] = current_time('Y-m-d H:i:s');
-        $status['last_message'] = '已手动停止';
+        $status['last_message'] = __('Stopped manually', 'wp-panel-optimizer');
         update_option(self::OPTION_PRELOAD_STATUS, $status, false);
         self::redirect_preload_notice('stopped', 0);
     }
@@ -203,7 +203,7 @@ trait WPP_Optimizer_Cache_Trait {
         $status['running'] = true;
         $status['queued'] = count($queue);
         $status['reason'] = sanitize_key($reason);
-        $status['last_message'] = '等待后台批量预加载';
+        $status['last_message'] = __('Waiting for the background preload batch', 'wp-panel-optimizer');
 
         update_option(self::OPTION_PRELOAD_QUEUE, array_values($queue), false);
         update_option(self::OPTION_PRELOAD_STATUS, $status, false);
@@ -243,7 +243,7 @@ trait WPP_Optimizer_Cache_Trait {
             $status['running'] = false;
             $status['queued'] = 0;
             $status['finished_at'] = current_time('Y-m-d H:i:s');
-            $status['last_message'] = '预加载队列为空';
+            $status['last_message'] = __('The preload queue is empty', 'wp-panel-optimizer');
             update_option(self::OPTION_PRELOAD_STATUS, $status, false);
             delete_transient('wpp_optimizer_preload_lock');
             return;
@@ -281,7 +281,7 @@ trait WPP_Optimizer_Cache_Trait {
         $status['queued'] = count($queue);
         if (!empty($queue)) {
             $status['running'] = true;
-            $status['last_message'] = '预加载进行中';
+            $status['last_message'] = __('Preload in progress', 'wp-panel-optimizer');
             update_option(self::OPTION_PRELOAD_QUEUE, array_values($queue), false);
             update_option(self::OPTION_PRELOAD_STATUS, $status, false);
             if (!wp_next_scheduled(self::PRELOAD_HOOK)) {
@@ -291,7 +291,7 @@ trait WPP_Optimizer_Cache_Trait {
             delete_option(self::OPTION_PRELOAD_QUEUE);
             $status['running'] = false;
             $status['finished_at'] = current_time('Y-m-d H:i:s');
-            $status['last_message'] = '预加载完成';
+            $status['last_message'] = __('Preload complete', 'wp-panel-optimizer');
             update_option(self::OPTION_PRELOAD_STATUS, $status, false);
         }
 

@@ -125,6 +125,61 @@ func TestCompanionAutomaticUpgradeStopsWhenPluginRemovedBeforePublish(t *testing
 	}
 }
 
+func TestCompanionUpgradeIgnoresAIAndMaintenanceWindow(t *testing.T) {
+	openTestDB(t)
+	root := t.TempDir()
+	pluginDir := filepath.Join(root, "wp-content", "plugins", pluginDirName)
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mainFile := filepath.Join(pluginDir, pluginDirName+".php")
+	if err := os.WriteFile(mainFile, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := database.GetDB().Exec(`INSERT INTO websites
+		(name,domain,status,site_type,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path,plugin_api_key,maintenance_security)
+		VALUES ('site','managed.test','active','wordpress','nobody',?,'','','','','','managed-key',?)`, root,
+		`{"window":{"id":"11111111-1111-4111-8111-111111111111","state":"unlocked","expires":4102444800}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := result.LastInsertId()
+	if _, err := database.GetDB().Exec(`INSERT INTO website_ai_development_access
+		(site_id,status,system_user,web_root,original_shell,original_home)
+		VALUES (?,'enabled','nobody',?,'/bin/bash','/tmp')`, id, root); err != nil {
+		t.Fatal(err)
+	}
+	if TryAcquireSiteOpLock(int(id), "ordinary") {
+		ReleaseSiteOpLock(int(id))
+		t.Fatal("ordinary operation unexpectedly ignored maintenance window")
+	}
+	if !TryAcquireCompanionDeployLock(int(id)) {
+		t.Fatal("companion lock was blocked by maintenance window")
+	}
+	changed, err := deploySiteCompanionOwned(int(id), map[string][]byte{pluginDirName + ".php": []byte("new")}, "new", true)
+	ReleaseSiteOpLock(int(id))
+	if err != nil || !changed {
+		t.Fatalf("companion deploy = %v, %v", changed, err)
+	}
+	content, err := os.ReadFile(mainFile)
+	if err != nil || string(content) != "new" {
+		t.Fatalf("plugin content = %q, %v", content, err)
+	}
+}
+
+func TestCompanionPluginReleaseVersionUsesHeaderNotSourceHash(t *testing.T) {
+	files := map[string][]byte{
+		pluginDirName + ".php": []byte("<?php\n/**\n * Version: 1.1.21\n */\n"),
+		"assets/example.css":   []byte("changed source"),
+	}
+	if got := companionPluginReleaseVersion(files); got != "1.1.21" {
+		t.Fatalf("release version = %q", got)
+	}
+	if got := pluginSourceVersion(files); got == "1.1.21" || got == "" {
+		t.Fatalf("source marker should remain an opaque hash, got %q", got)
+	}
+}
+
 func insertRegenTestWebsite(t *testing.T, domain, nginxConfPath, status string) int {
 	t.Helper()
 	res, err := database.GetDB().Exec(

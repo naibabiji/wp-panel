@@ -31,6 +31,20 @@ func TryAcquireSiteOpLock(siteID int, reason string) bool {
 	return true
 }
 
+// TryAcquireCompanionDeployLock reserves the in-process site slot without
+// treating a persisted maintenance window as a blocker. WP Panel owns the
+// companion plugin and may replace it while AI access or temporary maintenance
+// is active; real in-process writers remain mutually exclusive.
+func TryAcquireCompanionDeployLock(siteID int) bool {
+	wpSiteOpMu.Lock()
+	defer wpSiteOpMu.Unlock()
+	if _, busy := wpSiteOpBusy[siteID]; busy {
+		return false
+	}
+	wpSiteOpBusy[siteID] = "companion_upgrade"
+	return true
+}
+
 // Only the maintenance executor can enter its own persisted window.
 func tryAcquireMaintenanceOp(siteID int) bool {
 	wpSiteOpMu.Lock()

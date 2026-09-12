@@ -1,0 +1,875 @@
+# WP Panel Optimizer — Simplified Chinese translation.
+# Copyright (C) 2026 WP Panel
+# This file is distributed under the GPL-2.0+ license.
+msgid ""
+msgstr ""
+"Project-Id-Version: WP Panel Optimizer 1.1.21\n"
+"Report-Msgid-Bugs-To: https://wp-panel.org/\n"
+"POT-Creation-Date: 2026-09-12 00:00+0000\n"
+"PO-Revision-Date: 2026-09-12 00:00+0000\n"
+"Last-Translator: WP Panel\n"
+"Language-Team: Chinese (China)\n"
+"Language: zh_CN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"X-Domain: wp-panel-optimizer\n"
+
+msgid " (%s failed)"
+msgstr "（失败 %s）"
+
+msgid "\"Verify panel connection\" checks that the plugin can read and save settings properly; it is not a security scan of the site."
+msgstr "“验证面板连接”用于检查插件能否正常读取和保存设置，不是网站安全扫描。"
+
+msgid "%1$s300%2$s seconds equal 5 minutes. For most sites, %1$s300–3600%2$s seconds works well."
+msgstr "%1$s300%2$s 秒等于 5 分钟。一般网站可使用 %1$s300–3600%2$s 秒。"
+
+msgid "%d images could not be converted (unsupported file format, or the converted file would have been larger, etc.); the originals were kept automatically and uploads are unaffected."
+msgstr "有 %d 张图片未能转换成功（文件格式不受支持、转换后体积反而更大等原因），已自动保留原图，不影响正常上传。"
+
+msgid "%s MB saved in total (all batch jobs)"
+msgstr "累计已节省 %s MB（历次批量优化总计）"
+
+msgid "; %s MB saved this run"
+msgstr "，本次节省 %s MB"
+
+msgid "; %s files were already processed earlier and were skipped this run"
+msgstr "，另有 %s 张此前已处理过，本次自动跳过"
+
+msgid "A legacy remote connection API; most ordinary sites do not need it."
+msgstr "旧式远程连接接口，大多数普通网站不需要开启。"
+
+msgid "You can stop a running task at any time. Pages that were already cached will remain cached."
+msgstr "任务运行时可随时停止，已经生成的缓存会继续保留。"
+
+msgid "A value of %1$s3–5%2$s works for most sites; leave empty for no limit."
+msgstr "一般设置为 %1$s3–5%2$s；留空表示不限制数量。"
+
+msgid "API returned an error"
+msgstr "API 返回错误"
+
+msgid "About & Panel Sync"
+msgstr "关于与面板同步"
+
+msgid "About & panel sync"
+msgstr "关于与面板同步"
+
+msgid "Add"
+msgstr "增加"
+
+msgid "Adjust only when memory exhaustion errors appear."
+msgstr "只在出现内存不足错误时调整。"
+
+msgid "Administrators cannot reset passwords"
+msgstr "禁止管理员找回"
+
+msgid "After the cache is cleared, the plugin visits commonly used pages so they are already cached for the next visitor."
+msgstr "清除缓存后，提前访问常用页面，让第一位访客也能快速打开。"
+
+msgid "After saving settings, published pages will be preloaded according to the rules."
+msgstr "保存设置后，将根据规则预加载已发布页面。"
+
+msgid "All users may reset passwords"
+msgstr "允许所有用户找回"
+
+msgid "Allowed"
+msgstr "允许使用"
+
+msgid "Anomalies are recorded and notified by the panel; files, users, or content are never deleted automatically."
+msgstr "发现异常时由面板记录并通知，不会自动删除文件、用户或内容。"
+
+msgid "Ask the panel owner to apply Standard or Strict file lock before enabling maintenance."
+msgstr "请面板所有者先重新应用标准或严格文件锁，再开启临时维护。"
+
+msgid "Ask the panel owner to enable maintenance."
+msgstr "请联系面板所有者开启临时维护。"
+
+msgid "Automatic"
+msgstr "自动清除"
+
+msgid "Automatic (comment activity)"
+msgstr "自动清除（评论变更）"
+
+msgid "Automatic (post published)"
+msgstr "自动清除（发布文章）"
+
+msgid "Awaiting configuration"
+msgstr "等待配置"
+
+msgid "Block update checks for core, plugins, and themes"
+msgstr "屏蔽核心、插件与主题的更新检测"
+
+msgid "Cache & Performance"
+msgstr "缓存与性能"
+
+msgid "Cache actions & preload status"
+msgstr "缓存操作与预加载状态"
+
+msgid "Cache lifetime"
+msgstr "缓存有效期"
+
+msgid "Cache maintenance actions are separate from saving settings and take effect immediately."
+msgstr "缓存维护动作独立于设置保存，提交后立即生效。"
+
+msgid "Cache preload"
+msgstr "缓存预加载"
+
+msgid "Cache preload queued: %d URLs."
+msgstr "缓存预加载已加入队列，共 %d 个 URL。"
+
+msgid "Cache preload stopped and the queue has been emptied."
+msgstr "缓存预加载已停止，当前队列已清空。"
+
+msgid "Caching, image, and security policies managed centrally by the server panel."
+msgstr "由服务器端面板统一管理的缓存、图片与安全策略。"
+
+msgid "Changed in WP Panel → Site details → Password reset protection"
+msgstr "在 WP Panel → 网站详情 → 密码找回保护 中修改"
+
+msgid "Changed in WP Panel → Site details → WordPress optimization"
+msgstr "在 WP Panel → 网站详情 → WordPress 优化 中修改"
+
+msgid "Check failed"
+msgstr "检查异常"
+
+msgid "Chooses how newly uploaded images are processed; published content is not affected."
+msgstr "决定新增图片上传时的处理方式，不影响已发布内容。"
+
+msgid "Clear Nginx cache"
+msgstr "清除 Nginx 缓存"
+
+msgid "Close"
+msgstr "关闭"
+
+msgid "Completed"
+msgstr "已完成"
+
+msgid "Component status overview"
+msgstr "组件状态概览"
+
+msgid "Component updates"
+msgstr "组件更新"
+
+msgid "Component version"
+msgstr "组件版本"
+
+msgid "Compress or convert on upload to reduce file size."
+msgstr "上传时自动压缩或转换格式，减小体积。"
+
+msgid "Compression"
+msgstr "压缩优化"
+
+msgid "Configuration file missing"
+msgstr "配置文件缺失"
+
+msgid "Configured"
+msgstr "已配置"
+
+msgid "Configured and reviewed in WP Panel → Site details → WordPress anomaly monitoring"
+msgstr "在 WP Panel → 网站详情 → WordPress 异常监控 中配置和查看记录"
+
+msgid "Configured in WP Panel → Site details → File protection & temporary maintenance"
+msgstr "在 WP Panel → 网站详情 → 文件保护与临时维护 中配置"
+
+msgid "Connected"
+msgstr "已连接"
+
+msgid "Connection verified. The WP Panel API authenticated the request and responded successfully."
+msgstr "连接正常 — 面板 API 认证通过并已响应"
+
+msgid "Connection failed: %s"
+msgstr "连接失败：%s"
+
+msgid "Connection status"
+msgstr "连接状态"
+
+msgid "Connection successful"
+msgstr "连接成功"
+
+msgid "Controls which users may reset their login password via \"Lost your password?\"."
+msgstr "控制哪些用户可以通过“忘记密码”重设登录密码。"
+
+msgid "Convert to smaller WebP files and remove the original. Current versions of Chrome, Edge, Firefox, Safari, and other major browsers all display WebP."
+msgstr "转换为体积更小的 WebP 并删除原图。2026 年的 Chrome、Edge、Firefox 和 Safari 等主流浏览器均可正常显示 WebP。"
+
+msgid "Core cache switch"
+msgstr "核心缓存开关"
+
+msgid "Credentials & updates"
+msgstr "凭据与更新"
+
+msgid "Current connection"
+msgstr "当前连接"
+
+msgid "Current PHP memory limit on this server: %1$s. If you are unsure, leave this blank. If more memory is needed, try %2$s or %3$s."
+msgstr "当前服务器 PHP 内存上限：%1$s。不确定时请留空；需要调整时可填写 %2$s 或 %3$s。"
+
+msgid "Current status"
+msgstr "当前状态"
+
+msgid "Default"
+msgstr "默认"
+
+msgid "Default 40M"
+msgstr "默认 40M"
+
+msgid "Details"
+msgstr "查看说明"
+
+msgid "Diagnose white screens, 500 errors, or plugin faults."
+msgstr "排查白屏、500 错误或插件故障。"
+
+msgid "Disable file editing"
+msgstr "禁止文件编辑"
+
+msgid "Disable update checks"
+msgstr "禁止检测更新"
+
+msgid "Disabled"
+msgstr "已禁用"
+
+msgid "Disables revisions entirely; accidental edits can no longer be restored from revision history."
+msgstr "完全关闭历史版本，误改后将无法从修订记录恢复。"
+
+msgid "Disabling does not affect dashboard login, writing posts, or uploading images."
+msgstr "禁用不会影响 WordPress 后台登录、写文章或上传图片。"
+
+msgid "Disabling does not delete existing credentials; they keep working once re-enabled."
+msgstr "禁用不会删除已有凭据；重新允许后仍可继续使用。"
+
+msgid "Enable FastCGI cache"
+msgstr "开启 FastCGI 缓存"
+
+msgid "Enable automatic preload"
+msgstr "开启自动预加载"
+
+msgid "Enable debug mode"
+msgstr "启用调试模式"
+
+msgid "Enable only temporarily while troubleshooting; turn it off afterwards."
+msgstr "只在排查问题时临时开启，完成后请关闭。"
+
+msgid "Enable only when a tool you rely on clearly cannot connect."
+msgstr "只有明确遇到相关工具无法连接时才需要开启。"
+
+msgid "Enable the debug log"
+msgstr "开启调试日志"
+
+msgid "Enabled"
+msgstr "已开启"
+
+msgid "Enter the maintenance password; verification is required again across each 30-minute boundary."
+msgstr "请输入维护密码；加时跨 30 分钟区间时须重新验证。"
+
+msgid "Entering 0"
+msgstr "填 0"
+
+msgid "Environment not ready"
+msgstr "环境未就绪"
+
+msgid "Errors are written to %1$s and are not shown to visitors by default. To display errors on the page temporarily, configure it on the site details page in WP Panel."
+msgstr "错误会写入 %1$s，默认不会显示给访客。需要临时在页面显示错误时，请到 WP Panel 网站详情页设置。"
+
+msgid "Execution"
+msgstr "执行"
+
+msgid "Existing passwords"
+msgstr "已有密码"
+
+msgid "Extend before expiry if the update is unfinished. Relocking at expiry or panel restart may interrupt updates."
+msgstr "更新未完成请提前加时，完成后立即锁定。到期或面板重启会回锁，可能打断更新。"
+
+msgid "Failed"
+msgstr "失败"
+
+msgid "Failed to clear the cache. Please check the panel connection."
+msgstr "清除缓存失败，请检查面板连接是否正常。"
+
+msgid "Failed to start cache preload. Please confirm the FastCGI cache is enabled."
+msgstr "缓存预加载启动失败，请确认 FastCGI 缓存已开启。"
+
+msgid "FastCGI cache"
+msgstr "FastCGI 缓存"
+
+msgid "File lock disabled"
+msgstr "未开启文件锁"
+
+msgid "File protection"
+msgstr "文件保护"
+
+msgid "File protection & temporary maintenance"
+msgstr "文件保护与临时维护"
+
+msgid "File protection / maintenance"
+msgstr "文件保护 / 临时维护"
+
+msgid "File protection enabled"
+msgstr "文件保护已开启"
+
+msgid "File protection is managed by WP Panel. Temporarily unlock it with the maintenance password when installing, updating, or changing plugins and themes."
+msgstr "文件保护由 WP Panel 统一管理。需要安装、更新或修改插件和主题时，可使用维护密码临时解锁。"
+
+msgid "File protection not enabled"
+msgstr "文件保护未开启"
+
+msgid "Finished:"
+msgstr "结束："
+
+msgid "During maintenance"
+msgstr "需要维护"
+
+msgid "Help & support"
+msgstr "帮助与支持"
+
+msgid "Helps visitors open pages faster and reduces repeated server work for the same content."
+msgstr "让访客更快打开页面，同时减少服务器重复处理相同内容。"
+
+msgid "Hides update notices in the WordPress dashboard. Designed for business sites that receive infrequent maintenance."
+msgstr "隐藏后台更新提醒，适合建成后较少维护的企业网站。"
+
+msgid "How long a cached copy is kept before it is regenerated automatically."
+msgstr "单份缓存保留多久后自动重新生成。"
+
+msgid "The maximum number of URLs processed in a single preload run."
+msgstr "一轮预加载最多处理多少个地址。"
+
+msgid "Ideal for blogs and business sites that mostly serve public content."
+msgstr "适合博客、企业官网等以公开内容为主的网站。"
+
+msgid "Idle"
+msgstr "空闲"
+
+msgid "If the front end does not update immediately after saving content, use \"Clear Nginx cache\" below. If a CDN is also in use, its cache must be cleared at the CDN provider as well."
+msgstr "保存内容后，如果前台没有立即更新，可以使用页面下方的“清除 Nginx 缓存”。如果网站还使用了 CDN，也需要到 CDN 服务商处清除缓存。"
+
+msgid "Image Optimization"
+msgstr "图片优化"
+
+msgid "Image handling"
+msgstr "图片处理"
+
+msgid "Image processing is unavailable: the server is missing the exif extension."
+msgstr "服务器缺少 exif 扩展，暂不支持图片处理。"
+
+msgid "Increase this if you see \"Allowed memory size exhausted\" errors or memory-related white screens in the dashboard."
+msgstr "遇到“Allowed memory size exhausted”或后台因内存不足白屏时，可适当调高。"
+
+msgid "Insufficient permissions"
+msgstr "权限不足"
+
+msgid "Invalid request"
+msgstr "请求无效"
+
+msgid "JPEG files are compressed at the selected quality, while PNG files are optimized losslessly. File formats and URLs remain unchanged."
+msgstr "JPEG 按所选质量压缩，PNG 进行无损压缩；图片格式和访问地址保持不变。"
+
+msgid "JPEG quality"
+msgstr "JPEG 质量"
+
+msgid "Job status"
+msgstr "任务状态"
+
+msgid "Keep disabled on ordinary sites; enable when an external tool needs to connect."
+msgstr "普通网站保持禁用，需要连接外部工具时再开启。"
+
+msgid "Keep it off unless you use Jetpack, an older mobile app, or remote publishing tools."
+msgstr "没有使用 Jetpack、旧版手机 App 或远程发布工具时保持关闭。"
+
+msgid "Keep the default WordPress behavior: no conversion or compression on upload."
+msgstr "保持 WordPress 默认行为，上传时不做任何转换或压缩。"
+
+msgid "Keeps past versions of a post so accidental edits can be restored."
+msgstr "保留文章过去的版本，误改内容时可以恢复。"
+
+msgid "Last message: %s"
+msgstr "最近消息：%s"
+
+msgid "Last run:"
+msgstr "上次执行："
+
+msgid "Let mobile apps, auto-publishing tools, and third-party services connect to your site."
+msgstr "供手机 App、自动发布工具和第三方服务连接网站。"
+
+msgid "Optimize existing Media Library images"
+msgstr "历史图库批量优化"
+
+msgid "Limit how many historical revisions each post keeps."
+msgstr "限制每篇文章保留的历史版本数量。"
+
+msgid "Locked"
+msgstr "已锁定"
+
+msgid "Logged-in users never get cached pages. Common dynamic requests such as shopping carts are also excluded from the cache by server rules."
+msgstr "登录后台的用户不会读取页面缓存。购物车等常见动态请求也会按服务器规则跳过缓存。"
+
+msgid "Logs PHP errors to a file for troubleshooting."
+msgstr "记录 PHP 错误到日志，用于排查故障。"
+
+msgid "Longer lifetimes reduce server load; the cache can still be cleared automatically or manually after content updates."
+msgstr "时间越长，服务器压力越小；内容更新后仍可自动或手动清除缓存。"
+
+msgid "Lossless in-place re-encoding: file names stay the same, no WebP copies are created, and image references in published content are untouched."
+msgstr "原地无损重编码，不改文件名、不生成 WebP 副本、不影响已发布内容里的图片引用。"
+
+msgid "Maintained automatically via the panel."
+msgstr "随面板自动维护。"
+
+msgid "Maintenance password"
+msgstr "维护密码"
+
+msgid "Managed site"
+msgstr "受管站点"
+
+msgid "Manual clear"
+msgstr "手动清除"
+
+msgid "Max URLs per preload run"
+msgstr "单次最多预加载 URL"
+
+msgid "Method"
+msgstr "方式"
+
+msgid "Monitoring active"
+msgstr "监控正常"
+
+msgid "More details"
+msgstr "更多说明"
+
+msgid "Network error: could not reach the panel (%s)"
+msgstr "网络错误：无法连接到面板（%s）"
+
+msgid "Image handling for new uploads"
+msgstr "新上传图片处理"
+
+msgid "Newly uploaded JPG/PNG images are converted automatically to smaller WebP files; the originals are no longer kept. The vast majority of sites can switch without any impact; if some email notifications, share cards, or older plugins turn out to need the original format later, the affected WebP images can be converted back to JPG/PNG at any time."
+msgstr "新上传的 JPG/PNG 图片会自动转换为体积更小的 WebP 格式，不再保留原图。绝大多数网站切换后不会有任何影响；如果之后发现某些邮件通知、分享卡片或老插件用到了原图格式，随时可以把对应的 WebP 图片转换回 JPG/PNG 使用。"
+
+msgid "The Nginx cache was cleared. Each page will be cached again the next time it is visited."
+msgstr "Nginx 缓存已清除；页面下次被访问时会重新生成缓存。"
+
+msgid "No response; please check the panel address"
+msgstr "无响应，请检查面板地址"
+
+msgid "Not configured"
+msgstr "配置缺失"
+
+msgid "Not enabled"
+msgstr "未开启"
+
+msgid "Not set"
+msgstr "未配置"
+
+msgid "Note"
+msgstr "注意"
+
+msgid "Note:"
+msgstr "注意："
+
+msgid "Off"
+msgstr "已关闭"
+
+msgid "Only existing JPEG and PNG images in the Media Library are processed."
+msgstr "仅处理媒体库里已有的历史 JPEG / PNG。"
+
+msgid "Open the site details page for this website in the WP Panel and click the \"Install companion plugin\" button on the WordPress optimization card to complete initialization."
+msgstr "请在 WP Panel 面板中进入该网站详情页，点击 WordPress 优化卡片的「安装配套插件」按钮完成初始化。"
+
+msgid "Operation unavailable. Refresh or contact the administrator."
+msgstr "操作暂不可用，请刷新状态或联系管理员。"
+
+msgid "Other pages"
+msgstr "其他页面"
+
+msgid "Panel connection"
+msgstr "面板连接"
+
+msgid "Panel restart ended the maintenance window early. Enter the password again to start a new window."
+msgstr "面板重启，维护窗口已提前结束。继续维护请重新输入密码申请解锁。"
+
+msgid "Password reset disabled for all users"
+msgstr "禁止所有用户找回"
+
+msgid "Password reset policy"
+msgstr "密码找回策略"
+
+msgid "Periodically checks for changes to administrators, content, security settings, and unusual persisted database objects."
+msgstr "定期检查管理员、内容、安全设置及异常持久化对象的变化。"
+
+msgid "Plugin version"
+msgstr "插件版本"
+
+msgid "Post revisions"
+msgstr "文章修订版本数"
+
+msgid "Preload automatically after cache clear"
+msgstr "清除缓存后自动预加载"
+
+msgid "Preload complete"
+msgstr "预加载完成"
+
+msgid "Preload in progress"
+msgstr "预加载进行中"
+
+msgid "Preload is idle and no URLs are pending."
+msgstr "当前预加载任务空闲，无待处理队列。"
+
+msgid "Preload is queued; %d URLs are waiting to be processed."
+msgstr "预加载任务已排队，等待处理 %d 个地址。"
+
+msgid "Preload is running; %d URLs remain in the queue."
+msgstr "预加载任务正在运行，剩余队列 %d 个地址。"
+
+msgid "Preload now"
+msgstr "立即预加载"
+
+msgid "Preload unavailable: enable the FastCGI cache first and save."
+msgstr "预加载不可用：请先开启 FastCGI 缓存并保存。"
+
+msgid "Preloading only takes effect after the %1$sFastCGI cache%2$s above is enabled."
+msgstr "需要先开启上方的 %1$sFastCGI 缓存%2$s，预加载才会生效。"
+
+msgid "Prevent editing theme and plugin files in the dashboard"
+msgstr "禁止在后台编辑主题和插件文件"
+
+msgid "Helps prevent accidental or malicious changes to plugins, themes, and other site code."
+msgstr "帮助防止插件、主题和其他网站代码被意外或恶意修改。"
+
+msgid "Prioritizes the home page and recently updated public content; it does not crawl the whole site."
+msgstr "优先处理首页和最近更新的公开内容，不会遍历整个网站。"
+
+msgid "Processed slowly in the background, never hitting many pages at once."
+msgstr "以较慢速度在后台处理，不会一次访问大量页面。"
+
+msgid "Processing mode"
+msgstr "处理模式"
+
+msgid "Processing…"
+msgstr "正在处理…"
+
+msgid "Progress: %s / %s"
+msgstr "进度：%s / %s"
+
+msgid "Purpose"
+msgstr "作用"
+
+msgid "Queued"
+msgstr "排队中"
+
+msgid "Range %1$s10–500%2$s; %1$s100%2$s is a common choice. The home page comes first, followed by recently updated public posts, pages, and term archives."
+msgstr "范围 %1$s10–500%2$s；常用 %1$s100%2$s。首页优先，其次为最近更新的公开文章、页面和分类归档。"
+
+msgid "Re-encode existing media library images in place to save space."
+msgstr "对媒体库里已有的历史图片做原地重编码，减小占用。"
+
+msgid "Read the WP Panel documentation or report reproducible issues and error messages."
+msgstr "查看 WP Panel 的产品说明，或提交能够重复出现的问题和错误信息。"
+
+msgid "Regenerated automatically when it expires; no manual cleanup is required."
+msgstr "到期后自动重建，无需手动清理。"
+
+msgid "Recent cache clears"
+msgstr "最近清除记录"
+
+msgid "Recommendation"
+msgstr "建议"
+
+msgid "Recommended. It only disables the built-in dashboard code editors; post editing and media uploads are not affected."
+msgstr "建议开启。它只关闭 WordPress 后台自带的代码编辑器，不影响文章编辑和媒体上传。"
+
+msgid "Reduce unnecessary WordPress access points while keeping security settings synchronized with WP Panel."
+msgstr "减少不必要的 WordPress 访问入口，并与 WP Panel 保持安全设置同步。"
+
+msgid "Relock failed — contact administrator"
+msgstr "重新锁定失败，请联系管理员"
+
+msgid "Relock now"
+msgstr "立即重新锁定"
+
+msgid "Relocking"
+msgstr "正在重新锁定"
+
+msgid "Removes the dashboard code editors, reducing the chance of injected code."
+msgstr "关闭后台的代码编辑入口，减少被写入的可能。"
+
+msgid "Report a bug"
+msgstr "反馈 Bug"
+
+msgid "Resources & database"
+msgstr "资源与数据库"
+
+msgid "Restricting resets reduces the risk of malicious admin password resets; a forgotten password then requires another administrator or the panel owner to recover."
+msgstr "限制密码找回可减少管理员账号被恶意重置的风险，但忘记密码时需要由其他管理员或面板所有者协助恢复。"
+
+msgid "Result"
+msgstr "结果"
+
+msgid "Running"
+msgstr "运行中"
+
+msgid "Save settings"
+msgstr "保存设置"
+
+msgid "Scope"
+msgstr "范围"
+
+msgid "Security & Maintenance"
+msgstr "安全与维护"
+
+msgid "Security features managed by WP Panel"
+msgstr "由 WP Panel 托管的安全功能"
+
+msgid "Security risk"
+msgstr "安全风险"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Settings saved and synced to the panel."
+msgstr "设置已保存，已同步到面板。"
+
+msgid "Settings sync to WP Panel after saving; cache-related changes may take a few seconds to take effect."
+msgstr "保存后设置会同步到 WP Panel；缓存相关修改可能需要几秒钟生效。"
+
+msgid "Settings were not saved. To change optimizations that write to wp-config.php, release the file lock on the site details page in WP Panel first."
+msgstr "当前设置未保存。如需修改会写入 wp-config.php 的优化项，请先到 WP Panel 网站详情页解除文件锁定。"
+
+msgid "Settings were saved locally but failed to sync to the panel. Error message:"
+msgstr "设置已保存在本地，但同步到面板失败。错误信息："
+
+msgid "Site"
+msgstr "站点"
+
+msgid "Skipping updates for a long time leaves known vulnerabilities unpatched. Do not treat \"no notices\" as \"no updates needed\"."
+msgstr "长期不更新可能遗留已公开的安全漏洞，请不要把“没有提醒”理解为“无需更新”。"
+
+msgid "Speed is controlled by the panel; large libraries can take a while."
+msgstr "处理速度由面板控制，图库较大时任务会持续一段时间。"
+
+msgid "Start batch optimization"
+msgstr "开始批量优化"
+
+msgid "Start failed: %s"
+msgstr "启动失败：%s"
+
+msgid "Started:"
+msgstr "开始："
+
+msgid "State unknown"
+msgstr "状态未知"
+
+msgid "State unknown. Refresh or contact the administrator."
+msgstr "状态未知，请刷新状态或联系管理员。"
+
+msgid "Stop"
+msgstr "停止"
+
+msgid "Stop preload"
+msgstr "停止预加载"
+
+msgid "Stopped"
+msgstr "已停止"
+
+msgid "Stopped manually"
+msgstr "已手动停止"
+
+msgid "Succeeded"
+msgstr "成功"
+
+msgid "Success"
+msgstr "成功"
+
+msgid "Turn this setting off periodically to check for updates, or manage updates from \"WP Overview\" in WP Panel. Re-enable the site file lock when maintenance is complete."
+msgstr "定期临时关闭此开关检查更新，或通过 WP Panel 的“WP 总览”管理更新；完成后再开启网站文件锁定。"
+
+msgid "Temporary unlock"
+msgstr "临时解锁"
+
+msgid "The API key is the dedicated credential this plugin uses to connect to WP Panel; it is generated and stored by the panel automatically. Only the first 8 characters are shown here; the full key cannot be viewed or changed."
+msgstr "API Key 是插件连接 WP Panel 的专用凭据，由面板自动生成和保管。本页只显示前 8 位，无法查看或修改完整密钥。"
+
+msgid "The next time you open this page, state will be pulled from the panel and may overwrite these changes. Please check whether \"Verify panel connection\" in the plugin settings works."
+msgstr "下次进入本页面时将从面板拉取状态，可能覆盖本次修改。请检查插件设置中的「验证连接」是否正常。"
+
+msgid "The panel returned an error"
+msgstr "面板返回错误"
+
+msgid "The plugin clears the site cache automatically when content or comments change."
+msgstr "内容或评论发生变化时，插件会自动清除站点缓存。"
+
+msgid "The plugin is installed and updated automatically by WP Panel; there is no need to download it separately from the WordPress dashboard."
+msgstr "插件由 WP Panel 自动安装和更新，无需在 WordPress 后台单独下载。"
+
+msgid "This plugin displays these settings as read-only. They can be changed only in WP Panel, so WordPress administrators cannot weaken server security policies."
+msgstr "插件以只读方式显示这些设置；只能在 WP Panel 中修改，避免 WordPress 管理员降低服务器安全策略。"
+
+msgid "The preload queue is empty"
+msgstr "预加载队列为空"
+
+msgid "The task runs on WP Panel in the background; you can close this page once it starts."
+msgstr "任务由 WP Panel 在后台处理，开始后可以关闭本页面。"
+
+msgid "The value here cannot exceed the PHP memory limit shown above, which comes from the effective configuration in \"Software Management\" in WP Panel."
+msgstr "这里的数值不能超过上方显示的 PHP 内存上限；该上限来自 WP Panel“软件管理”的实际生效配置。"
+
+msgid "These pages are cached the first time someone visits them."
+msgstr "会在访客第一次打开时正常生成缓存。"
+
+msgid "This feature relies on the PHP %1$sexif%2$s extension to correct photo orientation. Once the panel has installed it, refresh this page to start using it."
+msgstr "该功能依赖 PHP %1$sexif%2$s 扩展做拍照方向修正，面板补装完成后刷新本页即可使用。"
+
+msgid "Time"
+msgstr "时间"
+
+msgid "Too many failed attempts. Password verification has been suspended for 10 minutes. Please try again later."
+msgstr "验证失败次数过多，已暂停密码验证 10 分钟，请稍后重试。"
+
+msgid "Total saved"
+msgstr "累计节省"
+
+msgid "Trigger"
+msgstr "方式"
+
+msgid "Unable to read the WP Panel configuration. The site domain or runtime configuration may have changed; rebuild the companion plugin configuration from the site details page in WP Panel."
+msgstr "无法读取 WP Panel 配置。网站域名或运行配置可能已变化，请到 WP Panel 网站详情中重建配套插件配置。"
+
+msgid "Unaffected"
+msgstr "不受影响"
+
+msgid "Unknown error"
+msgstr "未知错误"
+
+msgid "Unlimited"
+msgstr "未限制"
+
+msgid "Unlocked"
+msgstr "已解锁"
+
+msgid "Unlocking"
+msgstr "正在解锁"
+
+msgid "Use"
+msgstr "用途"
+
+msgid "Use the maintenance password configured in the panel to unlock temporarily, then relock the site as soon as maintenance is complete."
+msgstr "可使用面板设置的维护密码临时解锁，完成后应立即重新锁定。"
+
+msgid "Use when content does not refresh promptly; if a CDN is in use, its cache must be cleared too."
+msgstr "内容没有及时更新时使用；若启用了 CDN，还需清除 CDN 缓存。"
+
+msgid "Verification failed. Please check the maintenance password."
+msgstr "验证失败，请检查维护密码。"
+
+msgid "Verify panel connection"
+msgstr "验证面板连接"
+
+msgid "Verifying…"
+msgstr "验证中…"
+
+msgid "View temporary maintenance"
+msgstr "查看临时维护"
+
+msgid "Visit the WP Panel website"
+msgstr "访问 WP Panel 官网"
+
+msgid "Modern browsers display WebP reliably. WebP mode does %1$snot keep the original%2$s, so test older plugins, email templates, social sharing, and external services that may require JPEG or PNG files."
+msgstr "现代浏览器都能可靠显示 WebP。WebP 模式%1$s不保留原图%2$s，因此需要测试可能依赖 JPEG 或 PNG 文件的旧插件、邮件模板、社交分享和外部服务。"
+
+msgid "Visits public pages automatically to build their cache."
+msgstr "自动访问公开页面并生成缓存。"
+
+msgid "WP Panel Optimizer is the companion plugin installed automatically by WP Panel. It connects caching, image handling, and common WordPress settings to the panel for centralized management."
+msgstr "WP Panel Optimizer 是 WP Panel 自动安装的配套插件。它把缓存、图片和常用 WordPress 设置连接到面板，方便集中管理。"
+
+msgid "WP Panel Optimizer settings"
+msgstr "WP Panel Optimizer 设置"
+
+msgid "WP Panel file lock is enabled."
+msgstr "WP Panel 文件锁定已开启。"
+
+msgid "Waiting for first check"
+msgstr "等待首次检查"
+
+msgid "Waiting for the background preload batch"
+msgstr "等待后台批量预加载"
+
+msgid "WebP conversion"
+msgstr "WebP 转换"
+
+msgid "WebP mode is enabled."
+msgstr "WebP 模式已开启。"
+
+msgid "WebP quality"
+msgstr "WebP 质量"
+
+msgid "What it does"
+msgstr "作用"
+
+msgid "When enabled"
+msgstr "开启后"
+
+msgid "When to enable"
+msgstr "开启条件"
+
+msgid "WordPress anomaly monitoring"
+msgstr "WordPress 异常监控"
+
+msgid "WordPress application passwords"
+msgstr "WordPress 应用程序密码"
+
+msgid "WordPress hardening"
+msgstr "WordPress 加固"
+
+msgid "WordPress memory limit"
+msgstr "WordPress 内存限制"
+
+msgid "WordPress no longer checks for or displays update notices for core, plugins, and themes."
+msgstr "WordPress 不再检查或显示核心、插件和主题的更新提醒。"
+
+msgid "Writing posts, editing pages, and uploading images are unaffected. Write access in other runtime directories is governed by the current file lock rules; installing, updating, or deleting plugins or themes, and modifying code or site configuration, will be blocked. To maintain plugins and themes, or to configure security or caching plugins for the first time, release the file lock on the site details page in WP Panel first."
+msgstr "发文章、编辑页面和上传图片不受影响；其他运行目录的写入范围由当前文件锁规则决定，安装、更新、删除插件或主题，以及修改代码和站点配置会被阻止。如需维护插件主题或首次配置安全/缓存插件，请先到 WP Panel 网站详情页解除文件锁定。"
+
+msgid "Writing posts, editing pages, and uploading images are unaffected; installing, updating, or modifying program files is restricted."
+msgstr "写文章、编辑页面和上传图片不受影响；安装、更新或修改程序文件会受到限制。"
+
+msgid "XML-RPC interface"
+msgstr "XML-RPC 接口"
+
+msgid "minutes"
+msgstr "分钟"
+
+msgid "A new WP Panel Optimizer version is available."
+msgstr "WP Panel Optimizer 有新版本可用。"
+
+msgid "Installed: %1$s; available from WP Panel: %2$s."
+msgstr "当前版本：%1$s；WP Panel 提供的版本：%2$s。"
+
+msgid "Open WP Panel Optimizer to update"
+msgstr "打开 WP Panel Optimizer 进行更新"
+
+msgid "Update failed"
+msgstr "更新失败"
+
+msgid "Version %s available"
+msgstr "发现版本 %s"
+
+msgid "Up to date"
+msgstr "已是最新版本"
+
+msgid "An update is available for this managed plugin."
+msgstr "这个托管插件有新版本可用。"
+
+msgid "WP Panel can update this plugin from version %1$s to %2$s. The update will not change whether the plugin is active."
+msgstr "WP Panel 可以将插件从 %1$s 更新到 %2$s，更新不会改变插件当前的启用或停用状态。"
+
+msgid "Update now"
+msgstr "立即更新"
+
+msgid "Updating…"
+msgstr "正在更新…"
+
+msgid "Update completed. Reloading…"
+msgstr "更新完成，正在刷新页面…"
+
+msgid "Update failed: %s"
+msgstr "更新失败：%s"

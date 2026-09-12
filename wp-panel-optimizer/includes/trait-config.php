@@ -152,7 +152,7 @@ trait WPP_Optimizer_Config_Trait {
         if (is_wp_error($resp)) return $resp;
         $data = json_decode($resp, true);
         if (empty($data['success'])) {
-            return new \WP_Error('api_error', $data['message'] ?? 'API 返回错误');
+            return new \WP_Error('api_error', $data['message'] ?? __('API returned an error', 'wp-panel-optimizer'));
         }
         return true;
     }
@@ -175,7 +175,7 @@ trait WPP_Optimizer_Config_Trait {
         $baseUrl = self::get_panel_url();
         $apiKey  = self::get_api_key();
         if (!$baseUrl || !$apiKey) {
-            return new \WP_Error('config_missing', '无法读取 WP Panel 配置。网站域名或运行配置可能已变化，请到 WP Panel 网站详情中重建配套插件配置');
+            return new \WP_Error('config_missing', __('Unable to read the WP Panel configuration. The site domain or runtime configuration may have changed; rebuild the companion plugin configuration from the site details page in WP Panel.', 'wp-panel-optimizer'));
         }
 
         $args = [

@@ -1,0 +1,1335 @@
+/*
+ * WP Panel Optimizer — 设置页样式
+ *
+ * 设计取向：直角、细线、克制配色。层次依靠栅格对齐、字号对比与留白建立，
+ * 不使用圆角、渐变色块或外部资源。图标仅用 WordPress 自带 Dashicons。
+ */
+
+.wpp-settings *,
+.wpp-settings *::before,
+.wpp-settings *::after {
+    border-radius: 0 !important;
+    box-sizing: border-box;
+}
+
+.wpp-settings {
+    --wpp-ink: #0d1622;
+    --wpp-ink-soft: #1b2634;
+    --wpp-text: #1f2933;
+    --wpp-muted: #4b5560;
+    --wpp-line: #d5dae1;
+    --wpp-line-soft: #e7eaee;
+    --wpp-surface: #fff;
+    --wpp-surface-alt: #f7f8f9;
+    --wpp-accent: #1d4ed8;
+    --wpp-accent-deep: #14368f;
+    --wpp-accent-wash: #eef3ff;
+    --wpp-ok: #0b6b4f;
+    --wpp-warn: #8a5a00;
+    --wpp-risk: #a4231c;
+    --wpp-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+    color: var(--wpp-text);
+    font-variant-numeric: tabular-nums;
+    margin: 0;
+    max-width: 1180px;
+    padding-top: 4px;
+}
+
+/* ---------- 页头 ---------- */
+
+.wpp-settings .wpp-masthead {
+    align-items: stretch;
+    background: var(--wpp-ink);
+    border-top: 2px solid var(--wpp-accent);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    justify-content: space-between;
+    margin: 16px 0 0;
+}
+
+.wpp-settings .wpp-masthead__brand {
+    align-items: center;
+    display: flex;
+    gap: 14px;
+    min-width: 0;
+    padding: 20px 22px;
+}
+
+.wpp-settings .wpp-masthead__mark {
+    align-items: center;
+    border: 1px solid rgba(255, 255, 255, .28);
+    color: #fff;
+    display: flex;
+    flex: 0 0 auto;
+    height: 42px;
+    justify-content: center;
+    width: 42px;
+}
+
+.wpp-settings .wpp-masthead__mark img {
+    display: block;
+    height: 32px;
+    object-fit: contain;
+    width: 32px;
+}
+
+.wpp-settings .wpp-masthead__eyebrow {
+    color: #8fa3bd;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .16em;
+    margin: 0 0 4px;
+}
+
+.wpp-settings .wpp-masthead h1 {
+    color: #fff;
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    line-height: 1.25;
+    margin: 0;
+    padding: 0;
+}
+
+.wpp-settings .wpp-masthead__lead {
+    color: #b7c4d6;
+    font-size: 13.5px;
+    margin: 6px 0 0;
+}
+
+.wpp-settings .wpp-masthead__meta {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+}
+
+.wpp-settings .wpp-masthead__item {
+    border-left: 1px solid rgba(255, 255, 255, .14);
+    padding: 16px 20px;
+}
+
+.wpp-settings .wpp-masthead__label {
+    color: #8fa3bd;
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .12em;
+    margin-bottom: 4px;
+}
+
+.wpp-settings .wpp-masthead__value {
+    color: #fff;
+    display: block;
+    font-family: var(--wpp-mono);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
+.wpp-settings .wpp-masthead__action {
+    margin: 0 18px 0 0;
+}
+
+/* ---------- 状态读数条 ---------- */
+
+.wpp-settings .wpp-readout {
+    background: var(--wpp-surface);
+    border: 1px solid var(--wpp-line);
+    border-top: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    margin: 0;
+}
+
+.wpp-settings .wpp-readout__item {
+    border-left: 1px solid var(--wpp-line-soft);
+    min-width: 0;
+    padding: 12px 16px;
+}
+
+.wpp-settings .wpp-readout__item:first-child {
+    border-left: 0;
+}
+
+.wpp-settings .wpp-readout__label {
+    color: var(--wpp-muted);
+    display: block;
+    font-size: 12px;
+    margin-bottom: 6px;
+}
+
+.wpp-settings .wpp-readout__value {
+    align-items: center;
+    display: flex;
+    font-size: 15px;
+    font-weight: 600;
+    gap: 8px;
+}
+
+.wpp-settings .wpp-readout__value code {
+    font-family: var(--wpp-mono);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+/* 状态方块：直角实心小块，替代圆点与胶囊徽章 */
+
+.wpp-settings .wpp-flag {
+    flex: 0 0 auto;
+    height: 8px;
+    width: 8px;
+}
+
+.wpp-settings .wpp-flag--ok { background: var(--wpp-ok); }
+.wpp-settings .wpp-flag--warn { background: var(--wpp-warn); }
+.wpp-settings .wpp-flag--risk { background: var(--wpp-risk); }
+.wpp-settings .wpp-flag--idle { background: #9aa5b1; }
+.wpp-settings .wpp-flag--info { background: var(--wpp-accent); }
+
+.wpp-settings .is-ok { color: var(--wpp-ok); }
+.wpp-settings .is-warn { color: var(--wpp-warn); }
+.wpp-settings .is-risk { color: var(--wpp-risk); }
+.wpp-settings .is-idle { color: var(--wpp-muted); }
+
+.wpp-settings .wpp-component-update {
+    align-items: center;
+    background: #fff8e8;
+    border: 1px solid #d6a94b;
+    display: flex;
+    gap: 18px;
+    justify-content: space-between;
+    margin: 16px 0 0;
+    padding: 14px 16px;
+}
+
+.wpp-settings .wpp-component-update p { margin: 4px 0 0; }
+.wpp-settings #wpp-component-update-msg { min-width: 180px; }
+
+/* ---------- 标签导航 ---------- */
+
+.wpp-settings .wpp-tabs {
+    border-bottom: 1px solid var(--wpp-line);
+    display: flex;
+    flex-wrap: wrap;
+    margin: 22px 0 0;
+    padding: 0;
+}
+
+.wpp-settings .wpp-tabs .nav-tab {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    color: #8b949e;
+    display: inline-flex;
+    font-size: 14px;
+    font-weight: 500;
+    gap: 8px;
+    margin: 0;
+    padding: 12px 18px;
+}
+
+.wpp-settings .wpp-tabs .nav-tab:hover {
+    background: var(--wpp-surface-alt);
+    color: var(--wpp-text);
+}
+
+.wpp-settings .wpp-tabs .nav-tab:focus-visible {
+    outline: 2px solid var(--wpp-accent);
+    outline-offset: -2px;
+}
+
+.wpp-settings .wpp-tabs .nav-tab-active,
+.wpp-settings .wpp-tabs .nav-tab-active:hover {
+    background: var(--wpp-accent);
+    border-bottom-color: var(--wpp-accent);
+    color: #fff;
+    font-weight: 600;
+}
+
+.wpp-settings .wpp-tabs .nav-tab-active .dashicons {
+    color: #fff;
+}
+
+.wpp-settings .wpp-tabs .nav-tab .dashicons {
+    font-size: 16px;
+    height: 16px;
+    width: 16px;
+}
+
+/* ---------- 面板与分区 ---------- */
+
+.wpp-settings .wpp-tab-panel {
+    background: #eceff2;
+    border: 1px solid var(--wpp-line);
+    border-top: 0;
+    margin: 0;
+    padding: 18px;
+}
+
+.wpp-settings .wpp-section {
+    background: var(--wpp-surface);
+    border: 1px solid var(--wpp-line);
+    margin: 0 0 16px;
+}
+
+.wpp-settings .wpp-section:last-child {
+    margin-bottom: 0;
+}
+
+.wpp-settings .wpp-section__head {
+    background: var(--wpp-surface-alt);
+    border-bottom: 1px solid var(--wpp-line-soft);
+    padding: 12px 22px;
+}
+
+.wpp-settings .wpp-section__title {
+    align-items: center;
+    color: var(--wpp-ink);
+    display: flex;
+    font-size: 15px;
+    font-weight: 600;
+    gap: 9px;
+    margin: 0;
+}
+
+.wpp-settings .wpp-section__title .dashicons {
+    color: var(--wpp-accent);
+    font-size: 16px;
+    height: 16px;
+    width: 16px;
+}
+
+.wpp-settings .wpp-section__desc {
+    color: var(--wpp-muted);
+    font-size: 13.5px;
+    line-height: 1.65;
+    margin: 6px 0 0;
+}
+
+.wpp-settings .wpp-section__body {
+    padding: 4px 22px 20px;
+}
+
+/* ---------- 字段行 ---------- */
+
+.wpp-settings .wpp-field {
+    border-bottom: 1px solid var(--wpp-line-soft);
+    display: grid;
+    gap: 6px 32px;
+    grid-template-columns: 250px minmax(0, 1fr);
+    padding: 20px 0;
+}
+
+.wpp-settings .wpp-field:last-child {
+    border-bottom: 0;
+}
+
+.wpp-settings .wpp-field__title {
+    color: var(--wpp-ink);
+    display: block;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+.wpp-settings .wpp-field__body {
+    max-width: 800px;
+    min-width: 0;
+}
+
+.wpp-settings .wpp-field__note {
+    color: var(--wpp-muted);
+    font-size: 13.5px;
+    line-height: 1.7;
+    margin: 9px 0 0;
+}
+
+.wpp-settings .wpp-field__note strong {
+    color: var(--wpp-text);
+}
+
+.wpp-settings .wpp-field__note code {
+    background: var(--wpp-surface-alt);
+    border: 1px solid var(--wpp-line-soft);
+    font-family: var(--wpp-mono);
+    font-size: 12.5px;
+    padding: 1px 5px;
+}
+
+/* 只读状态行：用于由面板托管、插件内不可编辑的项 */
+
+.wpp-settings .wpp-locked {
+    align-items: baseline;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.wpp-settings .wpp-locked__value {
+    font-size: 14.5px;
+    font-weight: 600;
+}
+
+.wpp-settings .wpp-locked__hint {
+    color: var(--wpp-muted);
+    font-size: 13px;
+}
+
+/* ---------- 输入框 ---------- */
+
+.wpp-settings .wpp-input {
+    background: #fff;
+    border: 1px solid #c3ccd5;
+    color: var(--wpp-text);
+    font-size: 14px;
+    min-height: 40px;
+    padding: 5px 11px;
+    width: 100%;
+}
+
+.wpp-settings .wpp-input--num {
+    font-family: var(--wpp-mono);
+    max-width: 180px;
+}
+
+.wpp-settings .wpp-input--short {
+    max-width: 120px;
+}
+
+.wpp-settings .wpp-input:focus {
+    border-color: var(--wpp-accent);
+    box-shadow: 0 0 0 1px var(--wpp-accent);
+    outline: 0;
+}
+
+.wpp-settings .wpp-input:disabled {
+    background: var(--wpp-surface-alt);
+    color: var(--wpp-muted);
+}
+
+.wpp-settings .wpp-input-group {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+}
+
+.wpp-settings .wpp-input-group__item {
+    align-items: center;
+    display: flex;
+    gap: 7px;
+}
+
+.wpp-settings .wpp-input-group__item label {
+    color: var(--wpp-muted);
+    font-size: 13.5px;
+    white-space: nowrap;
+}
+
+/* ---------- 开关（直角） ---------- */
+
+.wpp-settings .wpp-switch {
+    align-items: center;
+    cursor: pointer;
+    display: inline-flex;
+    gap: 10px;
+    min-height: 24px;
+    position: relative;
+}
+
+.wpp-settings .wpp-switch input[type="checkbox"] {
+    height: 26px;
+    left: 0;
+    margin: 0;
+    opacity: 0;
+    position: absolute;
+    top: 0;
+    width: 48px;
+}
+
+.wpp-settings .wpp-switch__track {
+    background: #c0c9d3;
+    display: block;
+    flex: 0 0 auto;
+    height: 26px;
+    position: relative;
+    transition: background .15s ease;
+    width: 48px;
+}
+
+.wpp-settings .wpp-switch__thumb {
+    background: #fff;
+    display: block;
+    height: 20px;
+    left: 3px;
+    position: absolute;
+    top: 3px;
+    transition: transform .15s ease;
+    width: 20px;
+}
+
+.wpp-settings .wpp-switch input:checked + .wpp-switch__track {
+    background: var(--wpp-accent);
+}
+
+.wpp-settings .wpp-switch input:checked + .wpp-switch__track .wpp-switch__thumb {
+    transform: translateX(22px);
+}
+
+.wpp-settings .wpp-switch input:focus-visible + .wpp-switch__track {
+    box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--wpp-accent);
+}
+
+.wpp-settings .wpp-switch input:disabled + .wpp-switch__track {
+    background: #dde2e7;
+}
+
+.wpp-settings .wpp-switch__text {
+    font-size: 14.5px;
+    font-weight: 500;
+}
+
+/* ---------- 单选块（直角） ---------- */
+
+.wpp-settings .wpp-choice {
+    display: grid;
+    gap: 10px;
+    max-width: 800px;
+}
+
+.wpp-settings .wpp-choice__item {
+    align-items: flex-start;
+    background: #fff;
+    border: 1px solid var(--wpp-line);
+    cursor: pointer;
+    display: flex;
+    gap: 12px;
+    padding: 13px 16px;
+    transition: background .15s ease, border-color .15s ease;
+}
+
+.wpp-settings .wpp-choice__item:hover {
+    border-color: #b3bdc8;
+}
+
+.wpp-settings .wpp-choice__item:has(input:checked) {
+    background: var(--wpp-accent-wash);
+    border-color: var(--wpp-accent);
+    box-shadow: inset 3px 0 0 var(--wpp-accent);
+}
+
+.wpp-settings .wpp-choice__item:has(input:disabled) {
+    cursor: not-allowed;
+    opacity: .6;
+}
+
+.wpp-settings .wpp-choice__item input[type="radio"] {
+    accent-color: var(--wpp-accent);
+    flex: 0 0 auto;
+    height: 16px;
+    margin: 3px 0 0;
+    width: 16px;
+}
+
+.wpp-settings .wpp-choice__text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.wpp-settings .wpp-choice + .wpp-input-group {
+    margin-top: 12px;
+}
+
+/* ---------- 任务状态 ---------- */
+
+.wpp-settings .wpp-task-status {
+    align-items: center;
+    display: inline-flex;
+    font-size: 15px;
+    font-weight: 600;
+    gap: 8px;
+    min-height: 22px;
+}
+
+.wpp-settings .wpp-choice__label {
+    display: block;
+    font-size: 14.5px;
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+.wpp-settings .wpp-choice__desc {
+    color: var(--wpp-muted);
+    display: block;
+    font-size: 13.5px;
+    line-height: 1.65;
+    margin-top: 4px;
+}
+
+/* ---------- 指标读数 ---------- */
+
+.wpp-settings .wpp-stats {
+    border: 1px solid var(--wpp-line-soft);
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    margin: 14px 0 0;
+}
+
+.wpp-settings .wpp-stats__item {
+    border-left: 1px solid var(--wpp-line-soft);
+    min-width: 0;
+    padding: 11px 14px;
+}
+
+.wpp-settings .wpp-stats__item:first-child {
+    border-left: 0;
+}
+
+.wpp-settings .wpp-stats__label {
+    color: var(--wpp-muted);
+    display: block;
+    font-size: 12px;
+    margin-bottom: 5px;
+}
+
+.wpp-settings .wpp-stats__value {
+    color: var(--wpp-ink);
+    display: block;
+    font-family: var(--wpp-mono);
+    font-size: 21px;
+    font-weight: 600;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+}
+
+/* ---------- 进度条（直角） ---------- */
+
+.wpp-settings .wpp-meter {
+    background: var(--wpp-line-soft);
+    height: 6px;
+    margin: 12px 0 0;
+    overflow: hidden;
+    width: 100%;
+}
+
+.wpp-settings .wpp-meter__fill {
+    background: var(--wpp-accent);
+    height: 100%;
+    width: 0;
+}
+
+/* ---------- 操作区 ---------- */
+
+.wpp-settings .wpp-ops {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 18px 0 0;
+}
+
+.wpp-settings .wpp-ops form {
+    margin: 0;
+}
+
+.wpp-settings .wpp-ops__note {
+    color: var(--wpp-muted);
+    flex: 1 1 240px;
+    font-size: 13.5px;
+    line-height: 1.65;
+    margin: 0;
+    min-width: 0;
+}
+
+.wpp-settings .wpp-actions {
+    align-items: center;
+    background: var(--wpp-surface-alt);
+    border: 1px solid var(--wpp-line);
+    border-top: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 14px 22px;
+}
+
+.wpp-settings .wpp-actions__hint {
+    color: var(--wpp-muted);
+    font-size: 13.5px;
+    margin: 0;
+}
+
+/* ---------- 按钮 ---------- */
+
+.wpp-settings .button {
+    align-items: center;
+    background: #fff;
+    border: 1px solid var(--wpp-line);
+    border-radius: 0;
+    box-shadow: none;
+    color: var(--wpp-text);
+    display: inline-flex;
+    font-size: 14px;
+    font-weight: 500;
+    gap: 7px;
+    height: 40px;
+    line-height: 1;
+    padding: 0 18px;
+}
+
+.wpp-settings .button:hover:not(:disabled) {
+    background: #e8eef3;
+    border-color: var(--wpp-ink);
+    color: var(--wpp-ink);
+}
+
+.wpp-settings .button:focus-visible {
+    box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--wpp-accent);
+    outline: 0;
+}
+
+.wpp-settings .button .dashicons {
+    align-items: center;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 16px;
+    height: 16px;
+    justify-content: center;
+    line-height: 1;
+    width: 16px;
+}
+
+.wpp-settings .button-primary,
+.wpp-settings .button-primary:focus:not(:disabled) {
+    background: var(--wpp-ink);
+    border-color: var(--wpp-ink);
+    color: #fff;
+}
+
+.wpp-settings .button-primary:hover:not(:disabled) {
+    background: var(--wpp-accent-deep);
+    border-color: var(--wpp-accent-deep);
+    color: #fff;
+}
+
+.wpp-settings .button:disabled {
+    cursor: not-allowed;
+    opacity: .45;
+}
+
+.wpp-settings .wpp-managed-action {
+    margin-top: 12px;
+}
+
+/* ---------- 提示条 ---------- */
+
+.wpp-settings .notice {
+    background: #fff;
+    border: 1px solid var(--wpp-line);
+    border-left-width: 3px;
+    border-radius: 0;
+    box-shadow: none;
+    margin: 14px 0 0;
+    padding: 1px 14px;
+}
+
+.wpp-settings .notice p {
+    font-size: 13.5px;
+    line-height: 1.7;
+    margin: 11px 0;
+}
+
+.wpp-settings .notice-success { border-left-color: var(--wpp-ok); }
+.wpp-settings .notice-warning { border-left-color: var(--wpp-warn); }
+.wpp-settings .notice-error { border-left-color: var(--wpp-risk); }
+.wpp-settings .notice-info { border-left-color: var(--wpp-accent); }
+
+/* ---------- 关于页 ---------- */
+
+.wpp-settings .wpp-about-lead {
+    color: var(--wpp-muted);
+    font-size: 14px;
+    line-height: 1.75;
+    margin: 0 0 6px;
+}
+
+.wpp-settings .wpp-grid {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: minmax(0, 1fr);
+}
+
+/* ---------- 缓存操作 ---------- */
+
+.wpp-settings .wpp-cache-actions {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-top: 18px;
+}
+
+.wpp-settings .wpp-cache-action {
+    background: var(--wpp-surface-alt);
+    border: 1px solid var(--wpp-line-soft);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 14px;
+}
+
+.wpp-settings .wpp-cache-action form {
+    margin: 0;
+}
+
+.wpp-settings .wpp-cache-action .button {
+    justify-content: center;
+    width: 100%;
+}
+
+.wpp-settings .wpp-cache-action p {
+    color: var(--wpp-muted);
+    font-size: 13px;
+    line-height: 1.6;
+    margin: 10px 0 0;
+}
+
+.wpp-settings .wpp-cache-action p.is-warn {
+    color: #8a5a00;
+}
+
+.wpp-settings .wpp-panel-card {
+    border: 1px solid var(--wpp-line);
+    min-width: 0;
+}
+
+.wpp-settings .wpp-panel-card__head {
+    align-items: center;
+    background: var(--wpp-surface-alt);
+    border-bottom: 1px solid var(--wpp-line-soft);
+    display: flex;
+    gap: 8px;
+    padding: 11px 16px;
+}
+
+.wpp-settings .wpp-panel-card__head h3 {
+    color: var(--wpp-ink);
+    font-size: 14.5px;
+    font-weight: 600;
+    margin: 0;
+}
+
+.wpp-settings .wpp-panel-card__head .dashicons {
+    color: var(--wpp-accent);
+    font-size: 16px;
+    height: 16px;
+    width: 16px;
+}
+
+.wpp-settings .wpp-panel-card__body {
+    padding: 14px 16px 16px;
+}
+
+.wpp-settings .wpp-panel-card p {
+    color: var(--wpp-muted);
+    font-size: 13.5px;
+    line-height: 1.75;
+    margin: 0 0 10px;
+}
+
+.wpp-settings .wpp-panel-card p:last-child {
+    margin-bottom: 0;
+}
+
+.wpp-settings .wpp-dl {
+    margin: 0 0 14px;
+}
+
+.wpp-settings .wpp-dl__row {
+    border-bottom: 1px solid var(--wpp-line-soft);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    justify-content: space-between;
+    padding: 8px 0;
+}
+
+.wpp-settings .wpp-dl__row:last-child {
+    border-bottom: 0;
+}
+
+.wpp-settings .wpp-dl dt {
+    color: var(--wpp-muted);
+    font-size: 13.5px;
+}
+
+.wpp-settings .wpp-dl dd {
+    font-family: var(--wpp-mono);
+    font-size: 13.5px;
+    margin: 0;
+    overflow-wrap: anywhere;
+    text-align: right;
+}
+
+.wpp-settings .wpp-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+/* 面板内部回环地址属于运维信息，用小号等宽字呈现，不与主信息争视觉权重 */
+
+.wpp-settings .wpp-endpoint {
+    color: var(--wpp-muted);
+    font-family: var(--wpp-mono);
+    font-size: 11.5px;
+    margin: 10px 0 0;
+    overflow-wrap: anywhere;
+}
+
+/* ---------- 缓存操作面板 ---------- */
+
+.wpp-settings .wpp-cache-status {
+    border-top: 1px solid var(--wpp-line);
+    margin-top: 16px;
+}
+
+.wpp-settings .wpp-cache-status .wpp-section {
+    margin-bottom: 0;
+}
+
+/* ---------- 最近清除记录 ---------- */
+
+.wpp-settings .wpp-log {
+    border: 1px solid var(--wpp-line-soft);
+    margin: 16px 0 0;
+    max-width: 100%;
+}
+
+.wpp-settings .wpp-log table {
+    border: 0;
+    border-collapse: collapse;
+    margin: 0;
+    width: 100%;
+}
+
+.wpp-settings .wpp-log th {
+    background: var(--wpp-surface-alt);
+    border-bottom: 1px solid var(--wpp-line-soft);
+    color: var(--wpp-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    padding: 8px 12px;
+    text-align: left;
+}
+
+.wpp-settings .wpp-log td {
+    border-bottom: 1px solid var(--wpp-line-soft);
+    font-size: 12.5px;
+    padding: 8px 12px;
+}
+
+.wpp-settings .wpp-log tr:last-child td {
+    border-bottom: 0;
+}
+
+.wpp-settings .wpp-log td:first-child {
+    font-family: var(--wpp-mono);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+/* ---------- 字段头与一句话摘要 ---------- */
+
+.wpp-settings .wpp-field__head {
+    min-width: 0;
+}
+
+.wpp-settings .wpp-field__summary {
+    color: var(--wpp-muted);
+    display: block;
+    font-size: 13px;
+    line-height: 1.6;
+    margin-top: 5px;
+}
+
+/* ---------- 要点列表：把长段落拆成可扫读的短句 ---------- */
+
+.wpp-settings .wpp-points {
+    list-style: none;
+    margin: 11px 0 0;
+    padding: 0;
+}
+
+.wpp-settings .wpp-points li {
+    color: var(--wpp-muted);
+    font-size: 13.5px;
+    line-height: 1.7;
+    padding: 5px 0 5px 13px;
+    position: relative;
+}
+
+.wpp-settings .wpp-points li::before {
+    background: #c2cbd4;
+    bottom: 9px;
+    content: "";
+    left: 0;
+    position: absolute;
+    top: 9px;
+    width: 3px;
+}
+
+.wpp-settings .wpp-points li.is-warn::before { background: var(--wpp-warn); }
+.wpp-settings .wpp-points li.is-risk::before { background: var(--wpp-risk); }
+.wpp-settings .wpp-points li.is-ok::before { background: var(--wpp-ok); }
+
+.wpp-settings .wpp-points li strong {
+    color: var(--wpp-ink);
+}
+
+.wpp-settings .wpp-points__label {
+    color: var(--wpp-ink);
+    font-weight: 600;
+    margin-right: 8px;
+}
+
+.wpp-settings .wpp-points code {
+    background: var(--wpp-surface-alt);
+    border: 1px solid var(--wpp-line-soft);
+    font-family: var(--wpp-mono);
+    font-size: 12.5px;
+    padding: 1px 5px;
+}
+
+/* ---------- 前置提示：说明"为什么不能/不会生效" ---------- */
+
+.wpp-settings .wpp-hint {
+    align-items: flex-start;
+    background: var(--wpp-accent-wash);
+    border: 1px solid #cddcfb;
+    border-left: 3px solid var(--wpp-accent);
+    color: #2b3f5c;
+    display: flex;
+    font-size: 13.5px;
+    gap: 8px;
+    line-height: 1.65;
+    margin: 12px 0 0;
+    padding: 10px 13px;
+}
+
+.wpp-settings .wpp-hint .dashicons {
+    color: var(--wpp-accent);
+    flex: 0 0 auto;
+    font-size: 16px;
+    height: 16px;
+    margin-top: 2px;
+    width: 16px;
+}
+
+.wpp-settings .wpp-hint strong {
+    color: var(--wpp-ink);
+}
+
+/* ---------- 边界与风险提示 ---------- */
+
+.wpp-settings .wpp-callout {
+    align-items: flex-start;
+    background: #fdf8ed;
+    border: 1px solid #ecdcb8;
+    border-left: 3px solid var(--wpp-warn);
+    color: #5c4415;
+    display: flex;
+    font-size: 13.5px;
+    gap: 9px;
+    line-height: 1.7;
+    margin: 12px 0 0;
+    padding: 11px 14px;
+}
+
+.wpp-settings .wpp-callout .dashicons {
+    color: var(--wpp-warn);
+    flex: 0 0 auto;
+    font-size: 17px;
+    height: 17px;
+    margin-top: 2px;
+    width: 17px;
+}
+
+.wpp-settings .wpp-callout strong {
+    color: #3f2f0d;
+}
+
+/* ---------- 更多说明：原生 details 折叠，不依赖 JS ---------- */
+
+.wpp-settings .wpp-more {
+    border-top: 1px solid var(--wpp-line-soft);
+    margin: 12px 0 0;
+    padding-top: 8px;
+}
+
+.wpp-settings .wpp-more summary {
+    align-items: center;
+    color: var(--wpp-accent);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 13px;
+    gap: 6px;
+    list-style: none;
+    padding: 3px 0;
+}
+
+.wpp-settings .wpp-more summary::-webkit-details-marker {
+    display: none;
+}
+
+.wpp-settings .wpp-more summary::after {
+    content: "+";
+    font-family: var(--wpp-mono);
+    font-size: 14px;
+}
+
+.wpp-settings .wpp-more[open] summary::after {
+    content: "\2212";
+}
+
+.wpp-settings .wpp-more summary:focus-visible {
+    outline: 2px solid var(--wpp-accent);
+    outline-offset: 2px;
+}
+
+.wpp-settings .wpp-more__body {
+    padding: 6px 0 2px;
+}
+
+.wpp-settings .wpp-more__body p {
+    color: var(--wpp-muted);
+    font-size: 13.5px;
+    line-height: 1.7;
+    margin: 0 0 7px;
+}
+
+.wpp-settings .wpp-more__body p:last-child {
+    margin-bottom: 0;
+}
+
+.wpp-settings .wpp-more__body code {
+    background: var(--wpp-surface-alt);
+    border: 1px solid var(--wpp-line-soft);
+    font-family: var(--wpp-mono);
+    font-size: 12.5px;
+    padding: 1px 5px;
+}
+
+/* ---------- 小节标题 ---------- */
+
+.wpp-settings .wpp-subhead {
+    color: var(--wpp-ink);
+    font-size: 14.5px;
+    font-weight: 600;
+    margin: 22px 0 0;
+}
+
+/* ---------- 首屏重点模块 ---------- */
+
+.wpp-settings .wpp-section--featured {
+    border-color: #b9cdf7;
+    box-shadow: inset 3px 0 0 var(--wpp-accent);
+}
+
+.wpp-settings .wpp-section--featured > .wpp-section__head {
+    background: var(--wpp-accent-wash);
+    border-bottom-color: #d3e0fb;
+}
+
+.wpp-settings .wpp-section__titlerow {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.wpp-settings .wpp-section__badge {
+    background: var(--wpp-accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    padding: 3px 8px;
+    white-space: nowrap;
+}
+
+/* ---------- 推荐值高亮 ---------- */
+
+.wpp-settings .wpp-key {
+    color: var(--wpp-accent);
+    font-family: var(--wpp-mono);
+    font-weight: 700;
+}
+
+/* ---------- 按钮与原因绑定 ---------- */
+
+.wpp-settings .wpp-ops__group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.wpp-settings .wpp-ops__reason {
+    color: var(--wpp-muted);
+    font-size: 12.5px;
+    line-height: 1.55;
+    margin: 0;
+    max-width: 260px;
+}
+
+.wpp-settings .wpp-ops__reason.is-warn {
+    color: var(--wpp-warn);
+    font-weight: 500;
+}
+
+/* ---------- 结果化状态面板 ---------- */
+
+.wpp-settings .wpp-stats__item.is-ok .wpp-stats__value { color: var(--wpp-ok); }
+.wpp-settings .wpp-stats__item.is-risk .wpp-stats__value { color: var(--wpp-risk); }
+.wpp-settings .wpp-stats__item.is-info .wpp-stats__value { color: var(--wpp-accent); }
+.wpp-settings .wpp-stats__item.is-idle .wpp-stats__value { color: var(--wpp-muted); }
+
+.wpp-settings .wpp-statusline {
+    align-items: center;
+    background: var(--wpp-surface-alt);
+    border: 1px solid var(--wpp-line-soft);
+    border-left: 3px solid #aab3bd;
+    color: var(--wpp-text);
+    display: flex;
+    font-size: 13.5px;
+    gap: 9px;
+    margin: 0;
+    padding: 10px 13px;
+}
+
+.wpp-settings .wpp-statusline.is-active {
+    background: var(--wpp-accent-wash);
+    border-left-color: var(--wpp-accent);
+}
+
+.wpp-settings .wpp-statusline .dashicons {
+    color: var(--wpp-muted);
+    flex: 0 0 auto;
+    font-size: 17px;
+    height: 17px;
+    width: 17px;
+}
+
+.wpp-settings .wpp-statusline.is-active .dashicons {
+    color: var(--wpp-accent);
+}
+
+/* ---------- 移动端 ---------- */
+
+@media screen and (max-width: 782px) {
+    .wpp-settings {
+        padding-top: 0;
+    }
+
+    .wpp-settings .wpp-tab-panel {
+        padding: 12px;
+    }
+
+    .wpp-settings .wpp-section {
+        margin-bottom: 12px;
+    }
+
+    .wpp-settings .wpp-masthead {
+        flex-direction: column;
+    }
+
+    .wpp-settings .wpp-masthead__brand {
+        padding: 16px;
+    }
+
+    .wpp-settings .wpp-masthead__meta {
+        border-top: 1px solid rgba(255, 255, 255, .14);
+    }
+
+    .wpp-settings .wpp-masthead__item {
+        flex: 1 1 50%;
+        padding: 12px 16px;
+    }
+
+    .wpp-settings .wpp-masthead__item:first-child {
+        border-left: 0;
+    }
+
+    .wpp-settings .wpp-masthead__action {
+        justify-content: center;
+        margin: 12px 16px 16px;
+        width: calc(100% - 32px);
+    }
+
+    .wpp-settings .wpp-readout {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .wpp-settings .wpp-readout__item {
+        border-top: 1px solid var(--wpp-line-soft);
+    }
+
+    .wpp-settings .wpp-readout__item:nth-child(-n+2) {
+        border-top: 0;
+    }
+
+    .wpp-settings .wpp-readout__item:nth-child(odd) {
+        border-left: 0;
+    }
+
+    .wpp-settings .wpp-tabs {
+        gap: 0;
+    }
+
+    .wpp-settings .wpp-tabs .nav-tab {
+        flex: 1 1 50%;
+        justify-content: center;
+        padding: 10px 8px;
+    }
+
+    .wpp-settings .wpp-field {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    /* 单列化，避免 minmax 下限在窄屏撑破容器造成横向溢出 */
+    .wpp-settings .wpp-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .wpp-settings .wpp-cache-actions {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .wpp-settings .wpp-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .wpp-settings .wpp-stats__item:nth-child(odd) {
+        border-left: 0;
+    }
+
+    .wpp-settings .wpp-section__head,
+    .wpp-settings .wpp-section__body {
+        padding-left: 14px;
+        padding-right: 14px;
+    }
+
+    .wpp-settings .wpp-actions {
+        padding: 14px;
+    }
+
+    .wpp-settings .wpp-dl dd {
+        text-align: left;
+    }
+
+    .wpp-settings .wpp-log td:first-child {
+        white-space: normal;
+    }
+}

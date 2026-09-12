@@ -113,7 +113,7 @@ func AutoDeployPluginUpdates(pluginFS embed.FS) {
 	rows.Close()
 	var updated int
 	for _, id := range ids {
-		if !TryAcquireSiteOpLock(id, "companion_upgrade") {
+		if !TryAcquireCompanionDeployLock(id) {
 			continue
 		}
 		changed, err := deploySiteCompanionOwned(id, srcFiles, version, true)
@@ -142,16 +142,45 @@ func DeploySiteCompanionPluginOwned(siteID int) error {
 	return err
 }
 
+// UpdateExistingSiteCompanionPluginOwned updates only an installed companion.
+// It never turns a deleted plugin into a new installation.
+func UpdateExistingSiteCompanionPluginOwned(siteID int) (bool, string, error) {
+	files, version, err := embeddedPluginFilesWithVersion(cacheHelperPluginFS)
+	if err != nil || len(files) == 0 {
+		return false, "", fmt.Errorf("embedded companion unavailable")
+	}
+	changed, err := deploySiteCompanionOwned(siteID, files, version, true)
+	return changed, companionPluginReleaseVersion(files), err
+}
+
+func CompanionPluginVersion() string {
+	files, err := readEmbeddedPluginFiles(cacheHelperPluginFS)
+	if err != nil {
+		return ""
+	}
+	return companionPluginReleaseVersion(files)
+}
+
+var companionPluginVersionPattern = regexp.MustCompile(`(?m)^\s*\*\s*Version:\s*([^\s]+)\s*$`)
+
+func companionPluginReleaseVersion(files map[string][]byte) string {
+	match := companionPluginVersionPattern.FindSubmatch(files[pluginDirName+".php"])
+	if len(match) != 2 {
+		return ""
+	}
+	return string(match[1])
+}
+
 func deploySiteCompanionOwned(siteID int, files map[string][]byte, version string, requireExisting bool) (bool, error) {
 	manager := DefaultMaintenanceManager()
 	site, state, _, err := manager.load(siteID)
 	if err != nil {
 		return false, err
 	}
-	if site.SiteType != "wordpress" || site.Status != models.StatusActive || state.Window != nil || manager.isUncertain(siteID) || site.FileLockApplyStatus == "applying" || site.FileLockApplyStatus == "failed" {
+	if site.SiteType != "wordpress" || site.Status != models.StatusActive || manager.isUncertain(siteID) || site.FileLockApplyStatus == "applying" || site.FileLockApplyStatus == "failed" {
 		return false, ErrMaintenanceBusy
 	}
-	if err := manager.conflicts(siteID); err != nil {
+	if err := manager.companionDeployConflicts(siteID); err != nil {
 		return false, err
 	}
 	root, err := safeSiteWebRoot(site.WebRoot)
@@ -198,7 +227,7 @@ func deploySiteCompanionOwned(siteID int, files map[string][]byte, version strin
 	}
 	if !site.FileLockEnabled {
 		InstallPluginPermissions(site.Domain, site.SystemUser, pluginDir)
-	} else {
+	} else if state.Window == nil {
 		refreshWPCodeIntegrityBaselineBestEffort(site.ID, "配套插件更新成功")
 	}
 	return true, nil

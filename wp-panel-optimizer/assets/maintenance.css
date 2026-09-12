@@ -1,12 +1,94 @@
 #wp-admin-bar-wpp-maintenance[data-state="unlocked"] > a,
-#wp-admin-bar-wpp-maintenance[data-state="unlocking"] > a { background: #985800 !important; color: #fff !important; }
+#wp-admin-bar-wpp-maintenance[data-state="unlocking"] > a { background: #8a5a00 !important; color: #fff !important; }
 #wp-admin-bar-wpp-maintenance[data-state="warning"] > a,
 #wp-admin-bar-wpp-maintenance[data-state="unknown"] > a,
-#wp-admin-bar-wpp-maintenance[data-state="relock_failed"] > a { background: #a12622 !important; color: #fff !important; }
-#wpp-maintenance-dialog { max-width: 440px; width: calc(100% - 48px); border: 1px solid #777; border-radius: 8px; padding: 24px; }
-#wpp-maintenance-dialog::backdrop { background: #0008; }
-#wpp-maintenance-dialog input { display: block; width: 100%; margin: 8px 0 16px; }
+#wp-admin-bar-wpp-maintenance[data-state="relock_failed"] > a { background: #a4231c !important; color: #fff !important; }
+
+#wpp-maintenance-dialog,
+#wpp-maintenance-dialog *,
+#wpp-maintenance-dialog *::before,
+#wpp-maintenance-dialog *::after { border-radius: 0 !important; box-sizing: border-box; }
+
+#wpp-maintenance-dialog {
+    background: #fff; border: 1px solid #d5dae1; box-shadow: 0 24px 70px rgba(13, 22, 34, .34);
+    color: #1f2933; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    max-width: 560px; padding: 0; width: calc(100% - 32px);
+}
+#wpp-maintenance-dialog::backdrop { background: rgba(13, 22, 34, .72); }
+
+#wpp-maintenance-dialog .wpp-maintenance-head {
+    align-items: center; background: #0d1622; border-top: 2px solid #1d4ed8; color: #fff;
+    display: flex; gap: 14px; padding: 18px 22px;
+}
+#wpp-maintenance-dialog .wpp-maintenance-head img { display: block; height: 38px; object-fit: contain; width: 38px; }
+#wpp-maintenance-dialog .wpp-maintenance-head span {
+    color: #8fa3bd; display: block; font-size: 9px; font-weight: 600;
+    letter-spacing: .15em; margin-bottom: 4px;
+}
+#wpp-maintenance-dialog #wpp-maintenance-title {
+    color: #fff; font-size: 19px; line-height: 1.3; margin: 0; padding: 0;
+}
+
+#wpp-maintenance-dialog .wpp-maintenance-body { padding: 20px 22px 22px; }
+#wpp-maintenance-dialog .wpp-maintenance-intro {
+    color: #4b5560; font-size: 13.5px; line-height: 1.7; margin: 0 0 14px;
+}
+#wpp-maintenance-dialog #wpp-maintenance-state {
+    background: #f7f8f9; border: 1px solid #e7eaee; border-left: 3px solid #9aa5b1;
+    color: #1f2933; font-size: 15px; font-weight: 650; margin: 0; padding: 11px 13px;
+}
+#wpp-maintenance-dialog[data-state="locked"] #wpp-maintenance-state { border-left-color: #0b6b4f; color: #0b6b4f; }
+#wpp-maintenance-dialog[data-state="unlocked"] #wpp-maintenance-state,
+#wpp-maintenance-dialog[data-state="unlocking"] #wpp-maintenance-state { border-left-color: #8a5a00; color: #8a5a00; }
+#wpp-maintenance-dialog[data-state="warning"] #wpp-maintenance-state,
+#wpp-maintenance-dialog[data-state="unknown"] #wpp-maintenance-state,
+#wpp-maintenance-dialog[data-state="relock_failed"] #wpp-maintenance-state { border-left-color: #a4231c; color: #a4231c; }
+
+#wpp-maintenance-dialog #wpp-maintenance-warning {
+    color: #4b5560; font-size: 13px; line-height: 1.65; margin: 12px 0 0;
+}
+#wpp-maintenance-dialog #wpp-maintenance-warning.wpp-warning {
+    background: #fdf8ed; border: 1px solid #ecdcb8; border-left: 3px solid #8a5a00;
+    color: #5c4415; font-weight: 600; padding: 10px 12px;
+}
+#wpp-maintenance-dialog #wpp-maintenance-form {
+    border-top: 1px solid #e7eaee; margin-top: 16px; padding-top: 16px;
+}
+#wpp-maintenance-dialog #wpp-maintenance-password-label {
+    color: #1f2933; display: block; font-size: 13px; font-weight: 600; margin-bottom: 7px;
+}
+#wpp-maintenance-dialog input {
+    background: #fff; border: 1px solid #9aa5b1; box-shadow: none; display: block;
+    font-size: 15px; height: 42px; margin: 0 0 14px; padding: 7px 10px; width: 100%;
+}
+#wpp-maintenance-dialog input:focus { border-color: #1d4ed8; box-shadow: 0 0 0 1px #1d4ed8; outline: 0; }
 #wpp-maintenance-dialog input[hidden] { display: none; }
-#wpp-maintenance-dialog button { padding: 8px 12px; cursor: pointer; }
+
 #wpp-maintenance-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-#wpp-maintenance-message, #wpp-maintenance-warning.wpp-warning { color: #a12622; font-weight: 600; }
+#wpp-maintenance-dialog button {
+    align-items: center; background: #fff; border: 1px solid #d5dae1; box-shadow: none;
+    color: #1f2933; cursor: pointer; display: inline-flex; font-size: 13.5px; font-weight: 600;
+    justify-content: center; min-height: 38px; padding: 8px 14px;
+}
+#wpp-maintenance-dialog button:hover:not(:disabled) { background: #e8eef3; border-color: #0d1622; color: #0d1622; }
+#wpp-maintenance-dialog button:focus-visible { box-shadow: 0 0 0 2px #fff, 0 0 0 4px #1d4ed8; outline: 0; }
+#wpp-maintenance-dialog button.is-primary { background: #0d1622; border-color: #0d1622; color: #fff; }
+#wpp-maintenance-dialog button.is-primary:hover:not(:disabled) { background: #14368f; border-color: #14368f; color: #fff; }
+#wpp-maintenance-dialog button:disabled { cursor: not-allowed; opacity: .45; }
+
+#wpp-maintenance-dialog #wpp-maintenance-message {
+    color: #a4231c; font-size: 13px; font-weight: 600; line-height: 1.6; margin: 12px 0 0;
+}
+#wpp-maintenance-dialog #wpp-maintenance-message:empty { display: none; }
+#wpp-maintenance-dialog .wpp-maintenance-foot {
+    align-items: center; background: #f7f8f9; border-top: 1px solid #d5dae1;
+    display: flex; justify-content: flex-end; padding: 12px 22px;
+}
+
+@media screen and (max-width: 600px) {
+    #wpp-maintenance-dialog { width: calc(100% - 20px); }
+    #wpp-maintenance-dialog .wpp-maintenance-head,
+    #wpp-maintenance-dialog .wpp-maintenance-body,
+    #wpp-maintenance-dialog .wpp-maintenance-foot { padding-left: 16px; padding-right: 16px; }
+    #wpp-maintenance-actions .wpp-maintenance-button { flex: 1 1 100%; width: 100%; }
+}

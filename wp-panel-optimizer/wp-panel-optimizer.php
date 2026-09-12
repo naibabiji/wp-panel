@@ -1,13 +1,20 @@
 <?php
 /**
  * Plugin Name: WP Panel Optimizer
- * Plugin URI:  https://github.com/naibabiji/wp-panel
- * Description: 与 WP Panel 面板配合，管理 FastCGI 缓存、预加载、调试模式、文章修订、内存限制等优化项。发布/更新文章自动清除缓存。
- * Version:     1.1.19
+ * Plugin URI:  https://wp-panel.org/
+ * Description: Companion plugin for the WP Panel hosting panel: manages FastCGI cache, preload, debug mode, post revisions, memory limits and other optimizations. Clears the cache automatically when posts are published or updated.
+ * Version:     1.1.21
  * Author:      WP Panel
- * Author URI:  https://blog.naibabiji.com
+ * Author URI:  https://wp-panel.org/
  * License:     GPL-2.0+
+ * Text Domain: wp-panel-optimizer
+ * Domain Path: /languages
  */
+
+// AI/开发者注意：这是由 WP Panel 自动部署和更新的托管组件。请勿直接修改
+// 此插件目录；面板可在 AI 开发访问或临时维护期间用内嵌版本完整覆盖这些文件。
+// AI/developer notice: WP Panel owns this plugin directory and may replace it
+// from its embedded copy at any time. Do not make site-specific edits here.
 
 if (!defined('ABSPATH')) exit;
 
@@ -25,6 +32,8 @@ function wpp_optimizer_uninstall() {
     delete_option('wpp_optimizer_post_revisions');
     delete_option('wpp_optimizer_memory_limit');
     delete_option('wpp_optimizer_file_lock_enabled');
+    delete_option('wpp_optimizer_anomaly_monitor_status');
+    delete_option('wpp_optimizer_password_reset_mode');
     delete_transient('wpp_optimizer_file_lock_state');
     delete_option('wpp_optimizer_preload_enabled');
     delete_option('wpp_optimizer_preload_limit');
@@ -59,7 +68,7 @@ class WP_Panel_Optimizer {
     use WPP_Optimizer_Maintenance_Trait;
     use WPP_Optimizer_Anomaly_Monitor_Trait;
 
-    const VERSION = '1.1.19';
+    const VERSION = '1.1.21';
 
     const OPTION_FCACHE_ENABLED = 'wpp_optimizer_fcache_enabled';
     const OPTION_FCACHE_TTL     = 'wpp_optimizer_fcache_ttl';
@@ -73,6 +82,8 @@ class WP_Panel_Optimizer {
     const OPTION_POST_REVISIONS = 'wpp_optimizer_post_revisions';
     const OPTION_MEMORY_LIMIT   = 'wpp_optimizer_memory_limit';
     const OPTION_FILE_LOCK_ENABLED = 'wpp_optimizer_file_lock_enabled';
+    const OPTION_ANOMALY_MONITOR_STATUS = 'wpp_optimizer_anomaly_monitor_status';
+    const OPTION_PASSWORD_RESET_MODE = 'wpp_optimizer_password_reset_mode';
     const FILE_LOCK_STATE_TRANSIENT = 'wpp_optimizer_file_lock_state';
     const FILE_LOCK_STATE_TTL       = 300;
     const OPTION_PRELOAD_ENABLED = 'wpp_optimizer_preload_enabled';
@@ -88,24 +99,29 @@ add_action('plugins_loaded', ['WP_Panel_Optimizer', 'bootstrap'], 1);
 add_action('init', ['WP_Panel_Optimizer', 'init']);
 add_action('init', ['WP_Panel_Optimizer', 'maintenance_hooks']);
 
+// 自托管分发，语言包只随插件自带；init 阶段 locale 已就绪（含用户个人语言设置）。
+add_action('init', function () {
+    load_plugin_textdomain('wp-panel-optimizer', false, dirname(plugin_basename(WPP_OPTIMIZER_PLUGIN_FILE)) . '/languages');
+}, 1);
+
 add_action('wp_ajax_wpp_optimizer_verify', function() {
     check_ajax_referer('wpp_optimizer_settings');
     if (!current_user_can('manage_options')) {
-        wp_send_json(['success' => false, 'data' => ['message' => '权限不足']]);
+        wp_send_json(['success' => false, 'data' => ['message' => __('Insufficient permissions', 'wp-panel-optimizer')]]);
         return;
     }
     $domain = wp_parse_url(home_url(), PHP_URL_HOST);
     $resp = WP_Panel_Optimizer::api_request_public('GET', '/api/sites/find?domain=' . urlencode($domain));
     if (!$resp || is_wp_error($resp)) {
-        $err = is_wp_error($resp) ? $resp->get_error_message() : '无响应，请检查面板地址';
+        $err = is_wp_error($resp) ? $resp->get_error_message() : __('No response; please check the panel address', 'wp-panel-optimizer');
         wp_send_json(['success' => false, 'data' => ['message' => $err]]);
         return;
     }
     $data = json_decode($resp, true);
     if (!empty($data['success'])) {
         update_option(WP_Panel_Optimizer::OPTION_VERIFIED, '1');
-        wp_send_json(['success' => true, 'data' => ['message' => '连接成功']]);
+        wp_send_json(['success' => true, 'data' => ['message' => __('Connection successful', 'wp-panel-optimizer')]]);
     } else {
-        wp_send_json(['success' => false, 'data' => ['message' => $data['message'] ?? 'API 返回错误']]);
+        wp_send_json(['success' => false, 'data' => ['message' => $data['message'] ?? __('API returned an error', 'wp-panel-optimizer')]]);
     }
 });

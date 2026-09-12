@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -9,6 +10,40 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/naibabiji/wp-panel/database"
 )
+
+func TestFindByDomainReturnsManagedSecurityStatuses(t *testing.T) {
+	setupCacheHelperTestDB(t)
+	if _, err := database.GetDB().Exec(`UPDATE websites SET password_reset_mode='admin' WHERE domain='example.com'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.GetDB().Exec(`INSERT INTO site_wp_anomaly_state(site_id,enabled,last_success,last_error) VALUES(1,1,123,'')`); err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.GET("/api/sites/find", (&CacheHelperHandler{}).FindByDomain)
+	req := httptest.NewRequest(http.MethodGet, "/api/sites/find?domain=example.com", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("X-WP-Panel-Key", "secret")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			AnomalyMonitorStatus string `json:"anomaly_monitor_status"`
+			PasswordResetMode    string `json:"password_reset_mode"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Success || response.Data.AnomalyMonitorStatus != "active" || response.Data.PasswordResetMode != "admin" {
+		t.Fatalf("response=%+v", response)
+	}
+}
 
 func TestCacheHelperAPIKeyRequiresLocalhost(t *testing.T) {
 	setupCacheHelperTestDB(t)
