@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -219,22 +220,29 @@ func buildCurrentBanView(receipts []models.FirewallBan, enforcement executor.Cur
 	metadata := make(map[currentBanKey]models.FirewallBan)
 	byIP := make(map[string][]models.FirewallBan)
 	for _, receipt := range receipts {
-		key := currentBanKey{receipt.IPAddress, receipt.SourceJail}
+		lookupIP := currentBanLookupIP(receipt.IPAddress)
+		key := currentBanKey{lookupIP, receipt.SourceJail}
 		if _, exists := metadata[key]; !exists {
 			metadata[key] = receipt
 		}
-		byIP[receipt.IPAddress] = append(byIP[receipt.IPAddress], receipt)
+		byIP[lookupIP] = append(byIP[lookupIP], receipt)
 	}
 	rows := make(map[currentBanKey]models.CurrentFirewallBan)
 	add := func(ip, source string, receipt *models.FirewallBan) {
-		key := currentBanKey{ip, source}
+		lookupIP := currentBanLookupIP(ip)
+		key := currentBanKey{lookupIP, source}
 		if _, exists := rows[key]; exists {
 			return
 		}
-		rows[key] = currentBanFromReceipt(ip, source, receipt, true, "enforced")
+		displayIP := lookupIP
+		if receipt != nil {
+			displayIP = receipt.IPAddress
+		}
+		rows[key] = currentBanFromReceipt(displayIP, source, receipt, true, "enforced")
 	}
 	for key := range enforcement.Fail2ban {
-		receipt, ok := metadata[currentBanKey{key.IP, key.Source}]
+		lookupIP := currentBanLookupIP(key.IP)
+		receipt, ok := metadata[currentBanKey{lookupIP, key.Source}]
 		if ok {
 			add(key.IP, key.Source, &receipt)
 		} else {
@@ -242,6 +250,7 @@ func buildCurrentBanView(receipts []models.FirewallBan, enforcement executor.Cur
 		}
 	}
 	for ip := range enforcement.Persist {
+		ip = currentBanLookupIP(ip)
 		matched := false
 		for _, receipt := range byIP[ip] {
 			if receipt.SourceJail == "panel" || receipt.SourceJail == "panel_scan" || receipt.SourceJail == "manual" {
@@ -254,6 +263,7 @@ func buildCurrentBanView(receipts []models.FirewallBan, enforcement executor.Cur
 		}
 	}
 	for ip := range enforcement.Nginx {
+		ip = currentBanLookupIP(ip)
 		matched := false
 		for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login", "wppanel-sqli"} {
 			if !enforcement.Fail2ban[executor.CurrentBanKey{IP: ip, Source: jail}] {
@@ -286,7 +296,7 @@ func buildCurrentBanView(receipts []models.FirewallBan, enforcement executor.Cur
 	}
 	var anomalies []models.CurrentFirewallBan
 	for _, receipt := range receipts {
-		key := currentBanKey{receipt.IPAddress, receipt.SourceJail}
+		key := currentBanKey{currentBanLookupIP(receipt.IPAddress), receipt.SourceJail}
 		if _, enforced := rows[key]; enforced {
 			continue
 		}
@@ -304,6 +314,13 @@ func buildCurrentBanView(receipts []models.FirewallBan, enforcement executor.Cur
 		anomalies = append(anomalies, currentBanFromReceipt(receipt.IPAddress, receipt.SourceJail, &receipt, false, verification))
 	}
 	return current, anomalies
+}
+
+func currentBanLookupIP(value string) string {
+	if normalized, ok := executor.NormalizeIP(value); ok {
+		return normalized
+	}
+	return strings.TrimSpace(value)
 }
 
 func currentBanFromReceipt(ip, source string, receipt *models.FirewallBan, enforced bool, verification string) models.CurrentFirewallBan {
@@ -442,7 +459,9 @@ func (h *FirewallHandler) Unban(c *gin.Context) {
 		if jail == "wppanel" || jail == "wppanel-404" || jail == "wppanel-login" || jail == "wppanel-sqli" || jail == "manual" {
 			_ = executor.MaybeRemoveNginxBan(ip)
 		}
-		_ = executor.MaybeRemovePersistBan(ip)
+		if err := executor.MaybeRemovePersistBan(ip); err != nil {
+			log.Printf("解封 IP %s 后移除持久封禁失败，请检查执行层: %v", ip, err)
+		}
 	})
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "IP " + ip + " 已解除封禁"}))
@@ -505,7 +524,11 @@ func (h *FirewallHandler) PermanentBan(c *gin.Context) {
 		return
 	}
 
-	executor.GoSafe(func() { executor.AddPersistBan(ip) })
+	executor.GoSafe(func() {
+		if err := executor.AddPersistBan(ip); err != nil {
+			log.Printf("永久封禁 IP %s 已写入数据库，但持久封禁层应用失败，将等待同步重试: %v", ip, err)
+		}
+	})
 	if jail == "wppanel" || jail == "wppanel-404" || jail == "wppanel-login" || jail == "wppanel-sqli" || jail == "manual" {
 		executor.GoSafe(func() { executor.AddNginxBan(ip) })
 	}

@@ -159,3 +159,23 @@ func TestBuildCurrentBanViewMergesFail2banAndNginxWithoutReceipt(t *testing.T) {
 		t.Fatalf("anomalies = %+v", anomalies)
 	}
 }
+
+func TestBuildCurrentBanViewMatchesEquivalentIPv6Text(t *testing.T) {
+	receipt := models.FirewallBan{
+		ID: 9, IPAddress: "2604:a880:cad:d0:0:1:a6db:2001", SourceJail: "panel_scan",
+		BanLevel: models.BanLevelTemp24h, BannedAt: time.Now(),
+	}
+	state := executor.CurrentBanEnforcement{
+		Fail2ban: map[executor.CurrentBanKey]bool{},
+		Persist:  map[string]bool{"2604:a880:cad:d0::1:a6db:2001": true},
+		Nginx:    map[string]bool{},
+		Status:   executor.CurrentBanReadStatus{Fail2ban: map[string]bool{}, Nftables: true, Nginx: true},
+	}
+	current, anomalies := buildCurrentBanView([]models.FirewallBan{receipt}, state)
+	if len(current) != 1 || current[0].IPAddress != receipt.IPAddress || current[0].SourceJail != "panel_scan" {
+		t.Fatalf("current = %+v", current)
+	}
+	if len(anomalies) != 0 {
+		t.Fatalf("anomalies = %+v", anomalies)
+	}
+}

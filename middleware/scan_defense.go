@@ -24,7 +24,9 @@ var ensureNftablesOnce sync.Once
 
 func ensureNftables() {
 	ensureNftablesOnce.Do(func() {
-		executor.EnsurePersistNftables()
+		if err := executor.EnsurePersistNftables(); err != nil {
+			log.Printf("初始化扫描防御持久封禁层失败，将在封禁时重试: %v", err)
+		}
 	})
 }
 
@@ -159,8 +161,10 @@ func banScanIP(db *sql.DB, ip string, reason string, hours int) {
 		return
 	}
 
-	scanDefenseAddPersistBan(ip)
-
+	if err := scanDefenseAddPersistBan(ip); err != nil {
+		log.Printf("[扫描防御] IP %s 已写入数据库，但持久封禁层应用失败，将等待同步重试: %v", ip, err)
+		return
+	}
 	log.Printf("[扫描防御] 已封禁 IP %s (理由: %s, 时长: %d小时)", ip, reason, hours)
 }
 

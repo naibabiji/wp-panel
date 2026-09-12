@@ -3,6 +3,7 @@ package middleware
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -96,7 +97,9 @@ func (t *LoginAttemptTracker) banIP(ip string, attemptType string) {
 		ip, reason, expiresAt,
 	)
 
-	executor.AddPersistBan(ip)
+	if err := executor.AddPersistBan(ip); err != nil {
+		log.Printf("登录防护 IP %s 已写入数据库，但持久封禁层应用失败，将等待同步重试: %v", ip, err)
+	}
 }
 
 func (t *LoginAttemptTracker) ClearAttempts(ip string) {

@@ -3,6 +3,7 @@ package executor
 import (
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -45,6 +46,144 @@ func TestFail2banWebFilterIncludesNewSensitiveFileNames(t *testing.T) {
 		if !strings.Contains(fail2banFilterConfig, want) {
 			t.Fatalf("fail2ban web filter missing %q", want)
 		}
+	}
+}
+
+func TestPersistFamilyFor(t *testing.T) {
+	tests := []struct {
+		ip, family, setType, saddr string
+	}{
+		{ip: "192.0.2.1", family: "ip", setType: "ipv4_addr", saddr: "ip"},
+		{ip: "2001:db8::1", family: "ip6", setType: "ipv6_addr", saddr: "ip6"},
+	}
+	for _, tt := range tests {
+		family, err := persistFamilyFor(net.ParseIP(tt.ip))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if family.family != tt.family || family.setType != tt.setType || family.saddr != tt.saddr {
+			t.Fatalf("persistFamilyFor(%s) = %+v", tt.ip, family)
+		}
+	}
+	if _, err := persistFamilyFor(nil); err == nil {
+		t.Fatal("persistFamilyFor(nil) succeeded")
+	}
+}
+
+func TestPersistBanUsesAddressFamilyAndIsIdempotent(t *testing.T) {
+	oldExec := persistNftExec
+	t.Cleanup(func() { persistNftExec = oldExec })
+	var commands []string
+	persistNftExec = func(args ...string) (string, error) {
+		command := strings.Join(args, " ")
+		commands = append(commands, command)
+		if strings.HasPrefix(command, "add table ") || strings.HasPrefix(command, "add chain ") || strings.HasPrefix(command, "add set ") {
+			return "Error: File exists", errors.New("exit status 1")
+		}
+		if strings.HasPrefix(command, "list chain ") {
+			return "ip saddr @banned_ips drop\nip6 saddr @banned_ips drop\ntcp dport 22 ct state new", nil
+		}
+		return "", nil
+	}
+	if err := AddPersistBan("2604:a880:cad:d0:0:1:a6db:2001"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemovePersistBan("192.0.2.9"); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(commands, "\n")
+	if !strings.Contains(joined, "add element ip6 wppanel_persist banned_ips { 2604:a880:cad:d0:0:1:a6db:2001 }") {
+		t.Fatalf("IPv6 add did not use ip6 family or normalized address:\n%s", joined)
+	}
+	if !strings.Contains(joined, "delete element ip wppanel_persist banned_ips { 192.0.2.9 }") {
+		t.Fatalf("IPv4 delete did not use ip family:\n%s", joined)
+	}
+}
+
+func TestRemovePersistBanTreatsMissingElementAsSuccess(t *testing.T) {
+	oldExec := persistNftExec
+	t.Cleanup(func() { persistNftExec = oldExec })
+	persistNftExec = func(args ...string) (string, error) {
+		return "Error: No such file or directory", errors.New("exit status 1")
+	}
+	if err := RemovePersistBan("2001:db8::2"); err != nil {
+		t.Fatalf("missing element should be idempotent: %v", err)
+	}
+}
+
+func TestEnsurePersistNftablesAttemptsBothFamilies(t *testing.T) {
+	oldExec := persistNftExec
+	t.Cleanup(func() { persistNftExec = oldExec })
+	var commands []string
+	persistNftExec = func(args ...string) (string, error) {
+		command := strings.Join(args, " ")
+		commands = append(commands, command)
+		if command == "add table ip wppanel_persist" {
+			return "permission denied", errors.New("exit status 1")
+		}
+		if strings.HasPrefix(command, "add ") {
+			return "Error: File exists", errors.New("exit status 1")
+		}
+		if strings.HasPrefix(command, "list chain ") {
+			return "ip6 saddr @banned_ips drop", nil
+		}
+		return "", nil
+	}
+	if err := EnsurePersistNftables(); err == nil {
+		t.Fatal("EnsurePersistNftables succeeded despite IPv4 failure")
+	}
+	if !strings.Contains(strings.Join(commands, "\n"), "add table ip6 wppanel_persist") {
+		t.Fatalf("IPv6 family was skipped after IPv4 failure: %v", commands)
+	}
+}
+
+func TestReconcilePanelManagedBansContinuesAfterPersistFailure(t *testing.T) {
+	openTestDB(t)
+	oldAdd := syncAddPersistBan
+	t.Cleanup(func() { syncAddPersistBan = oldAdd })
+	for _, ip := range []string{"192.0.2.31", "2001:db8::31"} {
+		if _, err := database.GetDB().Exec(`INSERT INTO firewall_bans
+			(ip_address,ban_level,reason,source_jail,ban_count,expires_at)
+			VALUES (?,4,'scan','panel_scan',1,datetime('now','+1 day'))`, ip); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var called []string
+	syncAddPersistBan = func(ip string) error {
+		called = append(called, ip)
+		if ip == "192.0.2.31" {
+			return errors.New("injected failure")
+		}
+		return nil
+	}
+	reconcilePanelManagedBans(database.GetDB(), time.Now(), map[string]bool{})
+	if len(called) != 2 {
+		t.Fatalf("persist add calls = %v, want both IPs", called)
+	}
+}
+
+func TestUnbanAllIPsFlushesBothPersistFamilies(t *testing.T) {
+	openTestDB(t)
+	oldExec := persistNftExec
+	oldShell := shellExec
+	oldReplace := unbanAllReplaceNginxBannedIPs
+	t.Cleanup(func() {
+		persistNftExec = oldExec
+		shellExec = oldShell
+		unbanAllReplaceNginxBannedIPs = oldReplace
+	})
+	var flushed []string
+	persistNftExec = func(args ...string) (string, error) {
+		if len(args) >= 3 && args[0] == "flush" {
+			flushed = append(flushed, args[2])
+		}
+		return "", nil
+	}
+	shellExec = func(string, ...string) (string, error) { return "", errors.New("not running") }
+	unbanAllReplaceNginxBannedIPs = func(map[string]bool) error { return nil }
+	UnbanAllIPs()
+	if strings.Join(flushed, ",") != "ip,ip6" {
+		t.Fatalf("flushed families = %v, want [ip ip6]", flushed)
 	}
 }
 
@@ -353,8 +492,8 @@ func TestSyncFail2banBansPreservesPanelManagedBan(t *testing.T) {
 	}
 	syncReplaceNginxBannedIPs = func(map[string]bool) error { return nil }
 	var added, removed []string
-	syncAddPersistBan = func(ip string) { added = append(added, ip) }
-	syncRemovePersistBan = func(ip string) { removed = append(removed, ip) }
+	syncAddPersistBan = func(ip string) error { added = append(added, ip); return nil }
+	syncRemovePersistBan = func(ip string) error { removed = append(removed, ip); return nil }
 
 	ip := "203.0.113.96"
 	if _, err := database.GetDB().Exec(`INSERT INTO firewall_bans
@@ -397,8 +536,8 @@ func TestReconcilePanelManagedBansDoesNotRemoveIPWithAnotherActiveOwner(t *testi
 		}
 	}
 	var removed []string
-	syncAddPersistBan = func(string) {}
-	syncRemovePersistBan = func(ip string) { removed = append(removed, ip) }
+	syncAddPersistBan = func(string) error { return nil }
+	syncRemovePersistBan = func(ip string) error { removed = append(removed, ip); return nil }
 
 	reconcilePanelManagedBans(database.GetDB(), time.Now(), map[string]bool{})
 
@@ -438,7 +577,7 @@ func TestCleanExpiredBansDoesNotRemoveIPWithAnotherActiveOwner(t *testing.T) {
 		}
 	}
 	var persistRemoved, nginxRemoved int
-	syncRemovePersistBan = func(string) { persistRemoved++ }
+	syncRemovePersistBan = func(string) error { persistRemoved++; return nil }
 	conditionalRemoveNginxBan = func(string) error { nginxRemoved++; return nil }
 
 	CleanExpiredBans()

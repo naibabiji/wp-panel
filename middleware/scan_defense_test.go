@@ -120,7 +120,7 @@ func TestBanScanIPIgnoresNonPublicAddress(t *testing.T) {
 func TestBanScanIPDoesNotLetExpiredReceiptBlockNewBan(t *testing.T) {
 	db := newScanDefenseTestDB(t)
 	oldAddPersistBan := scanDefenseAddPersistBan
-	scanDefenseAddPersistBan = func(string) {}
+	scanDefenseAddPersistBan = func(string) error { return nil }
 	t.Cleanup(func() { scanDefenseAddPersistBan = oldAddPersistBan })
 
 	ip := "203.0.113.20"
@@ -182,7 +182,7 @@ func newScanDefenseTestRouter(t *testing.T, db *sql.DB) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	oldAddPersistBan := scanDefenseAddPersistBan
-	scanDefenseAddPersistBan = func(string) {}
+	scanDefenseAddPersistBan = func(string) error { return nil }
 	t.Cleanup(func() { scanDefenseAddPersistBan = oldAddPersistBan })
 
 	router := gin.New()

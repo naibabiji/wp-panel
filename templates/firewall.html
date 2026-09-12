@@ -95,7 +95,7 @@
                     <p class="text-white font-semibold mb-1">封禁机制</p>
                     <ul class="space-y-1 ml-2">
                         <li><span class="text-blue-400">Fail2ban</span> — 管理来源「Web防护」封禁（jail: <code class="text-gray-300">wppanel</code>）、来源「登录防护」封禁（jail: <code class="text-gray-300">wppanel-login</code>）、来源「404防御」封禁（jail: <code class="text-gray-300">wppanel-404</code>）、来源「SQL 注入防护」封禁（jail: <code class="text-gray-300">wppanel-sqli</code>）和来源「SSH防护」封禁（jail: <code class="text-gray-300">wppanel-sshd</code>，复用与 Web防护相同的阈值，检测 <code class="text-gray-300">/var/log/auth.log</code> 中的 SSH 登录失败），到期自动释放</li>
-                        <li><span class="text-purple-400">Nftables 持久</span> — 管理管理员手动永久封禁、来源「扫描防御」封禁（jail: <code class="text-gray-300">panel_scan</code>）和来源「面板」封禁（jail: <code class="text-gray-300">panel</code>），独立于 Fail2ban；有期限的记录到期解除，手动永久封禁需管理员解封</li>
+                        <li><span class="text-purple-400">Nftables 持久</span> — 通过独立 IPv4/IPv6 集合管理管理员手动永久封禁、来源「扫描防御」封禁（jail: <code class="text-gray-300">panel_scan</code>）和来源「面板」封禁（jail: <code class="text-gray-300">panel</code>），独立于 Fail2ban；有期限的记录到期解除，手动永久封禁需管理员解封</li>
                         <li><span class="text-green-400">Nginx 黑名单</span> — 与 Fail2ban 联动，Web 防护 jail 封禁时同步写入 Nginx geo 黑名单，被禁 IP 直接返回 <code class="text-gray-300">444</code>（关闭连接），确保 Cloudflare 代理场景下也能有效拦截</li>
                     </ul>
                     <p class="text-gray-500 mt-1">三条通道同时生效：Nftables 拦截直连源站的请求，Nginx 拦截经 Cloudflare 转发的请求，Fail2ban 到期自动释放。</p>
@@ -164,6 +164,7 @@
                         <div>
                             <span class="text-gray-500"># 查看 Nftables 持久封禁（扫描防御 + 面板认证封禁）</span>
                             <br><span class="text-green-400">nft</span> list set ip wppanel_persist banned_ips
+                            <br><span class="text-green-400">nft</span> list set ip6 wppanel_persist banned_ips
                         </div>
                     </div>
                 </div>

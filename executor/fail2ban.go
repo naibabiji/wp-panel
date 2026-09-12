@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -25,9 +26,19 @@ var sshRecordActionPending atomic.Bool
 var manualAddNginxBan = AddNginxBan
 var manualRemoveNginxBan = RemoveNginxBan
 var syncReplaceNginxBannedIPs = ReplaceNginxBannedIPs
+var unbanAllReplaceNginxBannedIPs = ReplaceNginxBannedIPs
 var conditionalRemoveNginxBan = RemoveNginxBan
 var syncAddPersistBan = AddPersistBan
 var syncRemovePersistBan = RemovePersistBan
+
+var persistNftExec = func(args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "nft", args...).CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+var persistNftMu sync.Mutex
 
 const (
 	googlebotOfficialURL = "https://developers.google.com/crawling/ipranges/common-crawlers.json"
@@ -818,13 +829,17 @@ func reconcileFail2banBans(db *sql.DB, snapshot fail2banSnapshot) {
 			continue
 		}
 		if snapshot.active[fail2banJailIP{jail: jail, ip: ip}] {
-			removePanelManagedPersistBanIfUnused(db, ip)
+			if err := removePanelManagedPersistBanIfUnused(db, ip); err != nil {
+				log.Printf("清理 IP %s 的面板持久封禁失败，将在后续同步重试: %v", ip, err)
+			}
 			if isWebBanSource(jail) {
 				snapshot.webBanned[ip] = true
 			}
 			continue
 		}
-		removePanelManagedPersistBanIfUnused(db, ip)
+		if err := removePanelManagedPersistBanIfUnused(db, ip); err != nil {
+			log.Printf("清理已结束 Fail2ban 回执 IP %s 的面板持久封禁失败，请检查执行层: %v", ip, err)
+		}
 		expiredIDs = append(expiredIDs, id)
 	}
 
@@ -912,6 +927,7 @@ func reconcilePanelManagedBans(db *sql.DB, now time.Time, webBannedSet map[strin
 
 	var expiredIDs []int
 	expiredIPs := make(map[string]bool)
+	var persistErrors []error
 	for rows.Next() {
 		var id, level int
 		var ip, jail string
@@ -925,7 +941,9 @@ func reconcilePanelManagedBans(db *sql.DB, now time.Time, webBannedSet map[strin
 			continue
 		}
 		if level >= 3 {
-			syncAddPersistBan(ip)
+			if err := syncAddPersistBan(ip); err != nil {
+				persistErrors = append(persistErrors, err)
+			}
 		}
 		if isWebBanSource(jail) {
 			webBannedSet[ip] = true
@@ -935,18 +953,24 @@ func reconcilePanelManagedBans(db *sql.DB, now time.Time, webBannedSet map[strin
 		db.Exec("UPDATE firewall_bans SET unbanned_at=datetime('now') WHERE id=?", id)
 	}
 	for ip := range expiredIPs {
-		removePanelManagedPersistBanIfUnused(db, ip)
+		if err := removePanelManagedPersistBanIfUnused(db, ip); err != nil {
+			persistErrors = append(persistErrors, err)
+		}
+	}
+	if len(persistErrors) > 0 {
+		log.Printf("持久封禁同步存在 %d 个失败，数据库记录已保留并将在下次同步重试: %v", len(persistErrors), errors.Join(persistErrors...))
 	}
 }
 
-func removePanelManagedPersistBanIfUnused(db *sql.DB, ip string) {
+func removePanelManagedPersistBanIfUnused(db *sql.DB, ip string) error {
 	var panelManagedCount int
 	_ = db.QueryRow(`SELECT COUNT(*) FROM firewall_bans
 		WHERE ip_address=? AND source_jail IN ('panel','panel_scan','manual') AND unbanned_at IS NULL
 		AND ban_level>=3 AND (expires_at IS NULL OR expires_at > datetime('now'))`, ip).Scan(&panelManagedCount)
 	if panelManagedCount == 0 {
-		syncRemovePersistBan(ip)
+		return syncRemovePersistBan(ip)
 	}
+	return nil
 }
 
 func RecordFail2banBan(ip, jail string, banTime, banCount int, restored bool) error {
@@ -1123,8 +1147,7 @@ func MaybeRemovePersistBan(ip string) error {
 	if err != nil || activePersistentBans > 0 {
 		return err
 	}
-	RemovePersistBan(ip)
-	return nil
+	return RemovePersistBan(ip)
 }
 
 type activeFirewallBanCandidate struct {
@@ -1249,37 +1272,125 @@ func detectFail2banJail(ip string) string {
 	return ""
 }
 
-func EnsurePersistNftables() {
-	exec.Command("bash", "-c",
-		`nft add table ip wppanel_persist 2>/dev/null
-nft add chain ip wppanel_persist input { type filter hook input priority -1\; } 2>/dev/null
-nft add set ip wppanel_persist banned_ips { type ipv4_addr\; } 2>/dev/null
-nft list chain ip wppanel_persist input 2>/dev/null | grep -q "saddr @banned_ips drop" || nft add rule ip wppanel_persist input ip saddr @banned_ips drop
-nft add set ip wppanel_persist ssh_limit { type ipv4_addr\; flags dynamic,timeout\; timeout 1m\; size 65535\; } 2>/dev/null
-nft list chain ip wppanel_persist input 2>/dev/null | grep -q "tcp dport 22 ct state new" || nft add rule ip wppanel_persist input tcp dport 22 ct state new add @ssh_limit { ip saddr limit rate over 3/minute } drop`).Run()
+type persistBanFamily struct {
+	family   string
+	setType  string
+	saddr    string
+	sshLimit bool
 }
 
-func AddPersistBan(ip string) {
-	ip = strings.TrimSpace(ip)
-	if ip == "" {
-		return
-	}
-	if parsed := net.ParseIP(ip); parsed == nil {
-		return
-	}
-	EnsurePersistNftables()
-	exec.Command("nft", "add", "element", "ip", "wppanel_persist", "banned_ips", "{", ip, "}").Run()
+var persistBanFamilies = []persistBanFamily{
+	{family: "ip", setType: "ipv4_addr", saddr: "ip", sshLimit: true},
+	{family: "ip6", setType: "ipv6_addr", saddr: "ip6"},
 }
 
-func RemovePersistBan(ip string) {
-	ip = strings.TrimSpace(ip)
-	if ip == "" {
-		return
+func persistFamilyFor(ip net.IP) (persistBanFamily, error) {
+	if ip == nil {
+		return persistBanFamily{}, errors.New("invalid IP")
 	}
-	if parsed := net.ParseIP(ip); parsed == nil {
-		return
+	if ip.To4() != nil {
+		return persistBanFamilies[0], nil
 	}
-	exec.Command("nft", "delete", "element", "ip", "wppanel_persist", "banned_ips", "{", ip, "}").Run()
+	return persistBanFamilies[1], nil
+}
+
+func nftErrorContains(output string, err error, fragment string) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(output+" "+err.Error()), strings.ToLower(fragment))
+}
+
+func runPersistNft(args ...string) error {
+	out, err := persistNftExec(args...)
+	if err == nil || nftErrorContains(out, err, "file exists") {
+		return nil
+	}
+	if out != "" {
+		return fmt.Errorf("nft %s failed: %w (%s)", strings.Join(args, " "), err, out)
+	}
+	return fmt.Errorf("nft %s failed: %w", strings.Join(args, " "), err)
+}
+
+func ensurePersistNftablesLocked() error {
+	var errs []error
+	for _, family := range persistBanFamilies {
+		if err := ensurePersistFamilyLocked(family); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func ensurePersistFamilyLocked(family persistBanFamily) error {
+	if err := runPersistNft("add", "table", family.family, "wppanel_persist"); err != nil {
+		return err
+	}
+	if err := runPersistNft("add", "chain", family.family, "wppanel_persist", "input", "{", "type", "filter", "hook", "input", "priority", "-1", ";", "}"); err != nil {
+		return err
+	}
+	if err := runPersistNft("add", "set", family.family, "wppanel_persist", "banned_ips", "{", "type", family.setType, ";", "}"); err != nil {
+		return err
+	}
+	chain, err := persistNftExec("list", "chain", family.family, "wppanel_persist", "input")
+	if err != nil {
+		return fmt.Errorf("list nft %s persist chain: %w", family.family, err)
+	}
+	banRule := family.saddr + " saddr @banned_ips drop"
+	if !strings.Contains(chain, banRule) {
+		if err := runPersistNft("add", "rule", family.family, "wppanel_persist", "input", family.saddr, "saddr", "@banned_ips", "drop"); err != nil {
+			return err
+		}
+	}
+	if !family.sshLimit {
+		return nil
+	}
+	if err := runPersistNft("add", "set", "ip", "wppanel_persist", "ssh_limit", "{", "type", "ipv4_addr", ";", "flags", "dynamic,timeout", ";", "timeout", "1m", ";", "size", "65535", ";", "}"); err != nil {
+		return err
+	}
+	chain, err = persistNftExec("list", "chain", "ip", "wppanel_persist", "input")
+	if err != nil {
+		return fmt.Errorf("list nft ip persist chain: %w", err)
+	}
+	if !strings.Contains(chain, "tcp dport 22 ct state new") {
+		return runPersistNft("add", "rule", "ip", "wppanel_persist", "input", "tcp", "dport", "22", "ct", "state", "new", "add", "@ssh_limit", "{", "ip", "saddr", "limit", "rate", "over", "3/minute", "}", "drop")
+	}
+	return nil
+}
+
+func EnsurePersistNftables() error {
+	persistNftMu.Lock()
+	defer persistNftMu.Unlock()
+	return ensurePersistNftablesLocked()
+}
+
+func AddPersistBan(ip string) error {
+	normalized, ok := NormalizeIP(ip)
+	if !ok {
+		return fmt.Errorf("invalid IP: %s", strings.TrimSpace(ip))
+	}
+	family, _ := persistFamilyFor(net.ParseIP(normalized))
+	persistNftMu.Lock()
+	defer persistNftMu.Unlock()
+	if err := ensurePersistFamilyLocked(family); err != nil {
+		return err
+	}
+	return runPersistNft("add", "element", family.family, "wppanel_persist", "banned_ips", "{", normalized, "}")
+}
+
+func RemovePersistBan(ip string) error {
+	normalized, ok := NormalizeIP(ip)
+	if !ok {
+		return fmt.Errorf("invalid IP: %s", strings.TrimSpace(ip))
+	}
+	family, _ := persistFamilyFor(net.ParseIP(normalized))
+	persistNftMu.Lock()
+	defer persistNftMu.Unlock()
+	out, err := persistNftExec("delete", "element", family.family, "wppanel_persist", "banned_ips", "{", normalized, "}")
+	if err == nil || nftErrorContains(out, err, "no such file or directory") || nftErrorContains(out, err, "no such file") {
+		return nil
+	}
+	return fmt.Errorf("remove nft %s persistent ban: %w", family.family, err)
 }
 
 func parseBannedIPs(status string) []string {
@@ -1549,7 +1660,9 @@ func executeManualBan(task *Task) TaskResult {
 	}
 
 	if banLevel >= 3 {
-		AddPersistBan(ip)
+		if err := AddPersistBan(ip); err != nil {
+			log.Printf("手动封禁 IP %s 已写入数据库和 Nginx，但持久封禁层应用失败，将等待同步重试: %v", ip, err)
+		}
 	}
 
 	msg := fmt.Sprintf("IP %s 已封禁", ip)
@@ -1612,8 +1725,13 @@ func UnbanAllIPs() string {
 		unbanCount, _ = unbanned.RowsAffected()
 	}
 
-	exec.Command("bash", "-c", "nft flush set ip wppanel_persist banned_ips 2>/dev/null; true").Run()
-	_ = ReplaceNginxBannedIPs(map[string]bool{})
+	for _, family := range []string{"ip", "ip6"} {
+		out, err := persistNftExec("flush", "set", family, "wppanel_persist", "banned_ips")
+		if err != nil && !nftErrorContains(out, err, "no such file") {
+			log.Printf("清空 %s 持久封禁集合失败: %v", family, err)
+		}
+	}
+	_ = unbanAllReplaceNginxBannedIPs(map[string]bool{})
 
 	for _, jail := range []string{"wppanel", "wppanel-404", "wppanel-login", "wppanel-sshd", "wppanel-sqli"} {
 		out, err := executeCommand("fail2ban-client", "status", jail)
@@ -1652,7 +1770,9 @@ func CleanExpiredBans() {
 			continue
 		}
 		db.Exec("UPDATE firewall_bans SET unbanned_at = datetime('now') WHERE id = ?", id)
-		removePanelManagedPersistBanIfUnused(db, ip)
+		if err := removePanelManagedPersistBanIfUnused(db, ip); err != nil {
+			log.Printf("清理已过期 IP %s 的持久封禁失败，请检查执行层: %v", ip, err)
+		}
 		if isWebBanSource(jail) {
 			_ = MaybeRemoveNginxBan(ip)
 		}

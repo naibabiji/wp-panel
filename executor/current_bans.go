@@ -6,6 +6,7 @@ import (
 )
 
 var currentBanCommand = executeCommand
+var currentBanEnsurePersist = EnsurePersistNftables
 
 type CurrentBanKey struct {
 	IP     string
@@ -45,17 +46,34 @@ func readCurrentBanEnforcement(snapshot fail2banSnapshot) CurrentBanEnforcement 
 		state.Status.Fail2ban[jail] = read
 	}
 	for pair := range snapshot.active {
-		state.Fail2ban[CurrentBanKey{IP: pair.ip, Source: pair.jail}] = true
+		ip := pair.ip
+		if normalized, ok := NormalizeIP(ip); ok {
+			ip = normalized
+		}
+		state.Fail2ban[CurrentBanKey{IP: ip, Source: pair.jail}] = true
 	}
 
-	EnsurePersistNftables()
-	if out, err := currentBanCommand("nft", "list", "set", "ip", "wppanel_persist", "banned_ips"); err == nil {
-		state.Status.Nftables = true
-		state.Persist = parseNftSetIPs(out)
+	_ = currentBanEnsurePersist()
+	allFamiliesRead := true
+	for _, family := range []string{"ip", "ip6"} {
+		out, err := currentBanCommand("nft", "list", "set", family, "wppanel_persist", "banned_ips")
+		if err != nil {
+			allFamiliesRead = false
+			continue
+		}
+		for ip := range parseNftSetIPs(out) {
+			state.Persist[ip] = true
+		}
 	}
+	state.Status.Nftables = allFamiliesRead
 	if ips, err := readNginxBannedIPs(); err == nil {
 		state.Status.Nginx = true
-		state.Nginx = ips
+		for ip := range ips {
+			if normalized, ok := NormalizeIP(ip); ok {
+				ip = normalized
+			}
+			state.Nginx[ip] = true
+		}
 	}
 	return state
 }
@@ -76,10 +94,19 @@ func parseNftSetIPs(output string) map[string]bool {
 		if len(fields) == 0 {
 			continue
 		}
-		ip := strings.TrimSpace(fields[0])
-		if net.ParseIP(ip) != nil {
+		if ip, ok := NormalizeIP(fields[0]); ok {
 			ips[ip] = true
 		}
 	}
 	return ips
+}
+
+// NormalizeIP provides one comparison boundary for database and nftables
+// addresses without changing the stored or displayed database value.
+func NormalizeIP(value string) (string, bool) {
+	ip := net.ParseIP(strings.TrimSpace(value))
+	if ip == nil {
+		return "", false
+	}
+	return ip.String(), true
 }
