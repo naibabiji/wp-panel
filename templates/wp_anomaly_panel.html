@@ -16,6 +16,8 @@
         <template x-if="state"><div class="text-xs text-gray-400 space-y-2">
             <p x-text="!state.enabled ? t('anomaly.disabled') : state.last_success ? t('anomaly.last_success', {time:timeText(state.last_success)}) : t('anomaly.pending')"></p>
             <p x-show="state.last_success" x-text="t('anomaly.post_count', {count:state.post_count})"></p>
+            <p x-show="state.last_success && state.application_passwords_initialized" x-text="t('anomaly.application_password_count', {count:state.application_password_count})"></p>
+            <p x-show="state.last_success && !state.application_passwords_initialized" x-text="t('anomaly.application_password_pending')"></p>
             <p>{{t .Lang "anomaly.baseline_help"}}</p>
             <ul class="space-y-1"><template x-for="admin in state.admins" :key="admin.id"><li class="break-all" x-text="'#' + admin.id + ' ' + admin.login + ' · ' + admin.roles.join(', ')"></li></template></ul>
         </div></template>
@@ -29,7 +31,7 @@ function wpAnomalyMonitor(siteID) {
         state:null, enabled:false, threshold:5, busy:false, error:'',
         timeText(value) { return new Date(value * 1000).toLocaleString(currentLocale()); },
         errorText(code) {
-            const keys = {plugin_required:'anomaly.plugin_required', multisite_unsupported:'anomaly.multisite_unsupported', site_busy:'anomaly.site_busy', site_unavailable:'anomaly.site_unavailable', anomaly_busy:'anomaly.busy', anomaly_invalid:'anomaly.invalid', anomaly_disabled:'anomaly.disabled'};
+            const keys = {plugin_required:'anomaly.plugin_required', multisite_unsupported:'anomaly.multisite_unsupported', sample_malformed:'anomaly.sample_malformed', sample_too_large:'anomaly.sample_too_large', site_busy:'anomaly.site_busy', site_unavailable:'anomaly.site_unavailable', anomaly_busy:'anomaly.busy', anomaly_invalid:'anomaly.invalid', anomaly_disabled:'anomaly.disabled'};
             return t(keys[code] || 'anomaly.failed');
         },
         async request(path, options, saving = false) {

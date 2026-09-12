@@ -24,10 +24,11 @@ import (
 var panelVersion string
 
 var i18nKeys = []string{
-	"anomaly.disabled", "anomaly.pending", "anomaly.last_success", "anomaly.post_count",
+	"anomaly.disabled", "anomaly.pending", "anomaly.last_success", "anomaly.post_count", "anomaly.application_password_count", "anomaly.application_password_pending",
 	"anomaly.plugin_required", "anomaly.multisite_unsupported", "anomaly.site_busy", "anomaly.site_unavailable",
+	"anomaly.sample_malformed", "anomaly.sample_too_large",
 	"anomaly.busy", "anomaly.invalid", "anomaly.failed",
-	"alert.type_wp_admin_change", "alert.type_wp_post_volume", "alert.type_wp_content_change", "alert.type_wp_content_volume", "alert.type_wp_setting_change", "alert.type_wp_code_integrity",
+	"alert.type_wp_admin_change", "alert.type_wp_post_volume", "alert.type_wp_content_change", "alert.type_wp_content_volume", "alert.type_wp_setting_change", "alert.type_wp_application_password", "alert.type_wp_code_integrity",
 	"maintenance.locked", "maintenance.unlocked", "maintenance.unlocked_permanent", "maintenance.unlocking",
 	"maintenance.relocking", "maintenance.relock_failed", "maintenance.unknown", "maintenance.state_unknown",
 	"maintenance.operation_unavailable", "maintenance.verification_failed", "maintenance.password_required",

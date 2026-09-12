@@ -13,8 +13,10 @@ trait WPP_Optimizer_Anomaly_Monitor_Trait {
         }
         global $wpdb;
         $users = get_users(['role'=>'administrator', 'number'=>101, 'orderby'=>'ID', 'order'=>'ASC']);
-        if ($wpdb->last_error !== '' || count($users) > 100) return ['error'=>'sample_failed'];
+        if ($wpdb->last_error !== '') return ['error'=>'sample_failed'];
+        if (count($users) > 100) return ['error'=>'sample_too_large'];
         $admins = [];
+        $application_passwords = [];
         $current = [];
         foreach ($users as $user) {
             $roles = array_values($user->roles);
@@ -23,8 +25,29 @@ trait WPP_Optimizer_Anomaly_Monitor_Trait {
                 'email_hash'=>hash_hmac('sha256', strtolower(trim($user->user_email)), wp_salt('auth')),
                 'display_hash'=>hash_hmac('sha256', (string)$user->display_name, wp_salt('auth')),
                 'credential_hash'=>hash_hmac('sha256', (string)$user->user_pass, wp_salt('auth'))];
+            if (!class_exists('WP_Application_Passwords')) return ['error'=>'sample_failed'];
+            // Core may repair legacy entries missing a UUID while reading them.
+            $passwords = WP_Application_Passwords::get_user_application_passwords((int)$user->ID);
+            if (!is_array($passwords)) return ['error'=>'sample_failed'];
+            if (count($passwords) > 100) return ['error'=>'sample_too_large'];
+            foreach ($passwords as $password) {
+                if (!is_array($password) || !isset($password['uuid'], $password['name'], $password['created']) || (string)$password['uuid'] === '' || (string)$password['name'] === '' || (int)$password['created'] < 1) return ['error'=>'sample_malformed'];
+                $application_passwords[] = [
+                    'admin_id'=>(int)$user->ID,
+                    'fingerprint'=>hash_hmac('sha256', (string)$password['uuid'], wp_salt('auth')),
+                    'name'=>(string)$password['name'],
+                    'has_app_id'=>isset($password['app_id']) && (string)$password['app_id'] !== '',
+                    'created'=>(int)($password['created'] ?? 0),
+                    'last_used'=>(int)($password['last_used'] ?? 0),
+                    'last_ip'=>(string)($password['last_ip'] ?? ''),
+                ];
+                if (count($application_passwords) > 1000) return ['error'=>'sample_too_large'];
+            }
             $current[(int)$user->ID] = true;
         }
+        usort($application_passwords, static function($a, $b) {
+            return [$a['admin_id'], $a['fingerprint']] <=> [$b['admin_id'], $b['fingerprint']];
+        });
         // Only former administrators are looked up: no full subscriber inventory.
         $removed = [];
         foreach ($known_ids as $id) {
@@ -60,12 +83,13 @@ trait WPP_Optimizer_Anomaly_Monitor_Trait {
                     'fingerprint'=>hash_hmac('sha256', $encoded, wp_salt('auth')),
                 ];
                 $last_id = (int)$row['ID'];
-                if (count($content) > 5000) return ['error'=>'sample_failed'];
+                if (count($content) > 5000) return ['error'=>'sample_too_large'];
             }
         } while (count($rows) === 251);
         return [
-            'version'=>2,
+            'version'=>3,
             'admins'=>$admins,
+            'application_passwords'=>$application_passwords,
             'removed'=>$removed,
             'post_count'=>(int)$count,
             'content'=>$content,

@@ -42,14 +42,14 @@ func TestWPAnomalyHandlerScopeAndCSRF(t *testing.T) {
 		t.Fatal("unauthenticated access allowed")
 	}
 	w = call("GET", "/websites/1/anomaly-monitor", "", false)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"threshold":5`) || !strings.Contains(w.Body.String(), `"enabled":false`) {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"threshold":5`) || !strings.Contains(w.Body.String(), `"enabled":false`) || !strings.Contains(w.Body.String(), `"application_passwords_initialized":false`) {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	if _, err := database.GetDB().Exec(`INSERT INTO site_wp_anomaly_state(site_id,admins) VALUES(1,?) ON CONFLICT(site_id) DO UPDATE SET admins=excluded.admins`, `[{"id":1,"login":"owner","roles":["administrator"],"email_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","credential_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}]`); err != nil {
+	if _, err := database.GetDB().Exec(`INSERT INTO site_wp_anomaly_state(site_id,admins,application_passwords) VALUES(1,?,?) ON CONFLICT(site_id) DO UPDATE SET admins=excluded.admins,application_passwords=excluded.application_passwords`, `[{"id":1,"login":"owner","roles":["administrator"],"email_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","credential_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}]`, `[{"admin_id":1,"fingerprint":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","name":"secret-client","created":1700000000,"last_used":0,"last_ip":""}]`); err != nil {
 		t.Fatal(err)
 	}
 	w = call("GET", "/websites/1/anomaly-monitor", "", false)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"login":"owner"`) || strings.Contains(w.Body.String(), "_hash") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"login":"owner"`) || !strings.Contains(w.Body.String(), `"application_password_count":1`) || !strings.Contains(w.Body.String(), `"application_passwords_initialized":true`) || strings.Contains(w.Body.String(), "_hash") || strings.Contains(w.Body.String(), "secret-client") || strings.Contains(w.Body.String(), "dddddddd") {
 		t.Fatal("sensitive anomaly baseline exposed", w.Code, w.Body.String())
 	}
 	if w = call("PUT", "/websites/1/anomaly-monitor", `{"enabled":false,"threshold":10}`, false); w.Code != 403 {

@@ -25,7 +25,10 @@ func anomalyAdmin(id int) WPAnomalyAdmin {
 	return WPAnomalyAdmin{ID: id, Login: "user", Roles: []string{"administrator"}, EmailHash: strings.Repeat("a", 64), DisplayHash: strings.Repeat("b", 64), CredentialHash: strings.Repeat("c", 64)}
 }
 func anomalySample(admins ...WPAnomalyAdmin) *WPAnomalySample {
-	return &WPAnomalySample{Version: 2, Admins: append([]WPAnomalyAdmin{}, admins...), Removed: []WPAnomalyRemoved{}, Content: []WPAnomalyContent{}, Options: WPAnomalyCriticalOptions{SiteURL: "https://example.com/wp", Home: "https://example.com", DefaultRole: "subscriber"}}
+	return &WPAnomalySample{Version: 3, Admins: append([]WPAnomalyAdmin{}, admins...), ApplicationPasswords: []WPAnomalyApplicationPassword{}, Removed: []WPAnomalyRemoved{}, Content: []WPAnomalyContent{}, Options: WPAnomalyCriticalOptions{SiteURL: "https://example.com/wp", Home: "https://example.com", DefaultRole: "subscriber"}}
+}
+func anomalyApplicationPassword(adminID int, fingerprint, name string) WPAnomalyApplicationPassword {
+	return WPAnomalyApplicationPassword{AdminID: adminID, Fingerprint: strings.Repeat(fingerprint, 64), Name: name, Created: 1700000000}
 }
 func anomalyCheck(t *testing.T, m *WPAnomalyMonitor, id int) WPAnomalyState {
 	t.Helper()
@@ -143,6 +146,187 @@ func TestWPAnomalyAtomicEventAndBaseline(t *testing.T) {
 	}
 }
 
+func TestWPAnomalyApplicationPasswordBaselineAndChanges(t *testing.T) {
+	m, id, now := anomalyFixture(t)
+	sample := anomalySample(anomalyAdmin(1))
+	sample.ApplicationPasswords = []WPAnomalyApplicationPassword{anomalyApplicationPassword(1, "a", "Existing")}
+	m.collect = func(context.Context, *models.Website, wpAnomalyQuery) (*WPAnomalySample, error) { return sample, nil }
+	if err := m.Configure(id, true, 5); err != nil {
+		t.Fatal(err)
+	}
+	var notifications []string
+	m.notify = func(key, _ string) { notifications = append(notifications, key) }
+	state := anomalyCheck(t, m, id)
+	if !state.ApplicationPasswordsInitialized || len(state.ApplicationPasswords) != 1 || !reflect.DeepEqual(notifications, []string{"alert_wp_application_password"}) {
+		t.Fatal("existing credential baseline", state, notifications)
+	}
+	anomalyCheck(t, m, id)
+	if len(notifications) != 1 {
+		t.Fatal("existing credential repeated", notifications)
+	}
+	*now = now.Add(time.Hour)
+	first := sample.ApplicationPasswords[0]
+	first.LastUsed, first.LastIP = now.Unix(), "192.0.2.10"
+	second := anomalyApplicationPassword(1, "b", "New")
+	sample.ApplicationPasswords = []WPAnomalyApplicationPassword{first, second}
+	anomalyCheck(t, m, id)
+	if len(notifications) != 2 {
+		t.Fatal("new and first use should aggregate", notifications)
+	}
+	*now = now.Add(25 * time.Hour)
+	first.LastUsed, first.LastIP = now.Unix(), "198.51.100.20"
+	sample.ApplicationPasswords = []WPAnomalyApplicationPassword{first}
+	anomalyCheck(t, m, id)
+	if len(notifications) != 3 {
+		t.Fatal("IP change not notified", notifications)
+	}
+	var critical, info int
+	if err := m.db.QueryRow(`SELECT COUNT(*) FROM alert_log WHERE alert_type='alert_wp_application_password' AND level='critical'`).Scan(&critical); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.db.QueryRow(`SELECT COUNT(*) FROM alert_log WHERE alert_type='alert_wp_application_password' AND level='info'`).Scan(&info); err != nil {
+		t.Fatal(err)
+	}
+	if critical != 3 || info != 1 {
+		t.Fatal("unexpected application password events", critical, info)
+	}
+}
+
+func TestWPAnomalyApplicationPasswordRoleChangeDoesNotClaimRevocationOrAddition(t *testing.T) {
+	m, id, _ := anomalyFixture(t)
+	password := anomalyApplicationPassword(1, "a", "Existing")
+	sample := anomalySample(anomalyAdmin(1))
+	sample.ApplicationPasswords = []WPAnomalyApplicationPassword{password}
+	m.collect = func(context.Context, *models.Website, wpAnomalyQuery) (*WPAnomalySample, error) { return sample, nil }
+	if err := m.Configure(id, true, 5); err != nil {
+		t.Fatal(err)
+	}
+	anomalyCheck(t, m, id)
+	sample = anomalySample()
+	sample.Removed = []WPAnomalyRemoved{{ID: 1}}
+	anomalyCheck(t, m, id)
+	sample = anomalySample(anomalyAdmin(1))
+	sample.ApplicationPasswords = []WPAnomalyApplicationPassword{password}
+	anomalyCheck(t, m, id)
+	var critical, info int
+	if err := m.db.QueryRow(`SELECT COUNT(*) FROM alert_log WHERE alert_type='alert_wp_application_password' AND level='critical'`).Scan(&critical); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.db.QueryRow(`SELECT COUNT(*) FROM alert_log WHERE alert_type='alert_wp_application_password' AND level='info'`).Scan(&info); err != nil {
+		t.Fatal(err)
+	}
+	var messages string
+	if err := m.db.QueryRow(`SELECT GROUP_CONCAT(message, ' ') FROM alert_log WHERE alert_type='alert_wp_application_password'`).Scan(&messages); err != nil {
+		t.Fatal(err)
+	}
+	if critical != 2 || info != 0 || strings.Contains(messages, "新增凭据") || !strings.Contains(messages, "新增/提权管理员 ID 1 当前发现 1 个凭据") {
+		t.Fatal("role change misreported application-password lifecycle", critical, info)
+	}
+}
+
+func TestWPAnomalyApplicationPasswordFingerprintRotationAndMessageLimit(t *testing.T) {
+	admins := []WPAnomalyAdmin{anomalyAdmin(1)}
+	previous := []WPAnomalyApplicationPassword{anomalyApplicationPassword(1, "a", "One"), anomalyApplicationPassword(1, "b", "Two")}
+	current := []WPAnomalyApplicationPassword{anomalyApplicationPassword(1, "c", "One"), anomalyApplicationPassword(1, "d", "Two")}
+	current[0].LastUsed = 1700000100
+	current[0].LastIP = "192.0.2.10"
+	current[1].Name = "Renamed"
+	critical, revoked := anomalyApplicationPasswordChanges(admins, admins, previous, current, true)
+	if len(critical) != 1 || !strings.Contains(critical[0], "指纹基线整体变化") || !strings.Contains(critical[0], "也可能同时包含") || len(revoked) != 0 {
+		t.Fatal(critical, revoked)
+	}
+	changes := make([]string, 25)
+	for i := range changes {
+		changes[i] = "change"
+	}
+	message := summarizeAnomalyChanges(changes, 20)
+	if strings.Count(message, "change") != 20 || !strings.Contains(message, "另有 5 条（共 25 条）") {
+		t.Fatal(message)
+	}
+}
+
+func TestValidateWPAnomalyApplicationPasswords(t *testing.T) {
+	valid := func() *WPAnomalySample {
+		sample := anomalySample(anomalyAdmin(1))
+		sample.ApplicationPasswords = []WPAnomalyApplicationPassword{anomalyApplicationPassword(1, "a", "Valid")}
+		return sample
+	}
+	tests := map[string]func(*WPAnomalySample){
+		"short fingerprint": func(sample *WPAnomalySample) { sample.ApplicationPasswords[0].Fingerprint = "abc" },
+		"unknown admin":     func(sample *WPAnomalySample) { sample.ApplicationPasswords[0].AdminID = 2 },
+		"empty name":        func(sample *WPAnomalySample) { sample.ApplicationPasswords[0].Name = "" },
+		"ip without use":    func(sample *WPAnomalySample) { sample.ApplicationPasswords[0].LastIP = "192.0.2.1" },
+		"duplicate": func(sample *WPAnomalySample) {
+			sample.ApplicationPasswords = append(sample.ApplicationPasswords, sample.ApplicationPasswords[0])
+		},
+		"unsorted": func(sample *WPAnomalySample) {
+			sample.Admins = append(sample.Admins, anomalyAdmin(2))
+			sample.ApplicationPasswords = append([]WPAnomalyApplicationPassword{anomalyApplicationPassword(2, "b", "Later")}, sample.ApplicationPasswords...)
+		},
+		"over limit": func(sample *WPAnomalySample) {
+			sample.ApplicationPasswords = make([]WPAnomalyApplicationPassword, 1001)
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			sample := valid()
+			mutate(sample)
+			if err := validateAnomalySample(sample, nil); !errors.Is(err, ErrWPAnomalyInvalid) {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestWPAnomalySampleErrorsRemainDistinct(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		sample *WPAnomalySample
+		err    error
+		want   string
+	}{
+		{"version two", &WPAnomalySample{Version: 2}, nil, "plugin_required"},
+		{"malformed", &WPAnomalySample{Error: "sample_malformed"}, nil, "sample_malformed"},
+		{"plugin capacity", &WPAnomalySample{Error: "sample_too_large"}, nil, "sample_too_large"},
+		{"protocol capacity", nil, runError(WPInventoryProtocolLimitExceeded, WPInventoryStageProtocol, 0, false, errors.New("fixture")), "sample_too_large"},
+		{"inventory capacity", nil, runError(WPInventoryInventoryLimitExceeded, WPInventoryStageProtocol, 0, false, errors.New("fixture")), "sample_too_large"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m, id, _ := anomalyFixture(t)
+			m.collect = func(context.Context, *models.Website, wpAnomalyQuery) (*WPAnomalySample, error) {
+				return test.sample, test.err
+			}
+			if err := m.Configure(id, true, 5); err != nil {
+				t.Fatal(err)
+			}
+			state, err := m.Check(context.Background(), id)
+			if err != nil || state.LastError != test.want || state.LastSuccess != 0 {
+				t.Fatal(state, err)
+			}
+		})
+	}
+}
+
+func TestWPAnomalySampleFailurePreservesSuccessfulBaseline(t *testing.T) {
+	for _, code := range []string{"sample_malformed", "sample_too_large"} {
+		t.Run(code, func(t *testing.T) {
+			m, id, _ := anomalyFixture(t)
+			sample := anomalySample(anomalyAdmin(1))
+			sample.ApplicationPasswords = []WPAnomalyApplicationPassword{anomalyApplicationPassword(1, "a", "Existing")}
+			m.collect = func(context.Context, *models.Website, wpAnomalyQuery) (*WPAnomalySample, error) { return sample, nil }
+			if err := m.Configure(id, true, 5); err != nil {
+				t.Fatal(err)
+			}
+			before := anomalyCheck(t, m, id)
+			sample = &WPAnomalySample{Error: code}
+			after, err := m.Check(context.Background(), id)
+			if err != nil || after.LastError != code || after.LastSuccess != before.LastSuccess || !reflect.DeepEqual(after.Admins, before.Admins) || !reflect.DeepEqual(after.ApplicationPasswords, before.ApplicationPasswords) {
+				t.Fatal(after, err)
+			}
+		})
+	}
+}
+
 func TestWPAnomalyContentAndCriticalOptionAlerts(t *testing.T) {
 	m, id, now := anomalyFixture(t)
 	sample := anomalySample(anomalyAdmin(1))
@@ -177,9 +361,10 @@ func TestWPAnomalyContentAndCriticalOptionAlerts(t *testing.T) {
 
 func TestWPAnomalyAlertLabels(t *testing.T) {
 	for key, want := range map[string]string{
-		"alert_wp_content_change": "WordPress 存量内容异常",
-		"alert_wp_content_volume": "WordPress 内容修改量异常",
-		"alert_wp_setting_change": "WordPress 关键设置变化",
+		"alert_wp_content_change":       "WordPress 存量内容异常",
+		"alert_wp_content_volume":       "WordPress 内容修改量异常",
+		"alert_wp_setting_change":       "WordPress 关键设置变化",
+		"alert_wp_application_password": "WordPress 应用程序密码异常",
 	} {
 		if got := alertLabel(key); got != want {
 			t.Fatalf("alertLabel(%q)=%q, want %q", key, got, want)

@@ -20,21 +20,23 @@ type wpAnomalyPublicAdmin struct {
 }
 
 type wpAnomalyPublicState struct {
-	Enabled       bool                   `json:"enabled"`
-	Threshold     int                    `json:"threshold"`
-	BaselineSince int64                  `json:"baseline_since"`
-	LastSuccess   int64                  `json:"last_success"`
-	NextCheck     int64                  `json:"next_check"`
-	LastError     string                 `json:"last_error"`
-	Admins        []wpAnomalyPublicAdmin `json:"admins"`
-	PostCount     int                    `json:"post_count"`
+	Enabled                         bool                   `json:"enabled"`
+	Threshold                       int                    `json:"threshold"`
+	BaselineSince                   int64                  `json:"baseline_since"`
+	LastSuccess                     int64                  `json:"last_success"`
+	NextCheck                       int64                  `json:"next_check"`
+	LastError                       string                 `json:"last_error"`
+	Admins                          []wpAnomalyPublicAdmin `json:"admins"`
+	PostCount                       int                    `json:"post_count"`
+	ApplicationPasswordCount        int                    `json:"application_password_count"`
+	ApplicationPasswordsInitialized bool                   `json:"application_passwords_initialized"`
 }
 
 func publicWPAnomalyState(state executor.WPAnomalyState) wpAnomalyPublicState {
 	result := wpAnomalyPublicState{
 		Enabled: state.Enabled, Threshold: state.Threshold, BaselineSince: state.BaselineSince,
 		LastSuccess: state.LastSuccess, NextCheck: state.NextCheck, LastError: state.LastError,
-		Admins: []wpAnomalyPublicAdmin{}, PostCount: state.PostCount,
+		Admins: []wpAnomalyPublicAdmin{}, PostCount: state.PostCount, ApplicationPasswordCount: len(state.ApplicationPasswords), ApplicationPasswordsInitialized: state.ApplicationPasswordsInitialized,
 	}
 	for _, admin := range state.Admins {
 		result.Admins = append(result.Admins, wpAnomalyPublicAdmin{ID: admin.ID, Login: admin.Login, Roles: admin.Roles})

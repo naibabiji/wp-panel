@@ -720,6 +720,11 @@ var upgrades = []Upgrade{
 			('wp_sqli_ban_threshold','5','SQL 注入自动封禁阈值'),
 			('wp_sqli_ban_window_seconds','600','SQL 注入自动封禁统计窗口（秒）')`},
 	},
+	{
+		Version:     "1.0.62",
+		Description: "扩展 WordPress 应用程序密码异常监控基线",
+		Func:        ensureWPAnomalyApplicationPasswordColumn,
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {
