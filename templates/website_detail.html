@@ -1286,13 +1286,14 @@ function websiteDetail() {
             await this.installPlugin();
         },
         fileLockStatusText() {
+            if (this.site.file_lock_apply_status === 'applying') return t('website.processing');
             if (this.fileLockApplyIncomplete()) return t('website.file_lock_apply_failed');
             if (!this.site.file_lock_enabled) return t('website.file_unlocked');
             if (this.site.file_lock_mode === 'legacy') return t('website.file_lock_legacy');
             return this.site.file_lock_mode === 'strict' ? t('website.file_lock_strict') : t('website.file_lock_standard');
         },
         fileLockApplyIncomplete() {
-            return this.site.file_lock_apply_status === 'failed' || this.site.file_lock_apply_status === 'applying';
+            return this.site.file_lock_apply_status === 'failed';
         },
         fileLockDisplayPath(path) {
             const labels = {

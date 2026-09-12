@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/naibabiji/wp-panel/database"
@@ -352,6 +354,152 @@ func TestUpdateSQLiSettingsDatabaseWriteIsAtomic(t *testing.T) {
 	}
 }
 
+func TestUpdateSecuritySettingsDatabaseWriteIsAtomicAcrossSubsystems(t *testing.T) {
+	setupSecurityTestDB(t)
+	restoreSecurityExecutorHooks(t)
+	if _, err := database.GetDB().Exec(`CREATE TRIGGER reject_rate_limit_burst
+		BEFORE UPDATE ON security_settings
+		WHEN NEW.skey='rate_limit_burst' AND NEW.svalue='20'
+		BEGIN SELECT RAISE(ABORT, 'injected write failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	regenerateAllSitesNginx = func() error { t.Fatal("nginx must not run after database failure"); return nil }
+	applyFail2banSettings = func() error { t.Fatal("fail2ban must not run after database failure"); return nil }
+	applyRateLimitSettings = func() error { t.Fatal("rate limit must not run after database failure"); return nil }
+
+	beforeSQLi := securitySettingValue(t, "wp_sqli_block_enabled")
+	beforeBurst := securitySettingValue(t, "rate_limit_burst")
+	rec := performSecurityRequest(http.MethodPut, "/settings", `{"wp_sqli_block_enabled":"false","rate_limit_burst":"20"}`, func(router *gin.Engine, h *SecurityHandler) {
+		router.PUT("/settings", h.UpdateSettings)
+	})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := securitySettingValue(t, "wp_sqli_block_enabled"); got != beforeSQLi {
+		t.Fatalf("SQLi setting after failed transaction = %q, want %q", got, beforeSQLi)
+	}
+	if got := securitySettingValue(t, "rate_limit_burst"); got != beforeBurst {
+		t.Fatalf("rate limit setting after failed transaction = %q, want %q", got, beforeBurst)
+	}
+}
+
+func TestUpdateGenericSecuritySettingRollsBackDatabaseAndRuntime(t *testing.T) {
+	setupSecurityTestDB(t)
+	restoreSecurityExecutorHooks(t)
+	before := securitySettingValue(t, "fail2ban_maxretry")
+	calls := 0
+	applyFail2banSettings = func() error {
+		calls++
+		if calls == 1 {
+			return errors.New("injected fail2ban failure")
+		}
+		return nil
+	}
+
+	rec := performSecurityRequest(http.MethodPut, "/settings", `{"fail2ban_maxretry":"12"}`, func(router *gin.Engine, h *SecurityHandler) {
+		router.PUT("/settings", h.UpdateSettings)
+	})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if calls != 2 {
+		t.Fatalf("fail2ban calls = %d, want 2", calls)
+	}
+	if got := securitySettingValue(t, "fail2ban_maxretry"); got != before {
+		t.Fatalf("maxretry after rollback = %q, want %q", got, before)
+	}
+}
+
+func TestUpdateSecuritySettingsRollbackAttemptsEveryRuntimeSubsystem(t *testing.T) {
+	setupSecurityTestDB(t)
+	restoreSecurityExecutorHooks(t)
+
+	nginxCalls, fail2banCalls, rateLimitCalls := 0, 0, 0
+	regenerateAllSitesNginx = func() error {
+		nginxCalls++
+		if nginxCalls == 2 {
+			return errors.New("injected rollback nginx failure")
+		}
+		return nil
+	}
+	applyFail2banSettings = func() error { fail2banCalls++; return nil }
+	applyRateLimitSettings = func() error {
+		rateLimitCalls++
+		if rateLimitCalls == 1 {
+			return errors.New("injected rate limit failure")
+		}
+		return nil
+	}
+
+	rec := performSecurityRequest(http.MethodPut, "/settings", `{"wp_sqli_block_enabled":"false","rate_limit_burst":"20"}`, func(router *gin.Engine, h *SecurityHandler) {
+		router.PUT("/settings", h.UpdateSettings)
+	})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if nginxCalls != 2 || fail2banCalls != 2 || rateLimitCalls != 2 {
+		t.Fatalf("nginx/fail2ban/rate limit calls = %d/%d/%d, want 2/2/2", nginxCalls, fail2banCalls, rateLimitCalls)
+	}
+	if !strings.Contains(decodeAPIResponse(t, rec).Message, "服务器配置恢复不完整") {
+		t.Fatalf("unexpected message: %s", rec.Body.String())
+	}
+	if got := securitySettingValue(t, "wp_sqli_block_enabled"); got != "true" {
+		t.Fatalf("SQLi setting after rollback = %q, want true", got)
+	}
+}
+
+func TestUpdateSecuritySettingsSerializesSnapshotThroughRuntimeApply(t *testing.T) {
+	setupSecurityTestDB(t)
+	restoreSecurityExecutorHooks(t)
+
+	firstApplyStarted := make(chan struct{})
+	releaseFirstApply := make(chan struct{})
+	var calls atomic.Int32
+	applyFail2banSettings = func() error {
+		if calls.Add(1) == 1 {
+			close(firstApplyStarted)
+			<-releaseFirstApply
+			return errors.New("injected first request failure")
+		}
+		return nil
+	}
+
+	firstDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		firstDone <- performSecurityRequest(http.MethodPut, "/settings", `{"fail2ban_maxretry":"12"}`, func(router *gin.Engine, h *SecurityHandler) {
+			router.PUT("/settings", h.UpdateSettings)
+		})
+	}()
+	select {
+	case <-firstApplyStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first request did not reach runtime apply")
+	}
+
+	secondDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		secondDone <- performSecurityRequest(http.MethodPut, "/settings", `{"fail2ban_maxretry":"13"}`, func(router *gin.Engine, h *SecurityHandler) {
+			router.PUT("/settings", h.UpdateSettings)
+		})
+	}()
+	select {
+	case rec := <-secondDone:
+		t.Fatalf("second request completed before first request released: %s", rec.Body.String())
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseFirstApply)
+
+	if rec := <-firstDone; rec.Code != http.StatusInternalServerError {
+		t.Fatalf("first status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if rec := <-secondDone; rec.Code != http.StatusOK {
+		t.Fatalf("second status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := securitySettingValue(t, "fail2ban_maxretry"); got != "13" {
+		t.Fatalf("final maxretry = %q, want 13", got)
+	}
+}
+
 func TestNormalizeSecuritySettingAcceptsBotLimitSettings(t *testing.T) {
 	for _, tc := range []struct {
 		key  string
@@ -428,15 +576,28 @@ func assertTestCDNRealIPGroupRolledBack(t *testing.T) {
 func restoreSecurityExecutorHooks(t *testing.T) {
 	t.Helper()
 	oldApplyFail2ban := applyFail2banSettings
+	oldApplyRateLimit := applyRateLimitSettings
+	oldEnsureLogMap := ensureLogMap
 	oldRegenerateAllSitesNginx := regenerateAllSitesNginx
 	oldWebsiteIDsForCDNRealIPGroup := websiteIDsForCDNRealIPGroup
 	oldRestoreCDNRealIPGroupWithBindings := restoreCDNRealIPGroupWithBindings
 	t.Cleanup(func() {
 		applyFail2banSettings = oldApplyFail2ban
+		applyRateLimitSettings = oldApplyRateLimit
+		ensureLogMap = oldEnsureLogMap
 		regenerateAllSitesNginx = oldRegenerateAllSitesNginx
 		websiteIDsForCDNRealIPGroup = oldWebsiteIDsForCDNRealIPGroup
 		restoreCDNRealIPGroupWithBindings = oldRestoreCDNRealIPGroupWithBindings
 	})
+}
+
+func securitySettingValue(t *testing.T, key string) string {
+	t.Helper()
+	var value string
+	if err := database.GetDB().QueryRow(`SELECT svalue FROM security_settings WHERE skey=?`, key).Scan(&value); err != nil {
+		t.Fatalf("read security setting %s: %v", key, err)
+	}
+	return value
 }
 
 func performSecurityRequest(method, path, body string, register func(*gin.Engine, *SecurityHandler)) *httptest.ResponseRecorder {

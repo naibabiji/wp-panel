@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/naibabiji/wp-panel/database"
@@ -18,8 +20,12 @@ import (
 
 type SecurityHandler struct{}
 
+var securitySettingsApplyMu sync.Mutex
+
 var (
 	applyFail2banSettings             = executor.ApplyFail2banSettings
+	applyRateLimitSettings            = executor.ApplyRateLimitSettings
+	ensureLogMap                      = executor.EnsureLogMap
 	regenerateAllSitesNginx           = executor.RegenerateAllSitesNginx
 	websiteIDsForCDNRealIPGroup       = executor.WebsiteIDsForCDNRealIPGroup
 	restoreCDNRealIPGroupWithBindings = executor.RestoreCDNRealIPGroupWithBindings
@@ -74,49 +80,9 @@ func (h *SecurityHandler) UpdateSettings(c *gin.Context) {
 		normalized[key] = strVal
 	}
 
-	var oldWPSecurityWhitelist string
-	if newVal, ok := normalized["wp_security_log_whitelist"]; ok {
-		_ = db.QueryRow("SELECT svalue FROM security_settings WHERE skey = 'wp_security_log_whitelist'").Scan(&oldWPSecurityWhitelist)
-		if _, err := db.Exec("UPDATE security_settings SET svalue = ?, updated_at = CURRENT_TIMESTAMP WHERE skey = 'wp_security_log_whitelist'", newVal); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("安全设置保存失败"))
-			return
-		}
-		if err := executor.EnsureLogMap(); err != nil {
-			_, _ = db.Exec("UPDATE security_settings SET svalue = ?, updated_at = CURRENT_TIMESTAMP WHERE skey = 'wp_security_log_whitelist'", oldWPSecurityWhitelist)
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Nginx 日志规则应用失败，已回滚白名单设置: "+err.Error()))
-			return
-		}
-		delete(normalized, "wp_security_log_whitelist")
-	}
-
-	if hasSQLiSettings(normalized) {
-		if err := applySQLiSettings(db, normalized); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse(err.Error()))
-			return
-		}
-		for _, key := range sqliSettingKeys {
-			delete(normalized, key)
-		}
-	}
-
-	for key, strVal := range normalized {
-		if _, err := db.Exec("UPDATE security_settings SET svalue = ?, updated_at = CURRENT_TIMESTAMP WHERE skey = ?", strVal, key); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("安全设置保存失败"))
-			return
-		}
-	}
-
-	if needsFail2banApply(normalized) {
-		if err := applyFail2banSettings(); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Fail2ban 配置应用失败: "+err.Error()))
-			return
-		}
-	}
-	if needsRateLimitApply(normalized) {
-		if err := applyRateLimit(); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Nginx 限速配置应用失败: "+err.Error()))
-			return
-		}
+	if err := applySecuritySettings(db, normalized); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(err.Error()))
+		return
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "安全设置已更新"}))
@@ -136,53 +102,68 @@ func hasSQLiSettings(settings map[string]string) bool {
 	return false
 }
 
-func applySQLiSettings(db *sql.DB, settings map[string]string) error {
-	old := make(map[string]string, len(sqliSettingKeys))
-	for _, key := range sqliSettingKeys {
+func applySecuritySettings(db *sql.DB, settings map[string]string) error {
+	if len(settings) == 0 {
+		return nil
+	}
+	securitySettingsApplyMu.Lock()
+	defer securitySettingsApplyMu.Unlock()
+
+	old := make(map[string]string, len(settings))
+	for key := range settings {
 		var value string
 		if err := db.QueryRow(`SELECT svalue FROM security_settings WHERE skey=?`, key).Scan(&value); err != nil {
-			return fmt.Errorf("读取 SQL 注入防护设置失败")
+			return fmt.Errorf("读取安全设置失败")
 		}
 		old[key] = value
 	}
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("SQL 注入防护设置保存失败")
+	if err := writeSecuritySettings(db, settings); err != nil {
+		return fmt.Errorf("安全设置保存失败")
 	}
-	for key, value := range settings {
-		if !containsSecurityKey(sqliSettingKeys, key) {
-			continue
-		}
-		if _, err := tx.Exec(`UPDATE security_settings SET svalue=?,updated_at=CURRENT_TIMESTAMP WHERE skey=?`, value, key); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("SQL 注入防护设置保存失败")
-		}
+	applyErr := applySecuritySettingsRuntime(settings)
+	if applyErr == nil {
+		return nil
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("SQL 注入防护设置保存失败")
+	if rollbackErr := writeSecuritySettings(db, old); rollbackErr != nil {
+		return fmt.Errorf("安全设置应用失败，数据库回滚失败: %v；原始错误: %v", rollbackErr, applyErr)
 	}
-	if err := regenerateAllSitesNginx(); err == nil {
-		if err = applyFail2banSettings(); err == nil {
-			return nil
-		}
+	if rollbackRuntimeErr := restoreSecuritySettingsRuntime(settings); rollbackRuntimeErr != nil {
+		return fmt.Errorf("安全设置应用失败，设置已回滚但服务器配置恢复不完整: %v；原始错误: %v", rollbackRuntimeErr, applyErr)
 	}
-	if err := rollbackSQLiSettings(db, old); err != nil {
-		return fmt.Errorf("SQL 注入防护应用失败，数据库回滚失败")
-	}
-	rollbackNginxErr := regenerateAllSitesNginx()
-	rollbackFail2banErr := applyFail2banSettings()
-	if rollbackNginxErr != nil || rollbackFail2banErr != nil {
-		return fmt.Errorf("SQL 注入防护应用失败，设置已回滚但服务器配置恢复不完整")
-	}
-	return fmt.Errorf("SQL 注入防护应用失败，已恢复修改前设置")
+	return fmt.Errorf("安全设置应用失败，已恢复修改前设置: %v", applyErr)
 }
 
-func rollbackSQLiSettings(db *sql.DB, old map[string]string) error {
+func restoreSecuritySettingsRuntime(settings map[string]string) error {
+	var restoreErrors []error
+	if _, ok := settings["wp_security_log_whitelist"]; ok {
+		if err := ensureLogMap(); err != nil {
+			restoreErrors = append(restoreErrors, fmt.Errorf("Nginx 日志规则恢复失败: %w", err))
+		}
+	}
+	if hasSQLiSettings(settings) {
+		if err := regenerateAllSitesNginx(); err != nil {
+			restoreErrors = append(restoreErrors, fmt.Errorf("SQL 注入防护恢复失败: %w", err))
+		}
+	}
+	if hasSQLiSettings(settings) || needsFail2banApply(settings) {
+		if err := applyFail2banSettings(); err != nil {
+			restoreErrors = append(restoreErrors, fmt.Errorf("Fail2ban 配置恢复失败: %w", err))
+		}
+	}
+	if needsRateLimitApply(settings) {
+		if err := applyRateLimitSettings(); err != nil {
+			restoreErrors = append(restoreErrors, fmt.Errorf("Nginx 限速配置恢复失败: %w", err))
+		}
+	}
+	return errors.Join(restoreErrors...)
+}
+
+func writeSecuritySettings(db *sql.DB, settings map[string]string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
-	for key, value := range old {
+	for key, value := range settings {
 		if _, err := tx.Exec(`UPDATE security_settings SET svalue=?,updated_at=CURRENT_TIMESTAMP WHERE skey=?`, value, key); err != nil {
 			_ = tx.Rollback()
 			return err
@@ -191,13 +172,28 @@ func rollbackSQLiSettings(db *sql.DB, old map[string]string) error {
 	return tx.Commit()
 }
 
-func containsSecurityKey(keys []string, target string) bool {
-	for _, key := range keys {
-		if key == target {
-			return true
+func applySecuritySettingsRuntime(settings map[string]string) error {
+	if _, ok := settings["wp_security_log_whitelist"]; ok {
+		if err := ensureLogMap(); err != nil {
+			return fmt.Errorf("Nginx 日志规则应用失败: %w", err)
 		}
 	}
-	return false
+	if hasSQLiSettings(settings) {
+		if err := regenerateAllSitesNginx(); err != nil {
+			return fmt.Errorf("SQL 注入防护应用失败: %w", err)
+		}
+	}
+	if hasSQLiSettings(settings) || needsFail2banApply(settings) {
+		if err := applyFail2banSettings(); err != nil {
+			return fmt.Errorf("Fail2ban 配置应用失败: %w", err)
+		}
+	}
+	if needsRateLimitApply(settings) {
+		if err := applyRateLimitSettings(); err != nil {
+			return fmt.Errorf("Nginx 限速配置应用失败: %w", err)
+		}
+	}
+	return nil
 }
 
 func needsFail2banApply(settings map[string]string) bool {
@@ -481,10 +477,6 @@ func normalizeCDNRealIPGroupPayload(name, headerName, rawRanges string, enabled 
 		return "", "", "", false, "", fmt.Errorf("备注过长")
 	}
 	return name, header, executor.JoinCDNRealIPRanges(ranges), isEnabled, description, nil
-}
-
-func applyRateLimit() error {
-	return executor.ApplyRateLimitSettings()
 }
 
 func normalizeSecuritySetting(key string, val interface{}) (string, bool, error) {

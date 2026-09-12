@@ -64,4 +64,10 @@ func TestWPAnomalyPanelPlacementAndScript(t *testing.T) {
 	if script < endTemplate {
 		t.Fatal("monitor script is inside inert template")
 	}
+	if !strings.Contains(code, "suppressToast:true") {
+		t.Fatal("anomaly panel must suppress the global API toast when rendering its inline error")
+	}
+	if !strings.Contains(code, "file_lock_apply_status === 'applying') return t('website.processing')") {
+		t.Fatal("maintenance transition must render as processing, not file-lock failure")
+	}
 }

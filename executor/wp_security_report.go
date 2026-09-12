@@ -361,11 +361,9 @@ func isWordPressCoreSearchRequest(requestURI string) bool {
 	}
 	switch parsed.Path {
 	case "/", "/index.php":
-		_, ok := values["s"]
-		return ok
+		return len(values["s"]) == 1
 	case "/wp-json/wp/v2/posts", "/wp-json/wp/v2/posts/", "/wp-json/wp/v2/pages", "/wp-json/wp/v2/pages/":
-		_, ok := values["search"]
-		return ok
+		return len(values["search"]) == 1
 	default:
 		return false
 	}

@@ -108,6 +108,16 @@ func TestApplyWPOptimizationsCanDisplayDebugErrors(t *testing.T) {
 	}
 }
 
+func TestWPDebugDisplayEnabledAcceptsUppercaseBoolean(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "wp-config.php"), []byte("<?php\ndefine('WP_DEBUG_DISPLAY', TRUE);\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !WPDebugDisplayEnabled(dir) {
+		t.Fatal("uppercase TRUE was not detected")
+	}
+}
+
 func TestApplyWPOptimizationsHandlesDoubleQuotedDebugDisplay(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "wp-config.php")

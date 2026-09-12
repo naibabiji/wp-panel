@@ -155,7 +155,7 @@ func WPDebugDisplayEnabled(webRoot string) bool {
 	if err != nil {
 		return false
 	}
-	return regexp.MustCompile(`(?m)^\s*define\s*\(\s*['"]WP_DEBUG_DISPLAY['"]\s*,\s*true\s*\)\s*;`).Match(data)
+	return regexp.MustCompile(`(?im)^\s*define\s*\(\s*['"]WP_DEBUG_DISPLAY['"]\s*,\s*true\s*\)\s*;`).Match(data)
 }
 
 func applyIntConstant(content, name string, value int) string {

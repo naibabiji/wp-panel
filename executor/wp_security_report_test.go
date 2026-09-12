@@ -84,6 +84,11 @@ func TestClassifySecurityEventDistinguishesBlockedFromProbe(t *testing.T) {
 	if eventType != SecurityEventSQLiProbe {
 		t.Fatalf("non-403 SQL signal type = %q, want %q", eventType, SecurityEventSQLiProbe)
 	}
+	repeatedSearch := "/?s=shoes&s=1%20UNION%20SELECT%201%20FROM%20users"
+	eventType, risk, _ = classifySecurityEvent("GET", repeatedSearch, "curl", "203.0.113.10", 403, &searchBotIPChecker{})
+	if eventType != SecurityEventSQLiBlocked || risk != "high" {
+		t.Fatalf("blocked repeated-search classification = (%q, %q), want blocked/high", eventType, risk)
+	}
 }
 
 func TestIsFakeSearchBot(t *testing.T) {
