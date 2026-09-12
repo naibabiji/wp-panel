@@ -85,6 +85,9 @@ msgstr "请面板所有者先重新应用标准或严格文件锁，再开启临
 msgid "Ask the panel owner to enable maintenance."
 msgstr "请联系面板所有者开启临时维护。"
 
+msgid "Ask the server administrator to temporarily unlock the site in WP Panel, then try again."
+msgstr "请联系服务器管理员在 WP Panel 中临时解锁网站，然后重试。"
+
 msgid "Automatic"
 msgstr "自动清除"
 
@@ -96,6 +99,9 @@ msgstr "自动清除（发布文章）"
 
 msgid "Awaiting configuration"
 msgstr "等待配置"
+
+msgid "Batch optimization is unavailable while file protection is enabled because it rewrites Media Library files."
+msgstr "文件保护开启时无法执行批量优化，因为该任务需要重写媒体库文件。"
 
 msgid "Block update checks for core, plugins, and themes"
 msgstr "屏蔽核心、插件与主题的更新检测"
@@ -610,6 +616,9 @@ msgstr "运行中"
 msgid "Save settings"
 msgstr "保存设置"
 
+msgid "Saving is unavailable while file protection is enabled because some settings may update protected configuration files."
+msgstr "文件保护开启时无法保存设置，因为部分设置可能需要修改受保护的配置文件。"
+
 msgid "Scope"
 msgstr "范围"
 
@@ -750,6 +759,9 @@ msgstr "正在解锁"
 
 msgid "Use"
 msgstr "用途"
+
+msgid "Use File protection / maintenance in the upper-right corner to unlock the site temporarily, then try again."
+msgstr "请点击右上角的“文件保护 / 临时维护”短时解锁，然后重试。"
 
 msgid "Use the maintenance password configured in the panel to unlock temporarily, then relock the site as soon as maintenance is complete."
 msgstr "可使用面板设置的维护密码临时解锁，完成后应立即重新锁定。"

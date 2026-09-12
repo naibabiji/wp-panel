@@ -103,6 +103,9 @@ msgstr ""
 msgid "Ask the panel owner to enable maintenance."
 msgstr ""
 
+msgid "Ask the server administrator to temporarily unlock the site in WP Panel, then try again."
+msgstr ""
+
 #: includes/trait-settings.php:894
 msgid "Automatic"
 msgstr ""
@@ -117,6 +120,9 @@ msgstr ""
 
 #: includes/trait-settings.php:762
 msgid "Awaiting configuration"
+msgstr ""
+
+msgid "Batch optimization is unavailable while file protection is enabled because it rewrites Media Library files."
 msgstr ""
 
 #: includes/trait-settings.php:557
@@ -830,6 +836,9 @@ msgstr ""
 msgid "Save settings"
 msgstr ""
 
+msgid "Saving is unavailable while file protection is enabled because some settings may update protected configuration files."
+msgstr ""
+
 #: includes/trait-settings.php:425
 #: includes/trait-settings.php:515
 msgid "Scope"
@@ -1018,6 +1027,9 @@ msgstr ""
 
 #: includes/trait-settings.php:592
 msgid "Use"
+msgstr ""
+
+msgid "Use File protection / maintenance in the upper-right corner to unlock the site temporarily, then try again."
 msgstr ""
 
 #: includes/trait-settings.php:663

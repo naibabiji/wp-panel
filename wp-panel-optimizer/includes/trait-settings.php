@@ -585,7 +585,11 @@ trait WPP_Optimizer_Settings_Trait {
                             <div class="wpp-ops">
                                 <button type="button" id="wpp-image-batch-start" class="button button-primary" <?php disabled($fileLockEnabled); ?>><?php echo esc_html__('Start batch optimization', 'wp-panel-optimizer'); ?></button>
                                 <button type="button" id="wpp-image-batch-stop" class="button" style="display:none"><?php echo esc_html__('Stop', 'wp-panel-optimizer'); ?></button>
-                                <p class="wpp-ops__note"><?php echo esc_html__('Speed is controlled by the panel; large libraries can take a while.', 'wp-panel-optimizer'); ?></p>
+                                <?php if ($fileLockEnabled): ?>
+                                    <p class="wpp-ops__reason is-warn"><?php echo esc_html__('Batch optimization is unavailable while file protection is enabled because it rewrites Media Library files.', 'wp-panel-optimizer'); ?> <?php echo $showMaintenance ? esc_html__('Use File protection / maintenance in the upper-right corner to unlock the site temporarily, then try again.', 'wp-panel-optimizer') : esc_html__('Ask the server administrator to temporarily unlock the site in WP Panel, then try again.', 'wp-panel-optimizer'); ?></p>
+                                <?php else: ?>
+                                    <p class="wpp-ops__note"><?php echo esc_html__('Speed is controlled by the panel; large libraries can take a while.', 'wp-panel-optimizer'); ?></p>
+                                <?php endif; ?>
                             </div>
                         </div>
                     </section>
@@ -850,7 +854,11 @@ trait WPP_Optimizer_Settings_Trait {
 
                 <div class="wpp-actions">
                     <button type="submit" name="wpp_save" class="button button-primary" <?php disabled($fileLockEnabled); ?>><?php echo esc_html__('Save settings', 'wp-panel-optimizer'); ?></button>
-                    <p class="wpp-actions__hint"><?php echo esc_html__('Settings sync to WP Panel after saving; cache-related changes may take a few seconds to take effect.', 'wp-panel-optimizer'); ?></p>
+                    <?php if ($fileLockEnabled): ?>
+                        <p class="wpp-ops__reason is-warn"><?php echo esc_html__('Saving is unavailable while file protection is enabled because some settings may update protected configuration files.', 'wp-panel-optimizer'); ?> <?php echo $showMaintenance ? esc_html__('Use File protection / maintenance in the upper-right corner to unlock the site temporarily, then try again.', 'wp-panel-optimizer') : esc_html__('Ask the server administrator to temporarily unlock the site in WP Panel, then try again.', 'wp-panel-optimizer'); ?></p>
+                    <?php else: ?>
+                        <p class="wpp-actions__hint"><?php echo esc_html__('Settings sync to WP Panel after saving; cache-related changes may take a few seconds to take effect.', 'wp-panel-optimizer'); ?></p>
+                    <?php endif; ?>
                 </div>
             </form>
 
