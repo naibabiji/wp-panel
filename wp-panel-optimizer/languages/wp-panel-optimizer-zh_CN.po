@@ -1,6 +1,6 @@
 msgid ""
 msgstr ""
-"Project-Id-Version: WP Panel Optimizer 1.1.27\n"
+"Project-Id-Version: WP Panel Optimizer 1.1.28\n"
 "Report-Msgid-Bugs-To: https://wp-panel.org/\n"
 "Last-Translator: WP Panel\n"
 "Language-Team: Chinese (China)\n"
