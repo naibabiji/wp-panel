@@ -71,6 +71,7 @@
     }
     async function run(operation, minutes) {
         if (busy) return;
+        let refreshPage = false;
         const needsPassword = operation === 'unlock' || (operation === 'extend' && state.expires_at + minutes * 60 > state.verified_until);
         if (needsPassword && !password.value) { message.textContent = text.password_required; password.focus(); return; }
         if (!pending || pending.operation !== operation || pending.minutes !== minutes || pending.window_id !== (state.window_id || '')) {
@@ -80,11 +81,13 @@
         password.value = ''; busy = true; message.textContent = ''; render();
         try {
             await request(operation, data); pending = null;
+            refreshPage = operation === 'unlock' || operation === 'relock';
         } catch (error) {
             if (error.definitive) pending = null;
             message.textContent = text[error.message] || text.state_unknown;
             try { await request('status', {}); } catch (_) { state = { state: 'unknown' }; }
         } finally { delete data.password; busy = false; render(); }
+        if (refreshPage) window.location.reload();
     }
     form.addEventListener('submit', event => event.preventDefault());
     document.getElementById('wpp-maintenance-password-label').textContent = text.password;

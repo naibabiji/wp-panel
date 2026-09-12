@@ -725,7 +725,11 @@
 
 /* ---------- 提示条 ---------- */
 
-.wpp-settings .notice {
+.wpp-settings .wpp-page-feedback:empty {
+    display: none;
+}
+
+.wpp-settings .wpp-page-notice {
     background: #fff;
     border: 1px solid var(--wpp-line);
     border-left-width: 3px;
@@ -735,16 +739,16 @@
     padding: 1px 14px;
 }
 
-.wpp-settings .notice p {
+.wpp-settings .wpp-page-notice p {
     font-size: 13.5px;
     line-height: 1.7;
     margin: 11px 0;
 }
 
-.wpp-settings .notice-success { border-left-color: var(--wpp-ok); }
-.wpp-settings .notice-warning { border-left-color: var(--wpp-warn); }
-.wpp-settings .notice-error { border-left-color: var(--wpp-risk); }
-.wpp-settings .notice-info { border-left-color: var(--wpp-accent); }
+.wpp-settings .wpp-page-notice--success { border-left-color: var(--wpp-ok); }
+.wpp-settings .wpp-page-notice--warning { border-left-color: var(--wpp-warn); }
+.wpp-settings .wpp-page-notice--error { border-left-color: var(--wpp-risk); }
+.wpp-settings .wpp-page-notice--info { border-left-color: var(--wpp-accent); }
 
 /* ---------- 关于页 ---------- */
 

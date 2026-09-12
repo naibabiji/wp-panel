@@ -231,13 +231,13 @@ trait WPP_Optimizer_Settings_Trait {
                 $noticeText = $fileLockSafeOnly
                     ? __('Available settings were saved. Settings that modify wp-config.php remain unchanged while file protection is enabled.', 'wp-panel-optimizer')
                     : __('Settings saved and synced to the panel.', 'wp-panel-optimizer');
-                $notice = '<div class="notice notice-success"><p>' . esc_html($noticeText) . '</p></div>';
+                $notice = '<div class="wpp-page-notice wpp-page-notice--success"><p>' . esc_html($noticeText) . '</p></div>';
             } else {
                 $errMsg = is_wp_error($pushed) ? $pushed->get_error_message() : __('Unknown error', 'wp-panel-optimizer');
-                $notice = '<div class="notice notice-warning is-dismissible"><p><strong>' . esc_html__('Note:', 'wp-panel-optimizer') . '</strong> ' . esc_html__('Settings were saved locally but failed to sync to the panel. Error message:', 'wp-panel-optimizer') . ' <code>' . esc_html($errMsg) . '</code></p><p>' . esc_html__('The next time you open this page, state will be pulled from the panel and may overwrite these changes. Please check whether "Verify panel connection" in the plugin settings works.', 'wp-panel-optimizer') . '</p></div>';
+                $notice = '<div class="wpp-page-notice wpp-page-notice--warning"><p><strong>' . esc_html__('Note:', 'wp-panel-optimizer') . '</strong> ' . esc_html__('Settings were saved locally but failed to sync to the panel. Error message:', 'wp-panel-optimizer') . ' <code>' . esc_html($errMsg) . '</code></p><p>' . esc_html__('The next time you open this page, state will be pulled from the panel and may overwrite these changes. Please check whether "Verify panel connection" in the plugin settings works.', 'wp-panel-optimizer') . '</p></div>';
             }
             if ($switchedToWebp) {
-                $notice .= '<div class="notice notice-info"><p><strong>' . esc_html__('WebP mode is enabled.', 'wp-panel-optimizer') . '</strong> ' . esc_html__('Newly uploaded JPG/PNG images are converted automatically to smaller WebP files; the originals are no longer kept. The vast majority of sites can switch without any impact; if some email notifications, share cards, or older plugins turn out to need the original format later, the affected WebP images can be converted back to JPG/PNG at any time.', 'wp-panel-optimizer') . '</p></div>';
+                $notice .= '<div class="wpp-page-notice wpp-page-notice--info"><p><strong>' . esc_html__('WebP mode is enabled.', 'wp-panel-optimizer') . '</strong> ' . esc_html__('Newly uploaded JPG/PNG images are converted automatically to smaller WebP files; the originals are no longer kept. The vast majority of sites can switch without any impact; if some email notifications, share cards, or older plugins turn out to need the original format later, the affected WebP images can be converted back to JPG/PNG at any time.', 'wp-panel-optimizer') . '</p></div>';
             }
         }
 
@@ -389,16 +389,21 @@ trait WPP_Optimizer_Settings_Trait {
                 </div>
             <?php endif; ?>
 
-            <?php echo wp_kses_post($notice); ?>
-            <?php if ($missing): ?>
-                <div class="notice notice-error"><p><strong><?php echo esc_html__('Configuration file missing', 'wp-panel-optimizer'); ?></strong> — <?php echo esc_html__('Open the site details page for this website in the WP Panel and click the "Install companion plugin" button on the WordPress optimization card to complete initialization.', 'wp-panel-optimizer'); ?></p></div>
-            <?php endif; ?>
             <nav class="wpp-tabs" id="wpp-tabs" aria-label="<?php echo esc_attr__('WP Panel Optimizer settings', 'wp-panel-optimizer'); ?>">
                 <a href="#" class="nav-tab nav-tab-active" data-tab="cache"><span class="dashicons dashicons-performance" aria-hidden="true"></span><?php echo esc_html__('Cache & Performance', 'wp-panel-optimizer'); ?></a>
                 <a href="#" class="nav-tab" data-tab="image"><span class="dashicons dashicons-format-image" aria-hidden="true"></span><?php echo esc_html__('Image Optimization', 'wp-panel-optimizer'); ?></a>
                 <a href="#" class="nav-tab" data-tab="security"><span class="dashicons dashicons-shield" aria-hidden="true"></span><?php echo esc_html__('Security & Maintenance', 'wp-panel-optimizer'); ?></a>
                 <a href="#" class="nav-tab" data-tab="about"><span class="dashicons dashicons-admin-links" aria-hidden="true"></span><?php echo esc_html__('About & Panel Sync', 'wp-panel-optimizer'); ?></a>
             </nav>
+
+            <?php if ($notice !== '' || $missing): ?>
+                <div class="wpp-page-feedback" aria-live="polite">
+                    <?php echo wp_kses_post($notice); ?>
+                    <?php if ($missing): ?>
+                        <div class="wpp-page-notice wpp-page-notice--error"><p><strong><?php echo esc_html__('Configuration file missing', 'wp-panel-optimizer'); ?></strong> — <?php echo esc_html__('Open the site details page for this website in the WP Panel and click the "Install companion plugin" button on the WordPress optimization card to complete initialization.', 'wp-panel-optimizer'); ?></p></div>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
 
             <form id="wpp-form" method="post">
                 <?php wp_nonce_field('wpp_optimizer_settings'); ?>
@@ -506,7 +511,7 @@ trait WPP_Optimizer_Settings_Trait {
                     <?php if (!$imageEnvReady): ?>
                         <div class="wpp-section">
                             <div class="wpp-section__body">
-                                <div class="notice notice-error" style="margin-top:16px"><p><strong><?php echo esc_html__('Image processing is unavailable: the server is missing the exif extension.', 'wp-panel-optimizer'); ?></strong> <?php echo sprintf(esc_html__('This feature relies on the PHP %1$sexif%2$s extension to correct photo orientation. Once the panel has installed it, refresh this page to start using it.', 'wp-panel-optimizer'), '<code>', '</code>'); ?></p></div>
+                                <div class="wpp-page-notice wpp-page-notice--error" style="margin-top:16px"><p><strong><?php echo esc_html__('Image processing is unavailable: the server is missing the exif extension.', 'wp-panel-optimizer'); ?></strong> <?php echo sprintf(esc_html__('This feature relies on the PHP %1$sexif%2$s extension to correct photo orientation. Once the panel has installed it, refresh this page to start using it.', 'wp-panel-optimizer'), '<code>', '</code>'); ?></p></div>
                             </div>
                         </div>
                     <?php endif; ?>
@@ -1065,7 +1070,7 @@ trait WPP_Optimizer_Settings_Trait {
 
             function wppNotice(el, type, textContent) {
                 var div = document.createElement('div');
-                div.className = 'notice notice-' + type;
+                div.className = 'wpp-page-notice wpp-page-notice--' + type;
                 var p = document.createElement('p');
                 p.textContent = textContent;
                 div.appendChild(p);
