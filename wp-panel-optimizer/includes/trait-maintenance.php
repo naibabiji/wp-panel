@@ -30,6 +30,8 @@ trait WPP_Optimizer_Maintenance_Trait {
                 'warning'=>__('Extend before expiry if the update is unfinished. Relocking at expiry or panel restart may interrupt updates.', 'wp-panel-optimizer'),
                 'restart'=>__('Panel restart ended the maintenance window early. Enter the password again to start a new window.', 'wp-panel-optimizer'),
                 'disabled'=>__('Ask the panel owner to enable maintenance.', 'wp-panel-optimizer'), 'password_required'=>__('Enter the maintenance password; verification is required again across each 30-minute boundary.', 'wp-panel-optimizer'),
+                'password_not_required'=>__('Relocking now and extensions that stay within the current 30-minute verification period do not require the password again.', 'wp-panel-optimizer'),
+                'password_boundary'=>__('Only an extension that crosses the current 30-minute verification boundary requires the password again. Relocking never requires it.', 'wp-panel-optimizer'),
                 'verification_failed'=>__('Verification failed. Please check the maintenance password.', 'wp-panel-optimizer'), 'operation_unavailable'=>__('Operation unavailable. Refresh or contact the administrator.', 'wp-panel-optimizer'),
                 'verification_frozen'=>__('Too many failed attempts. Password verification has been suspended for 10 minutes. Please try again later.', 'wp-panel-optimizer'),
                 'lock_mode_required'=>__('Ask the panel owner to apply Standard or Strict file lock before enabling maintenance.', 'wp-panel-optimizer'),
@@ -45,7 +47,7 @@ trait WPP_Optimizer_Maintenance_Trait {
         echo '<dialog id="wpp-maintenance-dialog" aria-labelledby="wpp-maintenance-title">'
             . '<header class="wpp-maintenance-head"><img src="' . esc_url(plugin_dir_url(WPP_OPTIMIZER_PLUGIN_FILE) . 'assets/wp-panel-logo.png') . '" alt=""><div><span>WP PANEL · MANAGED WORDPRESS</span><h2 id="wpp-maintenance-title">' . esc_html($title) . '</h2></div></header>'
             . '<div class="wpp-maintenance-body"><p class="wpp-maintenance-intro">' . esc_html($intro) . '</p><p id="wpp-maintenance-state" role="status"></p><p id="wpp-maintenance-warning"></p>'
-            . '<form id="wpp-maintenance-form"><label id="wpp-maintenance-password-label" for="wpp-maintenance-password"></label><input id="wpp-maintenance-password" type="password" autocomplete="off" maxlength="72"><div id="wpp-maintenance-actions"></div></form><p id="wpp-maintenance-message" role="alert"></p></div>'
+            . '<form id="wpp-maintenance-form"><label id="wpp-maintenance-password-label" for="wpp-maintenance-password"></label><input id="wpp-maintenance-password" type="password" autocomplete="off" maxlength="72"><p id="wpp-maintenance-password-hint"></p><div id="wpp-maintenance-actions"></div></form><p id="wpp-maintenance-message" role="alert"></p></div>'
             . '<footer class="wpp-maintenance-foot"><button type="button" id="wpp-maintenance-close"></button></footer></dialog>';
     }
 

@@ -63,6 +63,12 @@
 }
 #wpp-maintenance-dialog input:focus { border-color: #1d4ed8; box-shadow: 0 0 0 1px #1d4ed8; outline: 0; }
 #wpp-maintenance-dialog input[hidden] { display: none; }
+#wpp-maintenance-dialog #wpp-maintenance-password-label[hidden],
+#wpp-maintenance-dialog #wpp-maintenance-password-hint[hidden] { display: none; }
+#wpp-maintenance-dialog #wpp-maintenance-password-hint {
+    background: #f7f8f9; border-left: 3px solid #8a5a00; color: #4b5560;
+    font-size: 12.5px; line-height: 1.6; margin: 0; padding: 8px 10px;
+}
 
 #wpp-maintenance-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 #wpp-maintenance-dialog button {

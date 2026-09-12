@@ -7,6 +7,8 @@
     const text = cfg.text;
     const form = document.getElementById('wpp-maintenance-form');
     const password = document.getElementById('wpp-maintenance-password');
+    const passwordLabel = document.getElementById('wpp-maintenance-password-label');
+    const passwordHint = document.getElementById('wpp-maintenance-password-hint');
     const actions = document.getElementById('wpp-maintenance-actions');
     const message = document.getElementById('wpp-maintenance-message');
     const stateLabel = document.getElementById('wpp-maintenance-state');
@@ -49,8 +51,16 @@
             }
             if (state.window_id) button(text.relock, 'relock');
         }
-        password.disabled = busy;
-        password.hidden = busy;
+        const shownExtensions = [1, 3, 5];
+        const extensionNeedsPassword = state.state === 'unlocked' && shownExtensions.some(minutes => state.expires_at + minutes * 60 > state.verified_until);
+        const showPassword = !busy && ((state.state === 'locked' && state.enabled) || extensionNeedsPassword);
+        password.disabled = busy || !showPassword;
+        password.hidden = !showPassword;
+        passwordLabel.hidden = !showPassword;
+        passwordHint.textContent = state.state === 'unlocked'
+            ? (extensionNeedsPassword ? text.password_boundary : text.password_not_required)
+            : '';
+        passwordHint.hidden = !passwordHint.textContent;
         if (!busy && !state.enabled && !state.window_id) message.textContent = text.disabled;
     }
     async function request(operation, data) {
@@ -90,7 +100,7 @@
         if (refreshPage) window.location.reload();
     }
     form.addEventListener('submit', event => event.preventDefault());
-    document.getElementById('wpp-maintenance-password-label').textContent = text.password;
+    passwordLabel.textContent = text.password;
     document.getElementById('wpp-maintenance-close').textContent = text.close;
     document.getElementById('wpp-maintenance-close').onclick = () => { password.value = ''; dialog.close(); };
     dialog.addEventListener('close', () => { password.value = ''; });

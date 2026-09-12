@@ -3,7 +3,7 @@ Contributors: naibabiji
 Requires at least: 5.0
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 1.1.25
+Stable tag: 1.1.26
 License: GPL-2.0+
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -40,6 +40,9 @@ WP Panel Optimizer 是 [WP Panel](https://wp-panel.org/) 的配套插件，通�
 插件安装后，面板会在 Web 目录外的 /var/wp-panel/site-secrets/<domain>/wp-panel-config.json 写入配置文件（含面板地址和 API Key），并由站点 PHP-FPM pool 向插件提供当前文件路径，无需手动填写凭证，也不依赖 WordPress 站点 URL 推断配置位置。
 
 == Changelog ==
+
+= 1.1.26 =
+* 维护窗口内按实际验证需求显示密码框，明确重新锁定及未跨越 30 分钟验证期限的加时无需再次输入密码
 
 = 1.1.25 =
 * 将设置保存反馈移到标签导航下方，避免 WordPress 将通知搬入页眉；临时解锁或重新锁定后自动刷新设置页
