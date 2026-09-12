@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -25,10 +26,13 @@ func anomalyAdmin(id int) WPAnomalyAdmin {
 	return WPAnomalyAdmin{ID: id, Login: "user", Roles: []string{"administrator"}, EmailHash: strings.Repeat("a", 64), DisplayHash: strings.Repeat("b", 64), CredentialHash: strings.Repeat("c", 64)}
 }
 func anomalySample(admins ...WPAnomalyAdmin) *WPAnomalySample {
-	return &WPAnomalySample{Version: 3, Admins: append([]WPAnomalyAdmin{}, admins...), ApplicationPasswords: []WPAnomalyApplicationPassword{}, Removed: []WPAnomalyRemoved{}, Content: []WPAnomalyContent{}, Options: WPAnomalyCriticalOptions{SiteURL: "https://example.com/wp", Home: "https://example.com", DefaultRole: "subscriber"}}
+	return &WPAnomalySample{Version: 4, Admins: append([]WPAnomalyAdmin{}, admins...), ApplicationPasswords: []WPAnomalyApplicationPassword{}, DatabaseObjects: []WPAnomalyDatabaseObject{}, Removed: []WPAnomalyRemoved{}, Content: []WPAnomalyContent{}, Options: WPAnomalyCriticalOptions{SiteURL: "https://example.com/wp", Home: "https://example.com", DefaultRole: "subscriber"}}
 }
 func anomalyApplicationPassword(adminID int, fingerprint, name string) WPAnomalyApplicationPassword {
 	return WPAnomalyApplicationPassword{AdminID: adminID, Fingerprint: strings.Repeat(fingerprint, 64), Name: name, Created: 1700000000}
+}
+func anomalyDatabaseObject(kind, name, fingerprint string) WPAnomalyDatabaseObject {
+	return WPAnomalyDatabaseObject{Kind: kind, Name: name, Target: "custom_posts", Action: "BEFORE UPDATE", Fingerprint: strings.Repeat(fingerprint, 64)}
 }
 func anomalyCheck(t *testing.T, m *WPAnomalyMonitor, id int) WPAnomalyState {
 	t.Helper()
@@ -224,6 +228,81 @@ func TestWPAnomalyApplicationPasswordRoleChangeDoesNotClaimRevocationOrAddition(
 	}
 }
 
+func TestWPAnomalyDatabaseObjectBaselineChangesAndRotation(t *testing.T) {
+	m, id, _ := anomalyFixture(t)
+	sample := anomalySample()
+	sample.DatabaseObjects = []WPAnomalyDatabaseObject{anomalyDatabaseObject("trigger", "wds_protect_7095", "a")}
+	m.collect = func(context.Context, *models.Website, wpAnomalyQuery) (*WPAnomalySample, error) { return sample, nil }
+	if err := m.Configure(id, true, 5); err != nil {
+		t.Fatal(err)
+	}
+	state := anomalyCheck(t, m, id)
+	if !state.DatabaseObjectsInitialized || len(state.DatabaseObjects) != 1 {
+		t.Fatal(state)
+	}
+	var critical int
+	if err := m.db.QueryRow(`SELECT COUNT(*) FROM alert_log WHERE alert_type='alert_wp_database_object' AND level='critical'`).Scan(&critical); err != nil || critical != 1 {
+		t.Fatal(critical, err)
+	}
+	anomalyCheck(t, m, id)
+	if err := m.db.QueryRow(`SELECT COUNT(*) FROM alert_log WHERE alert_type='alert_wp_database_object'`).Scan(&critical); err != nil || critical != 1 {
+		t.Fatal("duplicate baseline alert", critical, err)
+	}
+	sample.DatabaseObjects[0].Fingerprint = strings.Repeat("b", 64)
+	anomalyCheck(t, m, id)
+	var message string
+	if err := m.db.QueryRow(`SELECT message FROM alert_log WHERE alert_type='alert_wp_database_object' AND level='critical' ORDER BY id DESC LIMIT 1`).Scan(&message); err != nil || !strings.Contains(message, "指纹基线整体变化") {
+		t.Fatal(message, err)
+	}
+	sample.DatabaseObjects = []WPAnomalyDatabaseObject{{Kind: "event", Name: "restore_spam", Action: "RECURRING", Status: "ENABLED", Fingerprint: strings.Repeat("c", 64)}, sample.DatabaseObjects[0]}
+	anomalyCheck(t, m, id)
+	sample.DatabaseObjects[0].Status = "DISABLED"
+	anomalyCheck(t, m, id)
+	if err := m.db.QueryRow(`SELECT message FROM alert_log WHERE alert_type='alert_wp_database_object' AND level='critical' ORDER BY id DESC LIMIT 1`).Scan(&message); err != nil || !strings.Contains(message, "修改定时事件") {
+		t.Fatal(message, err)
+	}
+	sample.DatabaseObjects = sample.DatabaseObjects[:1]
+	anomalyCheck(t, m, id)
+	var info int
+	if err := m.db.QueryRow(`SELECT COUNT(*) FROM alert_log WHERE alert_type='alert_wp_database_object' AND level='info'`).Scan(&info); err != nil || info != 1 {
+		t.Fatal(info, err)
+	}
+}
+
+func TestValidateWPAnomalyDatabaseObjects(t *testing.T) {
+	good := anomalySample()
+	good.DatabaseObjects = []WPAnomalyDatabaseObject{
+		{Kind: "event", Name: "scheduled", Action: "RECURRING", Status: "ENABLED", Fingerprint: strings.Repeat("a", 64)},
+		anomalyDatabaseObject("trigger", "protect", "b"),
+	}
+	if err := validateAnomalySample(good, nil); err != nil {
+		t.Fatal(err)
+	}
+	bad := *good
+	bad.DatabaseObjects = append([]WPAnomalyDatabaseObject{}, good.DatabaseObjects...)
+	bad.DatabaseObjects[1].Fingerprint = "SET NEW.post_content='secret'"
+	if validateAnomalySample(&bad, nil) == nil {
+		t.Fatal("raw definition accepted as fingerprint")
+	}
+	bad = *good
+	bad.DatabaseObjects = []WPAnomalyDatabaseObject{good.DatabaseObjects[1], good.DatabaseObjects[0]}
+	if validateAnomalySample(&bad, nil) == nil {
+		t.Fatal("unsorted objects accepted")
+	}
+	exact := anomalySample()
+	for i := 0; i < 100; i++ {
+		exact.DatabaseObjects = append(exact.DatabaseObjects, WPAnomalyDatabaseObject{Kind: "event", Name: fmt.Sprintf("event_%03d", i), Action: "RECURRING", Status: "ENABLED", Fingerprint: strings.Repeat("a", 64)})
+	}
+	if err := validateAnomalySample(exact, nil); err != nil {
+		t.Fatal("exact object limit rejected", err)
+	}
+	bad = *exact
+	bad.DatabaseObjects = append(append([]WPAnomalyDatabaseObject{}, exact.DatabaseObjects...), WPAnomalyDatabaseObject{})
+	if validateAnomalySample(&bad, nil) == nil {
+		t.Fatal("over-limit objects accepted")
+	}
+}
+
 func TestWPAnomalyApplicationPasswordFingerprintRotationAndMessageLimit(t *testing.T) {
 	admins := []WPAnomalyAdmin{anomalyAdmin(1)}
 	previous := []WPAnomalyApplicationPassword{anomalyApplicationPassword(1, "a", "One"), anomalyApplicationPassword(1, "b", "Two")}
@@ -285,7 +364,7 @@ func TestWPAnomalySampleErrorsRemainDistinct(t *testing.T) {
 		err    error
 		want   string
 	}{
-		{"version two", &WPAnomalySample{Version: 2}, nil, "plugin_required"},
+		{"version three", &WPAnomalySample{Version: 3}, nil, "plugin_required"},
 		{"malformed", &WPAnomalySample{Error: "sample_malformed"}, nil, "sample_malformed"},
 		{"plugin capacity", &WPAnomalySample{Error: "sample_too_large"}, nil, "sample_too_large"},
 		{"protocol capacity", nil, runError(WPInventoryProtocolLimitExceeded, WPInventoryStageProtocol, 0, false, errors.New("fixture")), "sample_too_large"},
@@ -313,6 +392,7 @@ func TestWPAnomalySampleFailurePreservesSuccessfulBaseline(t *testing.T) {
 			m, id, _ := anomalyFixture(t)
 			sample := anomalySample(anomalyAdmin(1))
 			sample.ApplicationPasswords = []WPAnomalyApplicationPassword{anomalyApplicationPassword(1, "a", "Existing")}
+			sample.DatabaseObjects = []WPAnomalyDatabaseObject{anomalyDatabaseObject("trigger", "existing", "a")}
 			m.collect = func(context.Context, *models.Website, wpAnomalyQuery) (*WPAnomalySample, error) { return sample, nil }
 			if err := m.Configure(id, true, 5); err != nil {
 				t.Fatal(err)
@@ -320,7 +400,7 @@ func TestWPAnomalySampleFailurePreservesSuccessfulBaseline(t *testing.T) {
 			before := anomalyCheck(t, m, id)
 			sample = &WPAnomalySample{Error: code}
 			after, err := m.Check(context.Background(), id)
-			if err != nil || after.LastError != code || after.LastSuccess != before.LastSuccess || !reflect.DeepEqual(after.Admins, before.Admins) || !reflect.DeepEqual(after.ApplicationPasswords, before.ApplicationPasswords) {
+			if err != nil || after.LastError != code || after.LastSuccess != before.LastSuccess || !reflect.DeepEqual(after.Admins, before.Admins) || !reflect.DeepEqual(after.ApplicationPasswords, before.ApplicationPasswords) || !reflect.DeepEqual(after.DatabaseObjects, before.DatabaseObjects) {
 				t.Fatal(after, err)
 			}
 		})
@@ -365,6 +445,7 @@ func TestWPAnomalyAlertLabels(t *testing.T) {
 		"alert_wp_content_volume":       "WordPress 内容修改量异常",
 		"alert_wp_setting_change":       "WordPress 关键设置变化",
 		"alert_wp_application_password": "WordPress 应用程序密码异常",
+		"alert_wp_database_object":      "WordPress 数据库持久化异常",
 	} {
 		if got := alertLabel(key); got != want {
 			t.Fatalf("alertLabel(%q)=%q, want %q", key, got, want)

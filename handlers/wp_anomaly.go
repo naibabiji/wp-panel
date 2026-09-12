@@ -30,6 +30,8 @@ type wpAnomalyPublicState struct {
 	PostCount                       int                    `json:"post_count"`
 	ApplicationPasswordCount        int                    `json:"application_password_count"`
 	ApplicationPasswordsInitialized bool                   `json:"application_passwords_initialized"`
+	DatabaseObjectCount             int                    `json:"database_object_count"`
+	DatabaseObjectsInitialized      bool                   `json:"database_objects_initialized"`
 }
 
 func publicWPAnomalyState(state executor.WPAnomalyState) wpAnomalyPublicState {
@@ -37,6 +39,7 @@ func publicWPAnomalyState(state executor.WPAnomalyState) wpAnomalyPublicState {
 		Enabled: state.Enabled, Threshold: state.Threshold, BaselineSince: state.BaselineSince,
 		LastSuccess: state.LastSuccess, NextCheck: state.NextCheck, LastError: state.LastError,
 		Admins: []wpAnomalyPublicAdmin{}, PostCount: state.PostCount, ApplicationPasswordCount: len(state.ApplicationPasswords), ApplicationPasswordsInitialized: state.ApplicationPasswordsInitialized,
+		DatabaseObjectCount: len(state.DatabaseObjects), DatabaseObjectsInitialized: state.DatabaseObjectsInitialized,
 	}
 	for _, admin := range state.Admins {
 		result.Admins = append(result.Admins, wpAnomalyPublicAdmin{ID: admin.ID, Login: admin.Login, Roles: admin.Roles})

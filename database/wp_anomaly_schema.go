@@ -15,7 +15,8 @@ const wpAnomalySchema = `CREATE TABLE IF NOT EXISTS site_wp_anomaly_state (
  critical_options TEXT NOT NULL DEFAULT '{}',
  content_changes TEXT NOT NULL DEFAULT '[]',
  content_alerted INTEGER NOT NULL DEFAULT 0 CHECK(content_alerted IN (0,1)),
- application_passwords TEXT NOT NULL DEFAULT ''
+ application_passwords TEXT NOT NULL DEFAULT '',
+ database_objects TEXT NOT NULL DEFAULT ''
 )`
 
 func ensureWPAnomalyContentColumns() error {
@@ -50,5 +51,17 @@ func ensureWPAnomalyApplicationPasswordColumn() error {
 		return nil
 	}
 	_, err := DB.Exec(`ALTER TABLE site_wp_anomaly_state ADD COLUMN application_passwords TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+func ensureWPAnomalyDatabaseObjectsColumn() error {
+	var exists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('site_wp_anomaly_state') WHERE name='database_objects'`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists != 0 {
+		return nil
+	}
+	_, err := DB.Exec(`ALTER TABLE site_wp_anomaly_state ADD COLUMN database_objects TEXT NOT NULL DEFAULT ''`)
 	return err
 }

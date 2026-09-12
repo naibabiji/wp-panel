@@ -33,6 +33,7 @@ type WPAnomalySample struct {
 	Version              int                            `json:"version"`
 	Admins               []WPAnomalyAdmin               `json:"admins"`
 	ApplicationPasswords []WPAnomalyApplicationPassword `json:"application_passwords"`
+	DatabaseObjects      []WPAnomalyDatabaseObject      `json:"database_objects"`
 	Removed              []WPAnomalyRemoved             `json:"removed"`
 	PostCount            int                            `json:"post_count"`
 	Content              []WPAnomalyContent             `json:"content"`
@@ -47,6 +48,14 @@ type WPAnomalyApplicationPassword struct {
 	Created     int64  `json:"created"`
 	LastUsed    int64  `json:"last_used"`
 	LastIP      string `json:"last_ip"`
+}
+type WPAnomalyDatabaseObject struct {
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+	Target      string `json:"target"`
+	Action      string `json:"action"`
+	Status      string `json:"status"`
+	Fingerprint string `json:"fingerprint"`
 }
 type WPAnomalyContent struct {
 	ID          int    `json:"id"`
@@ -85,6 +94,8 @@ type WPAnomalyState struct {
 	ContentAlerted                  bool                           `json:"-"`
 	ApplicationPasswords            []WPAnomalyApplicationPassword `json:"-"`
 	ApplicationPasswordsInitialized bool                           `json:"-"`
+	DatabaseObjects                 []WPAnomalyDatabaseObject      `json:"-"`
+	DatabaseObjectsInitialized      bool                           `json:"-"`
 }
 type WPAnomalyMonitor struct {
 	db      *sql.DB
@@ -138,13 +149,13 @@ func (m *WPAnomalyMonitor) site(id int) (*models.Website, error) {
 }
 
 func (m *WPAnomalyMonitor) Status(id int) (WPAnomalyState, error) {
-	state := WPAnomalyState{Threshold: 5, Admins: []WPAnomalyAdmin{}, Content: []WPAnomalyContent{}, ContentChanges: []WPAnomalyContentChange{}, ApplicationPasswords: []WPAnomalyApplicationPassword{}}
+	state := WPAnomalyState{Threshold: 5, Admins: []WPAnomalyAdmin{}, Content: []WPAnomalyContent{}, ContentChanges: []WPAnomalyContentChange{}, ApplicationPasswords: []WPAnomalyApplicationPassword{}, DatabaseObjects: []WPAnomalyDatabaseObject{}}
 	if _, err := m.site(id); err != nil {
 		return state, err
 	}
-	var admins, content, options, contentChanges, applicationPasswords string
-	err := m.db.QueryRow(`SELECT enabled,threshold,baseline_since,last_success,next_check,last_error,admins,post_count,post_alerted,content_items,critical_options,content_changes,content_alerted,application_passwords FROM site_wp_anomaly_state WHERE site_id=?`, id).
-		Scan(&state.Enabled, &state.Threshold, &state.BaselineSince, &state.LastSuccess, &state.NextCheck, &state.LastError, &admins, &state.PostCount, &state.PostAlerted, &content, &options, &contentChanges, &state.ContentAlerted, &applicationPasswords)
+	var admins, content, options, contentChanges, applicationPasswords, databaseObjects string
+	err := m.db.QueryRow(`SELECT enabled,threshold,baseline_since,last_success,next_check,last_error,admins,post_count,post_alerted,content_items,critical_options,content_changes,content_alerted,application_passwords,database_objects FROM site_wp_anomaly_state WHERE site_id=?`, id).
+		Scan(&state.Enabled, &state.Threshold, &state.BaselineSince, &state.LastSuccess, &state.NextCheck, &state.LastError, &admins, &state.PostCount, &state.PostAlerted, &content, &options, &contentChanges, &state.ContentAlerted, &applicationPasswords, &databaseObjects)
 	if errors.Is(err, sql.ErrNoRows) {
 		return state, nil
 	}
@@ -168,6 +179,12 @@ func (m *WPAnomalyMonitor) Status(id int) (WPAnomalyState, error) {
 			return state, err
 		}
 		state.ApplicationPasswordsInitialized = true
+	}
+	if databaseObjects != "" {
+		if err = json.Unmarshal([]byte(databaseObjects), &state.DatabaseObjects); err != nil {
+			return state, err
+		}
+		state.DatabaseObjectsInitialized = true
 	}
 	return state, nil
 }
@@ -201,6 +218,7 @@ func (m *WPAnomalyMonitor) Configure(id int, enabled bool, threshold int) error 
 	content_changes=CASE WHEN site_wp_anomaly_state.enabled=0 AND excluded.enabled=1 THEN '[]' ELSE content_changes END,
 	content_alerted=CASE WHEN site_wp_anomaly_state.enabled=0 AND excluded.enabled=1 THEN 0 ELSE content_alerted END,
 	application_passwords=CASE WHEN site_wp_anomaly_state.enabled=0 AND excluded.enabled=1 THEN '' ELSE application_passwords END,
+	database_objects=CASE WHEN site_wp_anomaly_state.enabled=0 AND excluded.enabled=1 THEN '' ELSE database_objects END,
  next_check=0,last_error=''`, id, enabled, threshold)
 	return err
 }
@@ -279,7 +297,7 @@ func (m *WPAnomalyMonitor) check(ctx context.Context, id int) (WPAnomalyState, e
 			return fail("sample_failed")
 		}
 	}
-	if sample.Version != 3 {
+	if sample.Version != 4 {
 		return fail("plugin_required")
 	}
 	if err := validateAnomalySample(sample, query.KnownIDs); err != nil {
@@ -290,6 +308,7 @@ func (m *WPAnomalyMonitor) check(ctx context.Context, id int) (WPAnomalyState, e
 		messages = anomalyAdminChanges(state.Admins, sample)
 	}
 	applicationPasswordMessages, revokedApplicationPasswords := anomalyApplicationPasswordChanges(state.Admins, sample.Admins, state.ApplicationPasswords, sample.ApplicationPasswords, state.ApplicationPasswordsInitialized)
+	databaseObjectMessages, removedDatabaseObjects := anomalyDatabaseObjectChanges(state.DatabaseObjects, sample.DatabaseObjects, state.DatabaseObjectsInitialized)
 	contentMessages := []string{}
 	optionMessages := []string{}
 	// Rows created by schema 1.0.59 have no content/options baseline. Their first
@@ -316,6 +335,8 @@ func (m *WPAnomalyMonitor) check(ctx context.Context, id int) (WPAnomalyState, e
 	state.Admins, state.PostCount = sample.Admins, sample.PostCount
 	state.ApplicationPasswords = sample.ApplicationPasswords
 	state.ApplicationPasswordsInitialized = true
+	state.DatabaseObjects = sample.DatabaseObjects
+	state.DatabaseObjectsInitialized = true
 	state.Content, state.Options = sample.Content, sample.Options
 	state.LastSuccess, state.NextCheck, state.LastError = now, m.now().Unix()+3600, ""
 	admins, _ := json.Marshal(state.Admins)
@@ -323,13 +344,14 @@ func (m *WPAnomalyMonitor) check(ctx context.Context, id int) (WPAnomalyState, e
 	options, _ := json.Marshal(state.Options)
 	contentChanges, _ := json.Marshal(state.ContentChanges)
 	applicationPasswords, _ := json.Marshal(state.ApplicationPasswords)
+	databaseObjects, _ := json.Marshal(state.DatabaseObjects)
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return state, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec(`UPDATE site_wp_anomaly_state SET baseline_since=?,last_success=?,next_check=?,last_error='',admins=?,post_count=?,post_alerted=?,content_items=?,critical_options=?,content_changes=?,content_alerted=?,application_passwords=? WHERE site_id=?`,
-		state.BaselineSince, state.LastSuccess, state.NextCheck, string(admins), state.PostCount, state.PostAlerted, string(content), string(options), string(contentChanges), state.ContentAlerted, string(applicationPasswords), id); err != nil {
+	if _, err = tx.Exec(`UPDATE site_wp_anomaly_state SET baseline_since=?,last_success=?,next_check=?,last_error='',admins=?,post_count=?,post_alerted=?,content_items=?,critical_options=?,content_changes=?,content_alerted=?,application_passwords=?,database_objects=? WHERE site_id=?`,
+		state.BaselineSince, state.LastSuccess, state.NextCheck, string(admins), state.PostCount, state.PostAlerted, string(content), string(options), string(contentChanges), state.ContentAlerted, string(applicationPasswords), string(databaseObjects), id); err != nil {
 		return state, err
 	}
 	type event struct{ key, message string }
@@ -352,6 +374,9 @@ func (m *WPAnomalyMonitor) check(ctx context.Context, id int) (WPAnomalyState, e
 	if len(applicationPasswordMessages) > 0 {
 		events = append(events, event{"alert_wp_application_password", fmt.Sprintf("%s WordPress 应用程序密码异常：%s。请在 WordPress 用户个人资料中核查并撤销未知凭据。", site.Domain, summarizeAnomalyChanges(applicationPasswordMessages, 20))})
 	}
+	if len(databaseObjectMessages) > 0 {
+		events = append(events, event{"alert_wp_database_object", fmt.Sprintf("%s WordPress 数据库持久化对象异常：%s。请核查是否为授权创建或修改。", site.Domain, summarizeAnomalyChanges(databaseObjectMessages, 20))})
+	}
 	for _, event := range events {
 		if _, err = tx.Exec(`INSERT INTO alert_log(alert_type,level,message,resolved) VALUES(?,'critical',?,1)`, event.key, event.message); err != nil {
 			return state, err
@@ -363,7 +388,13 @@ func (m *WPAnomalyMonitor) check(ctx context.Context, id int) (WPAnomalyState, e
 			return state, err
 		}
 	}
-	if len(events) > 0 || len(revokedApplicationPasswords) > 0 {
+	if len(removedDatabaseObjects) > 0 {
+		message := fmt.Sprintf("%s WordPress 数据库持久化对象已移除：%s。", site.Domain, summarizeAnomalyChanges(removedDatabaseObjects, 20))
+		if _, err = tx.Exec(`INSERT INTO alert_log(alert_type,level,message,resolved) VALUES(?,'info',?,1)`, "alert_wp_database_object", message); err != nil {
+			return state, err
+		}
+	}
+	if len(events) > 0 || len(revokedApplicationPasswords) > 0 || len(removedDatabaseObjects) > 0 {
 		if _, err = tx.Exec(`DELETE FROM alert_log WHERE created_at < datetime('now','-90 days')`); err != nil {
 			return state, err
 		}
@@ -379,7 +410,7 @@ func (m *WPAnomalyMonitor) check(ctx context.Context, id int) (WPAnomalyState, e
 }
 
 func validateAnomalySample(sample *WPAnomalySample, known []int) error {
-	if sample.Version != 3 || sample.Admins == nil || sample.ApplicationPasswords == nil || sample.Removed == nil || sample.Content == nil || len(sample.Admins) > 100 || len(sample.ApplicationPasswords) > 1000 || len(sample.Removed) > 100 || len(sample.Content) > 5000 || sample.PostCount < 0 || sample.PostCount > 1000000000 {
+	if sample.Version != 4 || sample.Admins == nil || sample.ApplicationPasswords == nil || sample.DatabaseObjects == nil || sample.Removed == nil || sample.Content == nil || len(sample.Admins) > 100 || len(sample.ApplicationPasswords) > 1000 || len(sample.DatabaseObjects) > 100 || len(sample.Removed) > 100 || len(sample.Content) > 5000 || sample.PostCount < 0 || sample.PostCount > 1000000000 {
 		return ErrWPAnomalyInvalid
 	}
 	seen := map[int]bool{}
@@ -410,6 +441,17 @@ func validateAnomalySample(sample *WPAnomalySample, known []int) error {
 		}
 		applicationPasswordSeen[key] = true
 		previousAdminID, previousFingerprint = password.AdminID, password.Fingerprint
+	}
+	previousDatabaseObjectKey := ""
+	for _, object := range sample.DatabaseObjects {
+		key := object.Kind + ":" + object.Name
+		if (object.Kind != "trigger" && object.Kind != "event" && object.Kind != "procedure" && object.Kind != "function") || object.Name == "" || validateShort(object.Name, 256) != nil || validateShort(object.Target, 256) != nil || validateShort(object.Action, 64) != nil || validateShort(object.Status, 64) != nil || !wpInventoryHashPattern.MatchString(object.Fingerprint) || key <= previousDatabaseObjectKey {
+			return ErrWPAnomalyInvalid
+		}
+		if object.Kind == "trigger" && (object.Target == "" || object.Action == "") {
+			return ErrWPAnomalyInvalid
+		}
+		previousDatabaseObjectKey = key
 	}
 	missing := map[int]bool{}
 	for _, id := range known {
@@ -520,6 +562,82 @@ func applicationPasswordFingerprintsRotated(previous, current []WPAnomalyApplica
 		}
 	}
 	return true
+}
+
+func anomalyDatabaseObjectChanges(previous, current []WPAnomalyDatabaseObject, initialized bool) ([]string, []string) {
+	if !initialized {
+		if len(current) == 0 {
+			return nil, nil
+		}
+		changes := make([]string, 0, len(current))
+		for _, object := range current {
+			changes = append(changes, "首次基线发现 "+databaseObjectDescription(object))
+		}
+		return changes, nil
+	}
+	if databaseObjectFingerprintsRotated(previous, current) {
+		return []string{fmt.Sprintf("%d 个数据库对象的指纹基线整体变化，可能由站点密钥轮换引起，也可能是对象定义被修改", len(current))}, nil
+	}
+	old := make(map[string]WPAnomalyDatabaseObject, len(previous))
+	for _, object := range previous {
+		old[object.Kind+":"+object.Name] = object
+	}
+	critical, removed := []string{}, []string{}
+	for _, object := range current {
+		key := object.Kind + ":" + object.Name
+		before, exists := old[key]
+		if !exists {
+			critical = append(critical, "新增"+databaseObjectDescription(object))
+		} else if before != object {
+			critical = append(critical, "修改"+databaseObjectDescription(object))
+		}
+		delete(old, key)
+	}
+	for _, object := range old {
+		removed = append(removed, databaseObjectDescription(object))
+	}
+	sort.Strings(removed)
+	return critical, removed
+}
+
+func databaseObjectFingerprintsRotated(previous, current []WPAnomalyDatabaseObject) bool {
+	if len(previous) == 0 || len(previous) != len(current) {
+		return false
+	}
+	old := make(map[string]WPAnomalyDatabaseObject, len(previous))
+	for _, object := range previous {
+		old[object.Kind+":"+object.Name] = object
+	}
+	for _, object := range current {
+		before, exists := old[object.Kind+":"+object.Name]
+		if !exists || before.Target != object.Target || before.Action != object.Action || before.Status != object.Status || before.Fingerprint == object.Fingerprint {
+			return false
+		}
+	}
+	return true
+}
+
+func databaseObjectDescription(object WPAnomalyDatabaseObject) string {
+	kind := map[string]string{"trigger": "触发器", "event": "定时事件", "procedure": "存储过程", "function": "函数"}[object.Kind]
+	description := fmt.Sprintf("%s %q", kind, object.Name)
+	if object.Target != "" {
+		description += fmt.Sprintf("（目标表 %q", object.Target)
+		if object.Action != "" {
+			description += "，" + object.Action
+		}
+		description += "）"
+	} else if object.Action != "" || object.Status != "" {
+		description += "（"
+		parts := []string{}
+		if object.Action != "" {
+			parts = append(parts, object.Action)
+		}
+		if object.Status != "" {
+			parts = append(parts, object.Status)
+		}
+		description += strings.Join(parts, "，") + "）"
+	}
+	return description
 }
 
 func summarizeAnomalyChanges(changes []string, limit int) string {

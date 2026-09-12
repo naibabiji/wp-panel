@@ -43,8 +43,8 @@ func TestUpgradeAddsImageOptimizerSchemaFrom1048(t *testing.T) {
 		t.Fatalf("second RunUpgrades() error = %v", err)
 	}
 
-	if got := LatestVersion(); got != "1.0.62" {
-		t.Fatalf("LatestVersion() = %q, want 1.0.62", got)
+	if got := LatestVersion(); got != "1.0.63" {
+		t.Fatalf("LatestVersion() = %q, want 1.0.63", got)
 	}
 
 	var hasSkippedFiles int

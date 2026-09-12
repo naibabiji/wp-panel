@@ -2,6 +2,7 @@
 define('ABSPATH', '/fixture/');
 define('DAY_IN_SECONDS', 86400);
 define('ARRAY_A', 'ARRAY_A');
+define('DB_NAME', 'fixture_db');
 require __DIR__.'/../../wp-panel-optimizer/includes/trait-anomaly-monitor.php';
 class MonitorFixture { use WPP_Optimizer_Anomaly_Monitor_Trait; }
 function verify($ok, $message) { if (!$ok) throw new Exception($message); }
@@ -22,8 +23,9 @@ class WP_Application_Passwords {
     static function get_user_application_passwords($id) { return $GLOBALS['application_passwords'][$id] ?? []; }
 }
 class SampleDB {
-    public $posts='custom_posts'; public $last_error=''; public $params; public $rows=[]; public $content_rows=[]; public $content_after=0;
+    public $posts='custom_posts'; public $last_error=''; public $params; public $rows=[]; public $content_rows=[]; public $content_after=0; public $database_rows=[];
     function prepare($sql, ...$args) {
+		if (strpos($sql,'information_schema.')!==false) { verify($args===['fixture_db'], 'database schema bound'); return $sql; }
         if (strpos($sql,'ID > %d')!==false) { verify(strpos($sql,'LIMIT 251')!==false, 'bounded content batch'); $this->content_after=(int)$args[0]; return $sql; }
         verify(strpos($sql, "post_type IN ('post','page')")!==false && strpos($sql,"post_status = 'publish'")!==false, 'published posts and pages only');
         verify(strpos($sql,'custom_posts')!==false, 'actual table prefix');
@@ -35,6 +37,10 @@ class SampleDB {
         return (string)$count;
     }
     function get_results($sql, $format) {
+		if (strpos($sql,'information_schema.TRIGGERS')!==false) return $this->database_rows['trigger'] ?? [];
+		if (strpos($sql,'information_schema.EVENTS')!==false) return $this->database_rows['event'] ?? [];
+		if (strpos($sql,"ROUTINE_TYPE='PROCEDURE'")!==false) return $this->database_rows['procedure'] ?? [];
+		if (strpos($sql,"ROUTINE_TYPE='FUNCTION'")!==false) return $this->database_rows['function'] ?? [];
         verify($format===ARRAY_A && strpos($sql,"post_type IN ('post','page')")!==false && strpos($sql,'LIMIT 251')!==false, 'bounded content snapshot');
         return array_slice(array_values(array_filter($this->content_rows, fn($row)=>(int)$row['ID']>$this->content_after)),0,251);
     }
@@ -49,8 +55,20 @@ $wpdb->rows=[['post','publish',gmdate('Y-m-d H:i:s',$until-1)], ['page','publish
     ['post','draft',gmdate('Y-m-d H:i:s',$until-1)], ['product','publish',gmdate('Y-m-d H:i:s',$until-1)],
     ['post','publish',gmdate('Y-m-d H:i:s',$until+1)]];
 $wpdb->content_rows=[['ID'=>'9','post_type'=>'page','post_status'=>'publish','post_title'=>'Home','post_content'=>'Welcome','post_excerpt'=>'','post_name'=>'home']];
+$wpdb->database_rows=[
+    'trigger'=>[['object_name'=>'wds_protect_7095','target_name'=>'custom_posts','object_action'=>'BEFORE UPDATE','object_status'=>'','definition_body'=>'SET NEW.post_content = OLD.post_content','object_definition'=>'SET NEW.post_content = OLD.post_content']],
+    'event'=>[['object_name'=>'restore_spam','target_name'=>'','object_action'=>'RECURRING','object_status'=>'ENABLED','definition_body'=>'INSERT secret event','object_definition'=>'INSERT secret event']],
+    'procedure'=>[['object_name'=>'publish_spam','target_name'=>'','object_action'=>'DEFINER','object_status'=>'','definition_body'=>'INSERT secret procedure','object_definition'=>'INSERT secret procedure']],
+    'function'=>[['object_name'=>'spam_url','target_name'=>'','object_action'=>'INVOKER','object_status'=>'','definition_body'=>'RETURN secret function','object_definition'=>'RETURN secret function']],
+];
 $sample=MonitorFixture::collect_anomaly_sample(0,$until,[1,2,3]);
-verify($sample['version']===3 && $sample['post_count']===2, 'sample version, UTC rolling window and included content types');
+verify($sample['version']===4 && $sample['post_count']===2, 'sample version, UTC rolling window and included content types');
+verify(array_column($sample['database_objects'],'kind')===['event','function','procedure','trigger'] && strlen($sample['database_objects'][0]['fingerprint'])===64, 'database object metadata, order and fingerprint');
+verify(strpos(json_encode($sample),'secret')===false && strpos(json_encode($sample),'SET NEW.post_content')===false, 'database object definitions not exposed');
+$original_database_rows=$wpdb->database_rows;
+$wpdb->database_rows['trigger'][0]['definition_body']=null;
+verify(MonitorFixture::collect_anomaly_sample(0,$until,[])['error']==='sample_malformed','database object missing definition body');
+$wpdb->database_rows=['trigger'=>[]];for($i=0;$i<100;$i++){$wpdb->database_rows['trigger'][]=['object_name'=>sprintf('trigger_%03d',$i),'target_name'=>'custom_posts','object_action'=>'BEFORE UPDATE','object_status'=>'','definition_body'=>'SET value '.$i,'object_definition'=>'SET value '.$i];}verify(count(MonitorFixture::collect_anomaly_sample(0,$until,[])['database_objects'])===100,'database object exact bound');$wpdb->database_rows['trigger'][]=['object_name'=>'trigger_100','target_name'=>'custom_posts','object_action'=>'BEFORE UPDATE','object_status'=>'','definition_body'=>'SET value 100','object_definition'=>'SET value 100'];verify(MonitorFixture::collect_anomaly_sample(0,$until,[])['error']==='sample_too_large','database object over limit');$wpdb->database_rows=$original_database_rows;
 verify($sample['removed']===[['id'=>2,'deleted'=>false],['id'=>3,'deleted'=>true]], 'demotion versus deletion');
 verify($sample['admins'][0]['roles']===['administrator','editor'], 'stable role order');
 verify($sample['admins'][0]['email_hash']===hash_hmac('sha256','owner@example.com',wp_salt('auth')), 'email hashed');
@@ -72,6 +90,7 @@ $application_passwords=[1=>array_fill(0,101,['uuid'=>'uuid','name'=>'Many','crea
 $application_passwords=[];$users=[];for($i=1;$i<=10;$i++){$user=clone $base_user;$user->ID=$i;$users[]=$user;$application_passwords[$i]=array_fill(0,100,['uuid'=>'uuid-'.$i,'name'=>'Exact','created'=>1700000000]);}verify(count(MonitorFixture::collect_anomaly_sample(0,$until,[])['application_passwords'])===1000,'application password exact site bound');
 $user=clone $base_user;$user->ID=11;$users[]=$user;$application_passwords[11]=array_fill(0,100,['uuid'=>'uuid-11','name'=>'Many','created'=>1700000000]);verify(MonitorFixture::collect_anomaly_sample(0,$until,[])['error']==='sample_too_large','application password site bound');
 $application_passwords=[];
+$wpdb->database_rows=[];
 $users=array_fill(0,101,$base_user);verify(MonitorFixture::collect_anomaly_sample(0,$until,[])['error']==='sample_too_large','user bound');
 $multisite=true;verify(MonitorFixture::collect_anomaly_sample(0,$until,[])['error']==='multisite_unsupported','multisite gate');
 echo "anomaly PHP checks passed\n";

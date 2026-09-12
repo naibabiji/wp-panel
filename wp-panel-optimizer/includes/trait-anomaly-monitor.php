@@ -12,6 +12,35 @@ trait WPP_Optimizer_Anomaly_Monitor_Trait {
             return ['error'=>'sample_invalid'];
         }
         global $wpdb;
+		$database_objects = [];
+		$object_queries = [
+			['trigger', "SELECT TRIGGER_NAME object_name,EVENT_OBJECT_TABLE target_name,CONCAT(ACTION_TIMING,' ',EVENT_MANIPULATION) object_action,'' object_status,ACTION_STATEMENT definition_body,CONCAT_WS('|',ACTION_STATEMENT,DEFINER,SQL_MODE,CHARACTER_SET_CLIENT,COLLATION_CONNECTION,DATABASE_COLLATION) object_definition FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=%s"],
+			['event', "SELECT EVENT_NAME object_name,'' target_name,EVENT_TYPE object_action,STATUS object_status,EVENT_DEFINITION definition_body,CONCAT_WS('|',EVENT_DEFINITION,DEFINER,SQL_MODE,TIME_ZONE,EVENT_TYPE,INTERVAL_VALUE,INTERVAL_FIELD,EXECUTE_AT,STARTS,ENDS,ON_COMPLETION) object_definition FROM information_schema.EVENTS WHERE EVENT_SCHEMA=%s"],
+			['procedure', "SELECT ROUTINE_NAME object_name,'' target_name,SECURITY_TYPE object_action,'' object_status,ROUTINE_DEFINITION definition_body,CONCAT_WS('|',ROUTINE_DEFINITION,DEFINER,SQL_MODE,DTD_IDENTIFIER,SQL_DATA_ACCESS,IS_DETERMINISTIC,SECURITY_TYPE) object_definition FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA=%s AND ROUTINE_TYPE='PROCEDURE'"],
+			['function', "SELECT ROUTINE_NAME object_name,'' target_name,SECURITY_TYPE object_action,'' object_status,ROUTINE_DEFINITION definition_body,CONCAT_WS('|',ROUTINE_DEFINITION,DEFINER,SQL_MODE,DTD_IDENTIFIER,SQL_DATA_ACCESS,IS_DETERMINISTIC,SECURITY_TYPE) object_definition FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA=%s AND ROUTINE_TYPE='FUNCTION'"],
+		];
+		foreach ($object_queries as [$kind, $sql]) {
+			$rows = $wpdb->get_results($wpdb->prepare($sql, DB_NAME), ARRAY_A);
+			if ($wpdb->last_error !== '' || !is_array($rows)) return ['error'=>'sample_failed'];
+			foreach ($rows as $row) {
+				$name = (string)($row['object_name'] ?? '');
+				$definition_body = $row['definition_body'] ?? null;
+				$definition = (string)($row['object_definition'] ?? '');
+				if ($name === '' || !is_string($definition_body) || $definition_body === '' || $definition === '') return ['error'=>'sample_malformed'];
+				$database_objects[] = [
+					'kind'=>$kind,
+					'name'=>$name,
+					'target'=>(string)($row['target_name'] ?? ''),
+					'action'=>(string)($row['object_action'] ?? ''),
+					'status'=>(string)($row['object_status'] ?? ''),
+					'fingerprint'=>hash_hmac('sha256', $definition, wp_salt('auth')),
+				];
+				if (count($database_objects) > 100) return ['error'=>'sample_too_large'];
+			}
+		}
+		usort($database_objects, static function($a, $b) {
+			return [$a['kind'], $a['name']] <=> [$b['kind'], $b['name']];
+		});
         $users = get_users(['role'=>'administrator', 'number'=>101, 'orderby'=>'ID', 'order'=>'ASC']);
         if ($wpdb->last_error !== '') return ['error'=>'sample_failed'];
         if (count($users) > 100) return ['error'=>'sample_too_large'];
@@ -87,9 +116,10 @@ trait WPP_Optimizer_Anomaly_Monitor_Trait {
             }
         } while (count($rows) === 251);
         return [
-            'version'=>3,
+            'version'=>4,
             'admins'=>$admins,
             'application_passwords'=>$application_passwords,
+			'database_objects'=>$database_objects,
             'removed'=>$removed,
             'post_count'=>(int)$count,
             'content'=>$content,

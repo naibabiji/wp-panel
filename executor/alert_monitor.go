@@ -368,6 +368,8 @@ func alertLabel(key string) string {
 		return "WordPress 关键设置变化"
 	case "alert_wp_application_password":
 		return "WordPress 应用程序密码异常"
+	case "alert_wp_database_object":
+		return "WordPress 数据库持久化异常"
 	case "alert_cpu":
 		return "CPU 高负载"
 	case "alert_memory":

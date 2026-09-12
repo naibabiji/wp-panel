@@ -18,6 +18,8 @@
             <p x-show="state.last_success" x-text="t('anomaly.post_count', {count:state.post_count})"></p>
             <p x-show="state.last_success && state.application_passwords_initialized" x-text="t('anomaly.application_password_count', {count:state.application_password_count})"></p>
             <p x-show="state.last_success && !state.application_passwords_initialized" x-text="t('anomaly.application_password_pending')"></p>
+            <p x-show="state.last_success && state.database_objects_initialized" x-text="t('anomaly.database_object_count', {count:state.database_object_count})"></p>
+            <p x-show="state.last_success && !state.database_objects_initialized" x-text="t('anomaly.database_object_pending')"></p>
             <p>{{t .Lang "anomaly.baseline_help"}}</p>
             <ul class="space-y-1"><template x-for="admin in state.admins" :key="admin.id"><li class="break-all" x-text="'#' + admin.id + ' ' + admin.login + ' · ' + admin.roles.join(', ')"></li></template></ul>
         </div></template>

@@ -13,7 +13,7 @@ func TestWPAnomalyNewInstallAndUpgrade(t *testing.T) {
 	check := func() {
 		t.Helper()
 		var n int
-		if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('site_wp_anomaly_state')`).Scan(&n); err != nil || n != 15 {
+		if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('site_wp_anomaly_state')`).Scan(&n); err != nil || n != 16 {
 			t.Fatal(n, err)
 		}
 	}
@@ -42,7 +42,14 @@ DELETE FROM schema_version; INSERT INTO schema_version(version) VALUES('1.0.59')
 		t.Fatal(err)
 	}
 	check()
-	if LatestVersion() != "1.0.62" {
+	if _, err := DB.Exec(`ALTER TABLE site_wp_anomaly_state DROP COLUMN database_objects; DELETE FROM schema_version; INSERT INTO schema_version(version) VALUES('1.0.62')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	check()
+	if LatestVersion() != "1.0.63" {
 		t.Fatal(LatestVersion())
 	}
 }

@@ -19,7 +19,7 @@ func TestWPAnomalyPreservesLegacySecurityAlerts(t *testing.T) {
 	if strings.Contains(code, `x-model="rules.alert_wp_sqli_probe"`) {
 		t.Fatal("retired SQL alert switch must not be rendered")
 	}
-	for _, alertType := range []string{"alert_wp_content_change", "alert_wp_content_volume", "alert_wp_setting_change", "alert_wp_application_password"} {
+	for _, alertType := range []string{"alert_wp_content_change", "alert_wp_content_volume", "alert_wp_setting_change", "alert_wp_application_password", "alert_wp_database_object"} {
 		if !strings.Contains(code, alertType) {
 			t.Fatalf("new anomaly alert label missing: %s", alertType)
 		}

@@ -725,6 +725,11 @@ var upgrades = []Upgrade{
 		Description: "扩展 WordPress 应用程序密码异常监控基线",
 		Func:        ensureWPAnomalyApplicationPasswordColumn,
 	},
+	{
+		Version:     "1.0.63",
+		Description: "扩展 WordPress 数据库持久化对象异常监控基线",
+		Func:        ensureWPAnomalyDatabaseObjectsColumn,
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {
