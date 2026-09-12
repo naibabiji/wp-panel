@@ -23,6 +23,10 @@ type rollbackStep struct {
 	fn   func() error
 }
 
+const createWebsiteInsertSQL = `INSERT INTO websites (name, domain, aliases, status, system_user, web_root, document_root_subdir, log_dir,
+	 db_name, db_user, php_pool_path, nginx_conf_path, site_type, ssl_enabled, ssl_cert_path, ssl_key_path, ssl_expires_at, ssl_last_error, template_version, access_log_mode, disable_application_passwords, log_retention_days, php_fpm_max_children, expires_at)
+	 VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v1.0', 'error_only', 1, ?, ?, ?)`
+
 func moveSiteLogDir(oldLogDir, newLogDir string) error {
 	if oldLogDir == newLogDir {
 		return nil
@@ -425,12 +429,10 @@ func executeCreateSite(task *Task) TaskResult {
 
 	db := database.GetDB()
 	insertResult, err := db.Exec(
-		`INSERT INTO websites (name, domain, aliases, status, system_user, web_root, document_root_subdir, log_dir,
-		 db_name, db_user, php_pool_path, nginx_conf_path, site_type, ssl_enabled, ssl_cert_path, ssl_key_path, ssl_expires_at, ssl_last_error, template_version, access_log_mode, disable_application_passwords, php_fpm_max_children, expires_at)
-		 VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v1.0', 'error_only', 1, ?, ?)`,
+		createWebsiteInsertSQL,
 		siteName, domain, strings.Join(payload.Aliases, "\n"), systemUser,
 		webRoot, documentRootSubdir, logDir, dbName, dbUser, phpPoolPath, nginxConfPath, payload.SiteType, sslEnabled,
-		certPath, keyPath, sslExpiry, sslWarning, maxChildren, nilIfEmpty(payload.ExpiresAt),
+		certPath, keyPath, sslExpiry, sslWarning, defaultSiteLogRetentionDays, maxChildren, nilIfEmpty(payload.ExpiresAt),
 	)
 	if err != nil {
 		rollback()

@@ -14,6 +14,46 @@ import (
 	"github.com/naibabiji/wp-panel/models"
 )
 
+func TestCreateWebsiteInsertOverridesLegacyLogRetentionDefault(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	_, err = db.Exec(`CREATE TABLE websites (
+		name TEXT, domain TEXT, aliases TEXT, status TEXT, system_user TEXT, web_root TEXT,
+		document_root_subdir TEXT, log_dir TEXT, db_name TEXT, db_user TEXT, php_pool_path TEXT,
+		nginx_conf_path TEXT, site_type TEXT, ssl_enabled INTEGER, ssl_cert_path TEXT,
+		ssl_key_path TEXT, ssl_expires_at DATETIME, ssl_last_error TEXT, template_version TEXT,
+		access_log_mode TEXT, disable_application_passwords INTEGER,
+		log_retention_days INTEGER NOT NULL DEFAULT 7, php_fpm_max_children INTEGER, expires_at DATETIME
+	)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = db.Exec(createWebsiteInsertSQL,
+		"legacy-default", "legacy-default.example.com", "", "wp_legacy", "/www/legacy", "", "/logs/legacy",
+		"db_legacy", "user_legacy", "/php/legacy.conf", "/nginx/legacy.conf", "wordpress", 0,
+		"", "", nil, "", defaultSiteLogRetentionDays, 5, nil,
+	)
+	if err != nil {
+		t.Fatalf("execute create website insert: %v", err)
+	}
+
+	var retentionDays, applicationPasswordsDisabled int
+	if err := db.QueryRow(`SELECT log_retention_days, disable_application_passwords FROM websites`).Scan(&retentionDays, &applicationPasswordsDisabled); err != nil {
+		t.Fatal(err)
+	}
+	if retentionDays != defaultSiteLogRetentionDays {
+		t.Fatalf("log_retention_days = %d, want %d even when schema default is 7", retentionDays, defaultSiteLogRetentionDays)
+	}
+	if applicationPasswordsDisabled != 1 {
+		t.Fatalf("disable_application_passwords = %d, want 1", applicationPasswordsDisabled)
+	}
+}
+
 func TestDeleteSiteAndAssociatedCronJobsDeletesOnlyMatchingSite(t *testing.T) {
 	openTestDB(t)
 	db := database.GetDB()
