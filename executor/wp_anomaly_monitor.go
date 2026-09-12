@@ -70,8 +70,19 @@ type WPAnomalyCriticalOptions struct {
 	FrontPageID      int    `json:"front_page_id"`
 }
 type WPAnomalyContentChange struct {
-	ID         int   `json:"id"`
-	DetectedAt int64 `json:"detected_at"`
+	ID                  int   `json:"id"`
+	DetectedAt          int64 `json:"detected_at"`
+	HomepageFirstAt     int64 `json:"homepage_first_at,omitempty"`
+	HomepageChangeCount int   `json:"homepage_change_count,omitempty"`
+}
+
+type wpAnomalyHomepageChange struct {
+	Changed bool
+	Notify  bool
+	FirstAt int64
+	LastAt  int64
+	Count   int
+	Reason  string
 }
 type wpAnomalyQuery struct {
 	Since    int64 `json:"since"`
@@ -310,11 +321,12 @@ func (m *WPAnomalyMonitor) check(ctx context.Context, id int) (WPAnomalyState, e
 	applicationPasswordMessages, revokedApplicationPasswords := anomalyApplicationPasswordChanges(state.Admins, sample.Admins, state.ApplicationPasswords, sample.ApplicationPasswords, state.ApplicationPasswordsInitialized)
 	databaseObjectMessages, removedDatabaseObjects := anomalyDatabaseObjectChanges(state.DatabaseObjects, sample.DatabaseObjects, state.DatabaseObjectsInitialized)
 	contentMessages := []string{}
+	homepageChange := wpAnomalyHomepageChange{}
 	optionMessages := []string{}
 	// Rows created by schema 1.0.59 have no content/options baseline. Their first
 	// 1.0.60 sample extends the baseline without reporting existing site state.
 	if state.LastSuccess != 0 && state.Options.SiteURL != "" {
-		state.ContentChanges, contentMessages = anomalyContentChanges(state.Content, sample.Content, state.Options.FrontPageID, sample.Options.FrontPageID, state.ContentChanges, now)
+		state.ContentChanges, contentMessages, homepageChange = anomalyContentChanges(state.Content, sample.Content, state.Options.FrontPageID, sample.Options.FrontPageID, state.ContentChanges, now)
 		optionMessages = anomalyOptionChanges(state.Options, sample.Options)
 	} else {
 		state.ContentChanges = []WPAnomalyContentChange{}
@@ -356,14 +368,22 @@ func (m *WPAnomalyMonitor) check(ctx context.Context, id int) (WPAnomalyState, e
 	}
 	type event struct{ key, message string }
 	events := []event{}
+	historyEvents := []event{}
 	if len(messages) > 0 {
 		events = append(events, event{"alert_wp_admin_change", fmt.Sprintf("%s 管理员变化：%s。请在 WordPress 用户页面核查。", site.Domain, strings.Join(messages, "；"))})
 	}
 	if postAlert {
 		events = append(events, event{"alert_wp_post_volume", fmt.Sprintf("%s 最近 24 小时（不早于本轮监控起点）发布文章或页面 %d 篇，超过阈值 %d。请核查是否为正常发布或导入。", site.Domain, state.PostCount, state.Threshold)})
 	}
-	if len(contentMessages) > 0 {
-		events = append(events, event{"alert_wp_content_change", fmt.Sprintf("%s 存量内容异常：%s。请核查 WordPress 文章和页面。", site.Domain, strings.Join(contentMessages, "；"))})
+	if len(contentMessages) > 0 || (homepageChange.Changed && homepageChange.Notify) {
+		parts := append([]string{}, contentMessages...)
+		if homepageChange.Changed && homepageChange.Notify {
+			parts = append(parts, homepageChange.Reason)
+		}
+		events = append(events, event{"alert_wp_content_change", fmt.Sprintf("%s WordPress 内容变化：%s。请核查是否为授权操作。", site.Domain, strings.Join(parts, "；"))})
+	}
+	if homepageChange.Changed && !homepageChange.Notify {
+		historyEvents = append(historyEvents, event{"alert_wp_content_change", fmt.Sprintf("%s 首页内容继续变化：本轮自 %s 起累计检测到 %d 次，最近一次为 %s；已合并通知。", site.Domain, anomalyEventTime(homepageChange.FirstAt), homepageChange.Count, anomalyEventTime(homepageChange.LastAt))})
 	}
 	if contentVolumeAlert {
 		events = append(events, event{"alert_wp_content_volume", fmt.Sprintf("%s 最近 24 小时检测到 %d 篇既有文章或页面内容被修改，超过阈值 %d。请核查是否为正常批量编辑。", site.Domain, len(state.ContentChanges), state.Threshold)})
@@ -382,6 +402,11 @@ func (m *WPAnomalyMonitor) check(ctx context.Context, id int) (WPAnomalyState, e
 			return state, err
 		}
 	}
+	for _, event := range historyEvents {
+		if _, err = tx.Exec(`INSERT INTO alert_log(alert_type,level,message,resolved) VALUES(?,'info',?,1)`, event.key, event.message); err != nil {
+			return state, err
+		}
+	}
 	if len(revokedApplicationPasswords) > 0 {
 		message := fmt.Sprintf("%s WordPress 应用程序密码已撤销：%s。", site.Domain, summarizeAnomalyChanges(revokedApplicationPasswords, 20))
 		if _, err = tx.Exec(`INSERT INTO alert_log(alert_type,level,message,resolved) VALUES(?,'info',?,1)`, "alert_wp_application_password", message); err != nil {
@@ -394,7 +419,7 @@ func (m *WPAnomalyMonitor) check(ctx context.Context, id int) (WPAnomalyState, e
 			return state, err
 		}
 	}
-	if len(events) > 0 || len(revokedApplicationPasswords) > 0 || len(removedDatabaseObjects) > 0 {
+	if len(events) > 0 || len(historyEvents) > 0 || len(revokedApplicationPasswords) > 0 || len(removedDatabaseObjects) > 0 {
 		if _, err = tx.Exec(`DELETE FROM alert_log WHERE created_at < datetime('now','-90 days')`); err != nil {
 			return state, err
 		}
@@ -407,6 +432,10 @@ func (m *WPAnomalyMonitor) check(ctx context.Context, id int) (WPAnomalyState, e
 		m.notify(event.key, event.message)
 	}
 	return state, nil
+}
+
+func anomalyEventTime(unix int64) string {
+	return time.Unix(unix, 0).Local().Format("2006-01-02 15:04")
 }
 
 func validateAnomalySample(sample *WPAnomalySample, known []int) error {
@@ -681,7 +710,7 @@ func anomalyAdminChanged(before, after WPAnomalyAdmin) bool {
 		(before.CredentialHash != "" && before.CredentialHash != after.CredentialHash)
 }
 
-func anomalyContentChanges(previous, current []WPAnomalyContent, oldFrontPageID, newFrontPageID int, recent []WPAnomalyContentChange, now int64) ([]WPAnomalyContentChange, []string) {
+func anomalyContentChanges(previous, current []WPAnomalyContent, oldFrontPageID, newFrontPageID int, recent []WPAnomalyContentChange, now int64) ([]WPAnomalyContentChange, []string, wpAnomalyHomepageChange) {
 	old := make(map[int]WPAnomalyContent, len(previous))
 	cur := make(map[int]WPAnomalyContent, len(current))
 	for _, item := range previous {
@@ -697,37 +726,61 @@ func anomalyContentChanges(previous, current []WPAnomalyContent, oldFrontPageID,
 		}
 	}
 	messages := []string{}
+	homepage := wpAnomalyHomepageChange{}
 	deleted := 0
-	homeChanged := oldFrontPageID != newFrontPageID
+	homeDeleted := false
 	for id, before := range old {
 		after, exists := cur[id]
 		if !exists {
-			deleted++
 			delete(changes, id)
 			if id == oldFrontPageID {
-				homeChanged = true
+				homeDeleted = true
+			} else {
+				deleted++
 			}
 			continue
 		}
 		if before.Fingerprint != after.Fingerprint {
-			changes[id] = WPAnomalyContentChange{ID: id, DetectedAt: now}
+			change := changes[id]
+			previousDetectedAt := change.DetectedAt
+			change.ID, change.DetectedAt = id, now
 			if id == oldFrontPageID || id == newFrontPageID {
-				homeChanged = true
+				if oldFrontPageID == newFrontPageID && change.HomepageChangeCount > 0 && previousDetectedAt > now-21600 {
+					change.HomepageChangeCount++
+				} else {
+					change.HomepageFirstAt, change.HomepageChangeCount = now, 1
+				}
+				homepage = wpAnomalyHomepageChange{Changed: true, Notify: change.HomepageChangeCount == 1, FirstAt: change.HomepageFirstAt, LastAt: now, Count: change.HomepageChangeCount, Reason: "首页内容发生变化"}
 			}
+			changes[id] = change
 		}
 	}
 	if deleted > 0 {
 		messages = append(messages, fmt.Sprintf("%d 篇已发布文章或页面被删除、移入回收站或取消发布", deleted))
 	}
-	if homeChanged {
-		messages = append(messages, "首页对应页面或首页内容发生变化")
+	if oldFrontPageID != newFrontPageID || homeDeleted {
+		reasons := []string{}
+		if oldFrontPageID != newFrontPageID {
+			reasons = append(reasons, fmt.Sprintf("首页显示由%s改为%s", anomalyFrontPageTarget(oldFrontPageID), anomalyFrontPageTarget(newFrontPageID)))
+		}
+		if homeDeleted {
+			reasons = append(reasons, "原静态首页被删除、移入回收站或取消发布")
+		}
+		homepage = wpAnomalyHomepageChange{Changed: true, Notify: true, FirstAt: now, LastAt: now, Count: 1, Reason: strings.Join(reasons, "；")}
 	}
 	result := make([]WPAnomalyContentChange, 0, len(changes))
 	for _, change := range changes {
 		result = append(result, change)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
-	return result, messages
+	return result, messages, homepage
+}
+
+func anomalyFrontPageTarget(id int) string {
+	if id == 0 {
+		return "“最新文章”"
+	}
+	return fmt.Sprintf("“页面 %d”", id)
 }
 
 func anomalyOptionChanges(before, after WPAnomalyCriticalOptions) []string {

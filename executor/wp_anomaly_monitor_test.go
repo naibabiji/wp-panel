@@ -439,9 +439,169 @@ func TestWPAnomalyContentAndCriticalOptionAlerts(t *testing.T) {
 	}
 }
 
+func TestWPAnomalyHomepageChangesMergeUntilSixHoursQuiet(t *testing.T) {
+	m, id, now := anomalyFixture(t)
+	sample := anomalySample(anomalyAdmin(1))
+	sample.Content = []WPAnomalyContent{{ID: 10, Type: "page", Fingerprint: strings.Repeat("1", 64)}}
+	sample.Options.FrontPageID = 10
+	m.collect = func(context.Context, *models.Website, wpAnomalyQuery) (*WPAnomalySample, error) { return sample, nil }
+	if err := m.Configure(id, true, 5); err != nil {
+		t.Fatal(err)
+	}
+	anomalyCheck(t, m, id)
+	var notifications []string
+	m.notify = func(_ string, message string) { notifications = append(notifications, message) }
+
+	firstAt := now.Add(time.Hour).Unix()
+	for i, step := range []time.Duration{time.Hour, 5 * time.Hour, 5 * time.Hour} {
+		*now = now.Add(step)
+		fingerprint := string(rune('2' + i))
+		sample.Content[0].Fingerprint = strings.Repeat(fingerprint, 64)
+		state := anomalyCheck(t, m, id)
+		if len(state.ContentChanges) != 1 || state.ContentChanges[0].HomepageChangeCount != i+1 || state.ContentChanges[0].HomepageFirstAt != firstAt || state.ContentChanges[0].DetectedAt != now.Unix() {
+			t.Fatalf("merged state after change %d: %+v", i+1, state.ContentChanges)
+		}
+	}
+	if len(notifications) != 1 || !strings.Contains(notifications[0], "首页内容发生变化") {
+		t.Fatalf("notifications=%q", notifications)
+	}
+	var critical, info int
+	if err := m.db.QueryRow(`SELECT COUNT(*) FROM alert_log WHERE alert_type='alert_wp_content_change' AND level='critical'`).Scan(&critical); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.db.QueryRow(`SELECT COUNT(*) FROM alert_log WHERE alert_type='alert_wp_content_change' AND level='info'`).Scan(&info); err != nil {
+		t.Fatal(err)
+	}
+	if critical != 1 || info != 2 {
+		t.Fatalf("history critical=%d info=%d", critical, info)
+	}
+
+	*now = now.Add(6 * time.Hour)
+	sample.Content[0].Fingerprint = strings.Repeat("5", 64)
+	state := anomalyCheck(t, m, id)
+	if len(notifications) != 2 || state.ContentChanges[0].HomepageChangeCount != 1 || state.ContentChanges[0].HomepageFirstAt != now.Unix() {
+		t.Fatalf("new episode notifications=%q state=%+v", notifications, state.ContentChanges)
+	}
+}
+
+func TestWPAnomalyHomepageChangeTransactionFailureKeepsEpisode(t *testing.T) {
+	m, id, now := anomalyFixture(t)
+	sample := anomalySample(anomalyAdmin(1))
+	sample.Content = []WPAnomalyContent{{ID: 10, Type: "page", Fingerprint: strings.Repeat("1", 64)}}
+	sample.Options.FrontPageID = 10
+	m.collect = func(context.Context, *models.Website, wpAnomalyQuery) (*WPAnomalySample, error) { return sample, nil }
+	if err := m.Configure(id, true, 5); err != nil {
+		t.Fatal(err)
+	}
+	anomalyCheck(t, m, id)
+	var notifications int
+	m.notify = func(string, string) { notifications++ }
+	*now = now.Add(time.Hour)
+	sample.Content[0].Fingerprint = strings.Repeat("2", 64)
+	before := anomalyCheck(t, m, id)
+	if notifications != 1 {
+		t.Fatalf("notifications=%d", notifications)
+	}
+	if _, err := m.db.Exec(`CREATE TRIGGER fail_anomaly_event BEFORE INSERT ON alert_log BEGIN SELECT RAISE(ABORT,'fixture'); END`); err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(time.Hour)
+	sample.Content[0].Fingerprint = strings.Repeat("3", 64)
+	if _, err := m.Check(context.Background(), id); err == nil {
+		t.Fatal("transaction failure hidden")
+	}
+	after, err := m.Status(id)
+	if err != nil || !reflect.DeepEqual(after.ContentChanges, before.ContentChanges) {
+		t.Fatalf("episode advanced after failed history insert: before=%+v after=%+v err=%v", before.ContentChanges, after.ContentChanges, err)
+	}
+	var info int
+	if err := m.db.QueryRow(`SELECT COUNT(*) FROM alert_log WHERE alert_type='alert_wp_content_change' AND level='info'`).Scan(&info); err != nil || info != 0 {
+		t.Fatalf("info=%d err=%v", info, err)
+	}
+	if notifications != 1 {
+		t.Fatalf("failed transaction sent notification: %d", notifications)
+	}
+}
+
+func TestWPAnomalyHomepageChangeFromLegacyStateStartsNewEpisode(t *testing.T) {
+	var legacy []WPAnomalyContentChange
+	if err := json.Unmarshal([]byte(`[{"id":10,"detected_at":1799996400}]`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	result, messages, homepage := anomalyContentChanges(
+		[]WPAnomalyContent{{ID: 10, Type: "page", Fingerprint: strings.Repeat("1", 64)}},
+		[]WPAnomalyContent{{ID: 10, Type: "page", Fingerprint: strings.Repeat("2", 64)}},
+		10,
+		10,
+		legacy,
+		1800000000,
+	)
+	if len(messages) != 0 || !homepage.Changed || !homepage.Notify || homepage.Count != 1 || homepage.FirstAt != 1800000000 {
+		t.Fatalf("messages=%q homepage=%+v", messages, homepage)
+	}
+	if len(result) != 1 || result[0].HomepageChangeCount != 1 || result[0].HomepageFirstAt != 1800000000 {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestWPAnomalyHomepageHighRiskChangesBypassMerge(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*WPAnomalySample)
+		want   string
+	}{
+		{"front page switched", func(sample *WPAnomalySample) {
+			sample.Content = append(sample.Content, WPAnomalyContent{ID: 20, Type: "page", Fingerprint: strings.Repeat("2", 64)})
+			sample.Options.FrontPageID = 20
+		}, "首页显示由“页面 10”改为“页面 20”"},
+		{"front page switched to posts", func(sample *WPAnomalySample) {
+			sample.Options.FrontPageID = 0
+		}, "首页显示由“页面 10”改为“最新文章”"},
+		{"front page unpublished", func(sample *WPAnomalySample) { sample.Content = []WPAnomalyContent{} }, "原静态首页"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, id, now := anomalyFixture(t)
+			sample := anomalySample(anomalyAdmin(1))
+			sample.Content = []WPAnomalyContent{{ID: 10, Type: "page", Fingerprint: strings.Repeat("1", 64)}}
+			sample.Options.FrontPageID = 10
+			m.collect = func(context.Context, *models.Website, wpAnomalyQuery) (*WPAnomalySample, error) { return sample, nil }
+			if err := m.Configure(id, true, 5); err != nil {
+				t.Fatal(err)
+			}
+			anomalyCheck(t, m, id)
+			*now = now.Add(time.Hour)
+			sample.Content[0].Fingerprint = strings.Repeat("3", 64)
+			anomalyCheck(t, m, id)
+			var notifications []string
+			m.notify = func(_ string, message string) { notifications = append(notifications, message) }
+			*now = now.Add(time.Hour)
+			tc.mutate(sample)
+			anomalyCheck(t, m, id)
+			if len(notifications) != 1 || !strings.Contains(notifications[0], tc.want) {
+				t.Fatalf("notifications=%q", notifications)
+			}
+			if tc.name == "front page unpublished" && strings.Count(notifications[0], "取消发布") != 1 {
+				t.Fatalf("homepage removal described more than once: %q", notifications[0])
+			}
+		})
+	}
+}
+
+func TestWPAnomalyHomepageTargetLabels(t *testing.T) {
+	content := []WPAnomalyContent{{ID: 10, Type: "page", Fingerprint: strings.Repeat("1", 64)}}
+	_, _, homepage := anomalyContentChanges(content, content, 0, 10, nil, 1800000000)
+	if homepage.Reason != "首页显示由“最新文章”改为“页面 10”" {
+		t.Fatalf("reason=%q", homepage.Reason)
+	}
+	_, _, homepage = anomalyContentChanges(content, content, 10, 0, nil, 1800000000)
+	if homepage.Reason != "首页显示由“页面 10”改为“最新文章”" {
+		t.Fatalf("reason=%q", homepage.Reason)
+	}
+}
+
 func TestWPAnomalyAlertLabels(t *testing.T) {
 	for key, want := range map[string]string{
-		"alert_wp_content_change":       "WordPress 存量内容异常",
+		"alert_wp_content_change":       "WordPress 内容变化",
 		"alert_wp_content_volume":       "WordPress 内容修改量异常",
 		"alert_wp_setting_change":       "WordPress 关键设置变化",
 		"alert_wp_application_password": "WordPress 应用程序密码异常",

@@ -361,7 +361,7 @@ func alertLabel(key string) string {
 	case "alert_wp_post_volume":
 		return "WordPress 文章发布量异常"
 	case "alert_wp_content_change":
-		return "WordPress 存量内容异常"
+		return "WordPress 内容变化"
 	case "alert_wp_content_volume":
 		return "WordPress 内容修改量异常"
 	case "alert_wp_setting_change":

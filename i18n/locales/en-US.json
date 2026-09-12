@@ -584,7 +584,7 @@
   "alert": {
     "type_wp_admin_change": "WordPress administrator changes",
     "type_wp_post_volume": "WordPress post volume anomaly",
-    "type_wp_content_change": "WordPress existing content anomaly",
+    "type_wp_content_change": "WordPress content change",
     "type_wp_content_volume": "WordPress content modification volume anomaly",
     "type_wp_setting_change": "WordPress critical settings changes",
     "type_wp_application_password": "WordPress application password anomaly",

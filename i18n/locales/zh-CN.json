@@ -584,7 +584,7 @@
   "alert": {
     "type_wp_admin_change": "WordPress 管理员变化",
     "type_wp_post_volume": "WordPress 文章发布量异常",
-    "type_wp_content_change": "WordPress 存量内容异常",
+    "type_wp_content_change": "WordPress 内容变化",
     "type_wp_content_volume": "WordPress 内容修改量异常",
     "type_wp_setting_change": "WordPress 关键设置变化",
     "type_wp_application_password": "WordPress 应用程序密码异常",
