@@ -3,7 +3,7 @@
 # This file is distributed under the GPL-2.0+ license.
 msgid ""
 msgstr ""
-"Project-Id-Version: WP Panel Optimizer 1.1.21\n"
+"Project-Id-Version: WP Panel Optimizer 1.1.22\n"
 "Report-Msgid-Bugs-To: https://wp-panel.org/\n"
 "POT-Creation-Date: 2026-09-12 00:00+0000\n"
 "PO-Revision-Date: 2026-09-12 00:00+0000\n"
@@ -631,8 +631,8 @@ msgstr "设置已保存，已同步到面板。"
 msgid "Settings sync to WP Panel after saving; cache-related changes may take a few seconds to take effect."
 msgstr "保存后设置会同步到 WP Panel；缓存相关修改可能需要几秒钟生效。"
 
-msgid "Settings were not saved. To change optimizations that write to wp-config.php, release the file lock on the site details page in WP Panel first."
-msgstr "当前设置未保存。如需修改会写入 wp-config.php 的优化项，请先到 WP Panel 网站详情页解除文件锁定。"
+msgid "Settings were not saved because one or more changes need to update wp-config.php. Use File protection / maintenance in the upper-right corner to unlock the site temporarily, then save again. If temporary maintenance is unavailable, ask the server administrator to handle the change in WP Panel."
+msgstr "当前设置未保存，因为部分改动需要写入 wp-config.php。请点击右上角的“文件保护 / 临时维护”短时解锁，然后重新保存。若临时维护不可用，请联系服务器管理员在 WP Panel 中处理。"
 
 msgid "Settings were saved locally but failed to sync to the panel. Error message:"
 msgstr "设置已保存在本地，但同步到面板失败。错误信息："
@@ -826,8 +826,8 @@ msgstr "WordPress 内存限制"
 msgid "WordPress no longer checks for or displays update notices for core, plugins, and themes."
 msgstr "WordPress 不再检查或显示核心、插件和主题的更新提醒。"
 
-msgid "Writing posts, editing pages, and uploading images are unaffected. Write access in other runtime directories is governed by the current file lock rules; installing, updating, or deleting plugins or themes, and modifying code or site configuration, will be blocked. To maintain plugins and themes, or to configure security or caching plugins for the first time, release the file lock on the site details page in WP Panel first."
-msgstr "发文章、编辑页面和上传图片不受影响；其他运行目录的写入范围由当前文件锁规则决定，安装、更新、删除插件或主题，以及修改代码和站点配置会被阻止。如需维护插件主题或首次配置安全/缓存插件，请先到 WP Panel 网站详情页解除文件锁定。"
+msgid "Publishing posts, editing pages, and uploading media are unaffected. Protected plugin, theme, code, and site configuration files cannot be changed directly. If an installation, update, or setup task needs to write to these files, use File protection / maintenance in the upper-right corner to unlock the site temporarily with the maintenance password. If temporary maintenance is unavailable, ask the server administrator to handle the task in WP Panel. WP Panel Optimizer is managed by the panel and can still receive its own updates."
+msgstr "发布文章、编辑页面和上传媒体不受影响。受保护的插件、主题、代码和站点配置文件不能直接修改。如果安装、更新或配置操作需要写入这些文件，请点击右上角的“文件保护 / 临时维护”，使用维护密码短时解锁。若临时维护不可用，请联系服务器管理员在 WP Panel 中处理。WP Panel Optimizer 由面板托管，文件保护开启时仍可接收自身更新。"
 
 msgid "Writing posts, editing pages, and uploading images are unaffected; installing, updating, or modifying program files is restricted."
 msgstr "写文章、编辑页面和上传图片不受影响；安装、更新或修改程序文件会受到限制。"

@@ -179,7 +179,7 @@ trait WPP_Optimizer_Settings_Trait {
         if ($isPost) {
             check_admin_referer('wpp_optimizer_settings');
             if (self::sync_file_lock_state(true)) {
-                $notice = '<div class="notice notice-warning"><p><strong>' . esc_html__('WP Panel file lock is enabled.', 'wp-panel-optimizer') . '</strong> ' . esc_html__('Settings were not saved. To change optimizations that write to wp-config.php, release the file lock on the site details page in WP Panel first.', 'wp-panel-optimizer') . '</p></div>';
+                $notice = '<div class="notice notice-warning"><p><strong>' . esc_html__('WP Panel file lock is enabled.', 'wp-panel-optimizer') . '</strong> ' . esc_html__('Settings were not saved because one or more changes need to update wp-config.php. Use File protection / maintenance in the upper-right corner to unlock the site temporarily, then save again. If temporary maintenance is unavailable, ask the server administrator to handle the change in WP Panel.', 'wp-panel-optimizer') . '</p></div>';
             } else {
             $fcacheEnabled  = !empty($_POST['fcache_enabled'])  ? true : false;
             $fcacheTTL      = isset($_POST['fcache_ttl']) ? intval($_POST['fcache_ttl']) : 300;
@@ -385,10 +385,6 @@ trait WPP_Optimizer_Settings_Trait {
             <?php if ($missing): ?>
                 <div class="notice notice-error"><p><strong><?php echo esc_html__('Configuration file missing', 'wp-panel-optimizer'); ?></strong> — <?php echo esc_html__('Open the site details page for this website in the WP Panel and click the "Install companion plugin" button on the WordPress optimization card to complete initialization.', 'wp-panel-optimizer'); ?></p></div>
             <?php endif; ?>
-            <?php if ($fileLockEnabled): ?>
-                <div class="notice notice-info"><p><strong><?php echo esc_html__('WP Panel file lock is enabled.', 'wp-panel-optimizer'); ?></strong> <?php echo esc_html__('Writing posts, editing pages, and uploading images are unaffected. Write access in other runtime directories is governed by the current file lock rules; installing, updating, or deleting plugins or themes, and modifying code or site configuration, will be blocked. To maintain plugins and themes, or to configure security or caching plugins for the first time, release the file lock on the site details page in WP Panel first.', 'wp-panel-optimizer'); ?></p></div>
-            <?php endif; ?>
-
             <nav class="wpp-tabs" id="wpp-tabs" aria-label="<?php echo esc_attr__('WP Panel Optimizer settings', 'wp-panel-optimizer'); ?>">
                 <a href="#" class="nav-tab nav-tab-active" data-tab="cache"><span class="dashicons dashicons-performance" aria-hidden="true"></span><?php echo esc_html__('Cache & Performance', 'wp-panel-optimizer'); ?></a>
                 <a href="#" class="nav-tab" data-tab="image"><span class="dashicons dashicons-format-image" aria-hidden="true"></span><?php echo esc_html__('Image Optimization', 'wp-panel-optimizer'); ?></a>
@@ -1229,7 +1225,7 @@ trait WPP_Optimizer_Settings_Trait {
         if (!self::sync_file_lock_state()) {
             return;
         }
-        echo '<div class="notice notice-warning"><p><strong>' . esc_html__('WP Panel file lock is enabled.', 'wp-panel-optimizer') . '</strong> ' . esc_html__('Writing posts, editing pages, and uploading images are unaffected. Write access in other runtime directories is governed by the current file lock rules; installing, updating, or deleting plugins or themes, and modifying code or site configuration, will be blocked. To maintain plugins and themes, or to configure security or caching plugins for the first time, release the file lock on the site details page in WP Panel first.', 'wp-panel-optimizer') . '</p></div>';
+        echo '<div class="notice notice-warning"><p><strong>' . esc_html__('WP Panel file lock is enabled.', 'wp-panel-optimizer') . '</strong> ' . esc_html__('Publishing posts, editing pages, and uploading media are unaffected. Protected plugin, theme, code, and site configuration files cannot be changed directly. If an installation, update, or setup task needs to write to these files, use File protection / maintenance in the upper-right corner to unlock the site temporarily with the maintenance password. If temporary maintenance is unavailable, ask the server administrator to handle the task in WP Panel. WP Panel Optimizer is managed by the panel and can still receive its own updates.', 'wp-panel-optimizer') . '</p></div>';
     }
 
 }
