@@ -47,7 +47,7 @@ trait WPP_Optimizer_Maintenance_Trait {
         echo '<dialog id="wpp-maintenance-dialog" aria-labelledby="wpp-maintenance-title">'
             . '<header class="wpp-maintenance-head"><img src="' . esc_url(plugin_dir_url(WPP_OPTIMIZER_PLUGIN_FILE) . 'assets/wp-panel-logo.png') . '" alt=""><div><span>WP PANEL · MANAGED WORDPRESS</span><h2 id="wpp-maintenance-title">' . esc_html($title) . '</h2></div></header>'
             . '<div class="wpp-maintenance-body"><p class="wpp-maintenance-intro">' . esc_html($intro) . '</p><p id="wpp-maintenance-state" role="status"></p><p id="wpp-maintenance-warning"></p>'
-            . '<form id="wpp-maintenance-form"><label id="wpp-maintenance-password-label" for="wpp-maintenance-password"></label><input id="wpp-maintenance-password" type="password" autocomplete="off" maxlength="72"><p id="wpp-maintenance-password-hint"></p><div id="wpp-maintenance-actions"></div></form><p id="wpp-maintenance-message" role="alert"></p></div>'
+            . '<form id="wpp-maintenance-form"><label id="wpp-maintenance-password-label" for="wpp-maintenance-password"></label><input id="wpp-maintenance-password" type="password" autocomplete="new-password" spellcheck="false" maxlength="72"><p id="wpp-maintenance-password-hint"></p><div id="wpp-maintenance-actions"></div></form><p id="wpp-maintenance-message" role="alert"></p></div>'
             . '<footer class="wpp-maintenance-foot"><button type="button" id="wpp-maintenance-close"></button></footer></dialog>';
     }
 

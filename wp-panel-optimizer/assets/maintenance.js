@@ -15,7 +15,7 @@
     const bar = document.querySelector('#wp-admin-bar-wpp-maintenance > a');
     const warning = document.getElementById('wpp-maintenance-warning');
     let state = { state: 'unknown' }, offset = 0, busy = false, nextPoll = 0;
-    let pending = null, actionKey = '', polling = false, issued = 0, accepted = 0;
+    let pending = null, actionKey = '', polling = false, issued = 0, accepted = 0, passwordEntered = false;
     const now = () => Math.floor(Date.now() / 1000) + offset;
     const requestID = () => {
         const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -57,6 +57,10 @@
         password.disabled = busy || !showPassword;
         password.hidden = !showPassword;
         passwordLabel.hidden = !showPassword;
+        if (!showPassword && password.value) {
+            password.value = '';
+            passwordEntered = false;
+        }
         passwordHint.textContent = state.state === 'unlocked'
             ? (extensionNeedsPassword ? text.password_boundary : text.password_not_required)
             : '';
@@ -83,12 +87,15 @@
         if (busy) return;
         let refreshPage = false;
         const needsPassword = operation === 'unlock' || (operation === 'extend' && state.expires_at + minutes * 60 > state.verified_until);
-        if (needsPassword && !password.value) { message.textContent = text.password_required; password.focus(); return; }
+        // Password managers may silently refill a previously used value even
+        // with autocomplete disabled. Treat a password as authorization only
+        // after the administrator actively edits this field in the current UI.
+        if (needsPassword && (!password.value || !passwordEntered)) { password.value = ''; passwordEntered = false; message.textContent = text.password_required; password.focus(); return; }
         if (!pending || pending.operation !== operation || pending.minutes !== minutes || pending.window_id !== (state.window_id || '')) {
             pending = { operation, minutes, window_id: state.window_id || '', request_id: requestID(), revision: state.revision || 0 };
         }
         const data = { ...pending, password: password.value }; delete data.operation;
-        password.value = ''; busy = true; message.textContent = ''; render();
+        password.value = ''; passwordEntered = false; busy = true; message.textContent = ''; render();
         try {
             await request(operation, data); pending = null;
             refreshPage = operation === 'unlock' || operation === 'relock';
@@ -100,10 +107,14 @@
         if (refreshPage) window.location.reload();
     }
     form.addEventListener('submit', event => event.preventDefault());
+    password.addEventListener('beforeinput', event => {
+        const deliberateEdits = ['insertText', 'insertFromPaste', 'deleteContentBackward', 'deleteContentForward'];
+        if (document.activeElement === password && deliberateEdits.includes(event.inputType)) passwordEntered = true;
+    });
     passwordLabel.textContent = text.password;
     document.getElementById('wpp-maintenance-close').textContent = text.close;
-    document.getElementById('wpp-maintenance-close').onclick = () => { password.value = ''; dialog.close(); };
-    dialog.addEventListener('close', () => { password.value = ''; });
+    document.getElementById('wpp-maintenance-close').onclick = () => { password.value = ''; passwordEntered = false; dialog.close(); };
+    dialog.addEventListener('close', () => { password.value = ''; passwordEntered = false; });
     function open(event) { event.preventDefault(); if (!dialog.open) dialog.showModal(); render(); }
     if (bar) bar.addEventListener('click', open);
     document.querySelectorAll('[data-wpp-maintenance-open]').forEach(el => el.addEventListener('click', open));
