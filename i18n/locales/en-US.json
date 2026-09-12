@@ -994,7 +994,7 @@
     "banned_in_range": "Banned during this analysis period",
     "status_444_explanation": "HTTP 444 means the request was rejected by a panel security rule. It is an enforcement result and is not counted as another violation.",
     "retained_security_events": "Related security events",
-    "security_history_limited": "Shows security events in the currently retained records that relate to this IP. Events are retained for 30 days, and the ban history page shows only its latest 300 records. A value of 0 does not mean the IP never triggered protection.",
+    "security_history_limited": "Shows security events in the currently retained records that relate to this IP. Events are retained for 90 days, and the ban history page shows only its latest 300 records. A value of 0 does not mean the IP never triggered protection.",
     "security_event_sensitive_file_scan": "Sensitive file scan",
     "security_event_sqli_probe": "SQL injection probe",
     "security_event_fake_search_bot": "Search crawler identity mismatch",

@@ -994,7 +994,7 @@
     "banned_in_range": "分析时段内曾被封禁",
     "status_444_explanation": "HTTP 444 表示请求已被面板安全规则拒绝，是拦截结果，不会作为新的违规次数重复计算。",
     "retained_security_events": "关联安全事件",
-    "security_history_limited": "显示当前保留记录中与该 IP 关联的安全事件。安全事件默认保留 30 天，封禁历史页仅展示最近 300 条；显示 0 只代表现存记录中没有关联结果，不代表该 IP 从未触发过安全防护。",
+    "security_history_limited": "显示当前保留记录中与该 IP 关联的安全事件。安全事件默认保留 90 天，封禁历史页仅展示最近 300 条；显示 0 只代表现存记录中没有关联结果，不代表该 IP 从未触发过安全防护。",
     "security_event_sensitive_file_scan": "敏感文件扫描",
     "security_event_sqli_probe": "SQL 注入探测",
     "security_event_fake_search_bot": "搜索爬虫身份未匹配",

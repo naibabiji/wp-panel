@@ -25,7 +25,7 @@ import (
 // 历史数据丢失的问题。只持久化 4 类明确分类的事件，通用的"WordPress 异常路径访问"
 // 兜底事件不入库，避免表无限增长。
 
-const wpSecurityEventRetentionDays = 30
+const wpSecurityEventRetentionDays = 90
 
 // IngestWPSecurityEvents 对所有 WordPress 站点做一次增量日志摄取，返回新入库的事件数。
 func IngestWPSecurityEvents() (int, error) {

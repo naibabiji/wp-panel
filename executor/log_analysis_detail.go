@@ -69,7 +69,7 @@ func AnalyzeWebsiteLogDetails(site *models.Website, startAt, endAt time.Time, db
 	}
 	sortLogFilesNewestFirst(files)
 
-	result := &models.LogAnalysisDetail{Kind: kind, Value: value, Page: page, PageSize: pageSize, Lines: []string{}, SecurityEventRetentionDays: 30, BanHistoryLimit: 300}
+	result := &models.LogAnalysisDetail{Kind: kind, Value: value, Page: page, PageSize: pageSize, Lines: []string{}, SecurityEventRetentionDays: wpSecurityEventRetentionDays, BanHistoryLimit: 300}
 	ips := map[string]int{}
 	paths := map[string]int{}
 	statuses := map[string]int{}

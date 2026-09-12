@@ -352,7 +352,7 @@ func TestPruneWPSecurityEventsRemovesOldRows(t *testing.T) {
 	openTestDB(t)
 	seedWPSecurityEventSite(t, t.TempDir())
 
-	old := time.Now().UTC().Add(-40 * 24 * time.Hour).Format("2006-01-02 15:04:05")
+	old := time.Now().UTC().Add(-100 * 24 * time.Hour).Format("2006-01-02 15:04:05")
 	recent := time.Now().UTC().Add(-1 * time.Hour).Format("2006-01-02 15:04:05")
 	for _, occurredAt := range []string{old, recent} {
 		if _, err := database.GetDB().Exec(`INSERT INTO wp_security_events
@@ -363,7 +363,7 @@ func TestPruneWPSecurityEventsRemovesOldRows(t *testing.T) {
 		}
 	}
 
-	if err := PruneWPSecurityEvents(30); err != nil {
+	if err := PruneWPSecurityEvents(wpSecurityEventRetentionDays); err != nil {
 		t.Fatalf("PruneWPSecurityEvents() error = %v", err)
 	}
 

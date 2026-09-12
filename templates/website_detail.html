@@ -817,7 +817,7 @@ function websiteDetail() {
                     this.wpDebugDisplay = r.data.wp_debug_display || false;
                     this.wpPostRevisions = r.data.wp_post_revisions != null ? r.data.wp_post_revisions : -1;
                     this.wpMemoryLimit = r.data.wp_memory_limit || '';
-                    this.logRetentionDays = r.data.log_retention_days || 7;
+                    this.logRetentionDays = r.data.log_retention_days ?? 14;
                     this.monitoringEnabled = r.data.monitoring_enabled || false;
                     this.monitoringInterval = r.data.monitoring_interval || 5;
                     this.documentRootSubdir = r.data.document_root_subdir || '';

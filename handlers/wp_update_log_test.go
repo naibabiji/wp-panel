@@ -126,11 +126,11 @@ func TestWPUpdateLogListReturnsRecentTasksAndEvents(t *testing.T) {
 	}
 }
 
-func TestWPUpdateLogListExcludesTasksOlderThan24h(t *testing.T) {
+func TestWPUpdateLogListExcludesTasksOlderThanSevenDays(t *testing.T) {
 	setupWPUpdateLogTest(t)
 	now := time.Now().UTC()
-	insertWPUpdateLogTask(t, 1, "wpu_log_old_failed", "failed", ptrTime(now.Add(-26*time.Hour)), true)
-	insertWPUpdateLogEvent(t, "wpu_log_old_failed", "rollback", "failed", "license_invalid", now.Add(-26*time.Hour))
+	insertWPUpdateLogTask(t, 1, "wpu_log_old_failed", "failed", ptrTime(now.Add(-8*24*time.Hour)), true)
+	insertWPUpdateLogEvent(t, "wpu_log_old_failed", "rollback", "failed", "license_invalid", now.Add(-8*24*time.Hour))
 
 	items := callWPUpdateLog(t, newWPUpdateLogTestRouter(), 1)
 	if len(items) != 0 {

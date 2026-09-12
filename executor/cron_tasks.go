@@ -17,6 +17,8 @@ import (
 
 var cronLogFile = "/www/server/panel/logs/cron.log"
 
+const cronLogKeepLines = 1000
+
 func executeRenderCron(task *Task) TaskResult {
 	return renderCronConfig()
 }
@@ -255,7 +257,7 @@ func runCronJob(jobID int, scheduled bool) TaskResult {
 		now, status, out, jobID,
 	)
 
-	// Append to cron log file, keep last 100 lines
+	// Append to cron log file, keep the latest bounded history.
 	f, err := os.OpenFile(cronLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err == nil {
 		mode := "manual"
@@ -267,7 +269,7 @@ func runCronJob(jobID int, scheduled bool) TaskResult {
 		f.WriteString(fmt.Sprintf("[%s] END %s (exit:%d)\n", now, job.name, map[bool]int{true: 0, false: 1}[execErr == nil]))
 		f.Close()
 	}
-	pruneCronLog(cronLogFile, 100)
+	pruneCronLog(cronLogFile, cronLogKeepLines)
 
 	return TaskResult{
 		Success: execErr == nil,
@@ -284,7 +286,7 @@ func appendCronGateError(jobID int, message string) {
 	}
 	_, _ = fmt.Fprintf(f, "[%s] GATE ERROR job_id=%d: %s\n", now, jobID, message)
 	_ = f.Close()
-	pruneCronLog(cronLogFile, 100)
+	pruneCronLog(cronLogFile, cronLogKeepLines)
 }
 
 func pruneCronLog(path string, keep int) {

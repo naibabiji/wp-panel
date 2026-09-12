@@ -191,7 +191,7 @@ func countWPUpdateLogEvents(t *testing.T, db *sql.DB, taskID string) int {
 	return n
 }
 
-// TestCleanupExpiredUpdateLogsDeletesOldEvents 验证严格 24h 清理：已结束且 finished_at
+// TestCleanupExpiredUpdateLogsDeletesOldEvents 验证严格 7 天清理：已结束且 finished_at
 // 超过保留窗口的任务，其事件日志一律删除（不区分成功/失败/需人工介入）。
 func TestCleanupExpiredUpdateLogsDeletesOldEvents(t *testing.T) {
 	store, siteID := newWPUpdateStoreTest(t)
@@ -200,8 +200,8 @@ func TestCleanupExpiredUpdateLogsDeletesOldEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	task := createAndSealUpdateTask(t, store, siteID, now.Add(-26*time.Hour))
-	if _, err := store.db.Exec(`UPDATE wp_update_tasks SET status='failed',finished_at=? WHERE id=?`, wpUpdateDBTime(now.Add(-26*time.Hour)), task.ID); err != nil {
+	task := createAndSealUpdateTask(t, store, siteID, now.Add(-8*24*time.Hour))
+	if _, err := store.db.Exec(`UPDATE wp_update_tasks SET status='failed',finished_at=? WHERE id=?`, wpUpdateDBTime(now.Add(-8*24*time.Hour)), task.ID); err != nil {
 		t.Fatal(err)
 	}
 	insertWPUpdateLogEventForTest(t, store.db, task.ID, "rollback", "failed")
@@ -215,11 +215,11 @@ func TestCleanupExpiredUpdateLogsDeletesOldEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := countWPUpdateLogEvents(t, store.db, task.ID); got != 0 {
-		t.Fatalf("events after cleanup = %d want 0 (strict 24h deletion)", got)
+		t.Fatalf("events after cleanup = %d want 0 (strict 7 day deletion)", got)
 	}
 }
 
-// TestCleanupExpiredUpdateLogsKeepsRecentAndUnfinished 验证近 24h 内结束的任务与
+// TestCleanupExpiredUpdateLogsKeepsRecentAndUnfinished 验证近 7 天内结束的任务与
 // 尚未结束（finished_at IS NULL）的任务事件都保留，不被误删。
 func TestCleanupExpiredUpdateLogsKeepsRecentAndUnfinished(t *testing.T) {
 	store, siteID := newWPUpdateStoreTest(t)
@@ -229,8 +229,8 @@ func TestCleanupExpiredUpdateLogsKeepsRecentAndUnfinished(t *testing.T) {
 	}
 	now := time.Now().UTC()
 
-	recentTask := createAndSealUpdateTask(t, store, siteID, now.Add(-2*time.Hour))
-	if _, err := store.db.Exec(`UPDATE wp_update_tasks SET status='success',finished_at=? WHERE id=?`, wpUpdateDBTime(now.Add(-1*time.Hour)), recentTask.ID); err != nil {
+	recentTask := createAndSealUpdateTask(t, store, siteID, now.Add(-6*24*time.Hour))
+	if _, err := store.db.Exec(`UPDATE wp_update_tasks SET status='success',finished_at=? WHERE id=?`, wpUpdateDBTime(now.Add(-6*24*time.Hour)), recentTask.ID); err != nil {
 		t.Fatal(err)
 	}
 	insertWPUpdateLogEventForTest(t, store.db, recentTask.ID, "complete", "success")

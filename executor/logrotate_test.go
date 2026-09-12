@@ -6,7 +6,7 @@ import (
 )
 
 func TestRenderSiteLogrotateConfigIncludesAllSiteLogs(t *testing.T) {
-	config := renderSiteLogrotateConfig("example.com", "/www/wwwlogs/example.com", 7)
+	config := renderSiteLogrotateConfig("example.com", "/www/wwwlogs/example.com", defaultSiteLogRetentionDays)
 	for _, want := range []string{
 		"/www/wwwlogs/example.com/access.log",
 		"/www/wwwlogs/example.com/error.log",
@@ -14,7 +14,7 @@ func TestRenderSiteLogrotateConfigIncludesAllSiteLogs(t *testing.T) {
 		"/www/wwwlogs/example.com/wp-sqli-security.log",
 		"/www/wwwlogs/example.com/php-error.log",
 		"/www/wwwlogs/example.com/php-slow.log",
-		"rotate 7",
+		"rotate 14",
 		"dateext",
 		"dateformat -%Y-%m-%d",
 		"dateyesterday",

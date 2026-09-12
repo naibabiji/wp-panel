@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	defaultSiteLogRetentionDays = 7
+	defaultSiteLogRetentionDays = 14
 	siteLogrotateDir            = "/etc/logrotate.d"
 	siteLogRoot                 = "/www/wwwlogs"
 )

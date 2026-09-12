@@ -492,6 +492,7 @@ func (m *MaintenanceManager) Relock(id int, windowID string) error {
 
 func (m *MaintenanceManager) relockOwned(id int, site *models.Website, state *maintenanceSecurity, raw *string) error {
 	w := state.Window
+	absorbIntegrityChanges := maintenanceRelockAbsorbsIntegrityChanges(w, m.isUncertain(id))
 	now := m.now().Unix()
 	m.mu.Lock()
 	retry := m.retry[id]
@@ -519,7 +520,7 @@ func (m *MaintenanceManager) relockOwned(id int, site *models.Website, state *ma
 		if err = m.save(id, *state, raw, "locked"); err == nil {
 			m.markUncertain(id, false)
 			m.event(id, "relock", fmt.Sprintf("success window=%s mode=%s reason=%s", w.ID, w.Mode, w.Reason))
-			refreshWPCodeIntegrityBaselineBestEffort(id, "维护回锁成功")
+			refreshWPCodeIntegrityBaselineAfterMaintenance(id, "维护回锁成功", absorbIntegrityChanges)
 			return nil
 		}
 	}
@@ -541,6 +542,10 @@ func (m *MaintenanceManager) relockOwned(id int, site *models.Website, state *ma
 	}
 	m.event(id, "relock", "failed stage="+failure)
 	return ErrMaintenanceUnknown
+}
+
+func maintenanceRelockAbsorbsIntegrityChanges(w *maintenanceWindow, uncertain bool) bool {
+	return w != nil && !uncertain && w.Reason == "" && w.Failure == "" && w.State == "unlocked"
 }
 
 func (m *MaintenanceManager) event(id int, op, result string) {

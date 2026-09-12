@@ -80,13 +80,17 @@ func TestAlertLogKeepsMetadataColumnsReadable(t *testing.T) {
 	}
 	for _, expected := range [][]byte{
 		[]byte(`table-fixed w-full min-w-[860px]`),
-		[]byte(`x-text="typeLabel(l.alert_type)"`),
+		[]byte(`w-44 py-2 pr-3 text-left whitespace-nowrap`),
+		[]byte(`class="py-2 pr-3 align-top text-sm text-gray-300" style="white-space: normal; overflow-wrap: anywhere;" x-text="typeLabel(l.alert_type)"`),
 		[]byte(`py-2 whitespace-nowrap`),
 		[]byte(`style="white-space: normal; overflow-wrap: anywhere;" x-text="l.message"`),
 	} {
 		if !bytes.Contains(page, expected) {
 			t.Fatalf("alert log table is missing %q", expected)
 		}
+	}
+	if bytes.Contains(page, []byte(`text-gray-300 whitespace-nowrap" x-text="typeLabel(l.alert_type)"`)) {
+		t.Fatal("alert type must wrap inside its fixed column instead of overlapping the level column")
 	}
 }
 

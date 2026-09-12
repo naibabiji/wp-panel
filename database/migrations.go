@@ -57,7 +57,7 @@ var migrations = append([]string{
 		file_lock_apply_status TEXT   NOT NULL DEFAULT '',
 		maintenance_security  TEXT   NOT NULL DEFAULT '{}',
 		password_reset_mode   TEXT    NOT NULL DEFAULT 'allow',
-		log_retention_days    INTEGER NOT NULL DEFAULT 7,
+		log_retention_days    INTEGER NOT NULL DEFAULT 14,
 		cdn_realip_enabled    INTEGER NOT NULL DEFAULT 0,
 		php_fpm_max_children  INTEGER NOT NULL DEFAULT 10,
 		expires_at            DATETIME,

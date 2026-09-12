@@ -7,7 +7,7 @@ import (
 	"github.com/naibabiji/wp-panel/database"
 )
 
-const operationLogKeepRows = 300
+const operationLogKeepRows = 1000
 
 func recordOperationLog(operation, target, status, message string) {
 	db := database.GetDB()

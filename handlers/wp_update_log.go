@@ -12,13 +12,9 @@ import (
 	"github.com/naibabiji/wp-panel/models"
 )
 
-// wpUpdateLogRetention 与「更新备份」保持一致的日志保留时长；超期事件由
-// executor.cleanupExpiredUpdateLogs 删除，本接口只返回该窗口内（或尚未结束）的任务。
-const wpUpdateLogRetention = 24 * time.Hour
-
 type WPUpdateLogHandler struct{}
 
-// List 返回某站点近 24 小时内（或尚未结束）的更新任务及其完整事件时间线。
+// List 返回某站点近 7 天内（或尚未结束）的更新任务及其完整事件时间线。
 // 用于「更新日志」卡片，用户更新失败时可一键复制结构化日志反馈，免去 SSH 排查。
 func (h *WPUpdateLogHandler) List(c *gin.Context) {
 	siteID, ok := wpUpdateBackupSiteID(c)
@@ -26,7 +22,7 @@ func (h *WPUpdateLogHandler) List(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	cutoff := executor.WPUpdateDBTime(time.Now().UTC().Add(-wpUpdateLogRetention))
+	cutoff := executor.WPUpdateDBTime(time.Now().UTC().Add(-executor.WPUpdateLogRetention))
 
 	taskRows, err := database.GetDB().QueryContext(ctx, `SELECT id,component_type,component_key,task_kind,status,stage,failure_stage,
 		rollback_status,requires_attention,current_version,target_version,started_at,finished_at,created_at

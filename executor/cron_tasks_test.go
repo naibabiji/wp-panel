@@ -2,6 +2,7 @@ package executor
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,6 +135,27 @@ func TestRunScheduledCronLogsGateErrors(t *testing.T) {
 	}
 	if text := string(data); !strings.Contains(text, "GATE ERROR job_id=999") || !strings.Contains(text, "查询任务失败") {
 		t.Fatalf("gate error log = %q", text)
+	}
+}
+
+func TestPruneCronLogKeepsConfiguredLineLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cron.log")
+	lines := make([]string, cronLogKeepLines+2)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line-%d", i+1)
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pruneCronLog(path, cronLogKeepLines)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	if len(got) != cronLogKeepLines || got[0] != "line-3" || got[len(got)-1] != fmt.Sprintf("line-%d", cronLogKeepLines+2) {
+		t.Fatalf("pruned cron log: lines=%d first=%q last=%q", len(got), got[0], got[len(got)-1])
 	}
 }
 

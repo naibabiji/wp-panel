@@ -19,6 +19,31 @@ import (
 
 const testMaintenancePassword = "correct-maintenance-password"
 
+func TestMaintenanceRelockAbsorbsIntegrityChangesOnlyForCleanWindow(t *testing.T) {
+	tests := []struct {
+		name      string
+		w         *maintenanceWindow
+		uncertain bool
+		want      bool
+	}{
+		{name: "clean active window", w: &maintenanceWindow{State: "unlocked"}, want: true},
+		{name: "normal expiry still clean", w: &maintenanceWindow{State: "unlocked"}, want: true},
+		{name: "unexpected relocking state", w: &maintenanceWindow{State: "relocking"}},
+		{name: "permission failure", w: &maintenanceWindow{State: "relock_failed", Failure: "permissions"}},
+		{name: "restart recovery", w: &maintenanceWindow{State: "relocking", Reason: "restart"}},
+		{name: "unknown", w: &maintenanceWindow{State: "unknown"}},
+		{name: "unpersisted state failure", w: &maintenanceWindow{State: "unlocked"}, uncertain: true},
+		{name: "missing window", w: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := maintenanceRelockAbsorbsIntegrityChanges(tt.w, tt.uncertain); got != tt.want {
+				t.Fatalf("maintenanceRelockAbsorbsIntegrityChanges()=%v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMaintenanceRestartProcessHelper(t *testing.T) {
 	dbPath := os.Getenv("WPP_MAINTENANCE_RESTART_TEST_DB")
 	if dbPath == "" {
@@ -79,6 +104,12 @@ func TestMaintenanceRestartAcrossProcess(t *testing.T) {
 func maintenanceFixture(t *testing.T) (*MaintenanceManager, int, *time.Time, *int, *int) {
 	t.Helper()
 	store, id := newWPUpdateStoreTest(t)
+	t.Cleanup(func() {
+		fileIntegrityStateMu.Lock()
+		delete(fileIntegrityRefreshJobs, id)
+		delete(fileIntegrityRetryAfter, id)
+		fileIntegrityStateMu.Unlock()
+	})
 	if _, err := store.db.Exec(`UPDATE websites SET file_lock_enabled=1,file_lock_mode='strict',file_lock_apply_status='ready' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}
@@ -286,6 +317,12 @@ func TestMaintenanceVerificationFailureKeepsRecoveryBarrier(t *testing.T) {
 	status, err = m.Status(id)
 	if err != nil || status.State != "locked" {
 		t.Fatalf("recovered status=%+v err=%v", status, err)
+	}
+	fileIntegrityStateMu.Lock()
+	job, queued := fileIntegrityRefreshJobs[id]
+	fileIntegrityStateMu.Unlock()
+	if !queued || job.Absorb {
+		t.Fatalf("recovered relock queued=%v job=%+v, want non-absorbing integrity check", queued, job)
 	}
 }
 

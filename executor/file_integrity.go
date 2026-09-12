@@ -58,12 +58,24 @@ type fileIntegrityDifference struct {
 	Signature string
 }
 
+type fileIntegrityRefreshJob struct {
+	Operation string
+	Absorb    bool
+}
+
+type fileIntegrityComponentChange struct {
+	Kind   string
+	Key    string
+	Change string
+}
+
 var fileIntegrityRunMu sync.Mutex
 
 var (
 	fileIntegrityStateMu     sync.Mutex
-	fileIntegrityRefreshJobs = map[int]string{}
+	fileIntegrityRefreshJobs = map[int]fileIntegrityRefreshJob{}
 	fileIntegrityRetryAfter  = map[int]time.Time{}
+	fileIntegrityChtimes     = os.Chtimes
 )
 
 var errFileIntegrityIdentityMismatch = errors.New("integrity baseline identity mismatch")
@@ -112,7 +124,7 @@ func loadFileIntegritySite(db *sql.DB, id int) (*models.Website, error) {
 	return s, err
 }
 
-func refreshWPCodeIntegrityBaselineOwned(siteID int) error {
+func refreshWPCodeIntegrityBaselineOwned(siteID int, job fileIntegrityRefreshJob) error {
 	db := database.GetDB()
 	if db == nil {
 		return errors.New("database unavailable")
@@ -137,21 +149,40 @@ func refreshWPCodeIntegrityBaselineOwned(siteID int) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), fileIntegrityTimeout)
 	defer cancel()
-	if err := writeFileIntegrityBaseline(ctx, site); err != nil {
+	target, err := fileIntegrityPath(site.ID)
+	if err != nil {
+		return err
+	}
+	currentPath, err := createFileIntegritySnapshot(ctx, site, filepath.Dir(target))
+	if err != nil {
+		return err
+	}
+	defer os.Remove(currentPath)
+	if err := applyFileIntegrityRefresh(db, site, target, currentPath, job); err != nil {
 		return err
 	}
 	return resolveIntegrityUnavailable(db, site.ID)
 }
 
 func refreshWPCodeIntegrityBaselineBestEffort(siteID int, operation string) {
+	queueWPCodeIntegrityRefresh(siteID, fileIntegrityRefreshJob{Operation: operation, Absorb: true})
+}
+
+func refreshWPCodeIntegrityBaselineAfterMaintenance(siteID int, operation string, absorb bool) {
+	queueWPCodeIntegrityRefresh(siteID, fileIntegrityRefreshJob{Operation: operation, Absorb: absorb})
+}
+
+func queueWPCodeIntegrityRefresh(siteID int, job fileIntegrityRefreshJob) {
 	if db := database.GetDB(); db != nil {
 		if site, err := loadFileIntegritySite(db, siteID); err != nil || !fileIntegrityEligible(site) {
 			return
 		}
 	}
 	fileIntegrityStateMu.Lock()
-	if _, queued := fileIntegrityRefreshJobs[siteID]; !queued {
-		fileIntegrityRefreshJobs[siteID] = operation
+	if queued, exists := fileIntegrityRefreshJobs[siteID]; !exists {
+		fileIntegrityRefreshJobs[siteID] = job
+	} else if queued.Absorb && !job.Absorb {
+		fileIntegrityRefreshJobs[siteID] = job
 	}
 	fileIntegrityStateMu.Unlock()
 }
@@ -178,16 +209,14 @@ func writeFileIntegrityBaseline(ctx context.Context, site *models.Website) error
 	if err != nil {
 		return err
 	}
-	keep := false
-	defer func() {
-		if !keep {
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if err := os.Rename(tmpName, target); err != nil {
+	defer os.Remove(tmpName)
+	return publishFileIntegritySnapshot(tmpName, target)
+}
+
+func publishFileIntegritySnapshot(snapshot, target string) error {
+	if err := os.Rename(snapshot, target); err != nil {
 		return errors.New("publish integrity baseline")
 	}
-	keep = true
 	if d, err := os.Open(filepath.Dir(target)); err == nil {
 		_ = d.Sync()
 		_ = d.Close()
@@ -511,6 +540,164 @@ func compareFileIntegrityManifestFiles(baselinePath, currentPath string, site *m
 	return diffs, nil
 }
 
+func applyFileIntegrityRefresh(db *sql.DB, site *models.Website, baselinePath, currentPath string, job fileIntegrityRefreshJob) error {
+	header, err := readFileIntegrityManifestHeader(baselinePath, site)
+	if os.IsNotExist(err) {
+		if !job.Absorb {
+			return errors.New("non-absorbing integrity refresh requires an existing baseline")
+		}
+		return publishFileIntegritySnapshot(currentPath, baselinePath)
+	}
+	if errors.Is(err, errFileIntegrityIdentityMismatch) {
+		if !job.Absorb {
+			return err
+		}
+		return publishFileIntegritySnapshot(currentPath, baselinePath)
+	}
+	if err != nil {
+		return err
+	}
+	diffs, err := compareFileIntegrityManifestFiles(baselinePath, currentPath, site)
+	if err != nil {
+		return err
+	}
+	if len(diffs) == 0 {
+		return publishFileIntegritySnapshot(currentPath, baselinePath)
+	}
+	components := fileIntegrityComponentChanges(diffs)
+	if job.Absorb {
+		message := fmt.Sprintf("%s：%s（文件差异 %d 项，基线起点 %s）", job.Operation, summarizeFileIntegrityComponents(components), len(diffs), header.BaselineAt)
+		if err := recordFileIntegritySummary(db, site, header.BaselineAt, message); err != nil {
+			return err
+		}
+		return publishFileIntegritySnapshot(currentPath, baselinePath)
+	}
+	newCount, err := persistIntegrityDiffs(db, site, diffs)
+	if err != nil {
+		return err
+	}
+	if newCount > 0 {
+		notifyFileIntegrityChanges(site, newCount, components)
+	}
+	if err := fileIntegrityChtimes(baselinePath, time.Now(), time.Now()); err != nil {
+		return errors.New("update integrity scan timestamp")
+	}
+	return nil
+}
+
+func recordFileIntegritySummary(db *sql.DB, site *models.Website, baselineAt, message string) error {
+	const operation = "wp_code_integrity_summary"
+	var existingID int64
+	err := db.QueryRow(`SELECT id FROM operation_logs WHERE operation=? AND target=? AND status='success' AND instr(message,?)>0 ORDER BY id DESC LIMIT 1`, operation, site.Domain, "基线起点 "+baselineAt).Scan(&existingID)
+	if err == nil {
+		_, err = db.Exec(`UPDATE operation_logs SET message=? WHERE id=?`, message, existingID)
+		return err
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if _, err := db.Exec(`INSERT INTO operation_logs(operation,target,status,message) VALUES(?,?,?,?)`, operation, site.Domain, "success", message); err != nil {
+		return err
+	}
+	pruneOperationLogs(db)
+	return nil
+}
+
+func fileIntegrityComponentChanges(diffs []fileIntegrityDifference) []fileIntegrityComponentChange {
+	type state struct {
+		kind, key   string
+		rootAdded   bool
+		rootDeleted bool
+	}
+	states := map[string]*state{}
+	for _, diff := range diffs {
+		kind, key, root, ok := fileIntegrityComponent(diff.Path)
+		if !ok {
+			continue
+		}
+		mapKey := kind + "\x00" + key
+		s := states[mapKey]
+		if s == nil {
+			s = &state{kind: kind, key: key}
+			states[mapKey] = s
+		}
+		switch {
+		case root && diff.EventType == FileSecurityEventIntegrityAdded:
+			s.rootAdded = true
+		case root && diff.EventType == FileSecurityEventIntegrityDeleted:
+			s.rootDeleted = true
+		}
+	}
+	changes := make([]fileIntegrityComponentChange, 0, len(states))
+	for _, s := range states {
+		change := "修改"
+		if s.rootAdded && !s.rootDeleted {
+			change = "新增"
+		} else if s.rootDeleted && !s.rootAdded {
+			change = "删除"
+		}
+		changes = append(changes, fileIntegrityComponentChange{Kind: s.kind, Key: s.key, Change: change})
+	}
+	sort.Slice(changes, func(i, j int) bool {
+		if changes[i].Kind == changes[j].Kind {
+			return changes[i].Key < changes[j].Key
+		}
+		return changes[i].Kind < changes[j].Kind
+	})
+	return changes
+}
+
+func fileIntegrityComponent(path string) (kind, key string, root, ok bool) {
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	if len(parts) >= 3 && parts[0] == "wp-content" {
+		switch parts[1] {
+		case "plugins":
+			return "插件", parts[2], len(parts) == 3, true
+		case "themes":
+			return "主题", parts[2], len(parts) == 3, true
+		case "mu-plugins":
+			return "MU 插件", parts[2], len(parts) == 3, true
+		}
+	}
+	if len(parts) == 2 && parts[0] == "wp-content" && isWordPressDropIn(parts[1]) {
+		return "Drop-in", parts[1], true, true
+	}
+	return "", "", false, false
+}
+
+func isWordPressDropIn(name string) bool {
+	switch name {
+	case "advanced-cache.php", "db.php", "db-error.php", "install.php", "maintenance.php", "object-cache.php", "php-error.php", "fatal-error-handler.php", "sunrise.php", "blog-deleted.php", "blog-inactive.php", "blog-suspended.php":
+		return true
+	default:
+		return false
+	}
+}
+
+func summarizeFileIntegrityComponents(changes []fileIntegrityComponentChange) string {
+	if len(changes) == 0 {
+		return "代码文件发生变化"
+	}
+	const limit = 10
+	parts := make([]string, 0, min(len(changes), limit))
+	for i, change := range changes {
+		if i == limit {
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s%s %q", change.Change, change.Kind, change.Key))
+	}
+	result := strings.Join(parts, "；")
+	if len(changes) > limit {
+		result += fmt.Sprintf("；另有 %d 项组件变化", len(changes)-limit)
+	}
+	return result
+}
+
+func notifyFileIntegrityChanges(site *models.Website, newCount int, components []fileIntegrityComponentChange) {
+	msg := fmt.Sprintf("%s 在文件锁定期间发现 %d 项新的代码完整性变化：%s。请在安全防御的文件安全页面核查。", site.Domain, newCount, summarizeFileIntegrityComponents(components))
+	sendResolvedAlertEvent("alert_wp_code_integrity", "WordPress 代码完整性变化", msg, "请确认是否来自授权维护；面板不会自动删除或恢复文件。")
+}
+
 func compareFileIntegrityPath(a, b string) int {
 	aParts, bParts := strings.Split(a, "/"), strings.Split(b, "/")
 	for i := 0; i < len(aParts) && i < len(bParts); i++ {
@@ -598,14 +785,13 @@ func scanWPCodeIntegritySite(siteID int, notify bool) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Chtimes(path, time.Now(), time.Now()); err != nil {
+	if notify && newCount > 0 {
+		notifyFileIntegrityChanges(site, newCount, fileIntegrityComponentChanges(diffs))
+	}
+	if err := fileIntegrityChtimes(path, time.Now(), time.Now()); err != nil {
 		return recordIntegrityUnavailable(db, site, errors.New("update integrity scan timestamp"))
 	}
 	_ = resolveIntegrityUnavailable(db, site.ID)
-	if notify && newCount > 0 {
-		msg := fmt.Sprintf("%s 在文件锁定期间发现 %d 项新的代码完整性变化。请在安全防御的文件安全页面核查。", site.Domain, newCount)
-		sendResolvedAlertEvent("alert_wp_code_integrity", "WordPress 代码完整性变化", msg, "请确认是否来自授权维护；面板不会自动删除或恢复文件。")
-	}
 	return nil
 }
 
@@ -743,7 +929,7 @@ func runQueuedWPCodeIntegrityRefresh(db *sql.DB) bool {
 	sort.Ints(ids)
 	for _, id := range ids {
 		fileIntegrityStateMu.Lock()
-		operation, queued := fileIntegrityRefreshJobs[id]
+		job, queued := fileIntegrityRefreshJobs[id]
 		retryAfter := fileIntegrityRetryAfter[id]
 		fileIntegrityStateMu.Unlock()
 		if !queued || now.Before(retryAfter) {
@@ -760,7 +946,7 @@ func runQueuedWPCodeIntegrityRefresh(db *sql.DB) bool {
 		if !TryAcquireSiteOpLock(id, "code_integrity_refresh") {
 			continue
 		}
-		err = refreshWPCodeIntegrityBaselineOwned(id)
+		err = refreshWPCodeIntegrityBaselineOwned(id, job)
 		ReleaseSiteOpLock(id)
 		fileIntegrityStateMu.Lock()
 		if err == nil {
@@ -771,7 +957,7 @@ func runQueuedWPCodeIntegrityRefresh(db *sql.DB) bool {
 		}
 		fileIntegrityStateMu.Unlock()
 		if err != nil {
-			recordIntegrityRefreshFailure(id, operation, err)
+			recordIntegrityRefreshFailure(id, job.Operation, err)
 		}
 		return true
 	}
