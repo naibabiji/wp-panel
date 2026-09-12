@@ -310,7 +310,8 @@ func aiRuntimeConfigurationSummary(site *models.Website) map[string]interface{} 
 	result := map[string]interface{}{
 		"site_type": site.SiteType, "ssl_enabled": site.SSLEnabled, "fastcgi_cache_enabled": site.FCacheEnabled,
 		"fastcgi_cache_ttl": site.FCacheTTL, "wp_debug_enabled": site.WPDebugEnabled, "xmlrpc_enabled": site.XMLRPCEnabled,
-		"access_log_mode": site.AccessLogMode, "log_retention_days": site.LogRetentionDays,
+		"disable_application_passwords": site.DisableApplicationPasswords,
+		"access_log_mode":               site.AccessLogMode, "log_retention_days": site.LogRetentionDays,
 		"php_pool_config_present": aiFileExists(site.PHPPoolPath), "nginx_config_present": aiFileExists(site.NginxConfPath),
 	}
 	if base := filepath.Base(site.PHPPoolPath); base != "." {

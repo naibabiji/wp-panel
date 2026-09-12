@@ -1,11 +1,30 @@
 package executor
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestWriteSitePluginIdentityIncludesApplicationPasswordPolicy(t *testing.T) {
+	root := useTemporarySiteSecretsRoot(t)
+	if err := WriteSitePluginIdentity("example.com", "root", "https://127.0.0.1:8443/panel", strings.Repeat("a", 32), true); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "example.com", sitePluginConfigFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var identity sitePluginIdentity
+	if err := json.Unmarshal(content, &identity); err != nil {
+		t.Fatal(err)
+	}
+	if !identity.DisableApplicationPasswords {
+		t.Fatal("application passwords policy missing from site identity")
+	}
+}
 
 func useTemporarySiteSecretsRoot(t *testing.T) string {
 	t.Helper()

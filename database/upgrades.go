@@ -730,6 +730,14 @@ var upgrades = []Upgrade{
 		Description: "扩展 WordPress 数据库持久化对象异常监控基线",
 		Func:        ensureWPAnomalyDatabaseObjectsColumn,
 	},
+	{
+		Version:     "1.0.64",
+		Description: "新增 WordPress 应用程序密码禁用开关，存量站点保持允许",
+		SQL: []string{
+			`ALTER TABLE websites ADD COLUMN disable_application_passwords INTEGER NOT NULL DEFAULT 1`,
+			`UPDATE websites SET disable_application_passwords = 0`,
+		},
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

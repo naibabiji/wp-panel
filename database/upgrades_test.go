@@ -62,6 +62,13 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 	if oomAlertEnabled != "true" {
 		t.Fatalf("alert_oom = %q, want true", oomAlertEnabled)
 	}
+	if _, err := DB.Exec(`INSERT INTO websites (name,domain,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path) VALUES ('new','new.example','wp_new','/var/www/new','/var/log/new','db_new','user_new','/etc/php/new.conf','/etc/nginx/new.conf')`); err != nil {
+		t.Fatalf("insert fresh website: %v", err)
+	}
+	var disableApplicationPasswords int
+	if err := DB.QueryRow(`SELECT disable_application_passwords FROM websites WHERE domain='new.example'`).Scan(&disableApplicationPasswords); err != nil || disableApplicationPasswords != 1 {
+		t.Fatalf("fresh website disable_application_passwords = %d, want 1, err=%v", disableApplicationPasswords, err)
+	}
 
 	for _, col := range []string{"php_pool_path", "nginx_conf_path", "wp_memory_limit", "file_lock_enabled", "file_lock_enabled_at", "file_lock_mode", "file_lock_apply_status", "cdn_realip_enabled", "ssl_last_error", "ssl_export_enabled", "document_root_subdir", "password_reset_mode"} {
 		var exists int
@@ -175,6 +182,41 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 		if got != setting.want {
 			t.Fatalf("%s = %q, want %q", setting.key, got, setting.want)
 		}
+	}
+}
+
+func TestUpgradeApplicationPasswordPolicyPreservesExistingWebsites(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`ALTER TABLE websites DROP COLUMN disable_application_passwords`); err != nil {
+		t.Fatalf("prepare legacy websites table: %v", err)
+	}
+	if _, err := DB.Exec(`INSERT INTO websites (name,domain,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path) VALUES ('existing','existing.example','wp_existing','/var/www/existing','/var/log/existing','db_existing','user_existing','/etc/php/existing.conf','/etc/nginx/existing.conf')`); err != nil {
+		t.Fatalf("insert legacy website: %v", err)
+	}
+	if _, err := DB.Exec(`DELETE FROM schema_version`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`INSERT INTO schema_version(version) VALUES ('1.0.63')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	var disabled int
+	if err := DB.QueryRow(`SELECT disable_application_passwords FROM websites WHERE domain='existing.example'`).Scan(&disabled); err != nil || disabled != 0 {
+		t.Fatalf("existing website disable_application_passwords = %d, want 0, err=%v", disabled, err)
+	}
+	if _, err := DB.Exec(`INSERT INTO websites (name,domain,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path) VALUES ('new-after-upgrade','new-after-upgrade.example','wp_new','/var/www/new','/var/log/new','db_new','user_new','/etc/php/new.conf','/etc/nginx/new.conf')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := DB.QueryRow(`SELECT disable_application_passwords FROM websites WHERE domain='new-after-upgrade.example'`).Scan(&disabled); err != nil || disabled != 1 {
+		t.Fatalf("new website after upgrade disable_application_passwords = %d, want 1, err=%v", disabled, err)
 	}
 }
 
@@ -354,7 +396,7 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.63" {
+	if got := LatestVersion(); got != "1.0.64" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
 	for _, column := range []string{"database_backup_mode", "database_backup_source_id", "auto_rollback", "batch_id"} {

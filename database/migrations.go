@@ -48,6 +48,7 @@ var migrations = append([]string{
 		disable_wp_updates    INTEGER NOT NULL DEFAULT 0,
 		disable_file_editing  INTEGER NOT NULL DEFAULT 0,
 		xmlrpc_enabled        INTEGER NOT NULL DEFAULT 0,
+		disable_application_passwords INTEGER NOT NULL DEFAULT 1,
 		wp_debug_enabled      INTEGER NOT NULL DEFAULT 0,
 		wp_post_revisions     INTEGER NOT NULL DEFAULT -1,
 		wp_memory_limit       TEXT    NOT NULL DEFAULT '',

@@ -11,6 +11,10 @@ if (!defined('ABSPATH')) exit;
 trait WPP_Optimizer_Settings_Trait {
 
     public static function bootstrap() {
+		$cfg = self::load_config();
+		if (!empty($cfg['disable_application_passwords'])) {
+			add_filter('wp_is_application_passwords_available', '__return_false', PHP_INT_MAX);
+		}
         if (get_option(self::OPTION_NO_UPDATES, '0') !== '1') {
             return;
         }
@@ -110,6 +114,7 @@ trait WPP_Optimizer_Settings_Trait {
                 update_option(self::OPTION_NO_UPDATES, !empty($panelState['disable_wp_updates']) ? '1' : '0');
                 update_option(self::OPTION_NO_FILE_EDIT, !empty($panelState['disable_file_editing']) ? '1' : '0');
                 update_option(self::OPTION_XMLRPC_ENABLED, !empty($panelState['xmlrpc_enabled']) ? '1' : '0');
+                update_option(self::OPTION_DISABLE_APPLICATION_PASSWORDS, !empty($panelState['disable_application_passwords']) ? '1' : '0');
                 update_option(self::OPTION_WP_DEBUG, !empty($panelState['wp_debug_enabled']) ? '1' : '0');
                 update_option(self::OPTION_POST_REVISIONS, $panelState['wp_post_revisions'] ?? -1);
                 update_option(self::OPTION_MEMORY_LIMIT, $panelState['wp_memory_limit'] ?? '');
@@ -192,6 +197,7 @@ trait WPP_Optimizer_Settings_Trait {
         $imageWebpQuality = self::clamp_image_quality(get_option(self::OPTION_IMAGE_WEBP_QUALITY, 82));
         $imageSkippedCount = intval(get_option(self::OPTION_IMAGE_SKIPPED_COUNT, 0));
         $xmlrpcEnabled = get_option('wpp_optimizer_xmlrpc_enabled', '0') === '1';
+        $applicationPasswordsDisabled = !empty($cfg['disable_application_passwords']);
         ?>
         <div class="wrap">
             <?php $pluginVersion = WP_Panel_Optimizer::VERSION; ?>
@@ -334,6 +340,13 @@ trait WPP_Optimizer_Settings_Trait {
                                     影响：<strong>无法使用 Jetpack、WordPress 手机 App、pingback/trackback、第三方通过 XML-RPC 发布文章</strong>。绝大多数站点不需要此功能。<br>
                                     如需开启或关闭，请在 WP Panel 面板中打开网站详情页 → WordPress 优化 →「允许 XML-RPC 接口」开关。<br>
                                 </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>WordPress 应用程序密码</th>
+                            <td>
+                                <span style="font-weight:bold;color:<?php echo $applicationPasswordsDisabled ? '#d63638' : '#00a32a'; ?>"><?php echo $applicationPasswordsDisabled ? '已禁用' : '允许使用'; ?></span>
+                                <p class="description">应用程序密码用于手机 App、自动发布和第三方服务通过 REST API 远程认证。禁用后不影响 WordPress 后台登录和编辑。<br>如需修改，请在 WP Panel 网站详情页的 WordPress 优化设置中操作。</p>
                             </td>
                         </tr>
                     </table>

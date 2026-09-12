@@ -1963,6 +1963,8 @@
     "memory_limit_help": "如 128M、256M，遇到内存不足错误（白屏/500）时调高",
     "allow_xmlrpc": "允许 XML-RPC 接口",
     "xmlrpc_help": "默认关闭，开启后 /xmlrpc.php 可被访问",
+    "disable_application_passwords": "禁用 WordPress 应用程序密码",
+    "disable_application_passwords_help": "新网站默认禁用；关闭此开关后，手机 App、自动发布和第三方服务可使用应用程序密码远程认证",
     "clear_cache": "清除缓存",
     "plugin_installed": "✓ 插件已安装",
     "companion_active": "✓ 配套插件已安装并启用",

@@ -16,8 +16,9 @@ const (
 var siteSecretsRoot = "/var/wp-panel/site-secrets"
 
 type sitePluginIdentity struct {
-	PanelURL string `json:"panel_url"`
-	APIKey   string `json:"api_key"`
+	PanelURL                    string `json:"panel_url"`
+	APIKey                      string `json:"api_key"`
+	DisableApplicationPasswords bool   `json:"disable_application_passwords"`
 }
 
 func sitePluginSecretsDir(domain string) string {
@@ -30,11 +31,11 @@ func sitePluginConfigPath(domain string) string {
 
 // WriteSitePluginIdentity creates or replaces the panel-issued identity for a site.
 // WordPress never owns this file; it only receives read access through its PHP-FPM pool.
-func WriteSitePluginIdentity(domain, systemUser, panelURL, apiKey string) error {
+func WriteSitePluginIdentity(domain, systemUser, panelURL, apiKey string, disableApplicationPasswords bool) error {
 	if !IsValidDomain(domain) || systemUser == "" || panelURL == "" || len(apiKey) < 32 {
 		return errors.New("invalid site plugin identity")
 	}
-	content, err := json.Marshal(sitePluginIdentity{PanelURL: panelURL, APIKey: apiKey})
+	content, err := json.Marshal(sitePluginIdentity{PanelURL: panelURL, APIKey: apiKey, DisableApplicationPasswords: disableApplicationPasswords})
 	if err != nil {
 		return err
 	}
@@ -82,6 +83,24 @@ func SitePluginIdentityAvailable(domain, expectedAPIKey string) bool {
 	}
 	var identity sitePluginIdentity
 	return json.Unmarshal(content, &identity) == nil && identity.PanelURL != "" && identity.APIKey == expectedAPIKey
+}
+
+// UpdateSitePluginApplicationPasswordPolicy refreshes an existing site identity.
+// Sites without a companion identity are left alone; installation writes the
+// current policy together with the new identity.
+func UpdateSitePluginApplicationPasswordPolicy(domain, systemUser string, disabled bool) error {
+	content, err := os.ReadFile(sitePluginConfigPath(domain))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var identity sitePluginIdentity
+	if json.Unmarshal(content, &identity) != nil || identity.PanelURL == "" || len(identity.APIKey) < 32 {
+		return errors.New("invalid site plugin identity")
+	}
+	return WriteSitePluginIdentity(domain, systemUser, identity.PanelURL, identity.APIKey, disabled)
 }
 
 // moveSitePluginIdentity moves a domain-keyed identity without ever replacing an

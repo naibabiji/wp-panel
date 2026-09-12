@@ -11,33 +11,34 @@ import (
 )
 
 type SiteMigrationRuntimeSettings struct {
-	Aliases                 []string                       `json:"aliases"`
-	DocumentRootSubdir      string                         `json:"document_root_subdir"`
-	SSLEnabled              bool                           `json:"ssl_enabled"`
-	TemplateVersion         string                         `json:"template_version"`
-	AccessLogMode           string                         `json:"access_log_mode"`
-	FastCGICacheEnabled     bool                           `json:"fastcgi_cache_enabled"`
-	FastCGICacheTTL         int                            `json:"fastcgi_cache_ttl"`
-	MonitoringEnabled       bool                           `json:"monitoring_enabled"`
-	MonitoringInterval      int                            `json:"monitoring_interval"`
-	DisableWPUpdates        bool                           `json:"disable_wp_updates"`
-	DisableFileEditing      bool                           `json:"disable_file_editing"`
-	XMLRPCEnabled           bool                           `json:"xmlrpc_enabled"`
-	WPDebugEnabled          bool                           `json:"wp_debug_enabled"`
-	WPPostRevisions         int                            `json:"wp_post_revisions"`
-	WPMemoryLimit           string                         `json:"wp_memory_limit"`
-	FileLockEnabled         bool                           `json:"file_lock_enabled"`
-	FileLockMode            string                         `json:"file_lock_mode"`
-	PasswordResetMode       string                         `json:"password_reset_mode"`
-	LogRetentionDays        int                            `json:"log_retention_days"`
-	CDNRealIPEnabled        bool                           `json:"cdn_realip_enabled"`
-	PHPFPMMaxChildren       int                            `json:"php_fpm_max_children"`
-	ExpiresAt               string                         `json:"expires_at"`
-	RemoteBackupReconfigure bool                           `json:"remote_backup_reconfigure"`
-	CronJobs                []SiteMigrationCronSetting     `json:"cron_jobs,omitempty"`
-	SkippedCustomCommands   int                            `json:"skipped_custom_commands"`
-	CDNGroups               []SiteMigrationCDNGroupSetting `json:"cdn_groups,omitempty"`
-	MarkerToken             string                         `json:"marker_token"`
+	Aliases                     []string                       `json:"aliases"`
+	DocumentRootSubdir          string                         `json:"document_root_subdir"`
+	SSLEnabled                  bool                           `json:"ssl_enabled"`
+	TemplateVersion             string                         `json:"template_version"`
+	AccessLogMode               string                         `json:"access_log_mode"`
+	FastCGICacheEnabled         bool                           `json:"fastcgi_cache_enabled"`
+	FastCGICacheTTL             int                            `json:"fastcgi_cache_ttl"`
+	MonitoringEnabled           bool                           `json:"monitoring_enabled"`
+	MonitoringInterval          int                            `json:"monitoring_interval"`
+	DisableWPUpdates            bool                           `json:"disable_wp_updates"`
+	DisableFileEditing          bool                           `json:"disable_file_editing"`
+	XMLRPCEnabled               bool                           `json:"xmlrpc_enabled"`
+	DisableApplicationPasswords bool                           `json:"disable_application_passwords"`
+	WPDebugEnabled              bool                           `json:"wp_debug_enabled"`
+	WPPostRevisions             int                            `json:"wp_post_revisions"`
+	WPMemoryLimit               string                         `json:"wp_memory_limit"`
+	FileLockEnabled             bool                           `json:"file_lock_enabled"`
+	FileLockMode                string                         `json:"file_lock_mode"`
+	PasswordResetMode           string                         `json:"password_reset_mode"`
+	LogRetentionDays            int                            `json:"log_retention_days"`
+	CDNRealIPEnabled            bool                           `json:"cdn_realip_enabled"`
+	PHPFPMMaxChildren           int                            `json:"php_fpm_max_children"`
+	ExpiresAt                   string                         `json:"expires_at"`
+	RemoteBackupReconfigure     bool                           `json:"remote_backup_reconfigure"`
+	CronJobs                    []SiteMigrationCronSetting     `json:"cron_jobs,omitempty"`
+	SkippedCustomCommands       int                            `json:"skipped_custom_commands"`
+	CDNGroups                   []SiteMigrationCDNGroupSetting `json:"cdn_groups,omitempty"`
+	MarkerToken                 string                         `json:"marker_token"`
 }
 
 type SiteMigrationCDNGroupSetting struct {
@@ -81,10 +82,10 @@ func (s *SiteMigrationSettingsService) SourceSettings(ctx context.Context, migra
 	}
 	var settings SiteMigrationRuntimeSettings
 	var aliases, expires, snapshotRaw string
-	var ssl, fastcgi, monitoring, disableUpdates, disableEditing, xmlrpc, debug, fileLock, cdn int
+	var ssl, fastcgi, monitoring, disableUpdates, disableEditing, xmlrpc, disableApplicationPasswords, debug, fileLock, cdn int
 	err := s.db.QueryRowContext(ctx, `SELECT w.aliases,w.document_root_subdir,w.ssl_enabled,w.template_version,w.access_log_mode,
 		w.fastcgi_cache_enabled,w.fastcgi_cache_ttl,w.monitoring_enabled,w.monitoring_interval,w.disable_wp_updates,
-		w.disable_file_editing,w.xmlrpc_enabled,w.wp_debug_enabled,w.wp_post_revisions,w.wp_memory_limit,
+		w.disable_file_editing,w.xmlrpc_enabled,w.disable_application_passwords,w.wp_debug_enabled,w.wp_post_revisions,w.wp_memory_limit,
 		w.file_lock_enabled,w.file_lock_mode,w.password_reset_mode,w.log_retention_days,w.cdn_realip_enabled,
 		w.php_fpm_max_children,COALESCE(CAST(w.expires_at AS TEXT),''),ms.settings_snapshot
 		FROM site_migration_sites ms
@@ -94,7 +95,7 @@ func (s *SiteMigrationSettingsService) SourceSettings(ctx context.Context, migra
 		WHERE ms.id=? AND ms.stage IN ('source_frozen','manifest_ready','transferring_files','transferring_database')`, migrationSiteID).Scan(
 		&aliases, &settings.DocumentRootSubdir, &ssl, &settings.TemplateVersion, &settings.AccessLogMode,
 		&fastcgi, &settings.FastCGICacheTTL, &monitoring, &settings.MonitoringInterval, &disableUpdates,
-		&disableEditing, &xmlrpc, &debug, &settings.WPPostRevisions, &settings.WPMemoryLimit,
+		&disableEditing, &xmlrpc, &disableApplicationPasswords, &debug, &settings.WPPostRevisions, &settings.WPMemoryLimit,
 		&fileLock, &settings.FileLockMode, &settings.PasswordResetMode, &settings.LogRetentionDays, &cdn,
 		&settings.PHPFPMMaxChildren, &expires, &snapshotRaw)
 	if err != nil {
@@ -107,6 +108,7 @@ func (s *SiteMigrationSettingsService) SourceSettings(ctx context.Context, migra
 	settings.DisableWPUpdates = disableUpdates == 1
 	settings.DisableFileEditing = disableEditing == 1
 	settings.XMLRPCEnabled = xmlrpc == 1
+	settings.DisableApplicationPasswords = disableApplicationPasswords == 1
 	settings.WPDebugEnabled = debug == 1
 	settings.FileLockEnabled = fileLock == 1
 	settings.CDNRealIPEnabled = cdn == 1

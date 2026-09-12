@@ -33,7 +33,7 @@ const websiteCols = `id, name, domain, aliases, status, system_user, web_root, d
 	ssl_cert_path, ssl_key_path, ssl_expires_at, ssl_last_error, ssl_export_enabled, template_version, access_log_mode,
 	fastcgi_cache_enabled, fastcgi_cache_ttl, fastcgi_cache_key,
 	monitoring_enabled, monitoring_interval, disable_wp_updates, disable_file_editing,
-		xmlrpc_enabled, wp_debug_enabled, wp_post_revisions, wp_memory_limit,
+		xmlrpc_enabled, disable_application_passwords, wp_debug_enabled, wp_post_revisions, wp_memory_limit,
 		file_lock_enabled, file_lock_mode, file_lock_apply_status,
 		password_reset_mode,
 		log_retention_days, cdn_realip_enabled, php_fpm_max_children, expires_at, created_at, updated_at`
@@ -90,7 +90,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 	var aliases, status string
 	var sslEnabled, sslExportEnabled, fCacheEnabled, monitoringEnabled int
 	var monitoringInterval int
-	var disableWPUpdates, disableFileEditing, xmlrpcEnabled int
+	var disableWPUpdates, disableFileEditing, xmlrpcEnabled, disableApplicationPasswords int
 	var wpDebugEnabled int
 	var wpPostRevisions int
 	var wpMemoryLimit string
@@ -106,7 +106,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 		&w.SSLExpiresAt, &w.SSLLastError, &sslExportEnabled, &w.TemplateVersion, &w.AccessLogMode,
 		&fCacheEnabled, &w.FCacheTTL, &w.FCacheKey,
 		&monitoringEnabled, &monitoringInterval, &disableWPUpdates, &disableFileEditing,
-		&xmlrpcEnabled, &wpDebugEnabled, &wpPostRevisions, &wpMemoryLimit,
+		&xmlrpcEnabled, &disableApplicationPasswords, &wpDebugEnabled, &wpPostRevisions, &wpMemoryLimit,
 		&fileLockEnabled, &w.FileLockMode, &w.FileLockApplyStatus,
 		&passwordResetMode,
 		&logRetentionDays, &cdnRealIPEnabled, &w.PHPFPMMaxChildren, &w.ExpiresAt,
@@ -126,6 +126,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 	w.DisableWPUpdates = disableWPUpdates == 1
 	w.DisableFileEditing = disableFileEditing == 1
 	w.XMLRPCEnabled = xmlrpcEnabled == 1
+	w.DisableApplicationPasswords = disableApplicationPasswords == 1
 	w.WPDebugEnabled = wpDebugEnabled == 1
 	w.WPPostRevisions = wpPostRevisions
 	w.WPMemoryLimit = wpMemoryLimit
@@ -2110,7 +2111,7 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 	// 清理旧路径下的配置文件（迁移到 Web 目录外之前的位置）
 	os.Remove(filepath.Join(pluginDir, "wp-panel-config.json"))
 
-	if err := executor.WriteSitePluginIdentity(domain, systemUser, panelURL, apiKey); err != nil {
+	if err := executor.WriteSitePluginIdentity(domain, systemUser, panelURL, apiKey, site.DisableApplicationPasswords); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("写入插件密钥失败"))
 		return
 	}
@@ -2230,16 +2231,17 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 	}
 
 	var req struct {
-		FCacheEnabled      bool   `json:"fcache_enabled"`
-		FCacheTTL          int    `json:"fcache_ttl"`
-		DisableWPUpdates   bool   `json:"disable_wp_updates"`
-		ExpectedWPUpdates  *bool  `json:"expected_disable_wp_updates"`
-		DisableFileEditing bool   `json:"disable_file_editing"`
-		XMLRPCEnabled      bool   `json:"xmlrpc_enabled"`
-		WPDebugEnabled     bool   `json:"wp_debug_enabled"`
-		WPDebugDisplay     *bool  `json:"wp_debug_display"`
-		WPPostRevisions    int    `json:"wp_post_revisions"`
-		WPMemoryLimit      string `json:"wp_memory_limit"`
+		FCacheEnabled               bool   `json:"fcache_enabled"`
+		FCacheTTL                   int    `json:"fcache_ttl"`
+		DisableWPUpdates            bool   `json:"disable_wp_updates"`
+		ExpectedWPUpdates           *bool  `json:"expected_disable_wp_updates"`
+		DisableFileEditing          bool   `json:"disable_file_editing"`
+		XMLRPCEnabled               bool   `json:"xmlrpc_enabled"`
+		DisableApplicationPasswords bool   `json:"disable_application_passwords"`
+		WPDebugEnabled              bool   `json:"wp_debug_enabled"`
+		WPDebugDisplay              *bool  `json:"wp_debug_display"`
+		WPPostRevisions             int    `json:"wp_post_revisions"`
+		WPMemoryLimit               string `json:"wp_memory_limit"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
@@ -2255,9 +2257,9 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 
 	// 检查 FastCGI / XML-RPC 配置是否变化，决定是否重载 Nginx
 	var domain string
-	var oldFCacheEnabled, oldFCacheTTL, oldXMLRPCEnabled, oldDisableWPUpdates int
-	if err := db.QueryRow("SELECT domain, fastcgi_cache_enabled, fastcgi_cache_ttl, xmlrpc_enabled, disable_wp_updates FROM websites WHERE id = ?", id).
-		Scan(&domain, &oldFCacheEnabled, &oldFCacheTTL, &oldXMLRPCEnabled, &oldDisableWPUpdates); err != nil {
+	var oldFCacheEnabled, oldFCacheTTL, oldXMLRPCEnabled, oldDisableWPUpdates, oldDisableApplicationPasswords int
+	if err := db.QueryRow("SELECT domain, fastcgi_cache_enabled, fastcgi_cache_ttl, xmlrpc_enabled, disable_wp_updates, disable_application_passwords FROM websites WHERE id = ?", id).
+		Scan(&domain, &oldFCacheEnabled, &oldFCacheTTL, &oldXMLRPCEnabled, &oldDisableWPUpdates, &oldDisableApplicationPasswords); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败"))
 		return
 	}
@@ -2282,6 +2284,10 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 	if req.XMLRPCEnabled {
 		xmlrpcEnabled = 1
 	}
+	disableApplicationPasswords := 0
+	if req.DisableApplicationPasswords {
+		disableApplicationPasswords = 1
+	}
 
 	wpDebug := 0
 	if req.WPDebugEnabled {
@@ -2304,10 +2310,10 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 
 	updateQuery := `UPDATE websites SET
 		fastcgi_cache_enabled = ?, fastcgi_cache_ttl = ?,
-		disable_wp_updates = ?, disable_file_editing = ?, xmlrpc_enabled = ?,
+		disable_wp_updates = ?, disable_file_editing = ?, xmlrpc_enabled = ?, disable_application_passwords = ?,
 		wp_debug_enabled = ?, wp_post_revisions = ?, wp_memory_limit = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`
-	updateArgs := []any{fcEnabled, req.FCacheTTL, disableUpdates, disableEditing, xmlrpcEnabled,
+	updateArgs := []any{fcEnabled, req.FCacheTTL, disableUpdates, disableEditing, xmlrpcEnabled, disableApplicationPasswords,
 		wpDebug, req.WPPostRevisions, req.WPMemoryLimit, id}
 	if req.ExpectedWPUpdates != nil {
 		updateQuery += " AND disable_wp_updates = ?"
@@ -2317,18 +2323,28 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 		}
 		updateArgs = append(updateArgs, expected)
 	}
+	applicationPasswordPolicyChanged := oldDisableApplicationPasswords != disableApplicationPasswords
+	if applicationPasswordPolicyChanged {
+		if err := executor.UpdateSitePluginApplicationPasswordPolicy(domain, site.SystemUser, req.DisableApplicationPasswords); err != nil {
+			respondWPOptimizationFailure(c, rollbackWPConfig, domain, http.StatusInternalServerError, "保存失败：无法同步配套插件策略", err)
+			return
+		}
+	}
 	result, err := db.Exec(updateQuery, updateArgs...)
 	if err != nil {
+		rollbackApplicationPasswordPolicy(domain, site.SystemUser, oldDisableApplicationPasswords, applicationPasswordPolicyChanged)
 		respondWPOptimizationFailure(c, rollbackWPConfig, domain, http.StatusInternalServerError, "保存失败", err)
 		return
 	}
 	if req.ExpectedWPUpdates != nil {
 		affected, rowsErr := result.RowsAffected()
 		if rowsErr != nil {
+			rollbackApplicationPasswordPolicy(domain, site.SystemUser, oldDisableApplicationPasswords, applicationPasswordPolicyChanged)
 			respondWPOptimizationFailure(c, rollbackWPConfig, domain, http.StatusInternalServerError, "保存失败", rowsErr)
 			return
 		}
 		if affected == 0 {
+			rollbackApplicationPasswordPolicy(domain, site.SystemUser, oldDisableApplicationPasswords, applicationPasswordPolicyChanged)
 			respondWPOptimizationFailure(c, rollbackWPConfig, domain, http.StatusConflict, i18n.TE(c.Request, "website.optimization_conflict"), fmt.Errorf("concurrent update conflict"))
 			return
 		}
@@ -2343,13 +2359,22 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 		})
 	}
 	if domain != "" {
-		recordHandlerOperationLog("wp_optimizations", domain, "success", wpOptimizationsLogMessage(req.FCacheEnabled, req.FCacheTTL, req.DisableWPUpdates, req.DisableFileEditing, req.XMLRPCEnabled, req.WPDebugEnabled, wpDebugDisplay, req.WPPostRevisions, req.WPMemoryLimit))
+		recordHandlerOperationLog("wp_optimizations", domain, "success", wpOptimizationsLogMessage(req.FCacheEnabled, req.FCacheTTL, req.DisableWPUpdates, req.DisableFileEditing, req.XMLRPCEnabled, req.DisableApplicationPasswords, req.WPDebugEnabled, wpDebugDisplay, req.WPPostRevisions, req.WPMemoryLimit))
 	}
 	if site.FileLockEnabled && site.FileLockApplyStatus == executor.FileLockApplyStatusReady {
 		executor.RefreshWPCodeIntegrityBaselineBestEffort(id, "WordPress 优化设置保存成功")
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
+}
+
+func rollbackApplicationPasswordPolicy(domain, systemUser string, previousValue int, changed bool) {
+	if !changed {
+		return
+	}
+	if err := executor.UpdateSitePluginApplicationPasswordPolicy(domain, systemUser, previousValue == 1); err != nil {
+		log.Printf("回滚 WordPress 应用程序密码策略失败 domain=%s: %v", domain, err)
+	}
 }
 
 func (h *WebsiteHandler) SetWPUpdateChecks(c *gin.Context) {
@@ -2836,29 +2861,30 @@ func (h *CacheHelperHandler) FindByDomain(c *gin.Context) {
 		return
 	}
 
-	var siteID, fcacheEnabled, fcacheTTL, disableUpdates, disableEditing, xmlrpcEnabled, wpDebugEnabled, wpPostRevisions, fileLockEnabled int
+	var siteID, fcacheEnabled, fcacheTTL, disableUpdates, disableEditing, xmlrpcEnabled, disableApplicationPasswords, wpDebugEnabled, wpPostRevisions, fileLockEnabled int
 	var wpMemoryLimit string
 	err := database.GetDB().QueryRow(
-		"SELECT id, fastcgi_cache_enabled, fastcgi_cache_ttl, disable_wp_updates, disable_file_editing, xmlrpc_enabled, wp_debug_enabled, wp_post_revisions, wp_memory_limit, file_lock_enabled FROM websites WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%') ESCAPE '\\'",
+		"SELECT id, fastcgi_cache_enabled, fastcgi_cache_ttl, disable_wp_updates, disable_file_editing, xmlrpc_enabled, disable_application_passwords, wp_debug_enabled, wp_post_revisions, wp_memory_limit, file_lock_enabled FROM websites WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%') ESCAPE '\\'",
 		domain, escapeLike(domain),
-	).Scan(&siteID, &fcacheEnabled, &fcacheTTL, &disableUpdates, &disableEditing, &xmlrpcEnabled, &wpDebugEnabled, &wpPostRevisions, &wpMemoryLimit, &fileLockEnabled)
+	).Scan(&siteID, &fcacheEnabled, &fcacheTTL, &disableUpdates, &disableEditing, &xmlrpcEnabled, &disableApplicationPasswords, &wpDebugEnabled, &wpPostRevisions, &wpMemoryLimit, &fileLockEnabled)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"site_id":               siteID,
-		"domain":                domain,
-		"fastcgi_cache_enabled": fcacheEnabled == 1,
-		"fastcgi_cache_ttl":     fcacheTTL,
-		"disable_wp_updates":    disableUpdates == 1,
-		"disable_file_editing":  disableEditing == 1,
-		"xmlrpc_enabled":        xmlrpcEnabled == 1,
-		"wp_debug_enabled":      wpDebugEnabled == 1,
-		"wp_post_revisions":     wpPostRevisions,
-		"wp_memory_limit":       wpMemoryLimit,
-		"file_lock_enabled":     fileLockEnabled == 1,
+		"site_id":                       siteID,
+		"domain":                        domain,
+		"fastcgi_cache_enabled":         fcacheEnabled == 1,
+		"fastcgi_cache_ttl":             fcacheTTL,
+		"disable_wp_updates":            disableUpdates == 1,
+		"disable_file_editing":          disableEditing == 1,
+		"xmlrpc_enabled":                xmlrpcEnabled == 1,
+		"disable_application_passwords": disableApplicationPasswords == 1,
+		"wp_debug_enabled":              wpDebugEnabled == 1,
+		"wp_post_revisions":             wpPostRevisions,
+		"wp_memory_limit":               wpMemoryLimit,
+		"file_lock_enabled":             fileLockEnabled == 1,
 	}))
 }
 
@@ -3004,7 +3030,7 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 			})
 		}
 	}
-	recordHandlerOperationLog("wp_optimizations", req.Domain, "success", wpOptimizationsLogMessage(req.Enabled, req.TTL, req.DisableWPUpdates, req.DisableFileEditing, false, req.WPDebugEnabled, wpDebugDisplay, req.WPPostRevisions, req.WPMemoryLimit))
+	recordHandlerOperationLog("wp_optimizations", req.Domain, "success", wpOptimizationsLogMessage(req.Enabled, req.TTL, req.DisableWPUpdates, req.DisableFileEditing, false, false, req.WPDebugEnabled, wpDebugDisplay, req.WPPostRevisions, req.WPMemoryLimit))
 	if site.FileLockEnabled && site.FileLockApplyStatus == executor.FileLockApplyStatusReady {
 		executor.RefreshWPCodeIntegrityBaselineBestEffort(site.ID, "WordPress 优化设置保存成功")
 	}
@@ -3012,7 +3038,7 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
 }
 
-func wpOptimizationsLogMessage(fcacheEnabled bool, fcacheTTL int, disableUpdates, disableEditing, xmlrpcEnabled, wpDebugEnabled, wpDebugDisplay bool, postRevisions int, memoryLimit string) string {
+func wpOptimizationsLogMessage(fcacheEnabled bool, fcacheTTL int, disableUpdates, disableEditing, xmlrpcEnabled, disableApplicationPasswords, wpDebugEnabled, wpDebugDisplay bool, postRevisions int, memoryLimit string) string {
 	state := func(enabled bool) string {
 		if enabled {
 			return "开启"
@@ -3025,6 +3051,7 @@ func wpOptimizationsLogMessage(fcacheEnabled bool, fcacheTTL int, disableUpdates
 		"禁止更新=" + state(disableUpdates),
 		"禁止文件编辑=" + state(disableEditing),
 		"XML-RPC=" + state(xmlrpcEnabled),
+		"禁用应用程序密码=" + state(disableApplicationPasswords),
 		"WP_DEBUG=" + state(wpDebugEnabled),
 		"浏览器错误显示=" + state(wpDebugEnabled && wpDebugDisplay),
 		fmt.Sprintf("文章修订=%d", postRevisions),

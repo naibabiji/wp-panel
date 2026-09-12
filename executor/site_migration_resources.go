@@ -188,12 +188,22 @@ func (s *SiteMigrationTargetResourceService) Create(ctx context.Context, migrati
 	}
 	siteIdentityPath := filepath.Join(s.stagingRoot, migrationSiteID, "identity", sitePluginConfigFileName)
 	panelURL := fmt.Sprintf("https://127.0.0.1:%d/%s", s.cfg.Panel.TLSPort, s.cfg.Panel.RandomSuffix)
+	var settingsSnapshot struct {
+		RuntimeSettings SiteMigrationRuntimeSettings `json:"runtime_settings"`
+	}
+	var settingsRaw string
+	if err := s.db.QueryRowContext(ctx, `SELECT settings_snapshot FROM site_migration_sites WHERE id=?`, migrationSiteID).Scan(&settingsRaw); err != nil {
+		return s.handleCreationError(migrationSiteID, errors.New("target site settings unavailable"))
+	}
+	if err := json.Unmarshal([]byte(settingsRaw), &settingsSnapshot); err != nil {
+		return s.handleCreationError(migrationSiteID, errors.New("target site settings invalid"))
+	}
 	if err := s.createAndRecord(ctx, migrationSiteID, "site_identity", siteIdentityPath, func() error {
 		apiKey := s.apiKey()
 		if len(apiKey) < 32 {
 			return errors.New("generated site API credential unavailable")
 		}
-		return writeMigrationSiteIdentity(siteIdentityPath, panelURL, apiKey)
+		return writeMigrationSiteIdentity(siteIdentityPath, panelURL, apiKey, settingsSnapshot.RuntimeSettings.DisableApplicationPasswords)
 	}, func() error { return os.Remove(siteIdentityPath) }); err != nil {
 		return s.handleCreationError(migrationSiteID, err)
 	}
@@ -441,14 +451,18 @@ func writeMigrationDatabaseIdentity(path, name, user, password string) error {
 	return atomicWriteMigrationFile(path, content, 0600)
 }
 
-func writeMigrationSiteIdentity(path, panelURL, apiKey string) error {
+func writeMigrationSiteIdentity(path, panelURL, apiKey string, disableApplicationPasswords bool) error {
 	if !strings.HasPrefix(panelURL, "https://127.0.0.1:") || len(apiKey) < 32 {
 		return errors.New("invalid migration site identity")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	content, err := json.Marshal(map[string]string{"panel_url": panelURL, "api_key": apiKey})
+	content, err := json.Marshal(sitePluginIdentity{
+		PanelURL:                    panelURL,
+		APIKey:                      apiKey,
+		DisableApplicationPasswords: disableApplicationPasswords,
+	})
 	if err != nil {
 		return err
 	}

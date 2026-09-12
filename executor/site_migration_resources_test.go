@@ -97,6 +97,9 @@ func (f *fakeMigrationTargetResourceOps) DropDatabase(name, user string) error {
 
 func TestSiteMigrationTargetResourcesCreateDerivedIdentityWithoutPublishingConfigs(t *testing.T) {
 	service, ops, root := setupMigrationTargetResourceServiceTest(t)
+	if _, err := database.GetDB().Exec(`UPDATE site_migration_sites SET settings_snapshot='{"existing":"kept","runtime_settings":{"disable_application_passwords":true}}' WHERE id='migration_0000001'`); err != nil {
+		t.Fatal(err)
+	}
 	spec := SiteMigrationTargetSpec{Domain: "example.com", SiteType: "wordpress"}
 	if err := service.Create(context.Background(), "migration_0000001", spec); err != nil {
 		t.Fatal(err)
@@ -126,6 +129,9 @@ func TestSiteMigrationTargetResourcesCreateDerivedIdentityWithoutPublishingConfi
 	siteIdentity, err := os.ReadFile(siteIdentityPath)
 	if err != nil || !strings.Contains(string(siteIdentity), `"api_key":"fixed-site-api-key-0000000000000000"`) {
 		t.Fatalf("site identity unavailable err=%v", err)
+	}
+	if !strings.Contains(string(siteIdentity), `"disable_application_passwords":true`) {
+		t.Fatalf("application password policy missing from migrated site identity: %s", siteIdentity)
 	}
 	if info, err := os.Stat(siteIdentityPath); err != nil {
 		t.Fatal(err)

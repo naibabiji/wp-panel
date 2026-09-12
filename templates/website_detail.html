@@ -243,6 +243,13 @@ location ^~ /api/ {
                 </label>
                 <span class="text-xs text-gray-500">{{t .Lang "website.xmlrpc_help"}}</span>
             </div>
+            <div class="flex items-center space-x-3 mb-4" x-show="site.site_type === 'wordpress'">
+                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" x-model="disableApplicationPasswords">
+                    <span>{{t .Lang "website.disable_application_passwords"}}</span>
+                </label>
+                <span class="text-xs text-gray-500">{{t .Lang "website.disable_application_passwords_help"}}</span>
+            </div>
             <div class="flex items-center space-x-3 mb-3">
                 <button @click="saveWPOptimizations()" :disabled="optimizationSaving || site.file_lock_enabled" class="btn-primary text-sm" x-text="optimizationSaving ? t('common.saving') : t('website.save_settings')"></button>
                 <button x-show="fcacheEnabled" @click="clearFCache()" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">{{t .Lang "website.clear_cache"}}</button>
@@ -753,6 +760,7 @@ function websiteDetail() {
         passwordResetMode: 'allow',
         passwordResetSaving: false,
         xmlrpcEnabled: false,
+        disableApplicationPasswords: false,
         wpDebug: false,
         wpDebugDisplay: false,
         wpPostRevisions: -1,
@@ -813,6 +821,7 @@ function websiteDetail() {
                     this.savedDisableFileEditing = this.disableFileEditing;
                     this.passwordResetMode = r.data.password_reset_mode || 'allow';
                     this.xmlrpcEnabled = r.data.xmlrpc_enabled || false;
+                    this.disableApplicationPasswords = r.data.disable_application_passwords || false;
                     this.wpDebug = r.data.wp_debug_enabled || false;
                     this.wpDebugDisplay = r.data.wp_debug_display || false;
                     this.wpPostRevisions = r.data.wp_post_revisions != null ? r.data.wp_post_revisions : -1;
@@ -1396,6 +1405,7 @@ function websiteDetail() {
                         expected_disable_wp_updates: this.savedDisableWPUpdates,
                         disable_file_editing: this.disableFileEditing,
                         xmlrpc_enabled: this.xmlrpcEnabled,
+                        disable_application_passwords: this.disableApplicationPasswords,
                         wp_debug_enabled: this.wpDebug,
                         wp_debug_display: this.wpDebug && this.wpDebugDisplay,
                         wp_post_revisions: this.wpPostRevisions,

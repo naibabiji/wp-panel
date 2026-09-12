@@ -3,7 +3,7 @@
  * Plugin Name: WP Panel Optimizer
  * Plugin URI:  https://github.com/naibabiji/wp-panel
  * Description: 与 WP Panel 面板配合，管理 FastCGI 缓存、预加载、调试模式、文章修订、内存限制等优化项。发布/更新文章自动清除缓存。
- * Version:     1.1.18
+ * Version:     1.1.19
  * Author:      WP Panel
  * Author URI:  https://blog.naibabiji.com
  * License:     GPL-2.0+
@@ -20,6 +20,7 @@ function wpp_optimizer_uninstall() {
     delete_option('wpp_optimizer_verified');
     delete_option('wpp_optimizer_log');
     delete_option('wpp_optimizer_xmlrpc_enabled');
+    delete_option('wpp_optimizer_disable_application_passwords');
     delete_option('wpp_optimizer_wp_debug');
     delete_option('wpp_optimizer_post_revisions');
     delete_option('wpp_optimizer_memory_limit');
@@ -58,7 +59,7 @@ class WP_Panel_Optimizer {
     use WPP_Optimizer_Maintenance_Trait;
     use WPP_Optimizer_Anomaly_Monitor_Trait;
 
-    const VERSION = '1.1.18';
+    const VERSION = '1.1.19';
 
     const OPTION_FCACHE_ENABLED = 'wpp_optimizer_fcache_enabled';
     const OPTION_FCACHE_TTL     = 'wpp_optimizer_fcache_ttl';
@@ -67,6 +68,7 @@ class WP_Panel_Optimizer {
     const OPTION_VERIFIED       = 'wpp_optimizer_verified';
     const OPTION_LOG            = 'wpp_optimizer_log';
     const OPTION_XMLRPC_ENABLED = 'wpp_optimizer_xmlrpc_enabled';
+    const OPTION_DISABLE_APPLICATION_PASSWORDS = 'wpp_optimizer_disable_application_passwords';
     const OPTION_WP_DEBUG       = 'wpp_optimizer_wp_debug';
     const OPTION_POST_REVISIONS = 'wpp_optimizer_post_revisions';
     const OPTION_MEMORY_LIMIT   = 'wpp_optimizer_memory_limit';

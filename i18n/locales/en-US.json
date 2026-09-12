@@ -1871,6 +1871,8 @@
     "memory_limit_help": "For example, 128M or 256M. Increase it when you hit memory errors such as a blank page or 500 error.",
     "allow_xmlrpc": "Allow XML-RPC Endpoint",
     "xmlrpc_help": "Disabled by default. When enabled, /xmlrpc.php can be accessed.",
+    "disable_application_passwords": "Disable WordPress application passwords",
+    "disable_application_passwords_help": "Disabled by default for new sites. Turn this off to allow mobile apps, automated publishing, and third-party services to authenticate remotely with application passwords.",
     "clear_cache": "Clear Cache",
     "plugin_installed": "✓ Plugin installed",
     "companion_active": "✓ Companion plugin installed and active",
