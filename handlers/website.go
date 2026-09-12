@@ -3033,7 +3033,11 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 		WPDebugDisplay     *bool  `json:"wp_debug_display"`
 		WPPostRevisions    int    `json:"wp_post_revisions"`
 		WPMemoryLimit      string `json:"wp_memory_limit"`
-		FileLockSafeOnly   bool   `json:"file_lock_safe_only"`
+		// This is deliberately scoped to fields whose real write path remains
+		// permitted by file protection. Do not turn it into a blanket bypass or
+		// reject an entire settings page merely because one field is protected.
+		// New plugin features must classify their actual filesystem/runtime writes.
+		FileLockSafeOnly bool `json:"file_lock_safe_only"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Domain == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))

@@ -3,7 +3,7 @@
  * Plugin Name: WP Panel Optimizer
  * Plugin URI:  https://wp-panel.org/
  * Description: Companion plugin for the WP Panel hosting panel: manages FastCGI cache, preload, debug mode, post revisions, memory limits and other optimizations. Clears the cache automatically when posts are published or updated.
- * Version:     1.1.23
+ * Version:     1.1.24
  * Author:      WP Panel
  * Author URI:  https://wp-panel.org/
  * License:     GPL-2.0+
@@ -68,7 +68,7 @@ class WP_Panel_Optimizer {
     use WPP_Optimizer_Maintenance_Trait;
     use WPP_Optimizer_Anomaly_Monitor_Trait;
 
-    const VERSION = '1.1.23';
+    const VERSION = '1.1.24';
 
     const OPTION_FCACHE_ENABLED = 'wpp_optimizer_fcache_enabled';
     const OPTION_FCACHE_TTL     = 'wpp_optimizer_fcache_ttl';

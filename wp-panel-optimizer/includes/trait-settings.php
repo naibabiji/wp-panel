@@ -178,6 +178,12 @@ trait WPP_Optimizer_Settings_Trait {
 
         if ($isPost) {
             check_admin_referer('wpp_optimizer_settings');
+            // File protection is not a blanket switch for this settings page.
+            // Before disabling a current or future feature, determine its real
+            // write targets. Keep database, cache, uploads, and panel-managed
+            // operations available when the active lock rules allow them; make
+            // only controls that write protected paths (currently wp-config.php)
+            // read-only. 面向 AI/开发者：禁止因文件保护而整页禁用，必须按实际写入范围判断。
             $fileLockSafeOnly = self::sync_file_lock_state(true);
             $fcacheEnabled  = !empty($_POST['fcache_enabled'])  ? true : false;
             $fcacheTTL      = isset($_POST['fcache_ttl']) ? intval($_POST['fcache_ttl']) : 300;
@@ -595,7 +601,7 @@ trait WPP_Optimizer_Settings_Trait {
 
                 <div class="wpp-tab-panel" data-tab-panel="security" style="display:none">
                     <?php if ($fileLockEnabled): ?>
-                        <p class="wpp-statusline is-active"><span class="dashicons dashicons-lock" aria-hidden="true"></span><?php echo esc_html__('File protection is enabled. Settings that modify wp-config.php are read-only; other settings and actions remain available.', 'wp-panel-optimizer'); ?></p>
+                        <p class="wpp-statusline is-warning"><span class="dashicons dashicons-warning" aria-hidden="true"></span><?php echo esc_html__('File protection is enabled. Settings that modify wp-config.php are read-only; other settings and actions remain available.', 'wp-panel-optimizer'); ?></p>
                     <?php endif; ?>
                     <section class="wpp-section">
                         <header class="wpp-section__head">

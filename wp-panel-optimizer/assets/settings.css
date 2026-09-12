@@ -1214,6 +1214,12 @@
     border-left-color: var(--wpp-accent);
 }
 
+.wpp-settings .wpp-statusline.is-warning {
+    background: #fff8e5;
+    border-color: #f0d58c;
+    border-left-color: var(--wpp-warn);
+}
+
 .wpp-settings .wpp-statusline .dashicons {
     color: var(--wpp-muted);
     flex: 0 0 auto;
@@ -1224,6 +1230,10 @@
 
 .wpp-settings .wpp-statusline.is-active .dashicons {
     color: var(--wpp-accent);
+}
+
+.wpp-settings .wpp-statusline.is-warning .dashicons {
+    color: var(--wpp-warn);
 }
 
 /* ---------- 移动端 ---------- */
