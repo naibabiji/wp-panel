@@ -245,9 +245,13 @@ func TestSaveWPOptimizationsAllowsPHPWithoutWPConfig(t *testing.T) {
 
 func performPluginOptimizationRequest(t *testing.T) *httptest.ResponseRecorder {
 	t.Helper()
+	return performPluginOptimizationRequestWithBody(t, `{"domain":"example.com","enabled":false,"ttl":300,"disable_wp_updates":false,"disable_file_editing":false,"wp_debug_enabled":true,"wp_post_revisions":-1,"wp_memory_limit":""}`)
+}
+
+func performPluginOptimizationRequestWithBody(t *testing.T, body string) *httptest.ResponseRecorder {
+	t.Helper()
 	router := gin.New()
 	router.PUT("/api/sites/optimizer-settings", (&CacheHelperHandler{}).UpdateOptimizerSettings)
-	body := `{"domain":"example.com","enabled":false,"ttl":300,"disable_wp_updates":false,"disable_file_editing":false,"wp_debug_enabled":true,"wp_post_revisions":-1,"wp_memory_limit":""}`
 	req := httptest.NewRequest(http.MethodPut, "/api/sites/optimizer-settings", strings.NewReader(body))
 	req.RemoteAddr = "127.0.0.1:12345"
 	req.Header.Set("Content-Type", "application/json")
@@ -255,6 +259,53 @@ func performPluginOptimizationRequest(t *testing.T) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	return rec
+}
+
+func TestPluginOptimizationFileLockSafeOnlyUpdatesCacheFields(t *testing.T) {
+	setupWebsiteOptimizationsTestDB(t)
+	db := database.GetDB()
+	if _, err := db.Exec(`UPDATE websites SET plugin_api_key='secret', file_lock_enabled=1, fastcgi_cache_enabled=0, fastcgi_cache_ttl=300, disable_wp_updates=1, disable_file_editing=1, wp_debug_enabled=1, wp_post_revisions=5, wp_memory_limit='128M' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := performPluginOptimizationRequestWithBody(t, `{"domain":"example.com","enabled":true,"ttl":600,"disable_wp_updates":false,"disable_file_editing":false,"wp_debug_enabled":false,"wp_post_revisions":0,"wp_memory_limit":"32M","file_lock_safe_only":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var cacheEnabled, ttl, noUpdates, noEdit, debugEnabled, revisions int
+	var memoryLimit string
+	if err := db.QueryRow(`SELECT fastcgi_cache_enabled, fastcgi_cache_ttl, disable_wp_updates, disable_file_editing, wp_debug_enabled, wp_post_revisions, wp_memory_limit FROM websites WHERE id=1`).Scan(&cacheEnabled, &ttl, &noUpdates, &noEdit, &debugEnabled, &revisions, &memoryLimit); err != nil {
+		t.Fatal(err)
+	}
+	if cacheEnabled != 1 || ttl != 600 {
+		t.Fatalf("cache fields=(%d,%d), want (1,600)", cacheEnabled, ttl)
+	}
+	if noUpdates != 1 || noEdit != 1 || debugEnabled != 1 || revisions != 5 || memoryLimit != "128M" {
+		t.Fatalf("protected fields changed: updates=%d edit=%d debug=%d revisions=%d memory=%q", noUpdates, noEdit, debugEnabled, revisions, memoryLimit)
+	}
+}
+
+func TestPluginOptimizationFileLockRejectsFullUpdate(t *testing.T) {
+	setupWebsiteOptimizationsTestDB(t)
+	if _, err := database.GetDB().Exec(`UPDATE websites SET plugin_api_key='secret', file_lock_enabled=1 WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	rec := performPluginOptimizationRequest(t)
+	if rec.Code != http.StatusLocked {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPluginOptimizationRejectsStaleFileLockSafeOnlyUpdate(t *testing.T) {
+	setupWebsiteOptimizationsTestDB(t)
+	if _, err := database.GetDB().Exec(`UPDATE websites SET plugin_api_key='secret', file_lock_enabled=0 WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	rec := performPluginOptimizationRequestWithBody(t, `{"domain":"example.com","enabled":true,"ttl":600,"file_lock_safe_only":true}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestWPOptimizationEndpointsSerializeBySite(t *testing.T) {

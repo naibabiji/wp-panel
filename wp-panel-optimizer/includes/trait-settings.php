@@ -178,16 +178,14 @@ trait WPP_Optimizer_Settings_Trait {
 
         if ($isPost) {
             check_admin_referer('wpp_optimizer_settings');
-            if (self::sync_file_lock_state(true)) {
-                $notice = '<div class="notice notice-warning"><p><strong>' . esc_html__('WP Panel file lock is enabled.', 'wp-panel-optimizer') . '</strong> ' . esc_html__('Settings were not saved because one or more changes need to update wp-config.php. Use File protection / maintenance in the upper-right corner to unlock the site temporarily, then save again. If temporary maintenance is unavailable, ask the server administrator to handle the change in WP Panel.', 'wp-panel-optimizer') . '</p></div>';
-            } else {
+            $fileLockSafeOnly = self::sync_file_lock_state(true);
             $fcacheEnabled  = !empty($_POST['fcache_enabled'])  ? true : false;
             $fcacheTTL      = isset($_POST['fcache_ttl']) ? intval($_POST['fcache_ttl']) : 300;
-            $noUpdates      = !empty($_POST['no_updates'])      ? true : false;
-            $noFileEdit     = !empty($_POST['no_file_edit'])    ? true : false;
-            $wpDebug        = !empty($_POST['wp_debug'])        ? true : false;
-            $postRevisions  = (isset($_POST['post_revisions']) && $_POST['post_revisions'] !== '') ? intval($_POST['post_revisions']) : -1;
-            $memoryLimit    = isset($_POST['memory_limit']) ? sanitize_text_field($_POST['memory_limit']) : '';
+            $noUpdates      = $fileLockSafeOnly ? get_option(self::OPTION_NO_UPDATES, '0') === '1' : !empty($_POST['no_updates']);
+            $noFileEdit     = $fileLockSafeOnly ? get_option(self::OPTION_NO_FILE_EDIT, '0') === '1' : !empty($_POST['no_file_edit']);
+            $wpDebug        = $fileLockSafeOnly ? get_option(self::OPTION_WP_DEBUG, '0') === '1' : !empty($_POST['wp_debug']);
+            $postRevisions  = $fileLockSafeOnly ? intval(get_option(self::OPTION_POST_REVISIONS, '-1')) : ((isset($_POST['post_revisions']) && $_POST['post_revisions'] !== '') ? intval($_POST['post_revisions']) : -1);
+            $memoryLimit    = $fileLockSafeOnly ? get_option(self::OPTION_MEMORY_LIMIT, '') : (isset($_POST['memory_limit']) ? sanitize_text_field($_POST['memory_limit']) : '');
             $preloadEnabled = !empty($_POST['preload_enabled']) ? true : false;
             $preloadLimit   = isset($_POST['preload_limit']) ? intval(wp_unslash($_POST['preload_limit'])) : 100;
 
@@ -209,27 +207,31 @@ trait WPP_Optimizer_Settings_Trait {
 
             update_option(self::OPTION_FCACHE_ENABLED, $fcacheEnabled ? '1' : '0');
             update_option(self::OPTION_FCACHE_TTL, $fcacheTTL);
-            update_option(self::OPTION_NO_UPDATES, $noUpdates ? '1' : '0');
-            if ($noUpdates) {
-                self::clear_update_schedules();
+            if (!$fileLockSafeOnly) {
+                update_option(self::OPTION_NO_UPDATES, $noUpdates ? '1' : '0');
+                if ($noUpdates) {
+                    self::clear_update_schedules();
+                }
+                update_option(self::OPTION_NO_FILE_EDIT, $noFileEdit ? '1' : '0');
+                update_option(self::OPTION_WP_DEBUG, $wpDebug ? '1' : '0');
+                update_option(self::OPTION_POST_REVISIONS, $postRevisions);
+                update_option(self::OPTION_MEMORY_LIMIT, $memoryLimit);
             }
-            update_option(self::OPTION_NO_FILE_EDIT, $noFileEdit ? '1' : '0');
-            update_option(self::OPTION_WP_DEBUG, $wpDebug ? '1' : '0');
-            update_option(self::OPTION_POST_REVISIONS, $postRevisions);
-            update_option(self::OPTION_MEMORY_LIMIT, $memoryLimit);
             update_option(self::OPTION_PRELOAD_ENABLED, $preloadEnabled ? '1' : '0');
             update_option(self::OPTION_PRELOAD_LIMIT, $preloadLimit);
 
-            $pushed = self::push_optimizer_settings($fcacheEnabled, $fcacheTTL, $noUpdates, $noFileEdit, $wpDebug, $postRevisions, $memoryLimit);
+            $pushed = self::push_optimizer_settings($fcacheEnabled, $fcacheTTL, $noUpdates, $noFileEdit, $wpDebug, $postRevisions, $memoryLimit, $fileLockSafeOnly);
             if ($pushed === true) {
-                $notice = '<div class="notice notice-success"><p>' . esc_html__('Settings saved and synced to the panel.', 'wp-panel-optimizer') . '</p></div>';
+                $noticeText = $fileLockSafeOnly
+                    ? __('Available settings were saved. Settings that modify wp-config.php remain unchanged while file protection is enabled.', 'wp-panel-optimizer')
+                    : __('Settings saved and synced to the panel.', 'wp-panel-optimizer');
+                $notice = '<div class="notice notice-success"><p>' . esc_html($noticeText) . '</p></div>';
             } else {
                 $errMsg = is_wp_error($pushed) ? $pushed->get_error_message() : __('Unknown error', 'wp-panel-optimizer');
                 $notice = '<div class="notice notice-warning is-dismissible"><p><strong>' . esc_html__('Note:', 'wp-panel-optimizer') . '</strong> ' . esc_html__('Settings were saved locally but failed to sync to the panel. Error message:', 'wp-panel-optimizer') . ' <code>' . esc_html($errMsg) . '</code></p><p>' . esc_html__('The next time you open this page, state will be pulled from the panel and may overwrite these changes. Please check whether "Verify panel connection" in the plugin settings works.', 'wp-panel-optimizer') . '</p></div>';
             }
             if ($switchedToWebp) {
                 $notice .= '<div class="notice notice-info"><p><strong>' . esc_html__('WebP mode is enabled.', 'wp-panel-optimizer') . '</strong> ' . esc_html__('Newly uploaded JPG/PNG images are converted automatically to smaller WebP files; the originals are no longer kept. The vast majority of sites can switch without any impact; if some email notifications, share cards, or older plugins turn out to need the original format later, the affected WebP images can be converted back to JPG/PNG at any time.', 'wp-panel-optimizer') . '</p></div>';
-            }
             }
         }
 
@@ -583,19 +585,18 @@ trait WPP_Optimizer_Settings_Trait {
                             <p class="wpp-field__note" id="wpp-image-batch-progress" style="display:none"></p>
                             <p class="wpp-field__note" id="wpp-image-batch-lifetime" style="display:none"></p>
                             <div class="wpp-ops">
-                                <button type="button" id="wpp-image-batch-start" class="button button-primary" <?php disabled($fileLockEnabled); ?>><?php echo esc_html__('Start batch optimization', 'wp-panel-optimizer'); ?></button>
+                                <button type="button" id="wpp-image-batch-start" class="button button-primary"><?php echo esc_html__('Start batch optimization', 'wp-panel-optimizer'); ?></button>
                                 <button type="button" id="wpp-image-batch-stop" class="button" style="display:none"><?php echo esc_html__('Stop', 'wp-panel-optimizer'); ?></button>
-                                <?php if ($fileLockEnabled): ?>
-                                    <p class="wpp-ops__reason is-warn"><?php echo esc_html__('Batch optimization is unavailable while file protection is enabled because it rewrites Media Library files.', 'wp-panel-optimizer'); ?> <?php echo $showMaintenance ? esc_html__('Use File protection / maintenance in the upper-right corner to unlock the site temporarily, then try again.', 'wp-panel-optimizer') : esc_html__('Ask the server administrator to temporarily unlock the site in WP Panel, then try again.', 'wp-panel-optimizer'); ?></p>
-                                <?php else: ?>
-                                    <p class="wpp-ops__note"><?php echo esc_html__('Speed is controlled by the panel; large libraries can take a while.', 'wp-panel-optimizer'); ?></p>
-                                <?php endif; ?>
+                                <p class="wpp-ops__note"><?php echo esc_html__('Speed is controlled by the panel; large libraries can take a while.', 'wp-panel-optimizer'); ?></p>
                             </div>
                         </div>
                     </section>
                 </div>
 
                 <div class="wpp-tab-panel" data-tab-panel="security" style="display:none">
+                    <?php if ($fileLockEnabled): ?>
+                        <p class="wpp-statusline is-active"><span class="dashicons dashicons-lock" aria-hidden="true"></span><?php echo esc_html__('File protection is enabled. Settings that modify wp-config.php are read-only; other settings and actions remain available.', 'wp-panel-optimizer'); ?></p>
+                    <?php endif; ?>
                     <section class="wpp-section">
                         <header class="wpp-section__head">
                             <h2 class="wpp-section__title"><span class="dashicons dashicons-lock" aria-hidden="true"></span><?php echo esc_html__('WordPress hardening', 'wp-panel-optimizer'); ?></h2>
@@ -609,7 +610,7 @@ trait WPP_Optimizer_Settings_Trait {
                                 </div>
                                 <div class="wpp-field__body">
                                     <label class="wpp-switch">
-                                        <input id="wpp-no-updates" name="no_updates" type="checkbox" value="1" <?php checked($noUpdates); ?>>
+                                        <input id="wpp-no-updates" name="no_updates" type="checkbox" value="1" <?php checked($noUpdates); ?> <?php disabled($fileLockEnabled); ?>>
                                         <span class="wpp-switch__track"><span class="wpp-switch__thumb"></span></span>
                                         <span class="wpp-switch__text"><?php echo esc_html__('Block update checks for core, plugins, and themes', 'wp-panel-optimizer'); ?></span>
                                     </label>
@@ -627,7 +628,7 @@ trait WPP_Optimizer_Settings_Trait {
                                 </div>
                                 <div class="wpp-field__body">
                                     <label class="wpp-switch">
-                                        <input id="wpp-no-file-edit" name="no_file_edit" type="checkbox" value="1" <?php checked($noFileEdit); ?>>
+                                        <input id="wpp-no-file-edit" name="no_file_edit" type="checkbox" value="1" <?php checked($noFileEdit); ?> <?php disabled($fileLockEnabled); ?>>
                                         <span class="wpp-switch__track"><span class="wpp-switch__thumb"></span></span>
                                         <span class="wpp-switch__text"><?php echo esc_html__('Prevent editing theme and plugin files in the dashboard', 'wp-panel-optimizer'); ?></span>
                                     </label>
@@ -641,7 +642,7 @@ trait WPP_Optimizer_Settings_Trait {
                                 </div>
                                 <div class="wpp-field__body">
                                     <label class="wpp-switch">
-                                        <input id="wpp-wp-debug" name="wp_debug" type="checkbox" value="1" <?php checked($wpDebug); ?>>
+                                        <input id="wpp-wp-debug" name="wp_debug" type="checkbox" value="1" <?php checked($wpDebug); ?> <?php disabled($fileLockEnabled); ?>>
                                         <span class="wpp-switch__track"><span class="wpp-switch__thumb"></span></span>
                                         <span class="wpp-switch__text"><?php echo esc_html__('Enable the debug log', 'wp-panel-optimizer'); ?></span>
                                     </label>
@@ -671,7 +672,7 @@ trait WPP_Optimizer_Settings_Trait {
                                     <span class="wpp-field__summary"><?php echo esc_html__('Limit how many historical revisions each post keeps.', 'wp-panel-optimizer'); ?></span>
                                 </div>
                                 <div class="wpp-field__body">
-                                    <input id="wpp-post-revisions" name="post_revisions" type="number" class="wpp-input wpp-input--num" value="<?php echo esc_attr($postRevisions >= 0 ? $postRevisions : ''); ?>" min="-1" placeholder="<?php echo esc_attr__('Default', 'wp-panel-optimizer'); ?>">
+                                    <input id="wpp-post-revisions" name="post_revisions" type="number" class="wpp-input wpp-input--num" value="<?php echo esc_attr($postRevisions >= 0 ? $postRevisions : ''); ?>" min="-1" placeholder="<?php echo esc_attr__('Default', 'wp-panel-optimizer'); ?>" <?php disabled($fileLockEnabled); ?>>
                                     <ul class="wpp-points">
                                         <li><span class="wpp-points__label"><?php echo esc_html__('Purpose', 'wp-panel-optimizer'); ?></span><?php echo esc_html__('Keeps past versions of a post so accidental edits can be restored.', 'wp-panel-optimizer'); ?></li>
                                         <li><span class="wpp-points__label"><?php echo esc_html__('Recommendation', 'wp-panel-optimizer'); ?></span><?php echo sprintf(esc_html__('A value of %1$s3–5%2$s works for most sites; leave empty for no limit.', 'wp-panel-optimizer'), '<strong>', '</strong>'); ?></li>
@@ -685,7 +686,7 @@ trait WPP_Optimizer_Settings_Trait {
                                     <span class="wpp-field__summary"><?php echo esc_html__('Adjust only when memory exhaustion errors appear.', 'wp-panel-optimizer'); ?></span>
                                 </div>
                                 <div class="wpp-field__body">
-                                    <input id="wpp-memory-limit" name="memory_limit" type="text" class="wpp-input wpp-input--num" value="<?php echo esc_attr($memoryLimit); ?>" placeholder="<?php echo esc_attr__('Default 40M', 'wp-panel-optimizer'); ?>">
+                                    <input id="wpp-memory-limit" name="memory_limit" type="text" class="wpp-input wpp-input--num" value="<?php echo esc_attr($memoryLimit); ?>" placeholder="<?php echo esc_attr__('Default 40M', 'wp-panel-optimizer'); ?>" <?php disabled($fileLockEnabled); ?>>
                                     <p class="wpp-field__note"><?php echo sprintf(esc_html__('Current PHP memory limit on this server: %1$s. If you are unsure, leave this blank. If more memory is needed, try %2$s or %3$s.', 'wp-panel-optimizer'), '<strong>' . esc_html($phpMemoryLimit) . '</strong>', '<strong>128M</strong>', '<strong>256M</strong>'); ?></p>
                                     <details class="wpp-more">
                                         <summary><?php echo esc_html__('More details', 'wp-panel-optimizer'); ?></summary>
@@ -853,9 +854,9 @@ trait WPP_Optimizer_Settings_Trait {
                 </div>
 
                 <div class="wpp-actions">
-                    <button type="submit" name="wpp_save" class="button button-primary" <?php disabled($fileLockEnabled); ?>><?php echo esc_html__('Save settings', 'wp-panel-optimizer'); ?></button>
+                    <button type="submit" name="wpp_save" class="button button-primary"><?php echo esc_html__('Save settings', 'wp-panel-optimizer'); ?></button>
                     <?php if ($fileLockEnabled): ?>
-                        <p class="wpp-ops__reason is-warn"><?php echo esc_html__('Saving is unavailable while file protection is enabled because some settings may update protected configuration files.', 'wp-panel-optimizer'); ?> <?php echo $showMaintenance ? esc_html__('Use File protection / maintenance in the upper-right corner to unlock the site temporarily, then try again.', 'wp-panel-optimizer') : esc_html__('Ask the server administrator to temporarily unlock the site in WP Panel, then try again.', 'wp-panel-optimizer'); ?></p>
+                        <p class="wpp-actions__hint"><?php echo esc_html__('Available settings can still be saved. Read-only settings remain unchanged until file protection is temporarily unlocked.', 'wp-panel-optimizer'); ?></p>
                     <?php else: ?>
                         <p class="wpp-actions__hint"><?php echo esc_html__('Settings sync to WP Panel after saving; cache-related changes may take a few seconds to take effect.', 'wp-panel-optimizer'); ?></p>
                     <?php endif; ?>

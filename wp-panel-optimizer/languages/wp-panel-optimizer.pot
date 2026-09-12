@@ -1,156 +1,51 @@
 # Copyright (C) 2026 WP Panel
-# This file is distributed under the GPL-2.0+ license.
+# This file is distributed under the GPL-2.0+.
 msgid ""
 msgstr ""
-"Project-Id-Version: WP Panel Optimizer 1.1.22\n"
-"Report-Msgid-Bugs-To: https://wp-panel.org/\n"
+"Project-Id-Version: WP Panel Optimizer 1.1.23\n"
+"Report-Msgid-Bugs-To: https://github.com/naibabiji/wp-panel/issues\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
+"POT-Creation-Date: 2026-09-12 00:00+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: wp-panel-optimizer\n"
 
-#: includes/trait-settings.php:926
-msgid " (%s failed)"
+#. Plugin Name of the plugin
+#: wp-panel-optimizer.php:3
+msgid "WP Panel Optimizer"
 msgstr ""
 
-#: includes/trait-settings.php:777
-msgid "\"Verify panel connection\" checks that the plugin can read and save settings properly; it is not a security scan of the site."
+#. Plugin URI of the plugin
+#. Author URI of the plugin
+#: wp-panel-optimizer.php:4
+#: wp-panel-optimizer.php:8
+msgid "https://wp-panel.org/"
 msgstr ""
 
-#: includes/trait-settings.php:395
-msgid "%1$s300%2$s seconds equal 5 minutes. For most sites, %1$s300–3600%2$s seconds works well."
+#. Description of the plugin
+#: wp-panel-optimizer.php:5
+msgid "Companion plugin for the WP Panel hosting panel: manages FastCGI cache, preload, debug mode, post revisions, memory limits and other optimizations. Clears the cache automatically when posts are published or updated."
 msgstr ""
 
-#: includes/trait-settings.php:501
-msgid "%d images could not be converted (unsupported file format, or the converted file would have been larger, etc.); the originals were kept automatically and uploads are unaffected."
+#. Author of the plugin
+#: wp-panel-optimizer.php:7
+msgid "WP Panel"
 msgstr ""
 
-#: includes/trait-settings.php:924
-msgid "%s MB saved in total (all batch jobs)"
+#: includes/trait-cache.php:17
+msgid "The Nginx cache was cleared. Each page will be cached again the next time it is visited."
 msgstr ""
 
-#: includes/trait-settings.php:928
-msgid "; %s MB saved this run"
-msgstr ""
-
-#: includes/trait-settings.php:927
-msgid "; %s files were already processed earlier and were skipped this run"
-msgstr ""
-
-#: includes/trait-settings.php:673
-msgid "A legacy remote connection API; most ordinary sites do not need it."
-msgstr ""
-
-#: includes/trait-settings.php:875
-msgid "You can stop a running task at any time. Pages that were already cached will remain cached."
-msgstr ""
-
-#: includes/trait-settings.php:620
-msgid "A value of %1$s3–5%2$s works for most sites; leave empty for no limit."
-msgstr ""
-
-#: wp-panel-optimizer.php:120
-#: includes/trait-config.php:155
-msgid "API returned an error"
-msgstr ""
-
-#: includes/trait-settings.php:339
-msgid "About & Panel Sync"
-msgstr ""
-
-#: includes/trait-settings.php:736
-msgid "About & panel sync"
-msgstr ""
-
-#: includes/trait-maintenance.php:29
-msgid "Add"
-msgstr ""
-
-#: includes/trait-settings.php:628
-msgid "Adjust only when memory exhaustion errors appear."
-msgstr ""
-
-#: includes/trait-settings.php:230
-msgid "Administrators cannot reset passwords"
-msgstr ""
-
-#: includes/trait-settings.php:405
-msgid "After the cache is cleared, the plugin visits commonly used pages so they are already cached for the next visitor."
-msgstr ""
-
-#: includes/trait-settings.php:867
-#: includes/trait-settings.php:911
-msgid "After saving settings, published pages will be preloaded according to the rules."
-msgstr ""
-
-#: includes/trait-settings.php:229
-msgid "All users may reset passwords"
-msgstr ""
-
-#: includes/trait-settings.php:693
-msgid "Allowed"
-msgstr ""
-
-#: includes/trait-settings.php:713
-msgid "Anomalies are recorded and notified by the panel; files, users, or content are never deleted automatically."
-msgstr ""
-
-#: includes/trait-maintenance.php:35
-msgid "Ask the panel owner to apply Standard or Strict file lock before enabling maintenance."
-msgstr ""
-
-#: includes/trait-maintenance.php:32
-msgid "Ask the panel owner to enable maintenance."
-msgstr ""
-
-msgid "Ask the server administrator to temporarily unlock the site in WP Panel, then try again."
-msgstr ""
-
-#: includes/trait-settings.php:894
-msgid "Automatic"
-msgstr ""
-
-#: includes/trait-settings.php:892
-msgid "Automatic (comment activity)"
-msgstr ""
-
-#: includes/trait-settings.php:891
-msgid "Automatic (post published)"
-msgstr ""
-
-#: includes/trait-settings.php:762
-msgid "Awaiting configuration"
-msgstr ""
-
-msgid "Batch optimization is unavailable while file protection is enabled because it rewrites Media Library files."
-msgstr ""
-
-#: includes/trait-settings.php:557
-msgid "Block update checks for core, plugins, and themes"
-msgstr ""
-
-#: includes/trait-settings.php:336
-msgid "Cache & Performance"
-msgstr ""
-
-#: includes/trait-settings.php:811
-msgid "Cache actions & preload status"
-msgstr ""
-
-#: includes/trait-settings.php:384
-#: includes/trait-settings.php:390
-msgid "Cache lifetime"
-msgstr ""
-
-#: includes/trait-settings.php:812
-msgid "Cache maintenance actions are separate from saving settings and take effect immediately."
-msgstr ""
-
-#: includes/trait-settings.php:404
-msgid "Cache preload"
+#: includes/trait-cache.php:19
+msgid "Failed to clear the cache. Please check the panel connection."
 msgstr ""
 
 #: includes/trait-cache.php:28
+#, php-format
 msgid "Cache preload queued: %d URLs."
 msgstr ""
 
@@ -158,641 +53,74 @@ msgstr ""
 msgid "Cache preload stopped and the queue has been emptied."
 msgstr ""
 
-#: includes/trait-settings.php:268
-msgid "Caching, image, and security policies managed centrally by the server panel."
-msgstr ""
-
-#: includes/trait-settings.php:724
-msgid "Changed in WP Panel → Site details → Password reset protection"
-msgstr ""
-
-#: includes/trait-settings.php:678
-#: includes/trait-settings.php:694
-msgid "Changed in WP Panel → Site details → WordPress optimization"
-msgstr ""
-
-#: includes/trait-settings.php:226
-msgid "Check failed"
-msgstr ""
-
-#: includes/trait-settings.php:455
-msgid "Chooses how newly uploaded images are processed; published content is not affected."
-msgstr ""
-
-#: includes/trait-settings.php:857
-#: includes/trait-cache.php:42
-msgid "Clear Nginx cache"
-msgstr ""
-
-#: includes/trait-maintenance.php:28
-msgid "Close"
-msgstr ""
-
-#: includes/trait-settings.php:920
-msgid "Completed"
-msgstr ""
-
-#: includes/trait-settings.php:289
-msgid "Component status overview"
-msgstr ""
-
-#: includes/trait-settings.php:319
-msgid "Component updates"
-msgstr ""
-
-#: includes/trait-settings.php:277
-msgid "Component version"
-msgstr ""
-
-#: includes/trait-settings.php:461
-msgid "Compress or convert on upload to reduce file size."
-msgstr ""
-
-#: includes/trait-settings.php:243
-#: includes/trait-settings.php:475
-msgid "Compression"
-msgstr ""
-
-#: includes/trait-settings.php:329
-msgid "Configuration file missing"
-msgstr ""
-
-#: includes/trait-settings.php:762
-msgid "Configured"
-msgstr ""
-
-#: includes/trait-settings.php:711
-msgid "Configured and reviewed in WP Panel → Site details → WordPress anomaly monitoring"
-msgstr ""
-
-#: includes/trait-settings.php:659
-msgid "Configured in WP Panel → Site details → File protection & temporary maintenance"
-msgstr ""
-
-#: includes/trait-settings.php:294
-msgid "Connected"
-msgstr ""
-
-#: includes/trait-settings.php:914
-msgid "Connection verified. The WP Panel API authenticated the request and responded successfully."
-msgstr ""
-
-#: includes/trait-settings.php:915
-msgid "Connection failed: %s"
-msgstr ""
-
-#: includes/trait-settings.php:761
-msgid "Connection status"
-msgstr ""
-
-#: wp-panel-optimizer.php:118
-msgid "Connection successful"
-msgstr ""
-
-#: includes/trait-settings.php:719
-msgid "Controls which users may reset their login password via \"Lost your password?\"."
-msgstr ""
-
-#: includes/trait-settings.php:483
-msgid "Convert to smaller WebP files and remove the original. Current versions of Chrome, Edge, Firefox, Safari, and other major browsers all display WebP."
-msgstr ""
-
-#: includes/trait-settings.php:350
-msgid "Core cache switch"
-msgstr ""
-
-#: includes/trait-settings.php:772
-msgid "Credentials & updates"
-msgstr ""
-
-#: includes/trait-settings.php:744
-msgid "Current connection"
-msgstr ""
-
-#: includes/trait-settings.php:632
-msgid "Current PHP memory limit on this server: %1$s. If you are unsure, leave this blank. If more memory is needed, try %2$s or %3$s."
-msgstr ""
-
-#: includes/trait-settings.php:821
-msgid "Current status"
-msgstr ""
-
-#: includes/trait-settings.php:617
-msgid "Default"
-msgstr ""
-
-#: includes/trait-settings.php:631
-msgid "Default 40M"
-msgstr ""
-
-#: includes/trait-settings.php:371
-msgid "Details"
-msgstr ""
-
-#: includes/trait-settings.php:592
-msgid "Diagnose white screens, 500 errors, or plugin faults."
-msgstr ""
-
-#: includes/trait-settings.php:568
-msgid "Disable file editing"
-msgstr ""
-
-#: includes/trait-settings.php:550
-msgid "Disable update checks"
-msgstr ""
-
-#: includes/trait-settings.php:308
-#: includes/trait-settings.php:677
-#: includes/trait-settings.php:693
-msgid "Disabled"
-msgstr ""
-
-#: includes/trait-settings.php:621
-msgid "Disables revisions entirely; accidental edits can no longer be restored from revision history."
-msgstr ""
-
-#: includes/trait-settings.php:698
-msgid "Disabling does not affect dashboard login, writing posts, or uploading images."
-msgstr ""
-
-#: includes/trait-settings.php:699
-msgid "Disabling does not delete existing credentials; they keep working once re-enabled."
-msgstr ""
-
-#: includes/trait-settings.php:364
-msgid "Enable FastCGI cache"
-msgstr ""
-
-#: includes/trait-settings.php:417
-msgid "Enable automatic preload"
-msgstr ""
-
-#: includes/trait-settings.php:582
-msgid "Enable debug mode"
-msgstr ""
-
-#: includes/trait-settings.php:593
-msgid "Enable only temporarily while troubleshooting; turn it off afterwards."
-msgstr ""
-
-#: includes/trait-settings.php:682
-msgid "Enable only when a tool you rely on clearly cannot connect."
-msgstr ""
-
-#: includes/trait-settings.php:589
-msgid "Enable the debug log"
-msgstr ""
-
-#: includes/trait-settings.php:301
-#: includes/trait-settings.php:308
-#: includes/trait-settings.php:677
-msgid "Enabled"
-msgstr ""
-
-#: includes/trait-maintenance.php:32
-msgid "Enter the maintenance password; verification is required again across each 30-minute boundary."
-msgstr ""
-
-#: includes/trait-settings.php:621
-msgid "Entering 0"
-msgstr ""
-
-#: includes/trait-settings.php:242
-msgid "Environment not ready"
-msgstr ""
-
-#: includes/trait-settings.php:598
-msgid "Errors are written to %1$s and are not shown to visitors by default. To display errors on the page temporarily, configure it on the site details page in WP Panel."
-msgstr ""
-
-#: includes/trait-settings.php:517
-msgid "Execution"
-msgstr ""
-
-#: includes/trait-settings.php:699
-msgid "Existing passwords"
-msgstr ""
-
-#: includes/trait-maintenance.php:30
-msgid "Extend before expiry if the update is unfinished. Relocking at expiry or panel restart may interrupt updates."
-msgstr ""
-
-#: includes/trait-settings.php:833
-#: includes/trait-settings.php:896
-#: includes/trait-settings.php:921
-msgid "Failed"
-msgstr ""
-
-#: includes/trait-cache.php:19
-msgid "Failed to clear the cache. Please check the panel connection."
-msgstr ""
-
 #: includes/trait-cache.php:32
 msgid "Failed to start cache preload. Please confirm the FastCGI cache is enabled."
 msgstr ""
 
-#: includes/trait-settings.php:305
-#: includes/trait-settings.php:349
-#: includes/trait-settings.php:357
-msgid "FastCGI cache"
+#: includes/trait-cache.php:42
+#: includes/trait-settings.php:919
+msgid "Clear Nginx cache"
 msgstr ""
 
-#: includes/trait-maintenance.php:26
-msgid "File lock disabled"
+#: includes/trait-cache.php:85
+msgid "Stopped manually"
 msgstr ""
 
-#: includes/trait-settings.php:298
-msgid "File protection"
+#: includes/trait-cache.php:206
+msgid "Waiting for the background preload batch"
 msgstr ""
 
-#: includes/trait-settings.php:653
-msgid "File protection & temporary maintenance"
-msgstr ""
-
-#: includes/trait-settings.php:283
-#: includes/trait-maintenance.php:43
-msgid "File protection / maintenance"
-msgstr ""
-
-#: includes/trait-settings.php:658
-msgid "File protection enabled"
-msgstr ""
-
-#: includes/trait-maintenance.php:44
-msgid "File protection is managed by WP Panel. Temporarily unlock it with the maintenance password when installing, updating, or changing plugins and themes."
-msgstr ""
-
-#: includes/trait-settings.php:658
-msgid "File protection not enabled"
-msgstr ""
-
-#: includes/trait-settings.php:848
-msgid "Finished:"
-msgstr ""
-
-#: includes/trait-settings.php:663
-msgid "During maintenance"
-msgstr ""
-
-#: includes/trait-settings.php:783
-msgid "Help & support"
-msgstr ""
-
-#: includes/trait-settings.php:352
-msgid "Helps visitors open pages faster and reduces repeated server work for the same content."
-msgstr ""
-
-#: includes/trait-settings.php:551
-msgid "Hides update notices in the WordPress dashboard. Designed for business sites that receive infrequent maintenance."
-msgstr ""
-
-#: includes/trait-settings.php:385
-msgid "How long a cached copy is kept before it is regenerated automatically."
-msgstr ""
-
-#: includes/trait-settings.php:433
-msgid "The maximum number of URLs processed in a single preload run."
-msgstr ""
-
-#: includes/trait-settings.php:358
-msgid "Ideal for blogs and business sites that mostly serve public content."
-msgstr ""
-
-#: includes/trait-settings.php:522
-#: includes/trait-settings.php:822
-#: includes/trait-settings.php:923
-msgid "Idle"
-msgstr ""
-
-#: includes/trait-settings.php:374
-msgid "If the front end does not update immediately after saving content, use \"Clear Nginx cache\" below. If a CDN is also in use, its cache must be cleared at the CDN provider as well."
-msgstr ""
-
-#: includes/trait-settings.php:337
-msgid "Image Optimization"
-msgstr ""
-
-#: includes/trait-settings.php:312
-msgid "Image handling"
-msgstr ""
-
-#: includes/trait-settings.php:448
-msgid "Image processing is unavailable: the server is missing the exif extension."
-msgstr ""
-
-#: includes/trait-settings.php:636
-msgid "Increase this if you see \"Allowed memory size exhausted\" errors or memory-related white screens in the dashboard."
-msgstr ""
-
-#: wp-panel-optimizer.php:105
-#: includes/trait-image-optimizer.php:76
-#: includes/trait-image-optimizer.php:88
-#: includes/trait-image-optimizer.php:100
-msgid "Insufficient permissions"
-msgstr ""
-
-#: includes/trait-maintenance.php:36
-msgid "Invalid request"
-msgstr ""
-
-#: includes/trait-settings.php:476
-msgid "JPEG files are compressed at the selected quality, while PNG files are optimized losslessly. File formats and URLs remain unchanged."
-msgstr ""
-
-#: includes/trait-settings.php:489
-msgid "JPEG quality"
-msgstr ""
-
-#: includes/trait-settings.php:521
-msgid "Job status"
-msgstr ""
-
-#: includes/trait-settings.php:697
-msgid "Keep disabled on ordinary sites; enable when an external tool needs to connect."
-msgstr ""
-
-#: includes/trait-settings.php:681
-msgid "Keep it off unless you use Jetpack, an older mobile app, or remote publishing tools."
-msgstr ""
-
-#: includes/trait-settings.php:469
-msgid "Keep the default WordPress behavior: no conversion or compression on upload."
-msgstr ""
-
-#: includes/trait-settings.php:619
-msgid "Keeps past versions of a post so accidental edits can be restored."
-msgstr ""
-
-#: includes/trait-settings.php:838
-msgid "Last message: %s"
-msgstr ""
-
-#: includes/trait-settings.php:845
-msgid "Last run:"
-msgstr ""
-
-#: includes/trait-settings.php:689
-msgid "Let mobile apps, auto-publishing tools, and third-party services connect to your site."
-msgstr ""
-
-#: includes/trait-settings.php:510
-msgid "Optimize existing Media Library images"
-msgstr ""
-
-#: includes/trait-settings.php:614
-msgid "Limit how many historical revisions each post keeps."
-msgstr ""
-
-#: includes/trait-maintenance.php:26
-msgid "Locked"
-msgstr ""
-
-#: includes/trait-settings.php:373
-msgid "Logged-in users never get cached pages. Common dynamic requests such as shopping carts are also excluded from the cache by server rules."
-msgstr ""
-
-#: includes/trait-settings.php:583
-msgid "Logs PHP errors to a file for troubleshooting."
-msgstr ""
-
-#: includes/trait-settings.php:396
-msgid "Longer lifetimes reduce server load; the cache can still be cleared automatically or manually after content updates."
-msgstr ""
-
-#: includes/trait-settings.php:516
-msgid "Lossless in-place re-encoding: file names stay the same, no WebP copies are created, and image references in published content are untouched."
-msgstr ""
-
-#: includes/trait-settings.php:322
-msgid "Maintained automatically via the panel."
-msgstr ""
-
-#: includes/trait-maintenance.php:29
-msgid "Maintenance password"
-msgstr ""
-
-#: includes/trait-settings.php:273
-msgid "Managed site"
-msgstr ""
-
-#: includes/trait-settings.php:890
-msgid "Manual clear"
-msgstr ""
-
-#: includes/trait-settings.php:432
-msgid "Max URLs per preload run"
-msgstr ""
-
-#: includes/trait-settings.php:516
-msgid "Method"
-msgstr ""
-
-#: includes/trait-settings.php:225
-msgid "Monitoring active"
-msgstr ""
-
-#: includes/trait-settings.php:596
-#: includes/trait-settings.php:634
-msgid "More details"
-msgstr ""
-
-#: includes/trait-settings.php:916
-msgid "Network error: could not reach the panel (%s)"
-msgstr ""
-
-#: includes/trait-settings.php:454
-msgid "Image handling for new uploads"
-msgstr ""
-
-#: includes/trait-settings.php:190
-msgid "Newly uploaded JPG/PNG images are converted automatically to smaller WebP files; the originals are no longer kept. The vast majority of sites can switch without any impact; if some email notifications, share cards, or older plugins turn out to need the original format later, the affected WebP images can be converted back to JPG/PNG at any time."
-msgstr ""
-
-#: includes/trait-cache.php:17
-msgid "The Nginx cache was cleared. Each page will be cached again the next time it is visited."
-msgstr ""
-
-#: wp-panel-optimizer.php:111
-msgid "No response; please check the panel address"
-msgstr ""
-
-#: includes/trait-settings.php:294
-msgid "Not configured"
-msgstr ""
-
-#: includes/trait-settings.php:223
-#: includes/trait-settings.php:301
-msgid "Not enabled"
-msgstr ""
-
-#: includes/trait-settings.php:758
-msgid "Not set"
-msgstr ""
-
-#: includes/trait-settings.php:593
-msgid "Note"
-msgstr ""
-
-#: includes/trait-settings.php:187
-msgid "Note:"
-msgstr ""
-
-#: includes/trait-settings.php:243
-#: includes/trait-settings.php:468
-msgid "Off"
-msgstr ""
-
-#: includes/trait-settings.php:515
-msgid "Only existing JPEG and PNG images in the Media Library are processed."
-msgstr ""
-
-#: includes/trait-settings.php:329
-msgid "Open the site details page for this website in the WP Panel and click the \"Install companion plugin\" button on the WordPress optimization card to complete initialization."
-msgstr ""
-
-#: includes/trait-maintenance.php:33
-msgid "Operation unavailable. Refresh or contact the administrator."
-msgstr ""
-
-#: includes/trait-settings.php:426
-msgid "Other pages"
-msgstr ""
-
-#: includes/trait-settings.php:291
-msgid "Panel connection"
-msgstr ""
-
-#: includes/trait-maintenance.php:31
-msgid "Panel restart ended the maintenance window early. Enter the password again to start a new window."
-msgstr ""
-
-#: includes/trait-settings.php:231
-msgid "Password reset disabled for all users"
-msgstr ""
-
-#: includes/trait-settings.php:718
-msgid "Password reset policy"
-msgstr ""
-
-#: includes/trait-settings.php:706
-msgid "Periodically checks for changes to administrators, content, security settings, and unusual persisted database objects."
-msgstr ""
-
-#: includes/trait-settings.php:753
-msgid "Plugin version"
-msgstr ""
-
-#: includes/trait-settings.php:613
-msgid "Post revisions"
-msgstr ""
-
-#: includes/trait-settings.php:410
-msgid "Preload automatically after cache clear"
-msgstr ""
-
-#: includes/trait-cache.php:294
-msgid "Preload complete"
+#: includes/trait-cache.php:246
+msgid "The preload queue is empty"
 msgstr ""
 
 #: includes/trait-cache.php:284
 msgid "Preload in progress"
 msgstr ""
 
-#: includes/trait-settings.php:255
-msgid "Preload is idle and no URLs are pending."
+#: includes/trait-cache.php:294
+msgid "Preload complete"
 msgstr ""
 
-#: includes/trait-settings.php:253
-msgid "Preload is queued; %d URLs are waiting to be processed."
+#: includes/trait-config.php:156
+#: wp-panel-optimizer.php:125
+msgid "API returned an error"
 msgstr ""
 
-#: includes/trait-settings.php:251
-msgid "Preload is running; %d URLs remain in the queue."
+#: includes/trait-config.php:179
+msgid "Unable to read the WP Panel configuration. The site domain or runtime configuration may have changed; rebuild the companion plugin configuration from the site details page in WP Panel."
 msgstr ""
 
-#: includes/trait-settings.php:865
-msgid "Preload now"
+#: includes/trait-image-optimizer.php:76
+#: includes/trait-image-optimizer.php:88
+#: includes/trait-image-optimizer.php:100
+#: includes/trait-settings.php:136
+#: wp-panel-optimizer.php:110
+msgid "Insufficient permissions"
 msgstr ""
 
-#: includes/trait-settings.php:867
-#: includes/trait-settings.php:912
-msgid "Preload unavailable: enable the FastCGI cache first and save."
+#: includes/trait-image-optimizer.php:116
+msgid "The panel returned an error"
 msgstr ""
 
-#: includes/trait-settings.php:421
-msgid "Preloading only takes effect after the %1$sFastCGI cache%2$s above is enabled."
+#: includes/trait-maintenance.php:26
+msgid "Locked"
 msgstr ""
 
-#: includes/trait-settings.php:575
-msgid "Prevent editing theme and plugin files in the dashboard"
+#: includes/trait-maintenance.php:26
+msgid "Unlocked"
 msgstr ""
 
-#: includes/trait-settings.php:654
-msgid "Helps prevent accidental or malicious changes to plugins, themes, and other site code."
+#: includes/trait-maintenance.php:26
+msgid "File lock disabled"
 msgstr ""
 
-#: includes/trait-settings.php:425
-msgid "Prioritizes the home page and recently updated public content; it does not crawl the whole site."
+#: includes/trait-maintenance.php:27
+msgid "Unlocking"
 msgstr ""
 
-#: includes/trait-settings.php:411
-msgid "Processed slowly in the background, never hitting many pages at once."
-msgstr ""
-
-#: includes/trait-settings.php:460
-msgid "Processing mode"
-msgstr ""
-
-#: includes/trait-maintenance.php:29
-msgid "Processing…"
-msgstr ""
-
-#: includes/trait-settings.php:925
-msgid "Progress: %s / %s"
-msgstr ""
-
-#: includes/trait-settings.php:619
-msgid "Purpose"
-msgstr ""
-
-#: includes/trait-settings.php:825
-#: includes/trait-settings.php:918
-msgid "Queued"
-msgstr ""
-
-#: includes/trait-settings.php:437
-msgid "Range %1$s10–500%2$s; %1$s100%2$s is a common choice. The home page comes first, followed by recently updated public posts, pages, and term archives."
-msgstr ""
-
-#: includes/trait-settings.php:511
-msgid "Re-encode existing media library images in place to save space."
-msgstr ""
-
-#: includes/trait-settings.php:786
-msgid "Read the WP Panel documentation or report reproducible issues and error messages."
-msgstr ""
-
-#: includes/trait-settings.php:391
-msgid "Regenerated automatically when it expires; no manual cleanup is required."
-msgstr ""
-
-#: includes/trait-settings.php:880
-msgid "Recent cache clears"
-msgstr ""
-
-#: includes/trait-settings.php:562
-#: includes/trait-settings.php:620
-#: includes/trait-settings.php:681
-#: includes/trait-settings.php:697
-msgid "Recommendation"
-msgstr ""
-
-#: includes/trait-settings.php:577
-msgid "Recommended. It only disables the built-in dashboard code editors; post editing and media uploads are not affected."
-msgstr ""
-
-#: includes/trait-settings.php:545
-msgid "Reduce unnecessary WordPress access points while keeping security settings synchronized with WP Panel."
+#: includes/trait-maintenance.php:27
+msgid "Relocking"
 msgstr ""
 
 #: includes/trait-maintenance.php:27
@@ -800,390 +128,1117 @@ msgid "Relock failed — contact administrator"
 msgstr ""
 
 #: includes/trait-maintenance.php:28
-msgid "Relock now"
-msgstr ""
-
-#: includes/trait-maintenance.php:27
-msgid "Relocking"
-msgstr ""
-
-#: includes/trait-settings.php:569
-msgid "Removes the dashboard code editors, reducing the chance of injected code."
-msgstr ""
-
-#: includes/trait-settings.php:789
-msgid "Report a bug"
-msgstr ""
-
-#: includes/trait-settings.php:608
-msgid "Resources & database"
-msgstr ""
-
-#: includes/trait-settings.php:726
-msgid "Restricting resets reduces the risk of malicious admin password resets; a forgotten password then requires another administrator or the panel owner to recover."
-msgstr ""
-
-#: includes/trait-settings.php:883
-msgid "Result"
-msgstr ""
-
-#: includes/trait-settings.php:822
-#: includes/trait-settings.php:919
-msgid "Running"
-msgstr ""
-
-#: includes/trait-settings.php:799
-msgid "Save settings"
-msgstr ""
-
-msgid "Saving is unavailable while file protection is enabled because some settings may update protected configuration files."
-msgstr ""
-
-#: includes/trait-settings.php:425
-#: includes/trait-settings.php:515
-msgid "Scope"
-msgstr ""
-
-#: includes/trait-settings.php:338
-msgid "Security & Maintenance"
-msgstr ""
-
-#: includes/trait-settings.php:647
-msgid "Security features managed by WP Panel"
-msgstr ""
-
-#: includes/trait-settings.php:561
-msgid "Security risk"
-msgstr ""
-
-#: includes/trait-settings.php:88
-msgid "Settings"
-msgstr ""
-
-#: includes/trait-settings.php:184
-msgid "Settings saved and synced to the panel."
-msgstr ""
-
-#: includes/trait-settings.php:800
-msgid "Settings sync to WP Panel after saving; cache-related changes may take a few seconds to take effect."
-msgstr ""
-
-#: includes/trait-settings.php:141
-msgid "Settings were not saved because one or more changes need to update wp-config.php. Use File protection / maintenance in the upper-right corner to unlock the site temporarily, then save again. If temporary maintenance is unavailable, ask the server administrator to handle the change in WP Panel."
-msgstr ""
-
-#: includes/trait-settings.php:187
-msgid "Settings were saved locally but failed to sync to the panel. Error message:"
-msgstr ""
-
-#: includes/trait-settings.php:749
-msgid "Site"
-msgstr ""
-
-#: includes/trait-settings.php:561
-msgid "Skipping updates for a long time leaves known vulnerabilities unpatched. Do not treat \"no notices\" as \"no updates needed\"."
-msgstr ""
-
-#: includes/trait-settings.php:535
-msgid "Speed is controlled by the panel; large libraries can take a while."
-msgstr ""
-
-#: includes/trait-settings.php:533
-msgid "Start batch optimization"
-msgstr ""
-
-#: includes/trait-settings.php:929
-msgid "Start failed: %s"
-msgstr ""
-
-#: includes/trait-settings.php:842
-msgid "Started:"
-msgstr ""
-
-#: includes/trait-maintenance.php:28
 msgid "State unknown"
-msgstr ""
-
-#: includes/trait-maintenance.php:36
-msgid "State unknown. Refresh or contact the administrator."
-msgstr ""
-
-#: includes/trait-settings.php:534
-msgid "Stop"
-msgstr ""
-
-#: includes/trait-settings.php:873
-msgid "Stop preload"
-msgstr ""
-
-#: includes/trait-settings.php:922
-msgid "Stopped"
-msgstr ""
-
-#: includes/trait-cache.php:85
-msgid "Stopped manually"
-msgstr ""
-
-#: includes/trait-settings.php:829
-msgid "Succeeded"
-msgstr ""
-
-#: includes/trait-settings.php:896
-msgid "Success"
-msgstr ""
-
-#: includes/trait-settings.php:562
-msgid "Turn this setting off periodically to check for updates, or manage updates from \"WP Overview\" in WP Panel. Re-enable the site file lock when maintenance is complete."
 msgstr ""
 
 #: includes/trait-maintenance.php:28
 msgid "Temporary unlock"
 msgstr ""
 
-#: includes/trait-settings.php:775
-msgid "The API key is the dedicated credential this plugin uses to connect to WP Panel; it is generated and stored by the panel automatically. Only the first 8 characters are shown here; the full key cannot be viewed or changed."
+#: includes/trait-maintenance.php:28
+msgid "Relock now"
 msgstr ""
 
-#: includes/trait-settings.php:187
-msgid "The next time you open this page, state will be pulled from the panel and may overwrite these changes. Please check whether \"Verify panel connection\" in the plugin settings works."
+#: includes/trait-maintenance.php:28
+msgid "Close"
 msgstr ""
 
-#: includes/trait-image-optimizer.php:116
-msgid "The panel returned an error"
+#: includes/trait-maintenance.php:29
+msgid "Maintenance password"
 msgstr ""
 
-#: includes/trait-settings.php:368
-msgid "The plugin clears the site cache automatically when content or comments change."
-msgstr ""
-
-#: includes/trait-settings.php:776
-msgid "The plugin is installed and updated automatically by WP Panel; there is no need to download it separately from the WordPress dashboard."
-msgstr ""
-
-#: includes/trait-settings.php:648
-msgid "This plugin displays these settings as read-only. They can be changed only in WP Panel, so WordPress administrators cannot weaken server security policies."
-msgstr ""
-
-#: includes/trait-cache.php:246
-msgid "The preload queue is empty"
-msgstr ""
-
-#: includes/trait-settings.php:517
-msgid "The task runs on WP Panel in the background; you can close this page once it starts."
-msgstr ""
-
-#: includes/trait-settings.php:637
-msgid "The value here cannot exceed the PHP memory limit shown above, which comes from the effective configuration in \"Software Management\" in WP Panel."
-msgstr ""
-
-#: includes/trait-settings.php:426
-msgid "These pages are cached the first time someone visits them."
-msgstr ""
-
-#: includes/trait-settings.php:448
-msgid "This feature relies on the PHP %1$sexif%2$s extension to correct photo orientation. Once the panel has installed it, refresh this page to start using it."
-msgstr ""
-
-#: includes/trait-settings.php:883
-msgid "Time"
-msgstr ""
-
-#: includes/trait-maintenance.php:34
-msgid "Too many failed attempts. Password verification has been suspended for 10 minutes. Please try again later."
-msgstr ""
-
-#: includes/trait-settings.php:525
-msgid "Total saved"
-msgstr ""
-
-#: includes/trait-settings.php:883
-msgid "Trigger"
-msgstr ""
-
-#: includes/trait-config.php:178
-msgid "Unable to read the WP Panel configuration. The site domain or runtime configuration may have changed; rebuild the companion plugin configuration from the site details page in WP Panel."
-msgstr ""
-
-#: includes/trait-settings.php:698
-msgid "Unaffected"
-msgstr ""
-
-#: includes/trait-settings.php:186
-#: includes/trait-settings.php:917
-msgid "Unknown error"
-msgstr ""
-
-#: includes/trait-settings.php:235
-msgid "Unlimited"
-msgstr ""
-
-#: includes/trait-maintenance.php:26
-msgid "Unlocked"
-msgstr ""
-
-#: includes/trait-maintenance.php:27
-msgid "Unlocking"
-msgstr ""
-
-#: includes/trait-settings.php:592
-msgid "Use"
-msgstr ""
-
-msgid "Use File protection / maintenance in the upper-right corner to unlock the site temporarily, then try again."
-msgstr ""
-
-#: includes/trait-settings.php:663
-msgid "Use the maintenance password configured in the panel to unlock temporarily, then relock the site as soon as maintenance is complete."
-msgstr ""
-
-#: includes/trait-settings.php:859
-msgid "Use when content does not refresh promptly; if a CDN is in use, its cache must be cleared too."
-msgstr ""
-
-#: includes/trait-maintenance.php:33
-msgid "Verification failed. Please check the maintenance password."
-msgstr ""
-
-#: includes/trait-settings.php:765
-msgid "Verify panel connection"
-msgstr ""
-
-#: includes/trait-settings.php:913
-msgid "Verifying…"
-msgstr ""
-
-#: includes/trait-settings.php:666
-msgid "View temporary maintenance"
-msgstr ""
-
-#: includes/trait-settings.php:788
-msgid "Visit the WP Panel website"
-msgstr ""
-
-#: includes/trait-settings.php:498
-msgid "Modern browsers display WebP reliably. WebP mode does %1$snot keep the original%2$s, so test older plugins, email templates, social sharing, and external services that may require JPEG or PNG files."
-msgstr ""
-
-#: includes/trait-settings.php:424
-msgid "Visits public pages automatically to build their cache."
-msgstr ""
-
-#: includes/trait-settings.php:739
-msgid "WP Panel Optimizer is the companion plugin installed automatically by WP Panel. It connects caching, image handling, and common WordPress settings to the panel for centralized management."
-msgstr ""
-
-#: includes/trait-settings.php:335
-msgid "WP Panel Optimizer settings"
-msgstr ""
-
-#: includes/trait-settings.php:141
-#: includes/trait-settings.php:332
-#: includes/trait-settings.php:1152
-msgid "WP Panel file lock is enabled."
-msgstr ""
-
-#: includes/trait-settings.php:224
-msgid "Waiting for first check"
-msgstr ""
-
-#: includes/trait-cache.php:206
-msgid "Waiting for the background preload batch"
-msgstr ""
-
-#: includes/trait-settings.php:243
-#: includes/trait-settings.php:482
-msgid "WebP conversion"
-msgstr ""
-
-#: includes/trait-settings.php:190
-msgid "WebP mode is enabled."
-msgstr ""
-
-#: includes/trait-settings.php:493
-msgid "WebP quality"
-msgstr ""
-
-#: includes/trait-settings.php:424
-msgid "What it does"
-msgstr ""
-
-#: includes/trait-settings.php:560
-#: includes/trait-settings.php:662
-msgid "When enabled"
-msgstr ""
-
-#: includes/trait-settings.php:682
-msgid "When to enable"
-msgstr ""
-
-#: includes/trait-settings.php:705
-msgid "WordPress anomaly monitoring"
-msgstr ""
-
-#: includes/trait-settings.php:688
-msgid "WordPress application passwords"
-msgstr ""
-
-#: includes/trait-settings.php:544
-msgid "WordPress hardening"
-msgstr ""
-
-#: includes/trait-settings.php:627
-msgid "WordPress memory limit"
-msgstr ""
-
-#: includes/trait-settings.php:560
-msgid "WordPress no longer checks for or displays update notices for core, plugins, and themes."
-msgstr ""
-
-#: includes/trait-settings.php:1228
-msgid "Publishing posts, editing pages, and uploading media are unaffected. Protected plugin, theme, code, and site configuration files cannot be changed directly. If an installation, update, or setup task needs to write to these files, use File protection / maintenance in the upper-right corner to unlock the site temporarily with the maintenance password. If temporary maintenance is unavailable, ask the server administrator to handle the task in WP Panel. WP Panel Optimizer is managed by the panel and can still receive its own updates."
-msgstr ""
-
-#: includes/trait-settings.php:662
-msgid "Writing posts, editing pages, and uploading images are unaffected; installing, updating, or modifying program files is restricted."
-msgstr ""
-
-#: includes/trait-settings.php:672
-msgid "XML-RPC interface"
+#: includes/trait-maintenance.php:29
+msgid "Add"
 msgstr ""
 
 #: includes/trait-maintenance.php:29
 msgid "minutes"
 msgstr ""
 
+#: includes/trait-maintenance.php:29
+msgid "Processing…"
+msgstr ""
+
+#: includes/trait-maintenance.php:30
+msgid "Extend before expiry if the update is unfinished. Relocking at expiry or panel restart may interrupt updates."
+msgstr ""
+
+#: includes/trait-maintenance.php:31
+msgid "Panel restart ended the maintenance window early. Enter the password again to start a new window."
+msgstr ""
+
+#: includes/trait-maintenance.php:32
+msgid "Ask the panel owner to enable maintenance."
+msgstr ""
+
+#: includes/trait-maintenance.php:32
+msgid "Enter the maintenance password; verification is required again across each 30-minute boundary."
+msgstr ""
+
+#: includes/trait-maintenance.php:33
+msgid "Verification failed. Please check the maintenance password."
+msgstr ""
+
+#: includes/trait-maintenance.php:33
+msgid "Operation unavailable. Refresh or contact the administrator."
+msgstr ""
+
+#: includes/trait-maintenance.php:34
+msgid "Too many failed attempts. Password verification has been suspended for 10 minutes. Please try again later."
+msgstr ""
+
+#: includes/trait-maintenance.php:35
+msgid "Ask the panel owner to apply Standard or Strict file lock before enabling maintenance."
+msgstr ""
+
+#: includes/trait-maintenance.php:36
+msgid "State unknown. Refresh or contact the administrator."
+msgstr ""
+
+#: includes/trait-maintenance.php:36
+msgid "Invalid request"
+msgstr ""
+
+#: includes/trait-maintenance.php:43
+#: includes/trait-settings.php:331
+msgid "File protection / maintenance"
+msgstr ""
+
+#: includes/trait-maintenance.php:44
+msgid "File protection is managed by WP Panel. Temporarily unlock it with the maintenance password when installing, updating, or changing plugins and themes."
+msgstr ""
+
+#: includes/trait-settings.php:90
+msgid "Settings"
+msgstr ""
+
+#: includes/trait-settings.php:128
 msgid "A new WP Panel Optimizer version is available."
 msgstr ""
 
+#: includes/trait-settings.php:129
+#, php-format
 msgid "Installed: %1$s; available from WP Panel: %2$s."
 msgstr ""
 
+#: includes/trait-settings.php:130
 msgid "Open WP Panel Optimizer to update"
 msgstr ""
 
+#: includes/trait-settings.php:142
 msgid "Update failed"
 msgstr ""
 
+#: includes/trait-settings.php:226
+msgid "Available settings were saved. Settings that modify wp-config.php remain unchanged while file protection is enabled."
+msgstr ""
+
+#: includes/trait-settings.php:227
+msgid "Settings saved and synced to the panel."
+msgstr ""
+
+#: includes/trait-settings.php:230
+#: includes/trait-settings.php:979
+msgid "Unknown error"
+msgstr ""
+
+#: includes/trait-settings.php:231
+msgid "Note:"
+msgstr ""
+
+#: includes/trait-settings.php:231
+msgid "Settings were saved locally but failed to sync to the panel. Error message:"
+msgstr ""
+
+#: includes/trait-settings.php:231
+msgid "The next time you open this page, state will be pulled from the panel and may overwrite these changes. Please check whether \"Verify panel connection\" in the plugin settings works."
+msgstr ""
+
+#: includes/trait-settings.php:234
+msgid "WebP mode is enabled."
+msgstr ""
+
+#: includes/trait-settings.php:234
+msgid "Newly uploaded JPG/PNG images are converted automatically to smaller WebP files; the originals are no longer kept. The vast majority of sites can switch without any impact; if some email notifications, share cards, or older plugins turn out to need the original format later, the affected WebP images can be converted back to JPG/PNG at any time."
+msgstr ""
+
+#: includes/trait-settings.php:266
+#: includes/trait-settings.php:349
+msgid "Not enabled"
+msgstr ""
+
+#: includes/trait-settings.php:267
+msgid "Waiting for first check"
+msgstr ""
+
+#: includes/trait-settings.php:268
+msgid "Monitoring active"
+msgstr ""
+
+#: includes/trait-settings.php:269
+msgid "Check failed"
+msgstr ""
+
+#: includes/trait-settings.php:272
+msgid "All users may reset passwords"
+msgstr ""
+
+#: includes/trait-settings.php:273
+msgid "Administrators cannot reset passwords"
+msgstr ""
+
+#: includes/trait-settings.php:274
+msgid "Password reset disabled for all users"
+msgstr ""
+
+#: includes/trait-settings.php:278
+msgid "Unlimited"
+msgstr ""
+
+#: includes/trait-settings.php:290
+msgid "Environment not ready"
+msgstr ""
+
+#: includes/trait-settings.php:291
+#: includes/trait-settings.php:537
+msgid "WebP conversion"
+msgstr ""
+
+#: includes/trait-settings.php:291
+#: includes/trait-settings.php:530
+msgid "Compression"
+msgstr ""
+
+#: includes/trait-settings.php:291
+#: includes/trait-settings.php:523
+msgid "Off"
+msgstr ""
+
+#: includes/trait-settings.php:299
+#, php-format
+msgid "Preload is running; %d URLs remain in the queue."
+msgstr ""
+
+#: includes/trait-settings.php:301
+#, php-format
+msgid "Preload is queued; %d URLs are waiting to be processed."
+msgstr ""
+
+#: includes/trait-settings.php:303
+msgid "Preload is idle and no URLs are pending."
+msgstr ""
+
+#: includes/trait-settings.php:316
+msgid "Caching, image, and security policies managed centrally by the server panel."
+msgstr ""
+
+#: includes/trait-settings.php:321
+msgid "Managed site"
+msgstr ""
+
+#: includes/trait-settings.php:325
+msgid "Component version"
+msgstr ""
+
+#: includes/trait-settings.php:337
+msgid "Component status overview"
+msgstr ""
+
+#: includes/trait-settings.php:339
+msgid "Panel connection"
+msgstr ""
+
+#: includes/trait-settings.php:342
+msgid "Not configured"
+msgstr ""
+
+#: includes/trait-settings.php:342
+msgid "Connected"
+msgstr ""
+
+#: includes/trait-settings.php:346
+msgid "File protection"
+msgstr ""
+
+#: includes/trait-settings.php:349
+#: includes/trait-settings.php:356
+#: includes/trait-settings.php:735
+msgid "Enabled"
+msgstr ""
+
+#: includes/trait-settings.php:353
+#: includes/trait-settings.php:404
+#: includes/trait-settings.php:412
+msgid "FastCGI cache"
+msgstr ""
+
+#: includes/trait-settings.php:356
+#: includes/trait-settings.php:735
+#: includes/trait-settings.php:751
+msgid "Disabled"
+msgstr ""
+
+#: includes/trait-settings.php:360
+msgid "Image handling"
+msgstr ""
+
+#: includes/trait-settings.php:367
+msgid "Component updates"
+msgstr ""
+
+#: includes/trait-settings.php:370
+#, php-format
 msgid "Version %s available"
 msgstr ""
 
+#: includes/trait-settings.php:370
 msgid "Up to date"
 msgstr ""
 
+#: includes/trait-settings.php:378
 msgid "An update is available for this managed plugin."
 msgstr ""
 
+#: includes/trait-settings.php:379
+#, php-format
 msgid "WP Panel can update this plugin from version %1$s to %2$s. The update will not change whether the plugin is active."
 msgstr ""
 
+#: includes/trait-settings.php:381
 msgid "Update now"
 msgstr ""
 
+#: includes/trait-settings.php:388
+msgid "Configuration file missing"
+msgstr ""
+
+#: includes/trait-settings.php:388
+msgid "Open the site details page for this website in the WP Panel and click the \"Install companion plugin\" button on the WordPress optimization card to complete initialization."
+msgstr ""
+
+#: includes/trait-settings.php:390
+msgid "WP Panel Optimizer settings"
+msgstr ""
+
+#: includes/trait-settings.php:391
+msgid "Cache & Performance"
+msgstr ""
+
+#: includes/trait-settings.php:392
+msgid "Image Optimization"
+msgstr ""
+
+#: includes/trait-settings.php:393
+msgid "Security & Maintenance"
+msgstr ""
+
+#: includes/trait-settings.php:394
+msgid "About & Panel Sync"
+msgstr ""
+
+#: includes/trait-settings.php:405
+msgid "Core cache switch"
+msgstr ""
+
+#: includes/trait-settings.php:407
+msgid "Helps visitors open pages faster and reduces repeated server work for the same content."
+msgstr ""
+
+#: includes/trait-settings.php:413
+msgid "Ideal for blogs and business sites that mostly serve public content."
+msgstr ""
+
+#: includes/trait-settings.php:419
+msgid "Enable FastCGI cache"
+msgstr ""
+
+#: includes/trait-settings.php:423
+msgid "The plugin clears the site cache automatically when content or comments change."
+msgstr ""
+
+#: includes/trait-settings.php:426
+msgid "Details"
+msgstr ""
+
+#: includes/trait-settings.php:428
+msgid "Logged-in users never get cached pages. Common dynamic requests such as shopping carts are also excluded from the cache by server rules."
+msgstr ""
+
+#: includes/trait-settings.php:429
+msgid "If the front end does not update immediately after saving content, use \"Clear Nginx cache\" below. If a CDN is also in use, its cache must be cleared at the CDN provider as well."
+msgstr ""
+
+#: includes/trait-settings.php:439
+#: includes/trait-settings.php:445
+msgid "Cache lifetime"
+msgstr ""
+
+#: includes/trait-settings.php:440
+msgid "How long a cached copy is kept before it is regenerated automatically."
+msgstr ""
+
+#: includes/trait-settings.php:446
+msgid "Regenerated automatically when it expires; no manual cleanup is required."
+msgstr ""
+
+#: includes/trait-settings.php:450
+#, php-format
+msgid "%1$s300%2$s seconds equal 5 minutes. For most sites, %1$s300–3600%2$s seconds works well."
+msgstr ""
+
+#: includes/trait-settings.php:451
+msgid "Longer lifetimes reduce server load; the cache can still be cleared automatically or manually after content updates."
+msgstr ""
+
+#: includes/trait-settings.php:459
+msgid "Cache preload"
+msgstr ""
+
+#: includes/trait-settings.php:460
+msgid "After the cache is cleared, the plugin visits commonly used pages so they are already cached for the next visitor."
+msgstr ""
+
+#: includes/trait-settings.php:465
+msgid "Preload automatically after cache clear"
+msgstr ""
+
+#: includes/trait-settings.php:466
+msgid "Processed slowly in the background, never hitting many pages at once."
+msgstr ""
+
+#: includes/trait-settings.php:472
+msgid "Enable automatic preload"
+msgstr ""
+
+#: includes/trait-settings.php:476
+#, php-format
+msgid "Preloading only takes effect after the %1$sFastCGI cache%2$s above is enabled."
+msgstr ""
+
+#: includes/trait-settings.php:479
+msgid "What it does"
+msgstr ""
+
+#: includes/trait-settings.php:479
+msgid "Visits public pages automatically to build their cache."
+msgstr ""
+
+#: includes/trait-settings.php:480
+#: includes/trait-settings.php:570
+msgid "Scope"
+msgstr ""
+
+#: includes/trait-settings.php:480
+msgid "Prioritizes the home page and recently updated public content; it does not crawl the whole site."
+msgstr ""
+
+#: includes/trait-settings.php:481
+msgid "Other pages"
+msgstr ""
+
+#: includes/trait-settings.php:481
+msgid "These pages are cached the first time someone visits them."
+msgstr ""
+
+#: includes/trait-settings.php:487
+msgid "Max URLs per preload run"
+msgstr ""
+
+#: includes/trait-settings.php:488
+msgid "The maximum number of URLs processed in a single preload run."
+msgstr ""
+
+#: includes/trait-settings.php:492
+#, php-format
+msgid "Range %1$s10–500%2$s; %1$s100%2$s is a common choice. The home page comes first, followed by recently updated public posts, pages, and term archives."
+msgstr ""
+
+#: includes/trait-settings.php:503
+msgid "Image processing is unavailable: the server is missing the exif extension."
+msgstr ""
+
+#: includes/trait-settings.php:503
+#, php-format
+msgid "This feature relies on the PHP %1$sexif%2$s extension to correct photo orientation. Once the panel has installed it, refresh this page to start using it."
+msgstr ""
+
+#: includes/trait-settings.php:509
+msgid "Image handling for new uploads"
+msgstr ""
+
+#: includes/trait-settings.php:510
+msgid "Chooses how newly uploaded images are processed; published content is not affected."
+msgstr ""
+
+#: includes/trait-settings.php:515
+msgid "Processing mode"
+msgstr ""
+
+#: includes/trait-settings.php:516
+msgid "Compress or convert on upload to reduce file size."
+msgstr ""
+
+#: includes/trait-settings.php:524
+msgid "Keep the default WordPress behavior: no conversion or compression on upload."
+msgstr ""
+
+#: includes/trait-settings.php:531
+msgid "JPEG files are compressed at the selected quality, while PNG files are optimized losslessly. File formats and URLs remain unchanged."
+msgstr ""
+
+#: includes/trait-settings.php:538
+msgid "Convert to smaller WebP files and remove the original. Current versions of Chrome, Edge, Firefox, Safari, and other major browsers all display WebP."
+msgstr ""
+
+#: includes/trait-settings.php:544
+msgid "JPEG quality"
+msgstr ""
+
+#: includes/trait-settings.php:548
+msgid "WebP quality"
+msgstr ""
+
+#: includes/trait-settings.php:553
+#, php-format
+msgid "Modern browsers display WebP reliably. WebP mode does %1$snot keep the original%2$s, so test older plugins, email templates, social sharing, and external services that may require JPEG or PNG files."
+msgstr ""
+
+#: includes/trait-settings.php:556
+#, php-format
+msgid "%d images could not be converted (unsupported file format, or the converted file would have been larger, etc.); the originals were kept automatically and uploads are unaffected."
+msgstr ""
+
+#: includes/trait-settings.php:565
+msgid "Optimize existing Media Library images"
+msgstr ""
+
+#: includes/trait-settings.php:566
+msgid "Re-encode existing media library images in place to save space."
+msgstr ""
+
+#: includes/trait-settings.php:570
+msgid "Only existing JPEG and PNG images in the Media Library are processed."
+msgstr ""
+
+#: includes/trait-settings.php:571
+msgid "Method"
+msgstr ""
+
+#: includes/trait-settings.php:571
+msgid "Lossless in-place re-encoding: file names stay the same, no WebP copies are created, and image references in published content are untouched."
+msgstr ""
+
+#: includes/trait-settings.php:572
+msgid "Execution"
+msgstr ""
+
+#: includes/trait-settings.php:572
+msgid "The task runs on WP Panel in the background; you can close this page once it starts."
+msgstr ""
+
+#: includes/trait-settings.php:576
+msgid "Job status"
+msgstr ""
+
+#: includes/trait-settings.php:577
+#: includes/trait-settings.php:884
+#: includes/trait-settings.php:988
+msgid "Idle"
+msgstr ""
+
+#: includes/trait-settings.php:580
+msgid "Total saved"
+msgstr ""
+
+#: includes/trait-settings.php:588
+msgid "Start batch optimization"
+msgstr ""
+
+#: includes/trait-settings.php:589
+msgid "Stop"
+msgstr ""
+
+#: includes/trait-settings.php:590
+msgid "Speed is controlled by the panel; large libraries can take a while."
+msgstr ""
+
+#: includes/trait-settings.php:598
+msgid "File protection is enabled. Settings that modify wp-config.php are read-only; other settings and actions remain available."
+msgstr ""
+
+#: includes/trait-settings.php:602
+msgid "WordPress hardening"
+msgstr ""
+
+#: includes/trait-settings.php:603
+msgid "Reduce unnecessary WordPress access points while keeping security settings synchronized with WP Panel."
+msgstr ""
+
+#: includes/trait-settings.php:608
+msgid "Disable update checks"
+msgstr ""
+
+#: includes/trait-settings.php:609
+msgid "Hides update notices in the WordPress dashboard. Designed for business sites that receive infrequent maintenance."
+msgstr ""
+
+#: includes/trait-settings.php:615
+msgid "Block update checks for core, plugins, and themes"
+msgstr ""
+
+#: includes/trait-settings.php:618
+#: includes/trait-settings.php:720
+msgid "When enabled"
+msgstr ""
+
+#: includes/trait-settings.php:618
+msgid "WordPress no longer checks for or displays update notices for core, plugins, and themes."
+msgstr ""
+
+#: includes/trait-settings.php:619
+msgid "Security risk"
+msgstr ""
+
+#: includes/trait-settings.php:619
+msgid "Skipping updates for a long time leaves known vulnerabilities unpatched. Do not treat \"no notices\" as \"no updates needed\"."
+msgstr ""
+
+#: includes/trait-settings.php:620
+#: includes/trait-settings.php:678
+#: includes/trait-settings.php:739
+#: includes/trait-settings.php:755
+msgid "Recommendation"
+msgstr ""
+
+#: includes/trait-settings.php:620
+msgid "Turn this setting off periodically to check for updates, or manage updates from \"WP Overview\" in WP Panel. Re-enable the site file lock when maintenance is complete."
+msgstr ""
+
+#: includes/trait-settings.php:626
+msgid "Disable file editing"
+msgstr ""
+
+#: includes/trait-settings.php:627
+msgid "Removes the dashboard code editors, reducing the chance of injected code."
+msgstr ""
+
+#: includes/trait-settings.php:633
+msgid "Prevent editing theme and plugin files in the dashboard"
+msgstr ""
+
+#: includes/trait-settings.php:635
+msgid "Recommended. It only disables the built-in dashboard code editors; post editing and media uploads are not affected."
+msgstr ""
+
+#: includes/trait-settings.php:640
+msgid "Enable debug mode"
+msgstr ""
+
+#: includes/trait-settings.php:641
+msgid "Logs PHP errors to a file for troubleshooting."
+msgstr ""
+
+#: includes/trait-settings.php:647
+msgid "Enable the debug log"
+msgstr ""
+
+#: includes/trait-settings.php:650
+msgid "Use"
+msgstr ""
+
+#: includes/trait-settings.php:650
+msgid "Diagnose white screens, 500 errors, or plugin faults."
+msgstr ""
+
+#: includes/trait-settings.php:651
+msgid "Note"
+msgstr ""
+
+#: includes/trait-settings.php:651
+msgid "Enable only temporarily while troubleshooting; turn it off afterwards."
+msgstr ""
+
+#: includes/trait-settings.php:654
+#: includes/trait-settings.php:692
+msgid "More details"
+msgstr ""
+
+#: includes/trait-settings.php:656
+#, php-format
+msgid "Errors are written to %1$s and are not shown to visitors by default. To display errors on the page temporarily, configure it on the site details page in WP Panel."
+msgstr ""
+
+#: includes/trait-settings.php:666
+msgid "Resources & database"
+msgstr ""
+
+#: includes/trait-settings.php:671
+msgid "Post revisions"
+msgstr ""
+
+#: includes/trait-settings.php:672
+msgid "Limit how many historical revisions each post keeps."
+msgstr ""
+
+#: includes/trait-settings.php:675
+msgid "Default"
+msgstr ""
+
+#: includes/trait-settings.php:677
+msgid "Purpose"
+msgstr ""
+
+#: includes/trait-settings.php:677
+msgid "Keeps past versions of a post so accidental edits can be restored."
+msgstr ""
+
+#: includes/trait-settings.php:678
+#, php-format
+msgid "A value of %1$s3–5%2$s works for most sites; leave empty for no limit."
+msgstr ""
+
+#: includes/trait-settings.php:679
+msgid "Entering 0"
+msgstr ""
+
+#: includes/trait-settings.php:679
+msgid "Disables revisions entirely; accidental edits can no longer be restored from revision history."
+msgstr ""
+
+#: includes/trait-settings.php:685
+msgid "WordPress memory limit"
+msgstr ""
+
+#: includes/trait-settings.php:686
+msgid "Adjust only when memory exhaustion errors appear."
+msgstr ""
+
+#: includes/trait-settings.php:689
+msgid "Default 40M"
+msgstr ""
+
+#: includes/trait-settings.php:690
+#, php-format
+msgid "Current PHP memory limit on this server: %1$s. If you are unsure, leave this blank. If more memory is needed, try %2$s or %3$s."
+msgstr ""
+
+#: includes/trait-settings.php:694
+msgid "Increase this if you see \"Allowed memory size exhausted\" errors or memory-related white screens in the dashboard."
+msgstr ""
+
+#: includes/trait-settings.php:695
+msgid "The value here cannot exceed the PHP memory limit shown above, which comes from the effective configuration in \"Software Management\" in WP Panel."
+msgstr ""
+
+#: includes/trait-settings.php:705
+msgid "Security features managed by WP Panel"
+msgstr ""
+
+#: includes/trait-settings.php:706
+msgid "This plugin displays these settings as read-only. They can be changed only in WP Panel, so WordPress administrators cannot weaken server security policies."
+msgstr ""
+
+#: includes/trait-settings.php:711
+msgid "File protection & temporary maintenance"
+msgstr ""
+
+#: includes/trait-settings.php:712
+msgid "Helps prevent accidental or malicious changes to plugins, themes, and other site code."
+msgstr ""
+
+#: includes/trait-settings.php:716
+msgid "File protection enabled"
+msgstr ""
+
+#: includes/trait-settings.php:716
+msgid "File protection not enabled"
+msgstr ""
+
+#: includes/trait-settings.php:717
+msgid "Configured in WP Panel → Site details → File protection & temporary maintenance"
+msgstr ""
+
+#: includes/trait-settings.php:720
+msgid "Writing posts, editing pages, and uploading images are unaffected; installing, updating, or modifying program files is restricted."
+msgstr ""
+
+#: includes/trait-settings.php:721
+msgid "During maintenance"
+msgstr ""
+
+#: includes/trait-settings.php:721
+msgid "Use the maintenance password configured in the panel to unlock temporarily, then relock the site as soon as maintenance is complete."
+msgstr ""
+
+#: includes/trait-settings.php:724
+msgid "View temporary maintenance"
+msgstr ""
+
+#: includes/trait-settings.php:730
+msgid "XML-RPC interface"
+msgstr ""
+
+#: includes/trait-settings.php:731
+msgid "A legacy remote connection API; most ordinary sites do not need it."
+msgstr ""
+
+#: includes/trait-settings.php:736
+#: includes/trait-settings.php:752
+msgid "Changed in WP Panel → Site details → WordPress optimization"
+msgstr ""
+
+#: includes/trait-settings.php:739
+msgid "Keep it off unless you use Jetpack, an older mobile app, or remote publishing tools."
+msgstr ""
+
+#: includes/trait-settings.php:740
+msgid "When to enable"
+msgstr ""
+
+#: includes/trait-settings.php:740
+msgid "Enable only when a tool you rely on clearly cannot connect."
+msgstr ""
+
+#: includes/trait-settings.php:746
+msgid "WordPress application passwords"
+msgstr ""
+
+#: includes/trait-settings.php:747
+msgid "Let mobile apps, auto-publishing tools, and third-party services connect to your site."
+msgstr ""
+
+#: includes/trait-settings.php:751
+msgid "Allowed"
+msgstr ""
+
+#: includes/trait-settings.php:755
+msgid "Keep disabled on ordinary sites; enable when an external tool needs to connect."
+msgstr ""
+
+#: includes/trait-settings.php:756
+msgid "Unaffected"
+msgstr ""
+
+#: includes/trait-settings.php:756
+msgid "Disabling does not affect dashboard login, writing posts, or uploading images."
+msgstr ""
+
+#: includes/trait-settings.php:757
+msgid "Existing passwords"
+msgstr ""
+
+#: includes/trait-settings.php:757
+msgid "Disabling does not delete existing credentials; they keep working once re-enabled."
+msgstr ""
+
+#: includes/trait-settings.php:763
+msgid "WordPress anomaly monitoring"
+msgstr ""
+
+#: includes/trait-settings.php:764
+msgid "Periodically checks for changes to administrators, content, security settings, and unusual persisted database objects."
+msgstr ""
+
+#: includes/trait-settings.php:769
+msgid "Configured and reviewed in WP Panel → Site details → WordPress anomaly monitoring"
+msgstr ""
+
+#: includes/trait-settings.php:771
+msgid "Anomalies are recorded and notified by the panel; files, users, or content are never deleted automatically."
+msgstr ""
+
+#: includes/trait-settings.php:776
+msgid "Password reset policy"
+msgstr ""
+
+#: includes/trait-settings.php:777
+msgid "Controls which users may reset their login password via \"Lost your password?\"."
+msgstr ""
+
+#: includes/trait-settings.php:782
+msgid "Changed in WP Panel → Site details → Password reset protection"
+msgstr ""
+
+#: includes/trait-settings.php:784
+msgid "Restricting resets reduces the risk of malicious admin password resets; a forgotten password then requires another administrator or the panel owner to recover."
+msgstr ""
+
+#: includes/trait-settings.php:794
+msgid "About & panel sync"
+msgstr ""
+
+#: includes/trait-settings.php:797
+msgid "WP Panel Optimizer is the companion plugin installed automatically by WP Panel. It connects caching, image handling, and common WordPress settings to the panel for centralized management."
+msgstr ""
+
+#: includes/trait-settings.php:802
+msgid "Current connection"
+msgstr ""
+
+#: includes/trait-settings.php:807
+msgid "Site"
+msgstr ""
+
+#: includes/trait-settings.php:811
+msgid "Plugin version"
+msgstr ""
+
+#: includes/trait-settings.php:816
+msgid "Not set"
+msgstr ""
+
+#: includes/trait-settings.php:819
+msgid "Connection status"
+msgstr ""
+
+#: includes/trait-settings.php:820
+msgid "Awaiting configuration"
+msgstr ""
+
+#: includes/trait-settings.php:820
+msgid "Configured"
+msgstr ""
+
+#: includes/trait-settings.php:823
+msgid "Verify panel connection"
+msgstr ""
+
+#: includes/trait-settings.php:830
+msgid "Credentials & updates"
+msgstr ""
+
+#: includes/trait-settings.php:833
+msgid "The API key is the dedicated credential this plugin uses to connect to WP Panel; it is generated and stored by the panel automatically. Only the first 8 characters are shown here; the full key cannot be viewed or changed."
+msgstr ""
+
+#: includes/trait-settings.php:834
+msgid "The plugin is installed and updated automatically by WP Panel; there is no need to download it separately from the WordPress dashboard."
+msgstr ""
+
+#: includes/trait-settings.php:835
+msgid "\"Verify panel connection\" checks that the plugin can read and save settings properly; it is not a security scan of the site."
+msgstr ""
+
+#: includes/trait-settings.php:841
+msgid "Help & support"
+msgstr ""
+
+#: includes/trait-settings.php:844
+msgid "Read the WP Panel documentation or report reproducible issues and error messages."
+msgstr ""
+
+#: includes/trait-settings.php:846
+msgid "Visit the WP Panel website"
+msgstr ""
+
+#: includes/trait-settings.php:847
+msgid "Report a bug"
+msgstr ""
+
+#: includes/trait-settings.php:857
+msgid "Save settings"
+msgstr ""
+
+#: includes/trait-settings.php:859
+msgid "Available settings can still be saved. Read-only settings remain unchanged until file protection is temporarily unlocked."
+msgstr ""
+
+#: includes/trait-settings.php:861
+msgid "Settings sync to WP Panel after saving; cache-related changes may take a few seconds to take effect."
+msgstr ""
+
+#: includes/trait-settings.php:873
+msgid "Cache actions & preload status"
+msgstr ""
+
+#: includes/trait-settings.php:874
+msgid "Cache maintenance actions are separate from saving settings and take effect immediately."
+msgstr ""
+
+#: includes/trait-settings.php:883
+msgid "Current status"
+msgstr ""
+
+#: includes/trait-settings.php:884
+#: includes/trait-settings.php:984
+msgid "Running"
+msgstr ""
+
+#: includes/trait-settings.php:887
+#: includes/trait-settings.php:983
+msgid "Queued"
+msgstr ""
+
+#: includes/trait-settings.php:891
+msgid "Succeeded"
+msgstr ""
+
+#: includes/trait-settings.php:895
+#: includes/trait-settings.php:958
+#: includes/trait-settings.php:986
+msgid "Failed"
+msgstr ""
+
+#: includes/trait-settings.php:900
+#, php-format
+msgid "Last message: %s"
+msgstr ""
+
+#: includes/trait-settings.php:904
+msgid "Started:"
+msgstr ""
+
+#: includes/trait-settings.php:907
+msgid "Last run:"
+msgstr ""
+
+#: includes/trait-settings.php:910
+msgid "Finished:"
+msgstr ""
+
+#: includes/trait-settings.php:921
+msgid "Use when content does not refresh promptly; if a CDN is in use, its cache must be cleared too."
+msgstr ""
+
+#: includes/trait-settings.php:927
+msgid "Preload now"
+msgstr ""
+
+#: includes/trait-settings.php:929
+#: includes/trait-settings.php:973
+msgid "After saving settings, published pages will be preloaded according to the rules."
+msgstr ""
+
+#: includes/trait-settings.php:929
+#: includes/trait-settings.php:974
+msgid "Preload unavailable: enable the FastCGI cache first and save."
+msgstr ""
+
+#: includes/trait-settings.php:935
+msgid "Stop preload"
+msgstr ""
+
+#: includes/trait-settings.php:937
+msgid "You can stop a running task at any time. Pages that were already cached will remain cached."
+msgstr ""
+
+#: includes/trait-settings.php:942
+msgid "Recent cache clears"
+msgstr ""
+
+#: includes/trait-settings.php:945
+msgid "Time"
+msgstr ""
+
+#: includes/trait-settings.php:945
+msgid "Trigger"
+msgstr ""
+
+#: includes/trait-settings.php:945
+msgid "Result"
+msgstr ""
+
+#: includes/trait-settings.php:952
+msgid "Manual clear"
+msgstr ""
+
+#: includes/trait-settings.php:953
+msgid "Automatic (post published)"
+msgstr ""
+
+#: includes/trait-settings.php:954
+msgid "Automatic (comment activity)"
+msgstr ""
+
+#: includes/trait-settings.php:956
+msgid "Automatic"
+msgstr ""
+
+#: includes/trait-settings.php:958
+msgid "Success"
+msgstr ""
+
+#: includes/trait-settings.php:975
+msgid "Verifying…"
+msgstr ""
+
+#: includes/trait-settings.php:976
+msgid "Connection verified. The WP Panel API authenticated the request and responded successfully."
+msgstr ""
+
+#: includes/trait-settings.php:977
+#, php-format
+msgid "Connection failed: %s"
+msgstr ""
+
+#: includes/trait-settings.php:978
+#, php-format
+msgid "Network error: could not reach the panel (%s)"
+msgstr ""
+
+#: includes/trait-settings.php:980
 msgid "Updating…"
 msgstr ""
 
+#: includes/trait-settings.php:981
 msgid "Update completed. Reloading…"
 msgstr ""
 
+#: includes/trait-settings.php:982
+#, php-format
 msgid "Update failed: %s"
+msgstr ""
+
+#: includes/trait-settings.php:985
+msgid "Completed"
+msgstr ""
+
+#: includes/trait-settings.php:987
+msgid "Stopped"
+msgstr ""
+
+#: includes/trait-settings.php:989
+#, php-format
+msgid "%s MB saved in total (all batch jobs)"
+msgstr ""
+
+#: includes/trait-settings.php:990
+#, php-format
+msgid "Progress: %s / %s"
+msgstr ""
+
+#: includes/trait-settings.php:991
+#, php-format
+msgid " (%s failed)"
+msgstr ""
+
+#: includes/trait-settings.php:992
+#, php-format
+msgid "; %s files were already processed earlier and were skipped this run"
+msgstr ""
+
+#: includes/trait-settings.php:993
+#, php-format
+msgid "; %s MB saved this run"
+msgstr ""
+
+#: includes/trait-settings.php:994
+#, php-format
+msgid "Start failed: %s"
+msgstr ""
+
+#: includes/trait-settings.php:1237
+msgid "WP Panel file lock is enabled."
+msgstr ""
+
+#: includes/trait-settings.php:1237
+msgid "Publishing posts, editing pages, and uploading media are unaffected. Protected plugin, theme, code, and site configuration files cannot be changed directly. If an installation, update, or setup task needs to write to these files, use File protection / maintenance in the upper-right corner to unlock the site temporarily with the maintenance password. If temporary maintenance is unavailable, ask the server administrator to handle the task in WP Panel. WP Panel Optimizer is managed by the panel and can still receive its own updates."
+msgstr ""
+
+#: wp-panel-optimizer.php:116
+msgid "No response; please check the panel address"
+msgstr ""
+
+#: wp-panel-optimizer.php:123
+msgid "Connection successful"
 msgstr ""

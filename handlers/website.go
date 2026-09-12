@@ -3033,6 +3033,7 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 		WPDebugDisplay     *bool  `json:"wp_debug_display"`
 		WPPostRevisions    int    `json:"wp_post_revisions"`
 		WPMemoryLimit      string `json:"wp_memory_limit"`
+		FileLockSafeOnly   bool   `json:"file_lock_safe_only"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Domain == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
@@ -3043,7 +3044,7 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("API Key 无效"))
 		return
 	}
-	if site.FileLockEnabled {
+	if site.FileLockEnabled && !req.FileLockSafeOnly {
 		c.JSON(http.StatusLocked, models.ErrorResponse(fileLockBlockedMessage))
 		return
 	}
@@ -3066,7 +3067,7 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
-	if site.FileLockEnabled {
+	if site.FileLockEnabled && !req.FileLockSafeOnly {
 		c.JSON(http.StatusLocked, models.ErrorResponse(fileLockBlockedMessage))
 		return
 	}
@@ -3080,6 +3081,27 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 	fcEnabled := 0
 	if req.Enabled {
 		fcEnabled = 1
+	}
+	if req.FileLockSafeOnly {
+		if !site.FileLockEnabled {
+			c.JSON(http.StatusConflict, models.ErrorResponse("文件保护状态已变化，请刷新页面后重试"))
+			return
+		}
+		if _, err := db.Exec(`UPDATE websites SET fastcgi_cache_enabled=?, fastcgi_cache_ttl=? WHERE id=?`, fcEnabled, req.TTL, site.ID); err != nil {
+			log.Printf("UpdateOptimizerSettings 安全字段更新失败 (site %s): %v", req.Domain, err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存失败"))
+			return
+		}
+		if oldFCacheEnabled != fcEnabled || oldFCacheTTL != req.TTL {
+			executor.GoSafe(func() {
+				if err := executor.RegenerateSiteNginx(site.ID); err != nil {
+					log.Printf("刷新站点 Nginx 配置失败 site=%d: %v", site.ID, err)
+				}
+			})
+		}
+		recordHandlerOperationLog("wp_optimizations", req.Domain, "success", fmt.Sprintf("文件保护期间保存可用设置：FastCGI缓存=%t, TTL=%d秒", req.Enabled, req.TTL))
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "可用设置已保存，受文件保护的设置保持不变"}))
+		return
 	}
 	disableUpdates := 0
 	disableEditing := 0

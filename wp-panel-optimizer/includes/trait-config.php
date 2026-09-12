@@ -137,7 +137,7 @@ trait WPP_Optimizer_Config_Trait {
         return $value;
     }
 
-    private static function push_optimizer_settings($fcacheEnabled, $fcacheTTL, $noUpdates, $noFileEdit, $wpDebug = false, $postRevisions = -1, $memoryLimit = '') {
+    private static function push_optimizer_settings($fcacheEnabled, $fcacheTTL, $noUpdates, $noFileEdit, $wpDebug = false, $postRevisions = -1, $memoryLimit = '', $fileLockSafeOnly = false) {
         $domain = wp_parse_url(home_url(), PHP_URL_HOST);
         $resp = self::api_request('PUT', '/api/sites/optimizer-settings', [
             'domain'               => $domain,
@@ -148,6 +148,7 @@ trait WPP_Optimizer_Config_Trait {
             'wp_debug_enabled'     => $wpDebug,
             'wp_post_revisions'    => $postRevisions,
             'wp_memory_limit'      => $memoryLimit,
+            'file_lock_safe_only'  => $fileLockSafeOnly,
         ]);
         if (is_wp_error($resp)) return $resp;
         $data = json_decode($resp, true);
