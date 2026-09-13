@@ -108,6 +108,16 @@ type LogAnalysisReport struct {
 	Samples                 []string              `json:"samples"`
 	CrawlerRangesUpdatedAt  string                `json:"crawler_ranges_updated_at,omitempty"`
 	SuspiciousClientIPCount int                   `json:"suspicious_client_ip_count"`
+	ClassificationVersion   int                   `json:"classification_version,omitempty"`
+	TrafficCategories       []LogTrafficCategory  `json:"traffic_categories,omitempty"`
+}
+
+// LogTrafficCategory is one mutually exclusive slice of ordinary access-log traffic.
+type LogTrafficCategory struct {
+	Key       string `json:"key"`
+	Count     int    `json:"count"`
+	UniqueIPs int    `json:"unique_ips"`
+	Certainty string `json:"certainty"`
 }
 
 type LogAnalysisJob struct {

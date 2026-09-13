@@ -23,7 +23,7 @@ func AnalyzeWebsiteLogDetails(site *models.Website, startAt, endAt time.Time, db
 	if site == nil || site.ID <= 0 || !startAt.Before(endAt) || endAt.Sub(startAt) > 7*24*time.Hour {
 		return nil, fmt.Errorf("invalid log analysis detail request")
 	}
-	if kind != "status" && kind != "path" && kind != "bot" && kind != "ip" {
+	if kind != "status" && kind != "path" && kind != "bot" && kind != "ip" && kind != "category" {
 		return nil, fmt.Errorf("invalid detail kind")
 	}
 	value = strings.TrimSpace(value)
@@ -40,6 +40,9 @@ func AnalyzeWebsiteLogDetails(site *models.Website, startAt, endAt time.Time, db
 	}
 	if kind == "ip" && net.ParseIP(value) == nil {
 		return nil, fmt.Errorf("invalid IP address")
+	}
+	if kind == "category" && !validLogTrafficCategory(value) {
+		return nil, fmt.Errorf("invalid traffic category")
 	}
 	if page < 1 {
 		page = 1
@@ -118,6 +121,8 @@ func AnalyzeWebsiteLogDetails(site *models.Website, startAt, endAt time.Time, db
 				}
 			case "ip":
 				matched = !security && m[1] == value
+			case "category":
+				matched = !security && classifyLogTraffic(m[3], m[4], m[5], m[6], m[1], checker) == value
 			}
 			if matched {
 				normalizedPath := normalizeLogPath(m[4])

@@ -58,6 +58,88 @@ func TestLogAnalysisPageIncludesContent(t *testing.T) {
 	}
 }
 
+func TestLogAnalysisExplainsServerTrafficMetrics(t *testing.T) {
+	template, err := os.ReadFile("../templates/log_analysis.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range [][]byte{
+		[]byte(`log_analysis.requests_help`),
+		[]byte(`log_analysis.unique_ips_help`),
+		[]byte(`statusCount('444')`),
+		[]byte(`identifiedBotRequests()`),
+		[]byte(`log_analysis.traffic_explanation`),
+	} {
+		if !bytes.Contains(template, required) {
+			t.Fatalf("log analysis traffic explanation missing %q", required)
+		}
+	}
+	if bytes.Contains(template, []byte(`report.security_request_count`)) {
+		t.Fatal("security log records must not be presented as the HTTP 444 rejection count")
+	}
+}
+
+func TestLogAnalysisTrafficMetricCalculations(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available")
+	}
+	rendered := renderPage(t, "log_analysis.html", "log_analysis_content")
+	scripts := regexp.MustCompile(`(?s)<script>(.*?)</script>`).FindAllSubmatch(rendered, -1)
+	var pageScript []byte
+	for _, script := range scripts {
+		if bytes.Contains(script[1], []byte("function logAnalysisPage()")) {
+			pageScript = script[1]
+			break
+		}
+	}
+	if len(pageScript) == 0 {
+		t.Fatal("log analysis page script not found")
+	}
+	harness := []byte(`
+function t(key, params = {}) { return key + '|' + JSON.stringify(params); }
+const page = logAnalysisPage();
+page.report = null;
+if (page.statusCount('444') !== 0 || page.identifiedBotRequests() !== 0) throw new Error('null report fallback failed');
+page.report = { access_requests: 20, unique_ips: 8, status_codes: null, bots: null };
+if (page.statusCount('444') !== 0 || page.identifiedBotRequests() !== 0) throw new Error('null collection fallback failed');
+if (page.categoryPercent(5) !== 25 || page.hasTrafficCategories()) throw new Error('legacy category fallback failed');
+page.report = { access_requests: 0, classification_version: 1, traffic_categories: [] };
+if (page.categoryPercent(5) !== 0 || !page.hasTrafficCategories()) throw new Error('empty classified report failed');
+page.report = {
+    access_requests: 20,
+    unique_ips: 8,
+    classification_version: 1,
+    traffic_categories: [{ key: 'page_like', count: 5 }],
+    status_codes: [{ name: '200', count: 12 }, { name: '444', count: 7 }],
+    bots: [
+        { verification: 'verified', count: 3 },
+        { verification: 'fake', count: 2 },
+        { verification: 'unverified', count: 4 },
+        { verification: 'unknown', count: '5' }
+    ]
+};
+if (page.statusCount('444') !== 7) throw new Error('HTTP 444 lookup failed');
+if (page.identifiedBotRequests() !== 14) throw new Error('bot aggregation omitted a verification state');
+if (page.categoryPercent(5) !== 25 || page.shareText(5) !== '25.0%') throw new Error('category percentage failed');
+if (!page.hasTrafficCategories()) throw new Error('classified report was treated as legacy');
+if (page.categoryLabel('page_like') !== 'log_analysis.category_page_like|{}') throw new Error('category label failed');
+if (page.categoryColor('page_like') !== 'bg-green-500') throw new Error('category color failed');
+const explanation = page.trafficExplanation();
+for (const expected of ['"requests":20', '"ips":8', '"blocked":7', '"bots":14']) {
+    if (!explanation.includes(expected)) throw new Error('traffic explanation missing ' + expected);
+}
+`)
+	testScript := append(append([]byte{}, pageScript...), harness...)
+	scriptPath := filepath.Join(t.TempDir(), "log-analysis-metrics.js")
+	if err := os.WriteFile(scriptPath, testScript, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, scriptPath).CombinedOutput(); err != nil {
+		t.Fatalf("log analysis traffic metric behavior failed: %v\n%s", err, output)
+	}
+}
+
 func TestAlertWebhookUsesConfigurationAsEnablement(t *testing.T) {
 	page, err := os.ReadFile("../templates/alert.html")
 	if err != nil {

@@ -97,6 +97,10 @@ func logDiagnosticResponseRules(kind, value string) []string {
 		return append(rules,
 			"这是来源IP专项分析：结合路径、状态码、方法、小时分布、安全事件和封禁历史判断其行为，不得根据IP归属或信誉作无数据依据的猜测。",
 			"当前封禁与时间段内曾封禁必须分开解释；安全事件和封禁记录受保留数量限制，0不代表历史从未发生。")
+	case "category":
+		return append(rules,
+			"这是互斥请求构成中的一个主分类：解释该类请求的数量、占总请求比例、来源IP、路径、状态码、方法和小时分布，不得把来源IP数或页面类请求候选解释为用户数。",
+			"页面类请求候选只是经过规则筛选后的服务器请求，仍可能包含未识别自动化流量，也可能因浏览器拦截统计代码而不出现在前端分析工具中。")
 	default:
 		return append(rules,
 			"这是整站日志总览：分别总结正常访问、搜索引擎与其他爬虫、错误响应、安全扫描和已拦截流量，按影响和证据排序管理员最值得关注的问题。",
@@ -211,7 +215,7 @@ func selectLogDiagnosticFocus(defaultKind, defaultValue, question string) (strin
 			return "bot", canonicalBotName(bot) + ":" + verification
 		}
 	}
-	if defaultKind == "status" || defaultKind == "path" || defaultKind == "bot" || defaultKind == "ip" {
+	if defaultKind == "status" || defaultKind == "path" || defaultKind == "bot" || defaultKind == "ip" || (defaultKind == "category" && validLogTrafficCategory(strings.TrimSpace(defaultValue))) {
 		return defaultKind, strings.TrimSpace(defaultValue)
 	}
 	return "", ""

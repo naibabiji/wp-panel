@@ -64,6 +64,23 @@ func TestAnalyzeWebsiteLogsScansRotationsAndVerifiesBots(t *testing.T) {
 	if report.PHPFatalCount != 1 {
 		t.Fatalf("php fatal=%d", report.PHPFatalCount)
 	}
+	if report.ClassificationVersion != logTrafficClassificationVersion {
+		t.Fatalf("classification version=%d", report.ClassificationVersion)
+	}
+	total := 0
+	for _, category := range report.TrafficCategories {
+		total += category.Count
+	}
+	if total != report.AccessRequests {
+		t.Fatalf("traffic category total=%d requests=%d categories=%+v", total, report.AccessRequests, report.TrafficCategories)
+	}
+	categories := map[string]models.LogTrafficCategory{}
+	for _, category := range report.TrafficCategories {
+		categories[category.Key] = category
+	}
+	if categories[logTrafficIdentifiedAutomation].UniqueIPs != 3 || categories[logTrafficHTTPError].UniqueIPs != 1 {
+		t.Fatalf("category unique IPs were not independently deduplicated: %+v", categories)
+	}
 	if len(report.TopPaths) == 0 || report.TopPaths[0].Name == "/archives?token=secret" {
 		t.Fatalf("query string was not removed: %+v", report.TopPaths)
 	}
@@ -81,6 +98,40 @@ func TestAnalyzeWebsiteLogsScansRotationsAndVerifiesBots(t *testing.T) {
 	}
 }
 
+func TestClassifyLogTrafficPriorityAndBoundaries(t *testing.T) {
+	checker := &searchBotIPChecker{}
+	tests := []struct {
+		name, method, path, status, ua, want string
+	}{
+		{"rejected bot stays security", "GET", "/wp-login.php", "444", "Googlebot/2.1", logTrafficSecurityRejected},
+		{"command client", "GET", "/", "200", "curl/8.0", logTrafficIdentifiedAutomation},
+		{"wget client", "GET", "/", "200", "Wget/1.21.4", logTrafficIdentifiedAutomation},
+		{"python requests client", "GET", "/", "200", "python-requests/2.32", logTrafficIdentifiedAutomation},
+		{"python urllib client", "GET", "/", "200", "Python-urllib/3.13", logTrafficIdentifiedAutomation},
+		{"go client", "GET", "/", "200", "Go-http-client/1.1", logTrafficIdentifiedAutomation},
+		{"perl client", "GET", "/", "200", "libwww-perl/6.77", logTrafficIdentifiedAutomation},
+		{"scrapy client", "GET", "/", "200", "Scrapy/2.12", logTrafficIdentifiedAutomation},
+		{"known bot error", "GET", "/missing", "404", "SomeCrawler/1.0", logTrafficIdentifiedAutomation},
+		{"browser error", "GET", "/missing", "404", "Mozilla/5.0", logTrafficHTTPError},
+		{"wordpress endpoint", "GET", "/wp-admin/admin-ajax.php", "200", "Mozilla/5.0", logTrafficWordPressEndpoint},
+		{"rest route query", "GET", "/?rest_route=/wp/v2/posts", "200", "Mozilla/5.0", logTrafficWordPressEndpoint},
+		{"wordpress error remains error", "GET", "/wp-login.php", "404", "Mozilla/5.0", logTrafficHTTPError},
+		{"static query", "GET", "/app.css?v=1", "200", "Mozilla/5.0", logTrafficStaticAsset},
+		{"missing static remains error", "GET", "/app.js", "404", "Mozilla/5.0", logTrafficHTTPError},
+		{"redirect page", "GET", "/old", "301", "Mozilla/5.0", logTrafficPageLike},
+		{"cache revalidation", "GET", "/article", "304", "Mozilla/5.0", logTrafficPageLike},
+		{"head page", "HEAD", "/article", "200", "Mozilla/5.0", logTrafficPageLike},
+		{"post is other", "POST", "/contact", "200", "Mozilla/5.0", logTrafficOther},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyLogTraffic(tt.method, tt.path, tt.status, tt.ua, "192.0.2.1", checker); got != tt.want {
+				t.Fatalf("classifyLogTraffic()=%q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAnalyzeWebsiteLogsRejectsUnsafeRangeAndNames(t *testing.T) {
 	if isAnalyzableLogName("access.log.secret") || isAnalyzableLogName("error.log.1.gz.bad") {
 		t.Fatal("unsafe rotated log name accepted")
@@ -89,6 +140,16 @@ func TestAnalyzeWebsiteLogsRejectsUnsafeRangeAndNames(t *testing.T) {
 	_, err := AnalyzeWebsiteLogs(&models.Website{ID: 1, LogDir: t.TempDir()}, now.Add(-8*24*time.Hour), now, nil, "zh-CN")
 	if err == nil {
 		t.Fatal("expected range validation error")
+	}
+}
+
+func TestLegacyLogReportOmitsTrafficClassification(t *testing.T) {
+	data, err := json.Marshal(models.LogAnalysisReport{AccessRequests: 12})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "classification_version") || strings.Contains(string(data), "traffic_categories") {
+		t.Fatalf("legacy-shaped report emitted false classification fields: %s", data)
 	}
 }
 
@@ -213,6 +274,13 @@ func TestAnalyzeWebsiteLogDetailsFiltersAndPaginates(t *testing.T) {
 	ipDetail, err := AnalyzeWebsiteLogDetails(site, now.Add(-time.Hour), now.Add(time.Hour), db, "ip", "1.2.3.4", 1, 20)
 	if err != nil || ipDetail.Total != 1 || len(ipDetail.Lines) != 1 || !strings.Contains(ipDetail.Lines[0], "/archives?a=1") {
 		t.Fatalf("ip detail=%+v err=%v", ipDetail, err)
+	}
+	category, err := AnalyzeWebsiteLogDetails(site, now.Add(-time.Hour), now.Add(time.Hour), db, "category", logTrafficSecurityRejected, 1, 20)
+	if err != nil || category.Total != status.Total {
+		t.Fatalf("category detail=%+v status total=%d err=%v", category, status.Total, err)
+	}
+	if _, err := AnalyzeWebsiteLogDetails(site, now.Add(-time.Hour), now.Add(time.Hour), db, "category", "invented", 1, 20); err == nil {
+		t.Fatal("invalid traffic category accepted")
 	}
 }
 

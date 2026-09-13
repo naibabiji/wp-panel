@@ -41,6 +41,8 @@ type logAnalysisAccumulator struct {
 	paths                 map[string]int
 	ips                   map[string]int
 	uniqueIPs             map[string]struct{}
+	trafficCounts         map[string]int
+	trafficIPs            map[string]map[string]struct{}
 	bots                  map[string]*models.LogAnalysisBotCount
 	botChecker            *searchBotIPChecker
 	botRequests           map[string]struct{}
@@ -74,10 +76,15 @@ func AnalyzeWebsiteLogs(site *models.Website, startAt, endAt time.Time, db *sql.
 		SiteID: site.ID, Domain: site.Domain, StartAt: startAt, EndAt: endAt,
 		GeneratedAt: time.Now(), Findings: []models.LogAnalysisFinding{}, Samples: []string{},
 	}
+	report.ClassificationVersion = logTrafficClassificationVersion
+	trafficIPs := map[string]map[string]struct{}{}
+	for _, item := range logTrafficCategoryOrder {
+		trafficIPs[item.key] = map[string]struct{}{}
+	}
 	acc := &logAnalysisAccumulator{
 		report: report, status: map[string]int{}, hourly: map[string]int{},
 		paths: map[string]int{}, ips: map[string]int{}, uniqueIPs: map[string]struct{}{},
-		bots:       map[string]*models.LogAnalysisBotCount{},
+		bots: map[string]*models.LogAnalysisBotCount{}, trafficCounts: map[string]int{}, trafficIPs: trafficIPs,
 		botChecker: newSearchBotIPChecker(db), botRequests: map[string]struct{}{}, ipAttributionRequests: map[string]struct{}{}, lang: lang,
 	}
 	if db != nil {
@@ -114,6 +121,7 @@ func AnalyzeWebsiteLogs(site *models.Website, startAt, endAt time.Time, db *sql.
 	report.TopPaths = sortedCounts(acc.paths, logAnalysisTopLimit)
 	report.TopIPs = sortedCounts(acc.ips, logAnalysisTopLimit)
 	report.Bots = sortedBots(acc.bots)
+	report.TrafficCategories = buildLogTrafficCategories(acc.trafficCounts, acc.trafficIPs)
 	acc.buildFindings()
 	return report, nil
 }
@@ -218,6 +226,9 @@ func (a *logAnalysisAccumulator) consumeAccess(line string, security bool, start
 	a.paths[path]++
 	a.status[code]++
 	a.hourly[stamp.Format("2006-01-02 15:00")]++
+	category := classifyLogTraffic(m[3], m[4], code, ua, ip, a.botChecker)
+	a.trafficCounts[category]++
+	a.trafficIPs[category][ip] = struct{}{}
 	if strings.HasPrefix(code, "5") {
 		a.fiveXX++
 		if len(a.fiveXXLines) < logAnalysisMaxSamples {
