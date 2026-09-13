@@ -87,9 +87,19 @@
                     <p class="text-xs text-gray-500 mt-1">{{t .Lang "database.backup_help"}}</p>
                 </div>
                 <div class="flex flex-wrap gap-2">
-                    <button @click="createBackup()" :disabled="backupSubmitting" class="btn-primary text-sm" x-text="backupSubmitting ? t('website.backing_up') : t('website.manual_backup')"></button>
-                    <button @click="uploadRestore()" :disabled="restoreUploading" class="btn-secondary text-sm" x-text="restoreUploading ? t('website.restoring') : t('website.upload_restore')"></button>
+                    <button @click="createBackup()" :disabled="backupSubmitting || restoreBusy()" class="btn-primary text-sm" x-text="backupSubmitting ? t('website.backing_up') : t('website.manual_backup')"></button>
+                    <button @click="uploadRestore()" :disabled="restoreBusy()" class="btn-secondary text-sm" x-text="restoreBusy() ? restoreStatusLabel() : t('website.upload_restore')"></button>
                     <input type="file" id="databaseRestoreFileInput" @change="handleRestoreUpload($event)" accept=".sql,.sql.gz,.gz,.zip" class="hidden">
+                </div>
+            </div>
+
+            <div x-show="restoreBusy()" x-cloak class="mb-4 rounded-lg border border-blue-800/70 bg-blue-950/30 p-3" role="status" aria-live="polite">
+                <div class="flex items-start gap-3">
+                    <span class="mt-0.5 inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-blue-300 border-t-transparent" aria-hidden="true"></span>
+                    <div>
+                        <p class="text-sm font-medium text-blue-100" x-text="restoreStatusLabel()"></p>
+                        <p class="mt-1 text-xs leading-5 text-blue-200/80" x-text="t('website.restore_long_running_help')"></p>
+                    </div>
                 </div>
             </div>
 
@@ -126,8 +136,8 @@
                                 <td class="py-2">
                                     <div class="flex flex-wrap gap-1">
                                         <button @click="downloadBackup(b)" class="btn-primary text-xs py-1 px-2">{{t .Lang "website.download"}}</button>
-                                        <button @click="restoreBackup(b)" :disabled="restoringId" class="btn-danger text-xs py-1 px-2" x-text="restoringId === b.id ? t('website.restoring') : t('website.restore')"></button>
-                                        <button @click="deleteBackup(b)" :disabled="restoringId" class="btn-secondary text-xs py-1 px-2">{{t .Lang "website.delete"}}</button>
+                                        <button @click="restoreBackup(b)" :disabled="restoreBusy()" class="btn-danger text-xs py-1 px-2" x-text="restoringId === b.id ? restoreStatusLabel() : t('website.restore')"></button>
+                                        <button @click="deleteBackup(b)" :disabled="restoreBusy()" class="btn-secondary text-xs py-1 px-2">{{t .Lang "website.delete"}}</button>
                                     </div>
                                 </td>
                             </tr>
@@ -144,7 +154,7 @@
         <div class="card border border-red-900/70">
             <h3 class="text-lg font-semibold text-red-300 mb-2">{{t .Lang "database.danger_zone"}}</h3>
             <p class="text-sm text-gray-400 mb-4">{{t .Lang "database.clear_warning"}}</p>
-            <button @click="clearDatabase()" :disabled="dbSubmitting" class="btn-danger text-sm" x-text="dbSubmitting ? t('website.clearing') : t('website.clear_database')"></button>
+            <button @click="clearDatabase()" :disabled="dbSubmitting || restoreBusy()" class="btn-danger text-sm" x-text="dbSubmitting ? t('website.clearing') : t('website.clear_database')"></button>
         </div>
     </div>
     </template>
@@ -272,6 +282,9 @@ function databaseDetail() {
         backupKeepCount: 7,
         restoringId: null,
         restoreUploading: false,
+        restorePhase: '',
+        restoreElapsedSeconds: 0,
+        restoreTimer: null,
         restorePollingActive: true,
         adminerStatus: { enabled: false },
         adminerDuration: 30,
@@ -280,8 +293,41 @@ function databaseDetail() {
         siteID() { return window.location.pathname.split('/').pop(); },
         panelPrefix() { return document.body.dataset.panelPrefix || ''; },
         init() {
-            window.addEventListener('beforeunload', () => { this.restorePollingActive = false; });
+            window.addEventListener('beforeunload', () => {
+                this.restorePollingActive = false;
+                this.stopRestoreTimer();
+            });
             this.fetchDetail();
+        },
+        restoreBusy() { return this.restorePhase !== ''; },
+        startRestoreTimer(phase) {
+            this.stopRestoreTimer();
+            this.restorePhase = phase;
+            this.restoreElapsedSeconds = 0;
+            const startedAt = Date.now();
+            this.restoreTimer = window.setInterval(() => {
+                this.restoreElapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+            }, 1000);
+        },
+        stopRestoreTimer() {
+            if (this.restoreTimer !== null) window.clearInterval(this.restoreTimer);
+            this.restoreTimer = null;
+        },
+        finishRestore() {
+            this.stopRestoreTimer();
+            this.restorePhase = '';
+            this.restoreUploading = false;
+            this.restoringId = null;
+        },
+        formatRestoreElapsed() {
+            const minutes = Math.floor(this.restoreElapsedSeconds / 60);
+            const seconds = this.restoreElapsedSeconds % 60;
+            return minutes > 0 ? `${minutes}:${String(seconds).padStart(2, '0')}` : `${seconds}s`;
+        },
+        restoreStatusLabel() {
+            if (this.restorePhase === 'uploading') return t('website.restore_uploading');
+            if (this.restorePhase === 'waiting') return t('website.restore_waiting');
+            return t('website.restore_running_elapsed', { time: this.formatRestoreElapsed() });
         },
         async fetchDetail() {
             this.loading = true;
@@ -494,13 +540,14 @@ function databaseDetail() {
         async restoreBackup(b) {
             if (!await confirmModal(t('website.confirm_restore_backup', { filename: b.filename }))) return;
             this.restoringId = b.id;
+            this.startRestoreTimer('waiting');
             try {
                 const r = await api('/websites/' + this.site.id + '/backups/' + b.id + '/restore', { method: 'POST' });
                 if (!r.data?.task_id) throw new Error(t('website.restore_task_failed'));
                 showToast(r.data?.message || t('website.restore_started'), 'info');
                 await this.pollRestoreTask(r.data.task_id);
             } catch (e) { showToast(e.message, 'error'); }
-            this.restoringId = null;
+            this.finishRestore();
         },
         async deleteBackup(b) {
             if (!await confirmModal(t('website.confirm_delete_backup', { filename: b.filename }))) return;
@@ -517,23 +564,30 @@ function databaseDetail() {
             if (![ '.sql', '.sql.gz', '.gz', '.zip' ].some(ext => file.name.endsWith(ext))) { showToast(t('website.restore_file_invalid'), 'error'); event.target.value = ''; return; }
             if (!await confirmModal(t('website.confirm_restore_upload', { filename: file.name }))) { event.target.value = ''; return; }
             this.restoreUploading = true;
+            this.startRestoreTimer('uploading');
             const body = new FormData();
             body.append('file', file);
             try {
                 const r = await api('/websites/' + this.site.id + '/backups/upload-restore', { method: 'POST', body, headers: {} });
                 if (!r.data?.task_id) throw new Error(t('website.restore_task_failed'));
+                this.restorePhase = 'waiting';
                 showToast(r.data?.message || t('website.restore_started'), 'info');
                 await this.pollRestoreTask(r.data.task_id);
                 await this.fetchBackups();
             } catch (e) { showToast(e.message, 'error'); }
-            this.restoreUploading = false;
+            this.finishRestore();
             event.target.value = '';
         },
         async pollRestoreTask(taskID) {
             this.restorePollingActive = true;
             for (let i = 0; i < 3600 && this.restorePollingActive; i++) {
                 const r = await api('/websites/' + this.site.id + '/backups/restore-tasks/' + encodeURIComponent(taskID));
-                if (r.data?.status === 'success') { showToast(r.data.message || t('website.restore_success'), 'success'); return; }
+                if (r.data?.status === 'running') this.restorePhase = 'running';
+                if (r.data?.status === 'waiting') this.restorePhase = 'waiting';
+                if (r.data?.status === 'success') {
+                    showToast(t('website.restore_success_elapsed', { time: this.formatRestoreElapsed() }), 'success');
+                    return;
+                }
                 if (r.data?.status === 'failed') throw new Error(r.data.message || t('website.restore_failed'));
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }

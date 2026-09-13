@@ -1550,6 +1550,26 @@ func TestDatabaseDetailShowsFiveRecentBackupsByDefault(t *testing.T) {
 	}
 }
 
+func TestDatabaseRestoreShowsLongRunningStatusAndBlocksConflictingActions(t *testing.T) {
+	source, err := os.ReadFile("../templates/database_detail.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range [][]byte{
+		[]byte(`restoreStatusLabel()`),
+		[]byte(`restoreElapsedSeconds`),
+		[]byte(`website.restore_long_running_help`),
+		[]byte(`website.restore_success_elapsed`),
+		[]byte(`backupSubmitting || restoreBusy()`),
+		[]byte(`dbSubmitting || restoreBusy()`),
+		[]byte(`if (r.data?.status === 'running') this.restorePhase = 'running'`),
+	} {
+		if !bytes.Contains(source, expected) {
+			t.Fatalf("database restore progress UI is missing %s", expected)
+		}
+	}
+}
+
 func TestDatabaseDetailProvidesWordPressAdministratorEditor(t *testing.T) {
 	templateSource, err := os.ReadFile("../templates/database_detail.html")
 	if err != nil {
