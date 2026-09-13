@@ -2,6 +2,7 @@ package executor
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -228,7 +229,7 @@ func restoreSQLReader(r io.Reader, dbName, dbPass string) TaskResult {
 		_ = cmd.Wait()
 		return TaskResult{Success: false, Message: "恢复失败，初始化 mysql 导入失败: " + err.Error()}
 	}
-	copyErr := writeSanitizedRestoreSQL(stdin, r)
+	copyErr := filterRestoreSQLBuffered(stdin, r)
 	if copyErr == nil {
 		_, copyErr = io.WriteString(stdin, "\nSET FOREIGN_KEY_CHECKS=1;\n")
 	}
@@ -409,6 +410,26 @@ func validateRestoreSQL(r io.Reader) error {
 		return fmt.Errorf("未找到建表语句")
 	}
 	return nil
+}
+
+// restoreSQLWriteBufferSize is shared by every database restore entry point
+// (regular backup restore and the WordPress core update rollback) so both
+// route through the same buffer sizing instead of drifting independently.
+const restoreSQLWriteBufferSize = 256 * 1024
+
+// filterRestoreSQLBuffered is the one entry point every mysql-stdin restore
+// path must use to stream SQL through writeSanitizedRestoreSQL. dst is
+// typically a raw OS pipe (mysql's stdin): writeSanitizedRestoreSQL writes
+// non-skipped bytes to dst one at a time, so writing straight to a pipe turns
+// a multi-GB import into a syscall per byte. Wrapping dst in a bufio.Writer
+// here coalesces those into buffer-sized writes; callers still own closing
+// the underlying destination after this returns.
+func filterRestoreSQLBuffered(dst io.Writer, src io.Reader) error {
+	buffered := bufio.NewWriterSize(dst, restoreSQLWriteBufferSize)
+	if err := writeSanitizedRestoreSQL(buffered, src); err != nil {
+		return err
+	}
+	return buffered.Flush()
 }
 
 func writeSanitizedRestoreSQL(dst io.Writer, src io.Reader) error {

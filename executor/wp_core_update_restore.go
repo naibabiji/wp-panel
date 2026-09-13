@@ -78,7 +78,7 @@ func restoreWPCoreDatabase(ctx context.Context, mysqlPath, dbName, password, bac
 		writeErr = err
 	}
 	if writeErr == nil {
-		writeErr = writeSanitizedRestoreSQL(stdin, gz)
+		writeErr = filterRestoreSQLBuffered(stdin, gz)
 	}
 	if writeErr == nil {
 		_, writeErr = io.WriteString(stdin, "\nSET FOREIGN_KEY_CHECKS=1;\n")
