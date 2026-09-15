@@ -34,5 +34,5 @@ type SystemStats struct {
 }
 
 type MetricsQuery struct {
-	Range string `form:"range" binding:"required,oneof=24h 7d 15d 30d"`
+	Range string `form:"range" binding:"required,oneof=24h 7d 15d"`
 }

@@ -7,13 +7,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -124,6 +127,69 @@ func TestDirectorySizeRejectsConcurrentOverflow(t *testing.T) {
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/files/size?site_id=0&path=/", nil))
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDeleteRejectsManagedBackupRoot(t *testing.T) {
+	oldConfig := config.AppConfig
+	backupRoot := t.TempDir()
+	config.AppConfig = &config.Config{Panel: config.PanelConfig{BackupDir: backupRoot}}
+	t.Cleanup(func() { config.AppConfig = oldConfig })
+	marker := filepath.Join(backupRoot, "keep.txt")
+	if err := os.WriteFile(marker, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.DELETE("/api/files/delete", (&FileHandler{}).Delete)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/files/delete?site_id=0&path=%2F", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("managed root contents changed: %v", err)
+	}
+}
+
+func TestRenameRejectsPathAndExistingTarget(t *testing.T) {
+	oldConfig := config.AppConfig
+	backupRoot := t.TempDir()
+	config.AppConfig = &config.Config{Panel: config.PanelConfig{BackupDir: backupRoot}}
+	t.Cleanup(func() { config.AppConfig = oldConfig })
+	if err := os.WriteFile(filepath.Join(backupRoot, "old.txt"), []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backupRoot, "existing.txt"), []byte("existing"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.PUT("/api/files/rename", (&FileHandler{}).Rename)
+	for _, tc := range []struct {
+		name    string
+		newName string
+		status  int
+	}{
+		{name: "path", newName: "nested/moved.txt", status: http.StatusBadRequest},
+		{name: "overwrite", newName: "existing.txt", status: http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := strings.NewReader(`{"site_id":0,"old_path":"/old.txt","new_name":"` + tc.newName + `"}`)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPut, "/api/files/rename", body)
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(rec, req)
+			if rec.Code != tc.status {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+	if data, err := os.ReadFile(filepath.Join(backupRoot, "old.txt")); err != nil || string(data) != "old" {
+		t.Fatalf("source changed: data=%q err=%v", data, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(backupRoot, "existing.txt")); err != nil || string(data) != "existing" {
+		t.Fatalf("target changed: data=%q err=%v", data, err)
 	}
 }
 
@@ -804,6 +870,97 @@ func TestZipTargetRejectsGB18030PathTraversal(t *testing.T) {
 
 	if _, _, _, err := zipTargetForFile(base, base, f); err == nil {
 		t.Fatal("zipTargetForFile decoded traversal error = nil, want error")
+	}
+}
+
+func TestArchiveFormatRecognizesZip(t *testing.T) {
+	if got := archiveFormat("backup.ZIP"); got != "zip" {
+		t.Fatalf("archiveFormat = %q, want zip", got)
+	}
+}
+
+func TestWriteZIPArchivePreservesExistingTargetOnFailure(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source.txt")
+	target := filepath.Join(root, "archive.zip")
+	if err := os.WriteFile(source, []byte("new content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("old archive"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := writeZIPArchive(ctx, target, root, root, []string{source}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("writeZIPArchive error = %v, want context canceled", err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "old archive" {
+		t.Fatalf("target changed to %q", data)
+	}
+}
+
+func TestWriteZIPArchiveCreatesReadableArchive(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source.txt")
+	target := filepath.Join(root, "archive.zip")
+	if err := os.WriteFile(source, []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeZIPArchive(context.Background(), target, root, root, []string{source}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0644 {
+		t.Fatalf("archive mode = %v, want 0644", info.Mode().Perm())
+	}
+	r, err := zip.OpenReader(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if len(r.File) != 1 || r.File[0].Name != "source.txt" {
+		t.Fatalf("archive entries = %#v", r.File)
+	}
+	src, err := r.File[0].Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(src)
+	_ = src.Close()
+	if err != nil || string(data) != "hello" {
+		t.Fatalf("archive body = %q, error = %v", data, err)
+	}
+}
+
+func TestExtractFileAtomicallyPreservesExistingTargetOnReadFailure(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target.txt")
+	if err := os.WriteFile(target, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	src := io.MultiReader(strings.NewReader("partial"), iotest.ErrReader(errors.New("read failed")))
+	if err := extractFileAtomically(target, src); err == nil {
+		t.Fatal("extractFileAtomically error = nil, want read failure")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "old" {
+		t.Fatalf("target changed to %q", data)
+	}
+}
+
+func TestValidateExpandedArchiveSizeRejectsPanelLimit(t *testing.T) {
+	if err := validateExpandedArchiveSize(t.TempDir(), maxPanelExtractedBytes+1); err == nil {
+		t.Fatal("validateExpandedArchiveSize error = nil, want size limit")
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -75,6 +76,7 @@ type rollbackPlan struct {
 }
 
 type autoUpdateSettings struct {
+	Valid                    bool
 	Enabled                  bool
 	Mode                     string
 	Window                   string
@@ -108,6 +110,13 @@ func ExecutePanelUpdate(opts PanelUpdateOptions) (*GithubRelease, error) {
 		return nil, fmt.Errorf("已有更新任务正在执行，请稍后再试")
 	}
 	defer panelUpdateMu.Unlock()
+	if !panelLifecycleMu.TryLock() {
+		return nil, fmt.Errorf("已有面板维护操作正在执行，请稍后再试")
+	}
+	defer panelLifecycleMu.Unlock()
+	if opts.Config != nil && ReconcilePanelDBRestoreStatus(opts.Config).Status == "running" {
+		return nil, fmt.Errorf("面板数据库正在恢复，请稍后再更新")
+	}
 
 	resetPanelUpdateStatus()
 	trigger := opts.Trigger
@@ -328,7 +337,7 @@ func RunUpdateWatchdog(cfg *config.Config, planPath string) {
 	var healthErr error
 	for time.Now().Before(deadline) {
 		time.Sleep(3 * time.Second)
-		if err := healthCheck(plan.HealthURL); err == nil {
+		if err := healthCheckVersion(plan.HealthURL, plan.TargetVersion); err == nil {
 			recordPanelUpdateStage(plan.Trigger, plan.TargetVersion, "health_check", "success", "更新后健康检查通过")
 			if plan.Trigger == "auto" {
 				sendPanelUpdateMail(true, plan.TargetVersion, "health_check", "自动更新成功，健康检查通过")
@@ -369,8 +378,16 @@ func RunUpdateWatchdog(cfg *config.Config, planPath string) {
 	if plan.Trigger == "auto" {
 		sendPanelUpdateMail(false, plan.TargetVersion, "health_check", msg+"；已尝试回滚旧版本")
 	}
+	if err := exec.Command("systemctl", "restart", "wp-panel").Run(); err != nil {
+		recordPanelUpdateStage(plan.Trigger, plan.CurrentVersion, "rollback_restart", "failed", "恢复旧版本后重启失败: "+err.Error())
+		return
+	}
+	if err := waitForPanelVersion(plan.HealthURL, plan.CurrentVersion, 30*time.Second); err != nil {
+		recordPanelUpdateStage(plan.Trigger, plan.CurrentVersion, "rollback_health", "failed", "旧版本恢复后健康检查失败: "+err.Error())
+		return
+	}
+	recordPanelUpdateStage(plan.Trigger, plan.CurrentVersion, "rollback_health", "success", "旧版本进程已恢复并通过健康检查")
 	_ = os.Remove(planPath)
-	_ = exec.Command("systemctl", "restart", "wp-panel").Run()
 }
 
 func IsPatchBump(current, target string) bool {
@@ -707,7 +724,7 @@ func runPanelAutoUpdateCheck(currentVersion, configPath string, cfg *config.Conf
 		return
 	}
 	settings := readAutoUpdateSettings()
-	if !settings.Enabled || !withinAutoUpdateWindow(settings.Window, time.Now()) {
+	if !settings.Valid || !settings.Enabled || !withinAutoUpdateWindow(settings.Window, time.Now()) {
 		return
 	}
 	if settings.LastStatus == "failed" && settings.LastAttemptAt.After(time.Now().Add(-autoUpdateFailureCooldown)) {
@@ -751,18 +768,19 @@ func runPanelAutoUpdateCheck(currentVersion, configPath string, cfg *config.Conf
 }
 
 func readAutoUpdateSettings() autoUpdateSettings {
-	mode := readSecuritySetting("panel_auto_update_mode")
-	if mode == "" {
-		mode = "patch_only"
-	}
-	window := readSecuritySetting("panel_auto_update_window")
-	if window == "" {
-		window = "03:00-05:00"
-	}
-	delay := parseSettingMinutes("panel_auto_update_release_delay_minutes", 15)
-	signatureTimeout := parseSettingMinutes("panel_auto_update_signature_timeout_minutes", 120)
+	enabledValue, err := readRequiredSecuritySetting("panel_auto_update_enabled")
+	valid := err == nil && (enabledValue == "true" || enabledValue == "false")
+	mode, err := readRequiredSecuritySetting("panel_auto_update_mode")
+	valid = valid && err == nil && (mode == "patch_only" || mode == "all_stable")
+	window, err := readRequiredSecuritySetting("panel_auto_update_window")
+	valid = valid && err == nil
+	delay, err := readRequiredSettingMinutes("panel_auto_update_release_delay_minutes", 1, 1440)
+	valid = valid && err == nil
+	signatureTimeout, err := readRequiredSettingMinutes("panel_auto_update_signature_timeout_minutes", 5, 1440)
+	valid = valid && err == nil
 	return autoUpdateSettings{
-		Enabled:                  readSecuritySetting("panel_auto_update_enabled") == "true",
+		Valid:                    valid && validAutoUpdateWindow(window),
+		Enabled:                  enabledValue == "true",
 		Mode:                     mode,
 		Window:                   window,
 		ReleaseDelay:             delay,
@@ -775,6 +793,40 @@ func readAutoUpdateSettings() autoUpdateSettings {
 		LastSignatureWaitVersion: readSecuritySetting("panel_auto_update_signature_wait_version"),
 		LastSignatureWaitAt:      parseSettingTime("panel_auto_update_signature_wait_at"),
 	}
+}
+
+func readRequiredSettingMinutes(key string, min, max int) (time.Duration, error) {
+	raw, err := readRequiredSecuritySetting(key)
+	if err != nil {
+		return 0, err
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < min || value > max {
+		return 0, fmt.Errorf("invalid minute setting %s", key)
+	}
+	return time.Duration(value) * time.Minute, nil
+}
+
+func readRequiredSecuritySetting(key string) (string, error) {
+	db := database.GetDB()
+	if db == nil {
+		return "", errors.New("database unavailable")
+	}
+	var value string
+	if err := db.QueryRow("SELECT svalue FROM security_settings WHERE skey = ?", key).Scan(&value); err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+func validAutoUpdateWindow(window string) bool {
+	parts := strings.Split(window, "-")
+	if len(parts) != 2 {
+		return false
+	}
+	_, err1 := parseClock(parts[0])
+	_, err2 := parseClock(parts[1])
+	return err1 == nil && err2 == nil
 }
 
 func shouldFetchForAutoUpdate(settings autoUpdateSettings, now time.Time) bool {
@@ -848,12 +900,12 @@ func handleWaitingSignature(settings autoUpdateSettings, version string) {
 func withinAutoUpdateWindow(window string, now time.Time) bool {
 	parts := strings.Split(window, "-")
 	if len(parts) != 2 {
-		return true
+		return false
 	}
 	start, err1 := parseClock(parts[0])
 	end, err2 := parseClock(parts[1])
 	if err1 != nil || err2 != nil {
-		return true
+		return false
 	}
 	cur := now.Hour()*60 + now.Minute()
 	if start <= end {
@@ -966,6 +1018,35 @@ func startUpdateWatchdog(backupBinary, planPath, configPath string) error {
 	return nil
 }
 
+func healthCheckVersion(rawURL, expectedVersion string) error {
+	client := &http.Client{Timeout: 5 * time.Second}
+	if strings.HasPrefix(rawURL, "https://") {
+		client.Transport = &http.Transport{TLSClientConfig: insecureLocalTLSConfig()}
+	}
+	resp, err := client.Get(rawURL)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthz HTTP %d", resp.StatusCode)
+	}
+	var payload struct {
+		OK      bool   `json:"ok"`
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&payload); err != nil {
+		return fmt.Errorf("解析 healthz 失败: %w", err)
+	}
+	if !payload.OK || normalizePanelVersion(payload.Version) != normalizePanelVersion(expectedVersion) {
+		return fmt.Errorf("healthz 版本不匹配: got=%s want=%s", payload.Version, expectedVersion)
+	}
+	return nil
+}
+
+// healthCheck is intentionally version-agnostic for panel database restore.
+// Restoring panel data must also work when the running binary predates the
+// version field added to /healthz.
 func healthCheck(rawURL string) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 	if strings.HasPrefix(rawURL, "https://") {
@@ -980,6 +1061,22 @@ func healthCheck(rawURL string) error {
 		return fmt.Errorf("healthz HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func waitForPanelVersion(rawURL, expectedVersion string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if lastErr = healthCheckVersion(rawURL, expectedVersion); lastErr == nil {
+			return nil
+		}
+		time.Sleep(time.Second)
+	}
+	return lastErr
+}
+
+func normalizePanelVersion(version string) string {
+	return strings.TrimPrefix(strings.TrimSpace(version), "v")
 }
 
 func insecureLocalTLSConfig() *tls.Config {

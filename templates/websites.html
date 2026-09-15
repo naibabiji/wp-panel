@@ -64,7 +64,8 @@
                         <th class="table-header">{{t .Lang "website.status"}}</th>
                         <th class="table-header">{{t .Lang "website.file_lock_column"}}</th>
                         <th class="table-header">SSL</th>
-                        <th class="table-header">{{t .Lang "website.monitoring"}}</th>
+                        <th class="table-header">{{t .Lang "website.online_monitoring"}}</th>
+                        <th class="table-header">{{t .Lang "website.anomaly_monitoring"}}</th>
                         <th class="table-header">{{t .Lang "website.cache"}}</th>
                         <th class="table-header">{{t .Lang "website.logs"}}</th>
                         <th class="table-header">{{t .Lang "website.db_backup"}}</th>
@@ -75,7 +76,7 @@
                 </thead>
                 <tbody>
                     <template x-for="site in websites" :key="site.id">
-                        <tr class="border-b border-gray-700/50" :class="site.ai_development_enabled ? 'bg-purple-950/40 border-l-2 border-l-purple-500' : ''">
+                        <tr class="border-b border-gray-700/50 transition-colors hover:bg-gray-700/40" :class="site.ai_development_enabled ? 'bg-purple-950/40 border-l-2 border-l-purple-500' : ''">
                             <td class="table-cell font-medium">
                                 <a :href="'http://' + site.domain" target="_blank" class="text-blue-400 hover:text-blue-300 hover:underline" x-text="site.domain"></a>
                             </td>
@@ -93,6 +94,7 @@
                                 </div>
                             </td>
                             <td class="table-cell"><span :class="site.monitoring_enabled ? 'badge-success' : 'badge-info'" x-text="site.monitoring_enabled ? t('website.monitoring_enabled') : t('website.monitoring_disabled')"></span></td>
+                            <td class="table-cell"><span :class="!site.anomaly_monitoring_applicable ? 'badge-info' : site.anomaly_monitoring_enabled ? 'badge-success' : 'badge-info'" x-text="!site.anomaly_monitoring_applicable ? t('website.not_applicable') : site.anomaly_monitoring_enabled ? t('website.monitoring_enabled') : t('website.monitoring_disabled')"></span></td>
                             <td class="table-cell"><span :class="site.fastcgi_cache_enabled ? 'badge-success' : 'badge-info'" x-text="site.fastcgi_cache_enabled ? t('website.enabled') : t('website.disabled')"></span></td>
                             <td class="table-cell"><span :class="site.access_log_mode === 'full' ? 'badge-success' : site.access_log_mode === 'error_only' ? 'badge-warning' : 'badge-info'" x-text="site.access_log_mode === 'full' ? t('website.access_log_full') : site.access_log_mode === 'error_only' ? t('website.access_log_error_only') : t('website.access_log_off')"></span></td>
                             <td class="table-cell">
@@ -112,7 +114,7 @@
                             </td>
                         </tr>
                     </template>
-                    <tr x-show="websites.length === 0"><td colspan="11" class="table-cell text-center text-gray-500 py-8">{{t .Lang "website.no_websites"}}</td></tr>
+                    <tr x-show="websites.length === 0"><td colspan="12" class="table-cell text-center text-gray-500 py-8">{{t .Lang "website.no_websites"}}</td></tr>
                 </tbody>
             </table>
         </div>
@@ -142,6 +144,7 @@ function websiteList() {
         statusText(status) {
             if (status === 'active') return t('website.status_running');
             if (status === 'migrated') return t('website.status_migrated');
+            if (status === 'deleting') return t('website.status_deleting');
             return t('website.status_paused');
         },
         async toggleStatus(site) {
@@ -151,7 +154,7 @@ function websiteList() {
                 const resp = await api('/websites/' + site.id + '/status', { method: 'PATCH', body: { action } });
                 if (resp.success) {
                     site.status = action === 'pause' ? 'paused' : 'active';
-                    showToast(resp.message || t('common.operation_success'), 'success');
+                    showToast(resp.data?.message || t('common.operation_success'), 'success');
                 }
             } catch (e) { showToast(e.message, 'error'); }
         },

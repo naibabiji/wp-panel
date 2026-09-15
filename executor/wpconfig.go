@@ -21,7 +21,10 @@ func IsValidWPTablePrefix(prefix string) bool {
 }
 
 func FixWPConfigCredentials(webRoot, domain, dbName, dbUser, tablePrefix string) error {
-	configPath := filepath.Join(webRoot, "wp-config.php")
+	configPath, err := managedWordPressPath(webRoot, "wp-config.php")
+	if err != nil {
+		return fmt.Errorf("wp-config.php 路径不安全: %w", err)
+	}
 	content, err := os.ReadFile(configPath)
 	if err != nil {
 		return fmt.Errorf("读取 wp-config.php 失败 (路径: %s): %w", configPath, err)
@@ -66,7 +69,7 @@ func FixWPConfigCredentials(webRoot, domain, dbName, dbUser, tablePrefix string)
 
 	result, _ = ensureWPConfigCachePrefixes(result, wpCacheKeySalt(domain))
 
-	if err := os.WriteFile(configPath, []byte(result), 0600); err != nil {
+	if err := writeManagedPHPFile(webRoot, configPath, []byte(result), 0600); err != nil {
 		return fmt.Errorf("写入 wp-config.php 失败: %w", err)
 	}
 	return nil

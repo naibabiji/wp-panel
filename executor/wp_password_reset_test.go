@@ -175,3 +175,40 @@ func TestApplyWPPasswordResetModeWritesInsideWebRoot(t *testing.T) {
 	}
 	// 断言不能通过构造派生路径逃出 webRoot：固定子目录拼接 cleaning 后不可能越界。
 }
+
+func TestApplyWPPasswordResetModeRejectsSymlinkedMuPlugins(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "wp-content"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "wp-content", "mu-plugins")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyWPPasswordResetMode(root, "", PasswordResetModeAll); err == nil {
+		t.Fatal("expected symlink rejection")
+	}
+	if _, err := os.Stat(filepath.Join(outside, wpPasswordResetPluginFile)); !os.IsNotExist(err) {
+		t.Fatalf("outside plugin unexpectedly written: %v", err)
+	}
+}
+
+func TestWPPasswordResetModeMatchesActualFile(t *testing.T) {
+	root := t.TempDir()
+	if matches, err := WPPasswordResetModeMatches(root, PasswordResetModeAllow); err != nil || !matches {
+		t.Fatalf("empty allow state = %v, %v", matches, err)
+	}
+	if err := ApplyWPPasswordResetMode(root, "", PasswordResetModeAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if matches, err := WPPasswordResetModeMatches(root, PasswordResetModeAdmin); err != nil || !matches {
+		t.Fatalf("admin state = %v, %v", matches, err)
+	}
+	path := filepath.Join(root, "wp-content", "mu-plugins", wpPasswordResetPluginFile)
+	if err := os.WriteFile(path, []byte("<?php // damaged"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if matches, err := WPPasswordResetModeMatches(root, PasswordResetModeAdmin); err != nil || matches {
+		t.Fatalf("damaged state = %v, %v", matches, err)
+	}
+}

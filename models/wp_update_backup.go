@@ -23,4 +23,5 @@ type WPUpdateBackup struct {
 	CreatedAt         time.Time `json:"created_at"`
 	RestoreAllowed    bool      `json:"restore_allowed"`
 	RequiresAttention bool      `json:"requires_attention"`
+	BatchShared       bool      `json:"batch_shared"`
 }

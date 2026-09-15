@@ -569,6 +569,8 @@ func TestSaveWPOptimizationsRejectsStaleUpdateCheckState(t *testing.T) {
 
 func setupWebsiteOptimizationsTestDB(t *testing.T) {
 	t.Helper()
+	oldPublish := publishSiteNginxWithCacheRollback
+	publishSiteNginxWithCacheRollback = func(int, int, int) error { return nil }
 	oldDB := database.DB
 	if err := database.Open(filepath.Join(t.TempDir(), "panel.db")); err != nil {
 		t.Fatalf("open db: %v", err)
@@ -577,6 +579,7 @@ func setupWebsiteOptimizationsTestDB(t *testing.T) {
 		t.Fatalf("migrate db: %v", err)
 	}
 	t.Cleanup(func() {
+		publishSiteNginxWithCacheRollback = oldPublish
 		_ = database.Close()
 		database.DB = oldDB
 	})

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -41,6 +42,7 @@ const (
 	// 真撞到这条线的包，交给 archiveTooHeavyMessage 引导去 SSH 解压，而不是简单调大数字了事。
 	maxArchiveEntries      = 300000
 	maxPanelArchiveBytes   = int64(5 * 1024 * 1024 * 1024)
+	maxPanelExtractedBytes = int64(20 * 1024 * 1024 * 1024)
 	uploadChunkSize        = int64(5 * 1024 * 1024)
 	maxUploadChunks        = 20000
 	uploadSessionDirPrefix = "wppanel-upload-"
@@ -261,6 +263,73 @@ func checkFileLockWrite(site *models.Website, targetPath string, targetIsDir, al
 
 func checkSiteFileLockWrite(siteID int, targetPath string, targetIsDir, allowExecutableCleanup bool) error {
 	return checkFileLockWrite(fileLockSite(siteID), targetPath, targetIsDir, allowExecutableCleanup)
+}
+
+func checkFileMigrationWrite(siteID int) error {
+	if siteID == 0 {
+		return nil
+	}
+	site := getWebsiteByID(siteID)
+	if site == nil {
+		return fmt.Errorf("网站不存在")
+	}
+	locked, err := executor.SiteMigrationLocked(context.Background(), site.ID, site.Domain)
+	if err != nil {
+		return fmt.Errorf("无法确认网站搬家状态")
+	}
+	if locked {
+		return fmt.Errorf("网站正在搬家，暂时不能修改文件")
+	}
+	return nil
+}
+
+func prepareUploadedFile(siteID int, basePath, path string, mode os.FileMode) error {
+	if err := os.Chmod(path, mode); err != nil {
+		return err
+	}
+	if siteID == 0 {
+		return nil
+	}
+	site := getWebsiteByID(siteID)
+	if site == nil {
+		return fmt.Errorf("网站不存在")
+	}
+	return executor.ChownSitePath(path, basePath, site.SystemUser)
+}
+
+func saveMultipartFileAtomically(file *multipart.FileHeader, siteID int, basePath, destPath string) error {
+	src, err := file.Open()
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	tmp, err := os.CreateTemp(filepath.Dir(destPath), ".wp-panel-upload-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := io.Copy(tmp, src); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := prepareUploadedFile(siteID, basePath, tmpPath, 0644); err != nil {
+		return err
+	}
+	if err := checkSiteFileLockWrite(siteID, destPath, false, false); err != nil {
+		return err
+	}
+	if err := checkFileMigrationWrite(siteID); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, destPath)
 }
 
 func checkTransferFileLock(srcSiteID, destSiteID int, items []fileTransferItem, move bool) error {
@@ -871,13 +940,16 @@ func (h *FileHandler) Upload(c *gin.Context) {
 		respondFileWriteError(c, err)
 		return
 	}
-
-	if err := c.SaveUploadedFile(file, destPath); err != nil {
-		log.Printf("文件上传失败 path=%s: %v", destPath, err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("上传失败"))
+	if err := checkFileMigrationWrite(siteID); err != nil {
+		c.JSON(http.StatusConflict, models.ErrorResponse(err.Error()))
 		return
 	}
-	os.Chmod(destPath, 0644)
+
+	if err := saveMultipartFileAtomically(file, siteID, basePath, destPath); err != nil {
+		log.Printf("文件上传失败 path=%s: %v", destPath, err)
+		respondFileWriteError(c, fmt.Errorf("上传失败: %w", err))
+		return
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "文件上传成功"}))
 }
@@ -923,6 +995,10 @@ func (h *FileHandler) UploadInit(c *gin.Context) {
 	}
 	if err := checkSiteFileLockWrite(siteID, destPath, false, false); err != nil {
 		respondFileWriteError(c, err)
+		return
+	}
+	if err := checkFileMigrationWrite(siteID); err != nil {
+		c.JSON(http.StatusConflict, models.ErrorResponse(err.Error()))
 		return
 	}
 
@@ -1066,6 +1142,10 @@ func (h *FileHandler) UploadComplete(c *gin.Context) {
 		respondFileWriteError(c, err)
 		return
 	}
+	if err := checkFileMigrationWrite(session.SiteID); err != nil {
+		c.JSON(http.StatusConflict, models.ErrorResponse(err.Error()))
+		return
+	}
 
 	if missing := missingUploadChunks(dir, session.TotalChunks); len(missing) > 0 {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("分片 %d 缺失，请重新上传", missing[0])))
@@ -1099,15 +1179,30 @@ func (h *FileHandler) UploadComplete(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse(uploadSaveErrorMessage("合并分片", err)))
 			return
 		}
-		src.Close()
+		if err := src.Close(); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取上传分片失败"))
+			return
+		}
+	}
+	if err := dst.Sync(); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存文件失败"))
+		return
 	}
 	if err := dst.Close(); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存文件失败"))
 		return
 	}
 
-	if err := os.Chmod(tmpDestPath, 0644); err != nil {
+	if err := prepareUploadedFile(session.SiteID, basePath, tmpDestPath, 0644); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("设置文件权限失败"))
+		return
+	}
+	if err := checkSiteFileLockWrite(session.SiteID, destPath, false, false); err != nil {
+		respondFileWriteError(c, err)
+		return
+	}
+	if err := checkFileMigrationWrite(session.SiteID); err != nil {
+		c.JSON(http.StatusConflict, models.ErrorResponse(err.Error()))
 		return
 	}
 	if err := os.Rename(tmpDestPath, destPath); err != nil {
@@ -1141,11 +1236,6 @@ func (h *FileHandler) Download(c *gin.Context) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
 		return
 	}
-	if isSamePath(basePath, fullPath) {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("不能删除根目录"))
-		return
-	}
-
 	info, err := os.Stat(fullPath)
 	if err != nil || info.IsDir() {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("文件不存在"))
@@ -1175,6 +1265,10 @@ func (h *FileHandler) Delete(c *gin.Context) {
 	fullPath = filepath.Clean(fullPath)
 	if !isPathWithin(basePath, fullPath) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
+		return
+	}
+	if isSamePath(basePath, fullPath) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("不能删除根目录"))
 		return
 	}
 	info, err := os.Stat(fullPath)
@@ -1221,7 +1315,12 @@ func (h *FileHandler) Rename(c *gin.Context) {
 		return
 	}
 
-	oldFull := filepath.Join(basePath, req.OldPath)
+	if req.NewName == "" || req.NewName == "." || req.NewName == ".." || filepath.Base(req.NewName) != req.NewName || strings.ContainsAny(req.NewName, `/\\`) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("新名称不能包含路径"))
+		return
+	}
+
+	oldFull := filepath.Clean(filepath.Join(basePath, req.OldPath))
 	newFull := filepath.Join(filepath.Dir(oldFull), req.NewName)
 
 	if !isPathWithin(basePath, oldFull) ||
@@ -1240,6 +1339,17 @@ func (h *FileHandler) Rename(c *gin.Context) {
 	}
 	if err := checkSiteFileLockWrite(req.SiteID, newFull, info.IsDir(), false); err != nil {
 		respondFileWriteError(c, err)
+		return
+	}
+	if isSamePath(oldFull, newFull) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("新名称与原名称相同"))
+		return
+	}
+	if _, err := os.Lstat(newFull); err == nil {
+		c.JSON(http.StatusConflict, models.ErrorResponse("同名文件或目录已存在"))
+		return
+	} else if !os.IsNotExist(err) {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("检查目标名称失败"))
 		return
 	}
 
@@ -1332,80 +1442,23 @@ func (h *FileHandler) BatchCompress(c *gin.Context) {
 		respondFileWriteError(c, err)
 		return
 	}
-	zipFile, err := os.Create(zipPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建压缩文件失败"))
-		return
-	}
-	defer zipFile.Close()
-
-	w := zip.NewWriter(zipFile)
-	defer w.Close()
-
+	sources := make([]string, 0, len(req.Names))
 	for _, name := range req.Names {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
+		cleanName, cleanErr := cleanFileOperationName(name)
+		if cleanErr != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(cleanErr.Error()))
+			return
 		}
-		fullPath := filepath.Join(workPath, filepath.Clean(name))
+		fullPath := filepath.Join(workPath, cleanName)
 		if !isPathWithin(basePath, fullPath) {
-			continue
+			c.JSON(http.StatusForbidden, models.ErrorResponse("路径越权"))
+			return
 		}
-		info, err := os.Stat(fullPath)
-		if err != nil {
-			continue
-		}
-		if info.IsDir() {
-			filepath.Walk(fullPath, func(path string, fi os.FileInfo, err error) error {
-				if err != nil {
-					return nil
-				}
-				if !isPathWithin(basePath, path) {
-					return nil
-				}
-				rel, _ := filepath.Rel(basePath, path)
-				rel = filepath.ToSlash(rel)
-				header, err := zip.FileInfoHeader(fi)
-				if err != nil {
-					return nil
-				}
-				header.Name = rel
-				header.Method = zip.Deflate
-				if fi.IsDir() {
-					header.Name += "/"
-					w.CreateHeader(header)
-					return nil
-				}
-				writer, err := w.CreateHeader(header)
-				if err != nil {
-					return nil
-				}
-				f, err := os.Open(path)
-				if err != nil {
-					return nil
-				}
-				defer f.Close()
-				io.Copy(writer, f)
-				return nil
-			})
-		} else {
-			header, err := zip.FileInfoHeader(info)
-			if err != nil {
-				continue
-			}
-			header.Name = info.Name()
-			header.Method = zip.Deflate
-			writer, err := w.CreateHeader(header)
-			if err != nil {
-				continue
-			}
-			f, err := os.Open(fullPath)
-			if err != nil {
-				continue
-			}
-			defer f.Close()
-			io.Copy(writer, f)
-		}
+		sources = append(sources, fullPath)
+	}
+	if err := writeZIPArchive(c.Request.Context(), zipPath, basePath, basePath, sources); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("压缩失败: "+err.Error()))
+		return
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": fmt.Sprintf("已压缩为 %s", archiveName)}))
@@ -1450,78 +1503,120 @@ func (h *FileHandler) Compress(c *gin.Context) {
 		respondFileWriteError(c, err)
 		return
 	}
-	zipFile, err := os.Create(zipPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建压缩文件失败"))
-		return
-	}
-	defer zipFile.Close()
-
-	w := zip.NewWriter(zipFile)
-	defer w.Close()
-
 	baseDir := filepath.Dir(fullPath)
-
-	if info.IsDir() {
-		filepath.Walk(fullPath, func(path string, fi os.FileInfo, err error) error {
-			if err != nil {
-				return nil
-			}
-			if !isPathWithin(basePath, path) {
-				return nil
-			}
-			rel, _ := filepath.Rel(baseDir, path)
-			rel = filepath.ToSlash(rel)
-
-			header, err := zip.FileInfoHeader(fi)
-			if err != nil {
-				return nil
-			}
-			header.Name = rel
-			header.Method = zip.Deflate
-
-			if fi.IsDir() {
-				header.Name += "/"
-				w.CreateHeader(header)
-				return nil
-			}
-
-			writer, err := w.CreateHeader(header)
-			if err != nil {
-				return nil
-			}
-			f, err := os.Open(path)
-			if err != nil {
-				return nil
-			}
-			defer f.Close()
-			io.Copy(writer, f)
-			return nil
-		})
-	} else {
-		header, err := zip.FileInfoHeader(info)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("压缩失败"))
-			return
-		}
-		header.Name = info.Name()
-		header.Method = zip.Deflate
-
-		writer, err := w.CreateHeader(header)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("压缩失败"))
-			return
-		}
-		f, err := os.Open(fullPath)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("压缩失败"))
-			return
-		}
-		defer f.Close()
-		io.Copy(writer, f)
+	if err := writeZIPArchive(c.Request.Context(), zipPath, basePath, baseDir, []string{fullPath}); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("压缩失败: "+err.Error()))
+		return
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": fmt.Sprintf("已压缩为 %s", zipName)}))
+}
+
+func writeZIPArchive(ctx context.Context, targetPath, managedRoot, nameRoot string, sources []string) error {
+	tmp, err := os.CreateTemp(filepath.Dir(targetPath), ".wp-panel-zip-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	w := zip.NewWriter(tmp)
+	count := 0
+	var total int64
+	add := func(path string, info os.FileInfo) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !isPathWithin(managedRoot, path) {
+			return fmt.Errorf("路径越权: %s", path)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || (!info.IsDir() && !info.Mode().IsRegular()) {
+			return fmt.Errorf("不支持的文件类型: %s", path)
+		}
+		count++
+		if count > maxArchiveEntries {
+			return fmt.Errorf("文件数量超过在线压缩上限 %d", maxArchiveEntries)
+		}
+		if !info.IsDir() {
+			if info.Size() < 0 || total > maxPanelArchiveBytes-info.Size() {
+				return fmt.Errorf("源文件总大小超过在线压缩上限 %s", formatFileSize(maxPanelArchiveBytes))
+			}
+			total += info.Size()
+		}
+		rel, err := filepath.Rel(nameRoot, path)
+		if err != nil {
+			return err
+		}
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.ToSlash(rel)
+		header.Method = zip.Deflate
+		if info.IsDir() {
+			header.Name += "/"
+			_, err = w.CreateHeader(header)
+			return err
+		}
+		writer, err := w.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+		src, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(writer, src)
+		closeErr := src.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	}
+	for _, source := range sources {
+		info, err := os.Lstat(source)
+		if err != nil {
+			w.Close()
+			tmp.Close()
+			return err
+		}
+		if info.IsDir() {
+			err = filepath.Walk(source, func(path string, info os.FileInfo, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				return add(path, info)
+			})
+		} else {
+			err = add(source, info)
+		}
+		if err != nil {
+			w.Close()
+			tmp.Close()
+			return err
+		}
+	}
+	if err := w.Close(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0644); err != nil {
+		return err
+	}
+	verify, err := zip.OpenReader(tmpPath)
+	if err != nil {
+		return err
+	}
+	if err := verify.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, targetPath)
 }
 
 func archiveFormat(path string) string {
@@ -1599,6 +1694,74 @@ func tooManyEntriesArchiveMessage(archivePath, format string, count int) string 
 		count, maxArchiveEntries,
 	)
 	return archiveTooHeavyMessage(archivePath, format, reason)
+}
+
+func validateExpandedArchiveSize(destDir string, total int64) error {
+	if total < 0 || total > maxPanelExtractedBytes {
+		return fmt.Errorf("解压后文件总大小超过面板在线解压上限 %s", formatFileSize(maxPanelExtractedBytes))
+	}
+	if free, ok := diskAvailableBytes(destDir); ok && free < total+minRemoteImportFreeSpace {
+		return fmt.Errorf("目标磁盘空间不足，解压后至少需保留 %s 可用空间", formatFileSize(minRemoteImportFreeSpace))
+	}
+	return nil
+}
+
+func tarExpandedSize(archivePath, format string) (int64, error) {
+	tr, closer, err := openTarReader(archivePath, format)
+	if err != nil {
+		return 0, err
+	}
+	defer closer.Close()
+	var total int64
+	count := 0
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return total, nil
+		}
+		if err != nil {
+			return 0, err
+		}
+		count++
+		if count > maxArchiveEntries {
+			return 0, fmt.Errorf("%s", tooManyEntriesArchiveMessage(archivePath, format, count))
+		}
+		if hdr.Size < 0 || total > maxPanelExtractedBytes-hdr.Size {
+			return 0, fmt.Errorf("解压后文件总大小超过面板在线解压上限 %s", formatFileSize(maxPanelExtractedBytes))
+		}
+		total += hdr.Size
+	}
+}
+
+func extractFileAtomically(target string, src io.Reader) error {
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".wp-panel-extract-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := io.Copy(tmp, src); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, target)
+}
+
+func extractionFailure(err error, completed int) error {
+	if completed == 0 {
+		return err
+	}
+	return fmt.Errorf("解压在完成 %d 个条目后失败，目标目录可能已有部分变化: %w", completed, err)
 }
 
 func openTarReader(path, format string) (*tar.Reader, io.Closer, error) {
@@ -1696,13 +1859,14 @@ func extractTarArchive(archivePath, format, basePath, destDir string, lockSite *
 	defer closer.Close()
 
 	count := 0
+	completed := 0
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return err
+			return extractionFailure(err, completed)
 		}
 		count++
 		if count > maxArchiveEntries {
@@ -1711,39 +1875,30 @@ func extractTarArchive(archivePath, format, basePath, destDir string, lockSite *
 
 		target, skip, err := tarTargetForHeader(basePath, destDir, hdr)
 		if err != nil {
-			return err
+			return extractionFailure(err, completed)
 		}
 		if skip {
 			continue
 		}
 		if err := checkFileLockWrite(lockSite, target, hdr.Typeflag == tar.TypeDir, false); err != nil {
-			return err
+			return extractionFailure(err, completed)
 		}
 
 		if hdr.Typeflag == tar.TypeDir {
 			if err := os.MkdirAll(target, 0755); err != nil {
-				return fmt.Errorf("创建目录失败: %s", hdr.Name)
+				return extractionFailure(fmt.Errorf("创建目录失败: %s", hdr.Name), completed)
 			}
+			completed++
 			continue
 		}
 
 		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-			return fmt.Errorf("创建目录失败: %s", hdr.Name)
+			return extractionFailure(fmt.Errorf("创建目录失败: %s", hdr.Name), completed)
 		}
-		dst, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-		if err != nil {
-			return fmt.Errorf("创建文件失败: %s", hdr.Name)
+		if err := extractFileAtomically(target, tr); err != nil {
+			return extractionFailure(fmt.Errorf("写入文件失败: %s", hdr.Name), completed)
 		}
-		_, copyErr := io.Copy(dst, tr)
-		closeErr := dst.Close()
-		if copyErr != nil {
-			os.Remove(target)
-			return fmt.Errorf("写入文件失败: %s", hdr.Name)
-		}
-		if closeErr != nil {
-			os.Remove(target)
-			return fmt.Errorf("保存文件失败: %s", hdr.Name)
-		}
+		completed++
 	}
 	return nil
 }
@@ -1821,8 +1976,28 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 	destDir := filepath.Dir(fullPath)
 	overwrite := c.Query("overwrite") == "1"
 	lockSite := fileLockSite(siteID)
+	if siteID != 0 {
+		if !executor.TryAcquireSiteFileOpLock(siteID, "archive_extract") {
+			c.JSON(http.StatusConflict, models.ErrorResponse("网站正在执行其它维护操作，请稍后重试"))
+			return
+		}
+		defer executor.ReleaseSiteOpLock(siteID)
+		if err := checkFileMigrationWrite(siteID); err != nil {
+			c.JSON(http.StatusConflict, models.ErrorResponse(err.Error()))
+			return
+		}
+	}
 
 	if format != "zip" {
+		total, err := tarExpandedSize(fullPath, format)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+			return
+		}
+		if err := validateExpandedArchiveSize(destDir, total); err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+			return
+		}
 		conflicts, err := checkTarArchive(fullPath, format, basePath, destDir, overwrite, lockSite)
 		if err != nil {
 			if isFileLockWriteError(err) {
@@ -1856,7 +2031,14 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(tooManyEntriesArchiveMessage(fullPath, format, len(r.File))))
 		return
 	}
+	var expandedSize int64
 	for _, f := range r.File {
+		entrySize := int64(f.UncompressedSize64)
+		if f.UncompressedSize64 > uint64(maxPanelExtractedBytes) || expandedSize > maxPanelExtractedBytes-entrySize {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("解压后文件总大小超过面板在线解压上限 "+formatFileSize(maxPanelExtractedBytes)))
+			return
+		}
+		expandedSize += entrySize
 		target, name, skip, err := zipTargetForFile(basePath, destDir, f)
 		if err != nil {
 			c.JSON(http.StatusForbidden, models.ErrorResponse(err.Error()))
@@ -1875,35 +2057,41 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 			}
 		}
 	}
+	if err := validateExpandedArchiveSize(destDir, expandedSize); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+		return
+	}
 	if len(conflicts) > 0 {
 		c.JSON(http.StatusConflict, gin.H{"success": false, "message": "以下文件已存在，确认覆盖？", "conflicts": conflicts})
 		return
 	}
 
+	completed := 0
 	for _, f := range r.File {
 		target, name, skip, err := zipTargetForFile(basePath, destDir, f)
 		if err != nil {
-			c.JSON(http.StatusForbidden, models.ErrorResponse(err.Error()))
+			c.JSON(http.StatusForbidden, models.ErrorResponse(extractionFailure(err, completed).Error()))
 			return
 		}
 		if skip {
 			continue
 		}
 		if err := checkFileLockWrite(lockSite, target, f.FileInfo().IsDir(), false); err != nil {
-			c.JSON(http.StatusLocked, models.ErrorResponse(err.Error()))
+			c.JSON(http.StatusLocked, models.ErrorResponse(extractionFailure(err, completed).Error()))
 			return
 		}
 
 		if f.FileInfo().IsDir() {
 			if err := os.MkdirAll(target, 0755); err != nil {
-				c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建目录失败: "+name))
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse(extractionFailure(fmt.Errorf("创建目录失败: %s", name), completed).Error()))
 				return
 			}
+			completed++
 			continue
 		}
 
 		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建目录失败: "+name))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(extractionFailure(fmt.Errorf("创建目录失败: %s", name), completed).Error()))
 			return
 		}
 		src, err := f.Open()
@@ -1911,25 +2099,13 @@ func (h *FileHandler) Decompress(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取压缩包文件失败: "+name))
 			return
 		}
-		dst, err := os.Create(target)
-		if err != nil {
-			src.Close()
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建文件失败: "+name))
+		writeErr := extractFileAtomically(target, src)
+		_ = src.Close()
+		if writeErr != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(extractionFailure(fmt.Errorf("写入文件失败 %s: %w", name, writeErr), completed).Error()))
 			return
 		}
-		_, copyErr := io.Copy(dst, src)
-		src.Close()
-		closeErr := dst.Close()
-		if copyErr != nil {
-			os.Remove(target)
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("写入文件失败: "+name))
-			return
-		}
-		if closeErr != nil {
-			os.Remove(target)
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存文件失败: "+name))
-			return
-		}
+		completed++
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "解压完成"}))

@@ -3,6 +3,7 @@ package executor
 import (
 	"encoding/json"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,7 +11,11 @@ import (
 
 func TestWriteSitePluginIdentityIncludesApplicationPasswordPolicy(t *testing.T) {
 	root := useTemporarySiteSecretsRoot(t)
-	if err := WriteSitePluginIdentity("example.com", "root", "https://127.0.0.1:8443/panel", strings.Repeat("a", 32), true); err != nil {
+	current, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSitePluginIdentity("example.com", current.Username, "https://127.0.0.1:8443/panel", strings.Repeat("a", 32), true); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(filepath.Join(root, "example.com", sitePluginConfigFileName))
@@ -23,6 +28,12 @@ func TestWriteSitePluginIdentityIncludesApplicationPasswordPolicy(t *testing.T) 
 	}
 	if !identity.DisableApplicationPasswords {
 		t.Fatal("application passwords policy missing from site identity")
+	}
+}
+
+func TestInstallPluginPermissionsRejectsUnknownUser(t *testing.T) {
+	if err := InstallPluginPermissions("", "wp-panel-user-that-does-not-exist", t.TempDir()); err == nil {
+		t.Fatal("expected permission setup failure")
 	}
 }
 

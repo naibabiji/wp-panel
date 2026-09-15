@@ -738,6 +738,14 @@ var upgrades = []Upgrade{
 			`UPDATE websites SET disable_application_passwords = 0`,
 		},
 	},
+	{
+		Version:     "1.0.65",
+		Description: "记录 SSL 证书来源并安全限制自动续期",
+		SQL: []string{
+			`ALTER TABLE websites ADD COLUMN ssl_cert_source TEXT NOT NULL DEFAULT ''`,
+		},
+		Func: backfillSSLCertificateSources,
+	},
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

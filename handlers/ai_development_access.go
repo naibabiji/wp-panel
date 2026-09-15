@@ -75,6 +75,12 @@ func (h *AIDevelopmentAccessHandler) Enable(c *gin.Context) {
 		c.JSON(http.StatusLocked, models.ErrorResponse(i18n.TE(c.Request, "ai_development.file_lock_enabled")))
 		return
 	}
+	knownHosts, err := executor.ReadSSHHostKnownHosts()
+	if err != nil {
+		log.Printf("读取 SSH 主机公钥失败 site=%d: %v", site.ID, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "common.operation_failed")))
+		return
+	}
 	if req.InstallWPCLI {
 		if err := executor.InstallDevelopmentTool(c.Request.Context(), "wp-cli"); err != nil {
 			log.Printf("安装 AI 开发组件失败 tool=wp-cli site=%d: %v", site.ID, err)
@@ -114,7 +120,7 @@ func (h *AIDevelopmentAccessHandler) Enable(c *gin.Context) {
 		return
 	}
 	host := requestSSHHost(c.Request)
-	packageData, err := buildAIDevelopmentCredentialPackage(site.Domain, host, executor.DetectSSHPort(c.Request.Context()), site.SystemUser, site.WebRoot, credential)
+	packageData, err := buildAIDevelopmentCredentialPackage(site.Domain, host, executor.DetectSSHPort(c.Request.Context()), site.SystemUser, site.WebRoot, knownHosts, credential)
 	if err != nil {
 		log.Printf("构建 AI SSH 连接包失败 site=%d: %v", site.ID, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_development.package_failed_rotate")))
@@ -128,6 +134,12 @@ func (h *AIDevelopmentAccessHandler) Rotate(c *gin.Context) {
 	if !ok {
 		return
 	}
+	knownHosts, err := executor.ReadSSHHostKnownHosts()
+	if err != nil {
+		log.Printf("读取 SSH 主机公钥失败 site=%d: %v", site.ID, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "common.operation_failed")))
+		return
+	}
 	credential, err := generateAIDevelopmentCredential()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "common.operation_failed")))
@@ -139,7 +151,7 @@ func (h *AIDevelopmentAccessHandler) Rotate(c *gin.Context) {
 		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "ai_development.rotate_failed")))
 		return
 	}
-	packageData, err := buildAIDevelopmentCredentialPackage(site.Domain, requestSSHHost(c.Request), executor.DetectSSHPort(c.Request.Context()), site.SystemUser, site.WebRoot, credential)
+	packageData, err := buildAIDevelopmentCredentialPackage(site.Domain, requestSSHHost(c.Request), executor.DetectSSHPort(c.Request.Context()), site.SystemUser, site.WebRoot, knownHosts, credential)
 	if err != nil {
 		log.Printf("构建 AI SSH 轮换连接包失败 site=%d: %v", site.ID, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_development.package_failed_rotate")))
@@ -177,7 +189,11 @@ func aiDevelopmentSiteFromRequest(c *gin.Context) (int, *models.Website, bool) {
 }
 
 func websiteAIDevelopmentSite(site *models.Website) executor.AIDevelopmentSite {
-	return executor.AIDevelopmentSite{ID: int64(site.ID), Domain: site.Domain, SystemUser: site.SystemUser, WebRoot: site.WebRoot, DBName: site.DBName, DBUser: site.DBUser}
+	return executor.AIDevelopmentSite{
+		ID: int64(site.ID), Domain: site.Domain, SystemUser: site.SystemUser, WebRoot: site.WebRoot,
+		LogDir: site.LogDir, PHPPoolPath: site.PHPPoolPath, NginxConfPath: site.NginxConfPath,
+		DBName: site.DBName, DBUser: site.DBUser,
+	}
 }
 
 func generateAIDevelopmentCredential() (aiDevelopmentCredential, error) {
@@ -200,7 +216,10 @@ func generateAIDevelopmentCredential() (aiDevelopmentCredential, error) {
 	}, nil
 }
 
-func buildAIDevelopmentCredentialPackage(domain, host string, port int, systemUser, webRoot string, credential aiDevelopmentCredential) ([]byte, error) {
+func buildAIDevelopmentCredentialPackage(domain, host string, port int, systemUser, webRoot, knownHosts string, credential aiDevelopmentCredential) ([]byte, error) {
+	if strings.TrimSpace(knownHosts) == "" {
+		return nil, errors.New("SSH host keys are unavailable")
+	}
 	var buffer bytes.Buffer
 	archive := zip.NewWriter(&buffer)
 	projectName := aiDevelopmentProjectName(domain)
@@ -214,10 +233,11 @@ func buildAIDevelopmentCredentialPackage(domain, host string, port int, systemUs
 		prefix + "README.md":                  {content: []byte(buildAIDevelopmentProjectReadme(domain, projectName)), mode: 0644},
 		prefix + ".gitignore":                 {content: []byte(".wp-panel-ai/\n"), mode: 0644},
 		prefix + ".wp-panel-ai/id_ed25519":    {content: credential.PrivateKey, mode: 0600},
-		prefix + ".wp-panel-ai/ssh_config":    {content: []byte(fmt.Sprintf("Host wp-panel-ai\n  HostName %s\n  Port %d\n  User %s\n  IdentitiesOnly yes\n", host, port, systemUser)), mode: 0600},
-		prefix + ".wp-panel-ai/CONNECTION.md": {content: []byte(fmt.Sprintf("# Connection details\n\n- Site: `%s`\n- Remote WebRoot: `%s`\n- SSH user: `%s`\n- SSH host: `%s`\n- SSH port: `%d`\n\nOn Linux, macOS, or WSL, run `bash .wp-panel-ai/connect.sh` from the project root. The script checks the required files and secures the private key before connecting. On Windows PowerShell, run `.\\.wp-panel-ai\\connect.ps1`. Then read `~/WP-PANEL-AI-HANDOFF.md` on the server.\n", domain, webRoot, systemUser, host, port)), mode: 0644},
-		prefix + ".wp-panel-ai/connect.sh":    {content: []byte("#!/bin/sh\nset -eu\ncredential_dir=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\nkey=$credential_dir/id_ed25519\nconfig=$credential_dir/ssh_config\n\nif [ ! -f \"$key\" ] || [ -L \"$key\" ]; then\n  echo \"WP Panel AI private key is missing or is not a regular file: $key\" >&2\n  exit 1\nfi\nif [ ! -f \"$config\" ] || [ -L \"$config\" ]; then\n  echo \"WP Panel AI SSH config is missing or is not a regular file: $config\" >&2\n  exit 1\nfi\nif ! chmod 600 \"$key\"; then\n  echo \"Unable to secure the WP Panel AI private key. Ensure the current user owns $key, then run: chmod 600 '$key'\" >&2\n  exit 1\nfi\n\nexec ssh -F \"$config\" -i \"$key\" wp-panel-ai \"$@\"\n"), mode: 0700},
-		prefix + ".wp-panel-ai/connect.ps1":   {content: []byte("param(\n    [Parameter(Position = 0, ValueFromRemainingArguments = $true)]\n    [string[]]$RemoteCommand\n)\n\n$ErrorActionPreference = 'Stop'\n$CredentialDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n$ConfigPath = Join-Path $CredentialDir 'ssh_config'\n$KeyPath = Join-Path $CredentialDir 'id_ed25519'\n$CurrentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name\n\n& icacls.exe $KeyPath /inheritance:r /grant:r \"$($CurrentIdentity):(F)\" | Out-Null\nif ($LASTEXITCODE -ne 0) {\n    throw 'Unable to secure the SSH private key for the current Windows user.'\n}\n\n$SSHArguments = @('-F', $ConfigPath, '-i', $KeyPath, 'wp-panel-ai')\nif ($RemoteCommand.Count -gt 0) {\n    $SSHArguments += ($RemoteCommand -join ' ')\n}\n\n& ssh.exe @SSHArguments\nexit $LASTEXITCODE\n"), mode: 0644},
+		prefix + ".wp-panel-ai/known_hosts":   {content: []byte(knownHosts), mode: 0600},
+		prefix + ".wp-panel-ai/ssh_config":    {content: []byte(fmt.Sprintf("Host wp-panel-ai\n  HostName %s\n  Port %d\n  User %s\n  HostKeyAlias wp-panel-ai-target\n  IdentitiesOnly yes\n  StrictHostKeyChecking yes\n", host, port, systemUser)), mode: 0600},
+		prefix + ".wp-panel-ai/CONNECTION.md": {content: []byte(buildAIDevelopmentConnectionGuide(domain, host, port, systemUser, webRoot)), mode: 0644},
+		prefix + ".wp-panel-ai/connect.sh":    {content: []byte("#!/bin/sh\nset -eu\ncredential_dir=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\nkey=$credential_dir/id_ed25519\nconfig=$credential_dir/ssh_config\nknown_hosts=$credential_dir/known_hosts\n\nfor required_file in \"$key\" \"$config\" \"$known_hosts\"; do\n  if [ ! -f \"$required_file\" ] || [ -L \"$required_file\" ]; then\n    echo \"WP Panel AI connection file is missing or is not a regular file: $required_file\" >&2\n    exit 1\n  fi\ndone\nif ! chmod 600 \"$key\" \"$known_hosts\"; then\n  echo \"Unable to secure the WP Panel AI connection files. Ensure the current user owns them.\" >&2\n  exit 1\nfi\n\nexec ssh -F \"$config\" -i \"$key\" -o \"UserKnownHostsFile=$known_hosts\" wp-panel-ai \"$@\"\n"), mode: 0700},
+		prefix + ".wp-panel-ai/connect.ps1":   {content: []byte("param(\n    [Parameter(Position = 0, ValueFromRemainingArguments = $true)]\n    [string[]]$RemoteCommand\n)\n\n$ErrorActionPreference = 'Stop'\n$CredentialDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n$ConfigPath = Join-Path $CredentialDir 'ssh_config'\n$KeyPath = Join-Path $CredentialDir 'id_ed25519'\n$KnownHostsPath = Join-Path $CredentialDir 'known_hosts'\n$CurrentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name\n\nforeach ($ProtectedPath in @($KeyPath, $KnownHostsPath)) {\n    & icacls.exe $ProtectedPath /inheritance:r /grant:r \"$($CurrentIdentity):(F)\" | Out-Null\n    if ($LASTEXITCODE -ne 0) {\n        throw \"Unable to secure the WP Panel AI connection file: $ProtectedPath\"\n    }\n}\n\n$SSHArguments = @('-F', $ConfigPath, '-i', $KeyPath, '-o', \"UserKnownHostsFile=$KnownHostsPath\", 'wp-panel-ai')\nif ($RemoteCommand.Count -gt 0) {\n    $SSHArguments += ($RemoteCommand -join ' ')\n}\n\n& ssh.exe @SSHArguments\nexit $LASTEXITCODE\n"), mode: 0644},
 	}
 	for name, file := range files {
 		header := &zip.FileHeader{Name: name, Method: zip.Deflate}
@@ -236,30 +256,47 @@ func buildAIDevelopmentCredentialPackage(domain, host string, port int, systemUs
 	return buffer.Bytes(), nil
 }
 
+func buildAIDevelopmentConnectionGuide(domain, host string, port int, systemUser, webRoot string) string {
+	return fmt.Sprintf(`# Connection details
+
+- Site: `+"`%s`"+`
+- Remote WebRoot: `+"`%s`"+`
+- SSH user: `+"`%s`"+`
+- SSH host: `+"`%s`"+`
+- SSH port: `+"`%d`"+`
+
+Run `+"`bash .wp-panel-ai/connect.sh`"+` on Linux, macOS, or WSL, or `+"`.\\.wp-panel-ai\\connect.ps1`"+` on Windows PowerShell. The package pins the server identity in its own `+"`known_hosts`"+` file, so a new computer does not need a prior global SSH record and must not click through an unknown fingerprint prompt.
+
+If connection fails:
+
+- "Host key verification failed" means the server identity differs from this package. Stop and ask the administrator to verify the server or generate a new package; never disable host-key checking.
+- "Permission denied (publickey)" usually means the package was invalidated, AI access was closed, or the private key permissions are wrong.
+- Timeout, unreachable, or refused errors mean the network, address, port, or SSH service is unavailable.
+- A missing-file message means the ZIP was not fully extracted. Keep all files together and retry.
+
+After connecting, read `+"`~/WP-PANEL-AI-HANDOFF.md`"+` on the server.
+`, domain, webRoot, systemUser, host, port)
+}
+
 func buildAIDevelopmentProjectInstructions(domain, webRoot string) string {
 	return fmt.Sprintf(`# WP Panel Remote AI Project
 
-This local folder controls remote development for %[1]s. Website files remain on the server at %[2]s; do not copy secrets into this local project.
+This package connects to %[1]s. Website files remain on the server at %[2]s.
 
-## Mandatory first-run workflow
+## Start here
 
-Do not modify files or the database, install or update components, create accounts, or generate test data until the user has answered the safety questions and explicitly approved a written plan.
-
-1. Connect with bash .wp-panel-ai/connect.sh on Linux, macOS, or WSL, or .\.wp-panel-ai\connect.ps1 on Windows PowerShell. The Unix script secures the private key before connecting, even when the ZIP extractor did not preserve file modes.
+1. Connect with bash .wp-panel-ai/connect.sh on Linux, macOS, or WSL, or .\.wp-panel-ai\connect.ps1 on Windows PowerShell.
 2. Read ~/WP-PANEL-AI-HANDOFF.md on the server and confirm the site and WebRoot.
-3. Perform read-only discovery. Determine WordPress, PHP, WP-CLI and Node.js versions; active theme and child theme; installed and active plugins; custom code locations; multisite status; WooCommerce and likely payment, shipping, tax or external-integration components; Git repository, branch and working-tree state; build tools; and relevant logs. Never print passwords, private keys, cookies, tokens, API keys, salts, full wp-config.php contents, Git credentials, or payment credentials.
-4. Create or update AI-CONTEXT.md in this local control-project root, not in the remote WebRoot. Record non-sensitive facts, unknowns, constraints and the date checked.
-5. Explain the discovered environment in beginner-friendly language. Ask only what cannot be safely inferred: whether this is staging or production; whether a restorable backup exists; the desired outcome, references and acceptance criteria; business flows that must not be affected; permission to create test content, orders, users or a temporary WordPress account; third-party sandbox constraints; and the required Git workflow.
-6. After the user answers, update AI-CONTEXT.md and create or update DEVELOPMENT-PLAN.md with scope, implementation steps, backup prerequisite, risks, test-data permissions, validation, rollback and acceptance criteria. Wait for explicit approval before making changes.
-7. During approved work, maintain AI-CHANGELOG.md with changed files, database and test-data changes, commands or migrations, verification results, rollback notes and remaining work.
+3. When the task involves WP Panel settings or server-level behavior, read ~/WP-PANEL-CAPABILITIES.md before acting or recommending a panel workflow.
 
-## Safety boundaries
+## WP Panel boundaries
 
 - Work only on this website and its database. Do not use sudo or modify WP Panel, system services or other sites.
-- Do not ask for root, WP Panel or database passwords. Most WordPress inspection should use WP-CLI. If browser-admin testing is genuinely required, explain why and ask permission for a temporary account; never record its password in project documents.
-- Do not claim that a backup exists merely because WP Panel supports backups. Ask the user to confirm a recent restorable backup. Do not automatically create backups or start one yourself unless the user explicitly authorizes it.
-- If WP-CLI, Node.js/npm or another system component is missing, ask the administrator to use WP Panel -> Software Management -> Development Tools. Do not attempt system installation.
-- Never print, copy, commit or upload anything inside .wp-panel-ai. The directory contains the SSH private key and is excluded by .gitignore.
+- Do not print, copy, commit or upload passwords, private keys, cookies, tokens, API keys, salts, full wp-config.php contents, Git credentials or payment credentials.
+- If WP-CLI, Node.js/npm or another system component is missing, use the current server-side operations.software capability to guide the administrator. Do not attempt system installation or rely on a menu name copied into this package.
+- Never print, copy, commit or upload anything inside .wp-panel-ai. It contains connection credentials, the pinned server identity, connection scripts and connection details, and is excluded by .gitignore.
+- AI development access cannot coexist with a WordPress maintenance window or site migration. The administrator must close AI development access before using either WP Panel workflow; closing access terminates this SSH session.
+- Treat the current server-side ~/WP-PANEL-AI-HANDOFF.md and ~/WP-PANEL-CAPABILITIES.md as authoritative. The downloaded package can become older than the running panel; if it conflicts with either server document, follow the server document. Do not copy capability claims from this local file or rely on remembered menu names.
 `, domain, webRoot)
 }
 
@@ -269,9 +306,11 @@ func buildAIDevelopmentProjectReadme(domain, projectName string) string {
 1. Extract this ZIP to a secure local location.
 2. Open the extracted %s folder as the project in your AI development tool.
 3. Copy the first-message prompt shown by WP Panel and send it to the AI.
-4. The AI will inspect the site without changing it, create local context and plan documents, ask you the necessary safety questions, and wait for your approval before development.
+4. The AI connects to the website and reads the current server-side handoff documents.
 
-The hidden .wp-panel-ai folder contains the one-time SSH credential and is excluded by .gitignore. Never share or commit it. If this folder is lost, generate a new package in WP Panel; doing so invalidates the old package and disconnects existing AI sessions.
+The hidden .wp-panel-ai folder contains the one-time SSH credential, pinned server identity, connection scripts and connection details. It is excluded by .gitignore. Never share or commit it.
+
+Generating a replacement package invalidates the old package and disconnects existing AI sessions. The server-side documents are refreshed by the running WP Panel and are authoritative even when this downloaded package is older.
 `, domain, projectName)
 }
 

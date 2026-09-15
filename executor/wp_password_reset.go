@@ -2,7 +2,6 @@ package executor
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,16 +56,16 @@ func ApplyWPPasswordResetMode(webRoot, systemUser, mode string) error {
 		return err
 	}
 
-	muDir := filepath.Join(webRoot, "wp-content", "mu-plugins")
-	pluginPath := filepath.Join(muDir, wpPasswordResetPluginFile)
-	for _, p := range []string{muDir, pluginPath} {
-		rel, err := filepath.Rel(webRoot, p)
-		if err != nil || strings.HasPrefix(rel, "..") || rel == ".." {
-			return fmt.Errorf("mu-plugin path %q is outside web root %q", p, webRoot)
-		}
+	muDir, err := managedWordPressPath(webRoot, "wp-content", "mu-plugins")
+	if err != nil {
+		return fmt.Errorf("password reset mu-plugin path: %w", err)
+	}
+	pluginPath, err := managedWordPressPath(webRoot, "wp-content", "mu-plugins", wpPasswordResetPluginFile)
+	if err != nil {
+		return fmt.Errorf("password reset mu-plugin path: %w", err)
 	}
 	if mode == PasswordResetModeAllow {
-		if _, statErr := os.Stat(pluginPath); statErr == nil {
+		if _, statErr := os.Lstat(pluginPath); statErr == nil {
 			if rmErr := os.Remove(pluginPath); rmErr != nil {
 				return fmt.Errorf("remove password reset mu-plugin: %w", rmErr)
 			}
@@ -78,7 +77,7 @@ func ApplyWPPasswordResetMode(webRoot, systemUser, mode string) error {
 		return fmt.Errorf("create mu-plugins dir: %w", err)
 	}
 	content := renderWPPasswordResetPlugin(mode)
-	if err := os.WriteFile(pluginPath, []byte(content), 0644); err != nil {
+	if err := writeManagedPHPFile(webRoot, pluginPath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("write password reset mu-plugin: %w", err)
 	}
 
@@ -91,10 +90,35 @@ func ApplyWPPasswordResetMode(webRoot, systemUser, mode string) error {
 			return fmt.Errorf("chown password reset mu-plugin to %s: %w", systemUser, chErr)
 		}
 		if chErr := ChownSitePath(muDir, webRoot, systemUser); chErr != nil {
-			log.Printf("chown mu-plugins dir failed (webRoot=%s): %v", webRoot, chErr)
+			return fmt.Errorf("chown mu-plugins dir to %s: %w", systemUser, chErr)
 		}
 	}
 	return nil
+}
+
+func WPPasswordResetModeMatches(webRoot, mode string) (bool, error) {
+	mode, err := ValidatePasswordResetMode(mode)
+	if err != nil {
+		return false, err
+	}
+	pluginPath, err := managedWordPressPath(webRoot, "wp-content", "mu-plugins", wpPasswordResetPluginFile)
+	if err != nil {
+		return false, err
+	}
+	data, err := os.ReadFile(pluginPath)
+	if mode == PasswordResetModeAllow {
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return string(data) == renderWPPasswordResetPlugin(mode), nil
 }
 
 // renderWPPasswordResetPlugin 生成带托管标记的 mu-plugin PHP 内容。

@@ -146,7 +146,7 @@
                                             <td class="table-cell whitespace-nowrap" x-text="fmtTime(backup.created_at)"></td>
                                             <td class="table-cell"><span class="badge-info" x-text="typeLabel(backup.component_type)"></span><div class="mt-1 break-all font-mono text-xs text-gray-400" x-text="backup.component_key"></div></td>
                                             <td class="table-cell whitespace-nowrap" x-text="backup.current_version + ' → ' + backup.target_version"></td>
-                                            <td class="table-cell" x-text="backupKindText(backup.kind)"></td>
+                                            <td class="table-cell"><span x-text="backupKindText(backup.kind)"></span><div x-show="backup.batch_shared" class="mt-1"><span class="badge-warning" x-text="t('wp_update_backup.batch_shared')"></span></div></td>
                                             <td class="table-cell whitespace-nowrap" x-text="formatBytes(backup.file_size)"></td>
                                             <td class="table-cell text-right">
                                                 <button x-show="backup.restore_allowed" @click="restoreUpdateBackup(backup)" :disabled="currentPage().restoringID !== null" class="btn-danger text-xs" x-text="currentPage().restoringID === backup.backup_id ? t('wp_update_backup.restoring') : t('wp_update_backup.restore')"></button>
@@ -753,7 +753,8 @@ function wpInventoryPanel() {
         async restoreUpdateBackup(backup) {
             const state = this.pages.backups;
             if (!this.siteID || state.restoringID !== null || !backup?.restore_allowed) return;
-            const accepted = await confirmModal(t('wp_update_backup.restore_confirm', { time: fmtTime(backup.created_at) }));
+            const confirmKey = backup.batch_shared ? 'wp_update_backup.restore_batch_confirm' : 'wp_update_backup.restore_confirm';
+            const accepted = await confirmModal(t(confirmKey, { time: fmtTime(backup.created_at) }));
             if (!accepted) return;
             const generation = this.requestGeneration;
             const siteID = this.siteID;
@@ -1250,7 +1251,8 @@ function wpInventoryPanel() {
         },
         async rollbackPluginBatchItem(item) {
             if (!this.siteID || !item?.task_id || this.pluginBatch.decidingTaskID) return;
-            const accepted = await confirmModal(t('wp_plugin_batch.rollback_confirm'));
+            const confirmKey = item.database_backup_mode === 'reuse' ? 'wp_plugin_batch.rollback_reuse_confirm' : 'wp_plugin_batch.rollback_confirm';
+            const accepted = await confirmModal(t(confirmKey));
             if (!accepted) return;
             const generation = this.requestGeneration;
             const siteID = this.siteID;

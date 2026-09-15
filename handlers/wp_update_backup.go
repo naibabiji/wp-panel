@@ -28,7 +28,7 @@ func (h *WPUpdateBackupHandler) List(c *gin.Context) {
 		return
 	}
 	rows, err := database.GetDB().QueryContext(c.Request.Context(), `SELECT b.id,b.task_id,t.component_type,t.component_key,
-		t.current_version,t.target_version,t.status,t.rollback_status,t.requires_attention,b.kind,b.file_size,b.created_at
+		t.current_version,t.target_version,t.status,t.rollback_status,t.requires_attention,b.kind,b.file_size,b.created_at,COALESCE(t.batch_id,'')
 		FROM wp_update_task_backups b JOIN wp_update_tasks t ON t.id=b.task_id
 		WHERE t.site_id=? AND b.protected=1 AND b.deleted_at IS NULL
 		ORDER BY b.created_at DESC,b.id DESC`, siteID)
@@ -41,13 +41,15 @@ func (h *WPUpdateBackupHandler) List(c *gin.Context) {
 	for rows.Next() {
 		var item models.WPUpdateBackup
 		var attention int
+		var batchID string
 		if err := rows.Scan(&item.BackupID, &item.TaskID, &item.ComponentType, &item.ComponentKey,
 			&item.CurrentVersion, &item.TargetVersion, &item.TaskStatus, &item.RollbackStatus,
-			&attention, &item.Kind, &item.FileSize, &item.CreatedAt); err != nil {
+			&attention, &item.Kind, &item.FileSize, &item.CreatedAt, &batchID); err != nil {
 			wpUpdateBackupError(c, http.StatusInternalServerError, "wp_update_backup.load_failed")
 			return
 		}
 		item.RequiresAttention = attention == 1
+		item.BatchShared = item.Kind == "database" && batchID != ""
 		item.RestoreAllowed = item.Kind == "database" && item.TaskStatus != "preparing" &&
 			item.TaskStatus != "queued" && item.TaskStatus != "running"
 		items = append(items, item)
@@ -93,6 +95,9 @@ func (h *WPUpdateBackupHandler) Restore(c *gin.Context) {
 		wpUpdateBackupError(c, http.StatusConflict, "wp_update_backup.update_active")
 		return
 	}
+	if wpUpdateRestorePersistentConflict(c, site) {
+		return
+	}
 	var path, expectedSHA string
 	err = database.GetDB().QueryRowContext(c.Request.Context(), `SELECT b.file_path,b.sha256
 		FROM wp_update_task_backups b JOIN wp_update_tasks t ON t.id=b.task_id
@@ -130,6 +135,10 @@ func (h *WPUpdateBackupHandler) Restore(c *gin.Context) {
 		wpUpdateBackupError(c, http.StatusConflict, "wp_update_backup.update_active")
 		return
 	}
+	if wpUpdateRestorePersistentConflict(c, site) {
+		executor.ReleaseSiteOpLock(siteID)
+		return
+	}
 	if !regularUpdateBackup(cleanPath, expectedSHA) {
 		executor.ReleaseSiteOpLock(siteID)
 		wpUpdateBackupError(c, http.StatusConflict, "wp_update_backup.file_unavailable")
@@ -142,6 +151,28 @@ func (h *WPUpdateBackupHandler) Restore(c *gin.Context) {
 		"task_id": task.ID,
 		"status":  task.Status,
 	}))
+}
+
+func wpUpdateRestorePersistentConflict(c *gin.Context, site *models.Website) bool {
+	locked, err := executor.SiteMigrationLocked(c.Request.Context(), site.ID, site.Domain)
+	if err != nil {
+		wpUpdateBackupError(c, http.StatusInternalServerError, "wp_update_backup.restore_failed")
+		return true
+	}
+	if locked {
+		wpUpdateBackupError(c, http.StatusConflict, "wp_update_backup.site_unavailable")
+		return true
+	}
+	blocked, err := database.IsAIDevelopmentAccessBlocking(c.Request.Context(), database.GetDB(), int64(site.ID))
+	if err != nil {
+		wpUpdateBackupError(c, http.StatusInternalServerError, "wp_update_backup.restore_failed")
+		return true
+	}
+	if blocked {
+		wpUpdateBackupError(c, http.StatusConflict, "wp_update_backup.site_unavailable")
+		return true
+	}
+	return false
 }
 
 func wpUpdateBackupSiteID(c *gin.Context) (int, bool) {

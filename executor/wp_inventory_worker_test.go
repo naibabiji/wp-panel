@@ -69,6 +69,21 @@ func TestWPInventoryWorkerPersistsSuccess(t *testing.T) {
 	}
 }
 
+func TestWPInventoryWorkerDefersJobWhenMigrationStartsAfterEnqueue(t *testing.T) {
+	store, siteID := newWPInventoryStoreTest(t)
+	jobID := enqueueWPInventoryWorkerJob(t, store, siteID, time.Now().Add(-time.Second))
+	insertWPInventoryMigrationLock(t, store.db, siteID, "inventory.example.com")
+	collector := &wpInventoryFakeCollector{}
+	worker := newTestWPInventoryWorker(t, store, collector, "worker-migration")
+	if hadJob, terminal := worker.processOne(context.Background()); !hadJob || terminal {
+		t.Fatalf("processOne=(%t,%t)", hadJob, terminal)
+	}
+	job, err := store.getJob(context.Background(), jobID)
+	if err != nil || job.Status != wpInventoryJobQueued || collector.callCount() != 0 {
+		t.Fatalf("job=%+v err=%v calls=%d", job, err, collector.callCount())
+	}
+}
+
 func TestWPInventoryWorkerRunnerFailureContinues(t *testing.T) {
 	store, firstSite := newWPInventoryStoreTest(t)
 	secondSite := insertWPInventoryWorkerSite(t, store, "second.example.com")

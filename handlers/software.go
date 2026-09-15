@@ -21,6 +21,12 @@ import (
 
 type SoftwareHandler struct{}
 
+var softwareNginxConfigPath = "/etc/nginx/conf.d/wppanel.conf"
+
+var runSoftwareShellCommand = func(command string) ([]byte, error) {
+	return exec.Command("bash", "-c", command).CombinedOutput()
+}
+
 type guardResponse struct {
 	Name         string `json:"name"`
 	Service      string `json:"service"`
@@ -232,6 +238,10 @@ func (h *SoftwareHandler) GuardAction(c *gin.Context) {
 		return
 	}
 	if err := executor.SetServiceState(req.Service, req.Action); err != nil {
+		if errors.Is(err, executor.ErrUnknownGuardService) {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "software.unknown_software")))
+			return
+		}
 		log.Printf("守护操作失败 service=%s action=%s: %v", req.Service, req.Action, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.operation_failed_with_error", i18n.P{"error": err.Error()})))
 		return
@@ -249,6 +259,11 @@ var softConfigAllowed = map[string]map[string]bool{
 	"MariaDB": {"innodb_buffer_pool_size": true},
 	"Redis":   {"maxmemory": true},
 }
+
+var (
+	softwarePHPRuntimeConfigPath  = executor.PHPRuntimeConfigPath
+	softwareRegenerateAllSitesFPM = executor.RegenerateAllSitesFPM
+)
 
 var (
 	phpSizeValueRe = regexp.MustCompile(`^[0-9]+[KMGkmg]?$`)
@@ -298,12 +313,12 @@ func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 
 	switch req.Name {
 	case "PHP":
-		configPath = executor.PHPRuntimeConfigPath()
+		configPath = softwarePHPRuntimeConfigPath()
 		serviceName = "php8.3-fpm"
 		checkCmd = "php-fpm8.3 -t"
 		reloadCmd = "systemctl reload php8.3-fpm"
 	case "Nginx":
-		configPath = "/etc/nginx/conf.d/wppanel.conf"
+		configPath = softwareNginxConfigPath
 		serviceName = "nginx"
 		checkCmd = "nginx -t"
 		reloadCmd = "systemctl reload nginx"
@@ -431,7 +446,7 @@ func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 
 	// Syntax check
 	if checkCmd != "" {
-		out, err := exec.Command("bash", "-c", checkCmd).CombinedOutput()
+		out, err := runSoftwareShellCommand(checkCmd)
 		if err != nil {
 			os.WriteFile(configPath, data, 0644)
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.syntax_check_failed_with_rollback", i18n.P{"output": strings.TrimSpace(string(out))})))
@@ -441,13 +456,56 @@ func (h *SoftwareHandler) SaveConfig(c *gin.Context) {
 
 	// Reload
 	if req.Name == "PHP" && phpConfigRequiresPoolRebuild(req.Key) {
-		if err := executor.RegenerateAllSitesFPM(); err != nil {
-			log.Printf("PHP 配置已写入，但部分站点 PHP-FPM Pool 重建失败: %v", err)
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.php_pool_rebuild_failed", i18n.P{"error": err.Error()})))
+		if applyErr := softwareRegenerateAllSitesFPM(); applyErr != nil {
+			restoreErr := os.WriteFile(configPath, data, 0644)
+			if restoreErr == nil {
+				if recoveryOut, err := runSoftwareShellCommand(checkCmd); err != nil {
+					restoreErr = errors.New(strings.TrimSpace(string(recoveryOut)))
+					if restoreErr.Error() == "" {
+						restoreErr = err
+					}
+				}
+			}
+			if restoreErr == nil {
+				restoreErr = softwareRegenerateAllSitesFPM()
+			}
+			log.Printf("PHP 配置应用失败并恢复: apply=%v recovery=%v", applyErr, restoreErr)
+			if restoreErr != nil {
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.apply_failed_rollback_failed", i18n.P{"service": serviceName, "error": applyErr.Error()})))
+				return
+			}
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.apply_failed_rolled_back", i18n.P{"error": applyErr.Error()})))
 			return
 		}
 	} else {
-		exec.Command("bash", "-c", reloadCmd).Run()
+		reloadOut, reloadErr := runSoftwareShellCommand(reloadCmd)
+		if reloadErr != nil {
+			restoreErr := os.WriteFile(configPath, data, 0644)
+			var recoveryErr error
+			if restoreErr == nil && checkCmd != "" {
+				if recoveryOut, err := runSoftwareShellCommand(checkCmd); err != nil {
+					recoveryErr = errors.New(strings.TrimSpace(string(recoveryOut)))
+					if recoveryErr.Error() == "" {
+						recoveryErr = err
+					}
+				}
+			}
+			if restoreErr == nil && recoveryErr == nil {
+				if recoveryOut, err := runSoftwareShellCommand(reloadCmd); err != nil {
+					recoveryErr = errors.New(strings.TrimSpace(string(recoveryOut)))
+					if recoveryErr.Error() == "" {
+						recoveryErr = err
+					}
+				}
+			}
+			log.Printf("%s 配置重载失败并回滚: reload=%v output=%s restore=%v recovery=%v", req.Name, reloadErr, string(reloadOut), restoreErr, recoveryErr)
+			if restoreErr != nil || recoveryErr != nil {
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.apply_failed_rollback_failed", i18n.P{"service": serviceName, "error": reloadErr.Error()})))
+				return
+			}
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.apply_failed_rolled_back", i18n.P{"error": reloadErr.Error()})))
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.T(lang, "software.config_updated_reloaded", i18n.P{"service": serviceName})}))

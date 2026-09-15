@@ -168,6 +168,11 @@ func (w *WPInventoryWorker) processOne(ctx context.Context) (bool, bool) {
 		}
 		return true, w.persistInternalFailure(job.ID, WPInventoryRunMeta{}) == nil
 	}
+	locked, lockErr := SiteMigrationLocked(ctx, identity.ID, identity.Domain)
+	if lockErr != nil || locked {
+		w.releaseAt(job.ID, w.now().UTC().Add(wpInventorySchedulePollInterval))
+		return true, false
+	}
 
 	site := &models.Website{
 		ID: identity.ID, Domain: identity.Domain, Status: identity.Status,
@@ -219,9 +224,13 @@ func (w *WPInventoryWorker) persistInternalFailure(jobID string, meta WPInventor
 }
 
 func (w *WPInventoryWorker) release(jobID string) {
+	w.releaseAt(jobID, w.now().UTC())
+}
+
+func (w *WPInventoryWorker) releaseAt(jobID string, notBefore time.Time) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = w.store.releaseOwned(ctx, jobID, w.owner, w.now().UTC())
+	_ = w.store.releaseOwned(ctx, jobID, w.owner, notBefore)
 }
 
 func wpInventoryWorkerInternalError() *WPInventoryRunError {

@@ -372,6 +372,14 @@ func (s *wpInventoryStore) enqueueEligibleScheduled(ctx context.Context, siteID 
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, errWPInventoryScheduledSiteIneligible
 	}
+	var migrationLocked int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM site_migration_locks
+		WHERE status='active' AND (site_id=? OR domain=?))`, identity.ID, identity.Domain).Scan(&migrationLocked); err != nil {
+		return "", false, err
+	}
+	if migrationLocked != 0 {
+		return "", false, errWPInventoryScheduledSiteIneligible
+	}
 	if err != nil {
 		return "", false, err
 	}

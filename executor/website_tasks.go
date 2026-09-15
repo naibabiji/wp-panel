@@ -23,9 +23,41 @@ type rollbackStep struct {
 	fn   func() error
 }
 
+func runRollbackSteps(steps []rollbackStep) []string {
+	var failures []string
+	for i := len(steps) - 1; i >= 0; i-- {
+		step := steps[i]
+		if err := step.fn(); err != nil {
+			log.Printf("回滚失败 [%s]: %v", step.desc, err)
+			failures = append(failures, step.desc+": "+err.Error())
+		}
+	}
+	return failures
+}
+
+func domainUpdateFailure(message string, err error, rollbacks []rollbackStep) TaskResult {
+	failures := runRollbackSteps(rollbacks)
+	if len(failures) > 0 {
+		return TaskResult{Success: false, Message: message + "，且状态恢复不完整，请检查：" + strings.Join(failures, "；")}
+	}
+	if err != nil {
+		log.Printf("%s: %v", message, err)
+	}
+	return TaskResult{Success: false, Message: message}
+}
+
+func requireDomainTargetAvailable(path, label string) error {
+	if _, err := os.Lstat(path); err == nil {
+		return fmt.Errorf("%s已存在: %s", label, path)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("检查%s失败: %w", label, err)
+	}
+	return nil
+}
+
 const createWebsiteInsertSQL = `INSERT INTO websites (name, domain, aliases, status, system_user, web_root, document_root_subdir, log_dir,
-	 db_name, db_user, php_pool_path, nginx_conf_path, site_type, ssl_enabled, ssl_cert_path, ssl_key_path, ssl_expires_at, ssl_last_error, template_version, access_log_mode, disable_application_passwords, log_retention_days, php_fpm_max_children, expires_at)
-	 VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v1.0', 'error_only', 1, ?, ?, ?)`
+	 db_name, db_user, php_pool_path, nginx_conf_path, site_type, ssl_enabled, ssl_cert_path, ssl_key_path, ssl_expires_at, ssl_last_error, ssl_cert_source, template_version, access_log_mode, disable_application_passwords, log_retention_days, php_fpm_max_children, expires_at)
+	 VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v1.0', 'error_only', 1, ?, ?, ?)`
 
 func moveSiteLogDir(oldLogDir, newLogDir string) error {
 	if oldLogDir == newLogDir {
@@ -201,21 +233,14 @@ func executeCreateSite(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "站点资源名冲突: " + err.Error()}
 	}
 
-	// Step 1: Create system user
-	if _, err := executeCommand("useradd", "-r", "-U", "-s", "/usr/sbin/nologin", "-M", "-d", "/nonexistent", systemUser); err != nil {
-		if !strings.Contains(err.Error(), "already exists") {
-			log.Printf("创建系统用户失败: %v", err)
-			return TaskResult{Success: false, Message: "创建系统用户失败"}
-		}
-	}
-	if err := ensureSitePrimaryGroup(systemUser); err != nil {
+	// Step 1: Create system user. Register cleanup as soon as useradd succeeds so
+	// a later primary-group verification failure cannot leave an orphan account.
+	userRollback, err := createSiteSystemUser(systemUser, executeCommand, ensureSitePrimaryGroup)
+	if err != nil {
 		log.Printf("创建站点用户组失败: %v", err)
-		return TaskResult{Success: false, Message: "创建站点用户组失败"}
+		return TaskResult{Success: false, Message: err.Error()}
 	}
-	rollbacks = append(rollbacks, rollbackStep{"删除系统用户 " + systemUser, func() error {
-		_, e := executeCommand("userdel", "-r", "-f", systemUser)
-		return e
-	}})
+	rollbacks = append(rollbacks, rollbackStep{"删除系统用户 " + systemUser, userRollback})
 
 	// Step 2: Create directories
 	for _, dir := range []string{webRoot, logDir} {
@@ -306,7 +331,7 @@ func executeCreateSite(task *Task) TaskResult {
 		log.Printf("渲染 PHP-FPM 配置失败: %v", err)
 		return taskFailure("渲染 PHP-FPM 配置失败", err)
 	}
-	if err := engine.ApplyPHPFPMPool(phpConfig, phpPoolPath, logDir); err != nil {
+	if err := engine.ApplyPHPFPMPool(phpConfig, phpPoolPath, logDir, phpSockPath); err != nil {
 		rollback()
 		log.Printf("应用 PHP-FPM 配置失败: %v", err)
 		return taskFailure("应用 PHP-FPM 配置失败", err)
@@ -427,12 +452,16 @@ func executeCreateSite(task *Task) TaskResult {
 		}
 	}
 
+	sslCertSource := ""
+	if sslEnabled == 1 {
+		sslCertSource = "auto"
+	}
 	db := database.GetDB()
 	insertResult, err := db.Exec(
 		createWebsiteInsertSQL,
 		siteName, domain, strings.Join(payload.Aliases, "\n"), systemUser,
 		webRoot, documentRootSubdir, logDir, dbName, dbUser, phpPoolPath, nginxConfPath, payload.SiteType, sslEnabled,
-		certPath, keyPath, sslExpiry, sslWarning, defaultSiteLogRetentionDays, maxChildren, nilIfEmpty(payload.ExpiresAt),
+		certPath, keyPath, sslExpiry, sslWarning, sslCertSource, defaultSiteLogRetentionDays, maxChildren, nilIfEmpty(payload.ExpiresAt),
 	)
 	if err != nil {
 		rollback()
@@ -469,6 +498,23 @@ func executeCreateSite(task *Task) TaskResult {
 			"ssl_warning": sslWarning,
 		},
 	}
+}
+
+func createSiteSystemUser(systemUser string, run func(string, ...string) (string, error), ensureGroup func(string) error) (func() error, error) {
+	if _, err := run("useradd", "-r", "-U", "-s", "/usr/sbin/nologin", "-M", "-d", "/nonexistent", systemUser); err != nil {
+		return nil, fmt.Errorf("创建系统用户失败: %w", err)
+	}
+	rollback := func() error {
+		_, err := run("userdel", "-r", "-f", systemUser)
+		return err
+	}
+	if err := ensureGroup(systemUser); err != nil {
+		if rollbackErr := rollback(); rollbackErr != nil {
+			return nil, fmt.Errorf("创建站点用户组失败: %v；清理新建系统用户失败: %w", err, rollbackErr)
+		}
+		return nil, fmt.Errorf("创建站点用户组失败，新建系统用户已清理: %w", err)
+	}
+	return rollback, nil
 }
 
 func executeDeleteSite(task *Task) TaskResult {
@@ -539,6 +585,14 @@ func executeDeleteSite(task *Task) TaskResult {
 		maintenancePaths = append(maintenancePaths, currentTarget)
 	}
 
+	// Persist the destructive operation before touching external resources. If
+	// final SQLite cleanup later fails (or the process stops), the surviving row
+	// must not continue to look like a usable website. Re-running delete accepts
+	// the existing deleting state and finishes the idempotent cleanup.
+	if err := markWebsiteDeleting(db, site.ID); err != nil {
+		return TaskResult{Success: false, Message: "标记网站删除状态失败: " + err.Error()}
+	}
+
 	if _, err := executeCommand("userdel", "-r", "-f", site.SystemUser); err != nil {
 		fmt.Fprintf(os.Stderr, "删除系统用户警告: %v\n", err)
 	}
@@ -579,6 +633,30 @@ func executeDeleteSite(task *Task) TaskResult {
 	}
 
 	return TaskResult{Success: true, Message: "网站 " + site.Domain + " 已删除" + dbCleanupWarning}
+}
+
+func markWebsiteDeleting(db *sql.DB, siteID int) error {
+	result, err := db.Exec(`UPDATE websites SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status<>?`,
+		models.StatusDeleting, siteID, models.StatusDeleting)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 1 {
+		return nil
+	}
+
+	var status models.WebsiteStatus
+	if err := db.QueryRow(`SELECT status FROM websites WHERE id=?`, siteID).Scan(&status); err != nil {
+		return err
+	}
+	if status != models.StatusDeleting {
+		return errors.New("网站状态已变化")
+	}
+	return nil
 }
 
 func terminalSourceMigrationMaintenancePaths(db *sql.DB, siteID int, nginxRoot string) ([]string, error) {
@@ -668,6 +746,9 @@ func executePauseSite(task *Task) TaskResult {
 	} else if locked {
 		return TaskResult{Success: false, Message: "网站正在迁移维护中"}
 	}
+	if site.Status != models.StatusActive {
+		return TaskResult{Success: false, Message: "当前网站状态不能执行暂停"}
+	}
 	cfg := config.AppConfig
 
 	nginxConfPath, err := managedSubpath(cfg.Paths.NginxSitesAvailable, site.NginxConfPath, "Nginx配置")
@@ -679,30 +760,42 @@ func executePauseSite(task *Task) TaskResult {
 	if err != nil {
 		return TaskResult{Success: false, Message: err.Error()}
 	}
+	if err := changeWebsiteStatus(site.ID, models.StatusActive, models.StatusPaused); err != nil {
+		return TaskResult{Success: false, Message: "更新网站状态失败: " + err.Error()}
+	}
+	restoreStatus := func() error {
+		return changeWebsiteStatus(site.ID, models.StatusPaused, models.StatusActive)
+	}
 	var removedEnabled bool
 	if _, err := os.Lstat(enabledPath); err == nil {
 		if err := os.Remove(enabledPath); err != nil {
+			if restoreErr := restoreStatus(); restoreErr != nil {
+				return TaskResult{Success: false, Message: "移除Nginx启用链接失败，网站状态恢复失败，请人工检查"}
+			}
 			return TaskResult{Success: false, Message: "移除Nginx启用链接失败: " + err.Error()}
 		}
 		removedEnabled = true
 	} else if !os.IsNotExist(err) {
+		if restoreErr := restoreStatus(); restoreErr != nil {
+			return TaskResult{Success: false, Message: "检查Nginx启用链接失败，网站状态恢复失败，请人工检查"}
+		}
 		return TaskResult{Success: false, Message: "检查Nginx启用链接失败: " + err.Error()}
 	}
 
-	if out, err := exec.Command("nginx", "-s", "reload").CombinedOutput(); err != nil {
+	if out, err := runWebsiteStateNginxReload(); err != nil {
+		var linkRestoreErr, reloadRestoreErr error
 		if removedEnabled {
-			if restoreErr := os.Symlink(nginxConfPath, enabledPath); restoreErr != nil {
-				log.Printf("暂停失败后恢复Nginx启用链接失败 path=%s: %v", enabledPath, restoreErr)
+			if linkRestoreErr = os.Symlink(nginxConfPath, enabledPath); linkRestoreErr != nil {
+				log.Printf("暂停失败后恢复Nginx启用链接失败 path=%s: %v", enabledPath, linkRestoreErr)
 			} else {
-				exec.Command("nginx", "-s", "reload").Run()
+				_, reloadRestoreErr = runWebsiteStateNginxReload()
 			}
 		}
+		statusRestoreErr := restoreStatus()
+		if linkRestoreErr != nil || reloadRestoreErr != nil || statusRestoreErr != nil {
+			return TaskResult{Success: false, Message: "Nginx 重载失败，网站原状态恢复未完成，请人工检查"}
+		}
 		return TaskResult{Success: false, Message: "Nginx 重载失败: " + string(out)}
-	}
-
-	db := database.GetDB()
-	if _, err := db.Exec("UPDATE websites SET status = 'paused', updated_at = CURRENT_TIMESTAMP WHERE id = ?", site.ID); err != nil {
-		return TaskResult{Success: false, Message: "更新网站状态失败: " + err.Error()}
 	}
 
 	return TaskResult{Success: true, Message: "网站 " + site.Domain + " 已暂停"}
@@ -718,6 +811,9 @@ func executeEnableSite(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "检查站点迁移锁失败"}
 	} else if locked {
 		return TaskResult{Success: false, Message: "网站正在迁移维护中"}
+	}
+	if site.Status != models.StatusPaused && site.Status != models.StatusMigrated {
+		return TaskResult{Success: false, Message: "当前网站状态不能执行启用"}
 	}
 	cfg := config.AppConfig
 
@@ -752,32 +848,40 @@ func executeEnableSite(task *Task) TaskResult {
 			}
 		}
 	}
+	if err := changeWebsiteStatus(site.ID, site.Status, models.StatusActive); err != nil {
+		return TaskResult{Success: false, Message: "更新网站状态失败: " + err.Error()}
+	}
+	restoreStatus := func() error {
+		return changeWebsiteStatus(site.ID, models.StatusActive, site.Status)
+	}
 	if err := atomicReplaceSymlink(enabledPath, nginxConfPath); err != nil {
 		log.Printf("创建软链接失败: %v", err)
+		if restoreErr := restoreStatus(); restoreErr != nil {
+			return TaskResult{Success: false, Message: "创建软链接失败，网站状态恢复失败，请人工检查"}
+		}
 		return TaskResult{Success: false, Message: "创建软链接失败"}
 	}
 
-	if out, err := exec.Command("nginx", "-s", "reload").CombinedOutput(); err != nil {
+	if out, err := runWebsiteStateNginxReload(); err != nil {
+		var linkRestoreErr, reloadRestoreErr error
 		if hadOldLink {
-			if restoreErr := atomicReplaceSymlink(enabledPath, oldTarget); restoreErr != nil {
-				log.Printf("启用失败后恢复Nginx启用链接失败 path=%s: %v", enabledPath, restoreErr)
+			if linkRestoreErr = atomicReplaceSymlink(enabledPath, oldTarget); linkRestoreErr != nil {
+				log.Printf("启用失败后恢复Nginx启用链接失败 path=%s: %v", enabledPath, linkRestoreErr)
 			} else {
-				exec.Command("nginx", "-s", "reload").Run()
+				_, reloadRestoreErr = runWebsiteStateNginxReload()
 			}
 		} else {
-			_ = os.Remove(enabledPath)
+			linkRestoreErr = os.Remove(enabledPath)
+			if linkRestoreErr == nil || os.IsNotExist(linkRestoreErr) {
+				linkRestoreErr = nil
+				_, reloadRestoreErr = runWebsiteStateNginxReload()
+			}
+		}
+		statusRestoreErr := restoreStatus()
+		if linkRestoreErr != nil || reloadRestoreErr != nil || statusRestoreErr != nil {
+			return TaskResult{Success: false, Message: "Nginx 重载失败，网站原状态恢复未完成，请人工检查"}
 		}
 		return TaskResult{Success: false, Message: "Nginx 重载失败: " + string(out)}
-	}
-
-	db := database.GetDB()
-	expectedStatus := string(site.Status)
-	result, err := db.Exec("UPDATE websites SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?", site.ID, expectedStatus)
-	if err != nil {
-		return TaskResult{Success: false, Message: "更新网站状态失败: " + err.Error()}
-	}
-	if changed, _ := result.RowsAffected(); changed != 1 {
-		return TaskResult{Success: false, Message: "网站状态已变化"}
 	}
 	if maintenancePath != "" {
 		if err := os.Remove(maintenancePath); err != nil && !os.IsNotExist(err) {
@@ -788,7 +892,86 @@ func executeEnableSite(task *Task) TaskResult {
 	if site.Status == models.StatusMigrated {
 		return TaskResult{Success: true, Message: "网站 " + site.Domain + " 已解除搬家维护模式并恢复运行"}
 	}
-	return TaskResult{Success: true, Message: "网站 " + site.Domain + " 已启用"}
+	return TaskResult{Success: true, Message: "网站 " + site.Domain + " 已启用" + enableSiteSSLWarning(site, time.Now())}
+}
+
+func enableSiteSSLWarning(site *models.Website, now time.Time) string {
+	if site == nil || !site.SSLEnabled || site.SSLExpiresAt == nil {
+		return ""
+	}
+	if !site.SSLExpiresAt.After(now) {
+		return "，但 SSL 证书已过期，请立即重新申请"
+	}
+	if !site.SSLExpiresAt.After(now.AddDate(0, 0, 30)) {
+		return "，SSL 证书将在 " + site.SSLExpiresAt.Format("2006-01-02") + " 到期，请尽快续期"
+	}
+	return ""
+}
+
+var runWebsiteStateNginxReload = func() ([]byte, error) {
+	return exec.Command("nginx", "-s", "reload").CombinedOutput()
+}
+
+var changeWebsiteStatus = updateWebsiteStatus
+
+var applyPrimaryDomainPHP = func(engine *TemplateEngine, content, targetPath, logDir, socketPath string) error {
+	return engine.ApplyPHPFPMPool(content, targetPath, logDir, socketPath)
+}
+
+var applyPrimaryDomainNginx = func(engine *TemplateEngine, content, targetPath, enabledPath string) error {
+	return engine.ApplyNginxConfig(content, targetPath, enabledPath)
+}
+
+var updatePrimaryDomainWPSiteURLs = UpdateWPSiteURLs
+
+var readPrimaryDomainWPSiteURLs = ReadWPSiteURLs
+
+var changeWebsitePrimaryDomain = updateWebsitePrimaryDomain
+
+var reloadPrimaryDomainPHP = func() error {
+	out, err := exec.Command("systemctl", "reload", "php8.3-fpm").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("reload php-fpm: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+var reloadPrimaryDomainNginx = func() error {
+	out, err := exec.Command("nginx", "-s", "reload").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("reload nginx: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func updateWebsitePrimaryDomain(siteID int, fromDomain string, site *models.Website) error {
+	result, err := database.GetDB().Exec(`UPDATE websites SET domain = ?, aliases = ?, web_root = ?, log_dir = ?,
+		nginx_conf_path = ?, php_pool_path = ?, ssl_cert_path = ?, ssl_key_path = ?,
+		updated_at = CURRENT_TIMESTAMP WHERE id = ? AND domain = ?`,
+		site.Domain, site.Aliases, site.WebRoot, site.LogDir,
+		site.NginxConfPath, site.PHPPoolPath, site.SSLCertPath, site.SSLKeyPath, siteID, fromDomain)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return errors.New("网站主域名已变化")
+	}
+	return nil
+}
+
+func updateWebsiteStatus(siteID int, from, to models.WebsiteStatus) error {
+	result, err := database.GetDB().Exec(
+		"UPDATE websites SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?", to, siteID, from,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return errors.New("网站状态已变化")
+	}
+	return nil
 }
 
 func executeUpdateDomains(task *Task) TaskResult {
@@ -806,6 +989,14 @@ func executeUpdateDomains(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "检查 AI 开发授权失败"}
 	} else if blocked {
 		return TaskResult{Success: false, Message: "该网站已开启 AI 开发访问，请先关闭授权"}
+	}
+	if locked, err := SiteMigrationLocked(context.Background(), site.ID, site.Domain); err != nil {
+		return TaskResult{Success: false, Message: "检查站点迁移锁失败"}
+	} else if locked {
+		return TaskResult{Success: false, Message: "网站正在迁移维护中"}
+	}
+	if blocked := rejectPausedSiteConfiguration(site.ID); blocked != nil {
+		return *blocked
 	}
 	cfg := config.AppConfig
 
@@ -832,25 +1023,8 @@ func executeUpdateDomains(task *Task) TaskResult {
 	}
 
 	var rollbacks []rollbackStep
-	rollback := func() {
-		for i := len(rollbacks) - 1; i >= 0; i-- {
-			step := rollbacks[i]
-			if e := step.fn(); e != nil {
-				fmt.Fprintf(os.Stderr, "回滚失败 [%s]: %v\n", step.desc, e)
-			}
-		}
-	}
 
 	if domainChanged {
-		if payload.NewWPSiteURL != "" || payload.NewWPHomeURL != "" {
-			if err := UpdateWPSiteURLs(site.DBName, site.TablePrefix, payload.NewWPSiteURL, payload.NewWPHomeURL, cfg); err != nil {
-				return taskFailure("同步 WordPress 站点 URL 失败", err)
-			}
-			rollbacks = append(rollbacks, rollbackStep{"恢复 WordPress 站点 URL", func() error {
-				return UpdateWPSiteURLs(site.DBName, site.TablePrefix, payload.OldWPSiteURL, payload.OldWPHomeURL, cfg)
-			}})
-		}
-
 		oldWebRoot := site.WebRoot
 		oldLogDir := site.LogDir
 		oldNginxConf := site.NginxConfPath
@@ -864,24 +1038,76 @@ func executeUpdateDomains(task *Task) TaskResult {
 		newPHPPool := oldPHPPool
 		newCertDir := filepath.Join(cfg.Paths.Certificates, newDomain)
 		newEnabledLink := nginxEnabledPath(cfg, newNginxConf, newDomain)
+		oldBackupDir := filepath.Join(cfg.Panel.BackupDir, oldDomain)
+		newBackupDir := filepath.Join(cfg.Panel.BackupDir, newDomain)
+		oldCustomPaths := []string{filepath.Join(nginxCustomDir, oldDomain+".pre.conf"), filepath.Join(nginxCustomDir, oldDomain+".conf")}
+		newCustomPaths := []string{filepath.Join(nginxCustomDir, newDomain+".pre.conf"), filepath.Join(nginxCustomDir, newDomain+".conf")}
 		poolName := phpPoolName(newPHPPool, newDomain)
 		if err := validateUnixSocketPath(phpSocketPath(cfg, newPHPPool, newDomain)); err != nil {
 			return TaskResult{Success: false, Message: err.Error()}
 		}
-		os.Remove(oldEnabledLink)
+
+		// 预检查：所有目标和两份新配置都在触碰现有站点前确认可用。
+		if info, err := os.Stat(oldWebRoot); err != nil || !info.IsDir() {
+			return TaskResult{Success: false, Message: "原网站目录不可用"}
+		}
+		if err := requireDomainTargetAvailable(newWebRoot, "新网站目录"); err != nil {
+			return taskFailure("主域名预检查失败", err)
+		}
+		if info, err := os.Stat(oldLogDir); err != nil || !info.IsDir() {
+			return TaskResult{Success: false, Message: "原日志目录不可用"}
+		}
+		if err := requireDomainTargetAvailable(newLogDir, "新日志目录"); err != nil {
+			return taskFailure("主域名预检查失败", err)
+		}
+		if _, err := os.Lstat(oldCertDir); err == nil {
+			if err := requireDomainTargetAvailable(newCertDir, "新证书目录"); err != nil {
+				return taskFailure("主域名预检查失败", err)
+			}
+		} else if !os.IsNotExist(err) {
+			return taskFailure("检查原证书目录失败", err)
+		}
+		if _, err := os.Lstat(sitePluginSecretsDir(oldDomain)); err == nil {
+			if err := requireDomainTargetAvailable(sitePluginSecretsDir(newDomain), "新插件身份目录"); err != nil {
+				return taskFailure("主域名预检查失败", err)
+			}
+		} else if !os.IsNotExist(err) {
+			return taskFailure("检查原插件身份目录失败", err)
+		}
+		if _, err := os.Lstat(oldBackupDir); err == nil {
+			if err := requireDomainTargetAvailable(newBackupDir, "新备份目录"); err != nil {
+				return taskFailure("主域名预检查失败", err)
+			}
+		} else if !os.IsNotExist(err) {
+			return taskFailure("检查原备份目录失败", err)
+		}
+		for i, oldPath := range oldCustomPaths {
+			if _, err := os.Lstat(oldPath); err == nil {
+				if err := requireDomainTargetAvailable(newCustomPaths[i], "新自定义 Nginx 文件"); err != nil {
+					return taskFailure("主域名预检查失败", err)
+				}
+			} else if !os.IsNotExist(err) {
+				return taskFailure("检查原自定义 Nginx 文件失败", err)
+			}
+		}
+		oldPoolContent, err := os.ReadFile(oldPHPPool)
+		if err != nil {
+			return taskFailure("读取原 PHP-FPM 配置失败", err)
+		}
+		oldNginxContent, err := os.ReadFile(oldNginxConf)
+		if err != nil {
+			return taskFailure("读取原 Nginx 配置失败", err)
+		}
+		oldEnabledTarget, oldEnabledErr := os.Readlink(oldEnabledLink)
+		if oldEnabledErr != nil {
+			return taskFailure("读取原 Nginx 启用链接失败", oldEnabledErr)
+		}
 		if newEnabledLink != oldEnabledLink {
-			os.Remove(newEnabledLink)
+			if err := requireDomainTargetAvailable(newEnabledLink, "新 Nginx 启用链接"); err != nil {
+				return taskFailure("主域名预检查失败", err)
+			}
 		}
 
-		nginxReload := func() { exec.Command("nginx", "-s", "reload").Run() }
-		nginxRB := rollbackStep{"恢复Nginx配置", func() error {
-			os.Symlink(oldNginxConf, oldEnabledLink)
-			nginxReload()
-			return nil
-		}}
-		rollbacks = append(rollbacks, nginxRB)
-
-		oldPoolContent, _ := os.ReadFile(oldPHPPool)
 		engine := NewTemplateEngine(cfg.Panel.BackupDir)
 		phpData := &PHPFPMPoolData{
 			Domain:     newDomain,
@@ -896,48 +1122,47 @@ func executeUpdateDomains(task *Task) TaskResult {
 		}
 		phpConfig, err := engine.RenderPHPFPMPool(phpData)
 		if err != nil {
-			rollback()
-			log.Printf("渲染 PHP-FPM 配置失败: %v", err)
 			return taskFailure("渲染 PHP-FPM 配置失败", err)
 		}
+
+		proposed := *site
+		proposed.WebRoot = newWebRoot
+		proposed.LogDir = newLogDir
+		proposed.Domain = newDomain
+		proposed.Aliases = strings.Join(newAliases, "\n")
+		if proposed.SSLCertPath != "" {
+			proposed.SSLCertPath = filepath.Join(newCertDir, "fullchain.pem")
+			proposed.SSLKeyPath = filepath.Join(newCertDir, "privkey.pem")
+		}
+		nginxData, err := nginxDataFromSiteChecked(&proposed)
+		if err != nil {
+			return taskFailure("CDN 真实 IP 配置无效", err)
+		}
+		nginxConfig, err := engine.RenderNginxConfig(nginxData)
+		if err != nil {
+			return taskFailure("渲染 Nginx 配置失败", err)
+		}
+
+		// 切换：每完成一步才登记对应恢复动作。
 		if err := os.Rename(oldWebRoot, newWebRoot); err != nil {
-			rollback()
-			log.Printf("重命名网站目录失败: %v", err)
-			return TaskResult{Success: false, Message: "重命名网站目录失败"}
+			return taskFailure("重命名网站目录失败", err)
 		}
 		rollbacks = append(rollbacks, rollbackStep{"恢复网站目录 " + oldWebRoot, func() error {
 			return os.Rename(newWebRoot, oldWebRoot)
 		}})
 
-		logDirMoved := true
 		if err := moveSiteLogDir(oldLogDir, newLogDir); err != nil {
-			logDirMoved = false
-			log.Printf("重命名日志目录失败，改为创建新日志目录: %v", err)
-			if createErr := createSiteLogDir(newLogDir); createErr != nil {
-				rollback()
-				log.Printf("创建新日志目录失败: %v", createErr)
-				return TaskResult{Success: false, Message: "创建新日志目录失败"}
-			}
+			return domainUpdateFailure("重命名日志目录失败", err, rollbacks)
 		}
-		if logDirMoved {
-			rollbacks = append(rollbacks, rollbackStep{"恢复日志目录 " + oldLogDir, func() error {
-				return os.Rename(newLogDir, oldLogDir)
-			}})
-		} else {
-			rollbacks = append(rollbacks, rollbackStep{"删除新日志目录 " + newLogDir, func() error {
-				_ = os.Remove(filepath.Join(newLogDir, "access.log"))
-				_ = os.Remove(filepath.Join(newLogDir, "error.log"))
-				return os.Remove(newLogDir)
-			}})
-		}
+		rollbacks = append(rollbacks, rollbackStep{"恢复日志目录 " + oldLogDir, func() error {
+			return os.Rename(newLogDir, oldLogDir)
+		}})
 
 		// 插件身份目录仍随面板主域名管理，但插件通过 PHP-FPM 注入的明确路径读取，
 		// 不再依赖 WordPress home URL。目标目录存在时拒绝覆盖，避免误删其他身份。
 		identityMoved, err := moveSitePluginIdentity(oldDomain, newDomain)
 		if err != nil {
-			rollback()
-			log.Printf("重命名插件密钥目录失败: %v", err)
-			return taskFailure("重命名插件密钥目录失败", err)
+			return domainUpdateFailure("重命名插件密钥目录失败", err, rollbacks)
 		}
 		if identityMoved {
 			rollbacks = append(rollbacks, rollbackStep{"恢复插件密钥目录", func() error {
@@ -946,25 +1171,51 @@ func executeUpdateDomains(task *Task) TaskResult {
 			}})
 		}
 
+		if _, err := os.Lstat(oldBackupDir); err == nil {
+			if err := os.Rename(oldBackupDir, newBackupDir); err != nil {
+				return domainUpdateFailure("重命名网站备份目录失败", err, rollbacks)
+			}
+			rollbacks = append(rollbacks, rollbackStep{"恢复网站备份目录", func() error {
+				return os.Rename(newBackupDir, oldBackupDir)
+			}})
+		}
+		if err := os.MkdirAll(nginxCustomDir, 0755); err != nil {
+			return domainUpdateFailure("准备自定义 Nginx 目录失败", err, rollbacks)
+		}
+		for i, oldPath := range oldCustomPaths {
+			newPath := newCustomPaths[i]
+			if _, err := os.Lstat(oldPath); err == nil {
+				if err := os.Rename(oldPath, newPath); err != nil {
+					return domainUpdateFailure("重命名自定义 Nginx 文件失败", err, rollbacks)
+				}
+				rollbacks = append(rollbacks, rollbackStep{"恢复自定义 Nginx 文件", func() error {
+					return os.Rename(newPath, oldPath)
+				}})
+			} else {
+				if err := os.WriteFile(newPath, nil, 0644); err != nil {
+					return domainUpdateFailure("创建新自定义 Nginx 文件失败", err, rollbacks)
+				}
+				rollbacks = append(rollbacks, rollbackStep{"删除新自定义 Nginx 文件", func() error {
+					return os.Remove(newPath)
+				}})
+			}
+		}
+
 		// 身份目录搬迁后立即切换 PHP-FPM 指针，缩短旧运行配置与新身份路径不一致的窗口。
-		if err := engine.ApplyPHPFPMPool(phpConfig, newPHPPool, newLogDir); err != nil {
-			rollback()
-			log.Printf("应用 PHP-FPM 配置失败: %v", err)
-			return taskFailure("应用 PHP-FPM 配置失败", err)
+		if err := applyPrimaryDomainPHP(engine, phpConfig, newPHPPool, newLogDir, phpSocketPath(cfg, newPHPPool, newDomain)); err != nil {
+			return domainUpdateFailure("应用 PHP-FPM 配置失败", err, rollbacks)
 		}
 		phpRB := rollbackStep{"恢复PHP-FPM Pool " + oldPHPPool, func() error {
-			os.Remove(newPHPPool)
-			os.WriteFile(oldPHPPool, oldPoolContent, 0644)
-			exec.Command("systemctl", "reload", "php8.3-fpm").Run()
-			return nil
+			if err := os.WriteFile(oldPHPPool, oldPoolContent, 0644); err != nil {
+				return err
+			}
+			return reloadPrimaryDomainPHP()
 		}}
 		rollbacks = append(rollbacks, phpRB)
 
 		if _, err := os.Stat(oldCertDir); err == nil {
 			if err := os.Rename(oldCertDir, newCertDir); err != nil {
-				rollback()
-				log.Printf("重命名SSL证书目录失败: %v", err)
-				return TaskResult{Success: false, Message: "重命名SSL证书目录失败"}
+				return domainUpdateFailure("重命名 SSL 证书目录失败", err, rollbacks)
 			}
 			certRB := rollbackStep{"恢复SSL证书目录", func() error {
 				return os.Rename(newCertDir, oldCertDir)
@@ -972,50 +1223,61 @@ func executeUpdateDomains(task *Task) TaskResult {
 			rollbacks = append(rollbacks, certRB)
 		}
 
-		site.WebRoot = newWebRoot
-		site.LogDir = newLogDir
-		site.NginxConfPath = newNginxConf
+		if err := applyPrimaryDomainNginx(engine, nginxConfig, newNginxConf, newEnabledLink); err != nil {
+			return domainUpdateFailure("应用 Nginx 配置失败", err, rollbacks)
+		}
+		rollbacks = append(rollbacks, rollbackStep{"恢复 Nginx 配置", func() error {
+			if err := os.WriteFile(oldNginxConf, oldNginxContent, 0644); err != nil {
+				return err
+			}
+			if newEnabledLink != oldEnabledLink {
+				if err := os.Remove(newEnabledLink); err != nil && !os.IsNotExist(err) {
+					return err
+				}
+			}
+			_ = os.Remove(oldEnabledLink)
+			if err := os.Symlink(oldEnabledTarget, oldEnabledLink); err != nil {
+				return err
+			}
+			return reloadPrimaryDomainNginx()
+		}})
 
-		site.PHPPoolPath = newPHPPool
-		if site.SSLCertPath != "" {
-			site.SSLCertPath = filepath.Join(newCertDir, "fullchain.pem")
-			site.SSLKeyPath = filepath.Join(newCertDir, "privkey.pem")
+		if payload.NewWPSiteURL != "" || payload.NewWPHomeURL != "" {
+			if err := updatePrimaryDomainWPSiteURLs(site.DBName, site.TablePrefix, payload.NewWPSiteURL, payload.NewWPHomeURL, cfg); err != nil {
+				return domainUpdateFailure("同步 WordPress 站点 URL 失败", err, rollbacks)
+			}
+			rollbacks = append(rollbacks, rollbackStep{"恢复 WordPress 站点 URL", func() error {
+				return updatePrimaryDomainWPSiteURLs(site.DBName, site.TablePrefix, payload.OldWPSiteURL, payload.OldWPHomeURL, cfg)
+			}})
+			siteURL, homeURL, err := readPrimaryDomainWPSiteURLs(site.DBName, site.TablePrefix, cfg)
+			if err != nil || siteURL != payload.NewWPSiteURL || homeURL != payload.NewWPHomeURL {
+				return domainUpdateFailure("验证 WordPress 站点 URL 失败", err, rollbacks)
+			}
 		}
 
-		aliasStr := strings.Join(newAliases, "\n")
-		site.Domain = newDomain
-		site.Aliases = aliasStr
+		if err := changeWebsitePrimaryDomain(site.ID, oldDomain, &proposed); err != nil {
+			return domainUpdateFailure("更新数据库失败", err, rollbacks)
+		}
+		rollbacks = append(rollbacks, rollbackStep{"恢复网站数据库记录", func() error {
+			return changeWebsitePrimaryDomain(site.ID, newDomain, site)
+		}})
 
-		nginxData, err := nginxDataFromSiteChecked(site)
-		if err != nil {
-			rollback()
-			return taskFailure("CDN 真实 IP 配置无效", err)
+		// 验证：数据库、关键目录和启用链接必须共同指向新状态。
+		var savedDomain, savedWebRoot, savedLogDir string
+		if err := database.GetDB().QueryRow("SELECT domain, web_root, log_dir FROM websites WHERE id = ?", site.ID).
+			Scan(&savedDomain, &savedWebRoot, &savedLogDir); err != nil || savedDomain != newDomain || savedWebRoot != newWebRoot || savedLogDir != newLogDir {
+			return domainUpdateFailure("主域名切换验证失败", err, rollbacks)
+		}
+		for path, label := range map[string]string{newWebRoot: "网站目录", newLogDir: "日志目录"} {
+			if info, err := os.Stat(path); err != nil || !info.IsDir() {
+				return domainUpdateFailure("主域名切换验证失败："+label+"不可用", err, rollbacks)
+			}
+		}
+		if target, err := os.Readlink(newEnabledLink); err != nil || filepath.Clean(target) != filepath.Clean(newNginxConf) {
+			return domainUpdateFailure("主域名切换验证失败：Nginx 启用链接异常", err, rollbacks)
 		}
 
-		nginxConfig, err := engine.RenderNginxConfig(nginxData)
-		if err != nil {
-			rollback()
-			log.Printf("渲染 Nginx 配置失败: %v", err)
-			return taskFailure("渲染 Nginx 配置失败", err)
-		}
-
-		if err := engine.ApplyNginxConfig(nginxConfig, newNginxConf, newEnabledLink); err != nil {
-			rollback()
-			log.Printf("应用 Nginx 配置失败: %v", err)
-			return taskFailure("应用 Nginx 配置失败", err)
-		}
-
-		db := database.GetDB()
-		_, err = db.Exec(`UPDATE websites SET domain = ?, aliases = ?, web_root = ?, log_dir = ?,
-			nginx_conf_path = ?, php_pool_path = ?, ssl_cert_path = ?, ssl_key_path = ?,
-			updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-			newDomain, aliasStr, newWebRoot, newLogDir,
-			newNginxConf, newPHPPool, site.SSLCertPath, site.SSLKeyPath, site.ID)
-		if err != nil {
-			rollback()
-			log.Printf("更新数据库失败: %v", err)
-			return TaskResult{Success: false, Message: "更新数据库失败"}
-		}
+		*site = proposed
 
 		msg := fmt.Sprintf("主域名已从 %s 更换为 %s", oldDomain, newDomain)
 		if err := WriteSiteLogrotateConfig(oldDomain, oldLogDir, 0); err != nil {
@@ -1036,6 +1298,7 @@ func executeUpdateDomains(task *Task) TaskResult {
 		return TaskResult{Success: true, Message: msg}
 	}
 
+	oldAliases := site.Aliases
 	aliasStr := strings.Join(newAliases, "\n")
 	site.Aliases = aliasStr
 
@@ -1051,17 +1314,18 @@ func executeUpdateDomains(task *Task) TaskResult {
 		return taskFailure("渲染 Nginx 配置失败", err)
 	}
 
-	if err := engine.ApplyNginxConfig(nginxConfig, site.NginxConfPath,
+	if err := changeWebsiteAliases(site.ID, oldAliases, aliasStr); err != nil {
+		site.Aliases = oldAliases
+		return taskFailure("保存网站别名失败", err)
+	}
+	if err := applyAliasNginx(engine, nginxConfig, site.NginxConfPath,
 		nginxEnabledPath(cfg, site.NginxConfPath, newDomain)); err != nil {
 		log.Printf("应用 Nginx 配置失败: %v", err)
+		site.Aliases = oldAliases
+		if restoreErr := changeWebsiteAliases(site.ID, aliasStr, oldAliases); restoreErr != nil {
+			return TaskResult{Success: false, Message: "应用 Nginx 配置失败，网站别名状态恢复失败，请人工检查"}
+		}
 		return taskFailure("应用 Nginx 配置失败", err)
-	}
-
-	db := database.GetDB()
-	_, err = db.Exec(`UPDATE websites SET aliases = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, aliasStr, site.ID)
-	if err != nil {
-		log.Printf("更新数据库失败: %v", err)
-		return TaskResult{Success: false, Message: "更新数据库失败"}
 	}
 
 	msg := "别名已更新"
@@ -1070,6 +1334,26 @@ func executeUpdateDomains(task *Task) TaskResult {
 	}
 
 	return TaskResult{Success: true, Message: msg}
+}
+
+var applyAliasNginx = func(engine *TemplateEngine, content, targetPath, enabledPath string) error {
+	return engine.ApplyNginxConfig(content, targetPath, enabledPath)
+}
+
+var changeWebsiteAliases = updateWebsiteAliases
+
+func updateWebsiteAliases(siteID int, from, to string) error {
+	result, err := database.GetDB().Exec(
+		"UPDATE websites SET aliases = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND aliases = ?", to, siteID, from,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return errors.New("网站别名已变化")
+	}
+	return nil
 }
 
 func executeUnbanIP(task *Task) TaskResult {

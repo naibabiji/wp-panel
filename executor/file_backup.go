@@ -1,8 +1,10 @@
 package executor
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -70,7 +72,9 @@ func executeFileBackup(siteID int, mode string, keepCount int, scheduled bool) (
 	}
 
 	backupDir := filepath.Join(backupsRoot, domain, "files")
-	os.MkdirAll(backupDir, 0755)
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return "", fmt.Errorf("创建文件备份目录失败: %w", err)
+	}
 	stampFile := filepath.Join(backupDir, ".last_backup.stamp")
 
 	// Check disk space: need at least 1GB free after backup
@@ -78,7 +82,8 @@ func executeFileBackup(siteID int, mode string, keepCount int, scheduled bool) (
 		return "", fmt.Errorf("磁盘空间不足，备份取消")
 	}
 
-	ts := time.Now().Format("20060102_150405")
+	backupCutoff := time.Now()
+	ts := backupCutoff.Format("20060102_150405")
 	var tarName string
 	var fullPath string
 	var isFull bool
@@ -130,12 +135,13 @@ func executeFileBackup(siteID int, mode string, keepCount int, scheduled bool) (
 	if isFull {
 		tarName = fmt.Sprintf("file_full_%s.tar.gz", ts)
 		fullPath = filepath.Join(backupDir, tarName)
-		args := []string{"-czf", fullPath, "--warning=no-file-changed", "--ignore-failed-read"}
+		args := []string{"-czf", fullPath, "--warning=no-file-changed"}
 		args = append(args, tarExcludes...)
 		args = append(args, "-C", filepath.Dir(webRoot), filepath.Base(webRoot))
 		cmd := exec.Command("tar", args...)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
+			_ = os.Remove(fullPath)
 			if len(out) == 0 {
 				return "", fmt.Errorf("全量备份失败: %v", err)
 			}
@@ -148,33 +154,28 @@ func executeFileBackup(siteID int, mode string, keepCount int, scheduled bool) (
 		if _, err := os.Stat(uploadsDir); os.IsNotExist(err) {
 			return "", fmt.Errorf("uploads 目录不存在")
 		}
-		// Check if there are new files since last backup
-		checkCmd := exec.Command("find", uploadsDir, "-newer", stampFile, "-type", "f")
-		out, _ := checkCmd.Output()
-		if len(out) == 0 {
-			os.WriteFile(stampFile, []byte(time.Now().Format(time.RFC3339)), 0644)
+		hasFiles, err := createIncrementalFileArchive(uploadsDir, stampFile, fullPath)
+		if err != nil {
+			return "", err
+		}
+		if !hasFiles {
+			if err := writeBackupStamp(stampFile, backupCutoff); err != nil {
+				return "", fmt.Errorf("更新增量备份时间戳失败: %w", err)
+			}
 			return fmt.Sprintf("%s 文件备份跳过: 无新文件", domain), nil
 		}
-		script := fmt.Sprintf(
-			`find '%s' -newer '%s' -type f | tar -czf '%s' --ignore-failed-read -T -`,
-			uploadsDir, stampFile, fullPath,
-		)
-		out, err = exec.Command("bash", "-c", script).CombinedOutput()
-		if err != nil {
-			if len(out) == 0 {
-				return "", fmt.Errorf("增量备份失败: %v", err)
-			}
-			return "", fmt.Errorf("增量备份失败: %s", string(out))
-		}
 	}
 
-	os.WriteFile(stampFile, []byte(time.Now().Format(time.RFC3339)), 0644)
-
-	info, _ := os.Stat(fullPath)
-	size := int64(0)
-	if info != nil {
-		size = info.Size()
+	if err := verifyFileBackupArchive(fullPath); err != nil {
+		_ = os.Remove(fullPath)
+		return "", err
 	}
+
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return "", fmt.Errorf("读取文件备份结果失败: %w", err)
+	}
+	size := info.Size()
 	modeLabel := "incremental"
 	if isFull {
 		modeLabel = "full"
@@ -185,6 +186,12 @@ func executeFileBackup(siteID int, mode string, keepCount int, scheduled bool) (
 
 	remoteEnabled := remoteBackupEnabled()
 	remoteSynced := SyncBackupToRemote(fullPath, BackupSourceFile, siteID, tarName)
+	if remoteEnabled && !remoteSynced {
+		return "", fmt.Errorf("本地文件备份已生成，但远程同步失败，旧备份链已保留")
+	}
+	if err := writeBackupStamp(stampFile, backupCutoff); err != nil {
+		return "", fmt.Errorf("文件备份已生成，但更新增量备份时间戳失败: %w", err)
+	}
 	if isFull {
 		if remoteEnabled && remoteSynced {
 			cleanupSupersededFileBackupChain(siteID, domain, backupDir, oldChain)
@@ -197,10 +204,68 @@ func executeFileBackup(siteID int, mode string, keepCount int, scheduled bool) (
 		logMsg += "；检测到远程无全量基线，已自动转为全量备份"
 	}
 	appendCronLog(logMsg)
-	if remoteEnabled && !remoteSynced {
-		return "", fmt.Errorf("本地文件备份已生成，但远程同步失败，旧备份链已保留")
-	}
 	return logMsg, nil
+}
+
+func createIncrementalFileArchive(uploadsDir, stampFile, target string) (bool, error) {
+	checkCmd := exec.Command("find", uploadsDir, "-newer", stampFile, "-type", "f")
+	files, err := checkCmd.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("扫描增量文件失败: %s", strings.TrimSpace(string(files)))
+	}
+	if len(files) == 0 {
+		return false, nil
+	}
+	cmd := exec.Command("tar", "-czf", target, "--verbatim-files-from", "-T", "-")
+	cmd.Stdin = bytes.NewReader(files)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		_ = os.Remove(target)
+		if len(out) == 0 {
+			return false, fmt.Errorf("增量备份失败: %v", err)
+		}
+		return false, fmt.Errorf("增量备份失败: %s", strings.TrimSpace(string(out)))
+	}
+	return true, nil
+}
+
+func verifyFileBackupArchive(path string) error {
+	cmd := exec.Command("tar", "-tzf", path)
+	cmd.Stdout = io.Discard
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("文件备份归档校验失败: %s", strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+func writeBackupStamp(path string, cutoff time.Time) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".last-backup-stamp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.WriteString(cutoff.Format(time.RFC3339Nano)); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0644); err != nil {
+		return err
+	}
+	if err := os.Chtimes(tmpPath, cutoff, cutoff); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func remoteBackupEnabled() bool {

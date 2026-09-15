@@ -603,71 +603,126 @@ func (e *TemplateEngine) writeNginxConfigFile(configContent string, targetPath s
 		return fmt.Errorf("Nginx 语法检查失败:\n%s", string(preCheckOut))
 	}
 
+	var nginxBackupDir, backupPath string
 	if _, err := os.Stat(targetPath); err == nil {
-		nginxBackupDir := e.BackupDir + "/nginx"
+		nginxBackupDir = e.BackupDir + "/nginx"
 		os.MkdirAll(nginxBackupDir, 0755)
-		backupPath := nginxBackupDir + "/" + fmt.Sprintf("%s.bak.%d", getConfBaseName(targetPath), time.Now().Unix())
+		backupPath = nginxBackupDir + "/" + fmt.Sprintf("%s.bak.%d", getConfBaseName(targetPath), time.Now().Unix())
 		if err := os.Rename(targetPath, backupPath); err != nil {
 			return fmt.Errorf("备份旧配置失败: %w", err)
 		}
-		cleanupNginxConfigBackups(nginxBackupDir, targetPath, nginxConfigBackupKeepCount)
 	}
 
-	if err := os.WriteFile(targetPath, []byte(configContent), 0644); err != nil {
-		return fmt.Errorf("写入配置文件失败: %w", err)
+	if err := writeNginxConfigAfterBackup(targetPath, backupPath, []byte(configContent), os.WriteFile); err != nil {
+		return err
+	}
+	if backupPath != "" {
+		cleanupNginxConfigBackups(nginxBackupDir, targetPath, nginxConfigBackupKeepCount)
 	}
 
 	return nil
 }
 
-func (e *TemplateEngine) ApplyPHPFPMPool(configContent string, targetPath string, logDir string) error {
+func writeNginxConfigAfterBackup(targetPath, backupPath string, content []byte, writeFile func(string, []byte, os.FileMode) error) error {
+	if err := writeFile(targetPath, content, 0644); err != nil {
+		if backupPath == "" {
+			return fmt.Errorf("写入配置文件失败: %w", err)
+		}
+		if restoreErr := os.Rename(backupPath, targetPath); restoreErr != nil {
+			return fmt.Errorf("写入配置文件失败: %v；恢复旧配置也失败: %w", err, restoreErr)
+		}
+		return fmt.Errorf("写入配置文件失败，旧配置已恢复: %w", err)
+	}
+	return nil
+}
+
+var (
+	writePHPFPMPoolFile    = os.WriteFile
+	removePHPFPMPoolFile   = os.Remove
+	runPHPFPMServiceAction = func(action string) error {
+		out, err := exec.Command("systemctl", action, "php8.3-fpm").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("systemctl %s php8.3-fpm: %s", action, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+)
+
+func (e *TemplateEngine) ApplyPHPFPMPool(configContent string, targetPath string, logDir string, socketPath string) error {
 	os.MkdirAll(logDir, 0755)
 
 	oldContent, oldErr := os.ReadFile(targetPath)
 	hadOld := oldErr == nil
 
-	if err := os.WriteFile(targetPath, []byte(configContent), 0644); err != nil {
+	if err := writePHPFPMPoolFile(targetPath, []byte(configContent), 0644); err != nil {
 		return fmt.Errorf("写入PHP-FPM配置失败: %w", err)
 	}
 
 	testCmd := exec.Command("php-fpm8.3", "-t")
 	testOut, err := testCmd.CombinedOutput()
 	if err != nil {
-		if hadOld {
-			_ = os.WriteFile(targetPath, oldContent, 0644)
-		} else {
-			_ = os.Remove(targetPath)
+		applyErr := fmt.Errorf("PHP-FPM 配置检查失败: %s", strings.TrimSpace(string(testOut)))
+		if restoreErr := restorePHPFPMPool(targetPath, oldContent, hadOld, false, socketPath); restoreErr != nil {
+			return fmt.Errorf("%v；自动恢复不完整，需要人工检查: %w", applyErr, restoreErr)
 		}
-		return fmt.Errorf("PHP-FPM 配置检查失败，已回滚\n%s", string(testOut))
+		return fmt.Errorf("%v；旧 Pool 配置已恢复", applyErr)
 	}
 
 	// 尝试 reload，失败则 restart，再失败则 start
-	reloadCmd := exec.Command("systemctl", "reload", "php8.3-fpm")
-	if _, err := reloadCmd.CombinedOutput(); err != nil {
-		restartCmd := exec.Command("systemctl", "restart", "php8.3-fpm")
-		if _, err := restartCmd.CombinedOutput(); err != nil {
-			startCmd := exec.Command("systemctl", "start", "php8.3-fpm")
-			if _, err := startCmd.CombinedOutput(); err != nil {
-				if hadOld {
-					_ = os.WriteFile(targetPath, oldContent, 0644)
-				} else {
-					_ = os.Remove(targetPath)
+	if err := runPHPFPMServiceAction("reload"); err != nil {
+		if err := runPHPFPMServiceAction("restart"); err != nil {
+			if err := runPHPFPMServiceAction("start"); err != nil {
+				applyErr := fmt.Errorf("PHP-FPM reload、restart 和 start 均失败: %w", err)
+				if restoreErr := restorePHPFPMPool(targetPath, oldContent, hadOld, true, socketPath); restoreErr != nil {
+					return fmt.Errorf("%v；自动恢复不完整，需要人工检查: %w", applyErr, restoreErr)
 				}
-				_ = exec.Command("systemctl", "restart", "php8.3-fpm").Run()
-				return fmt.Errorf("PHP-FPM 启动失败，请检查: systemctl status php8.3-fpm")
+				return fmt.Errorf("%v；旧 Pool 配置和 PHP-FPM 已恢复", applyErr)
 			}
-		}
-		// 重启后等待 socket 就绪
-		sockPath := "/run/php/php8.3-fpm.sock"
-		for i := 0; i < 30; i++ {
-			if _, err := os.Stat(sockPath); err == nil {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
 		}
 	}
 
+	// PHP-FPM 主服务可正常 reload/restart，不代表本次站点 Pool 已成功创建自己的 Socket。
+	// 必须检查调用方根据同一份受控配置计算出的站点 Socket，避免单站配置未加载仍返回成功。
+	if err := waitForPHPFPMSocket(socketPath, 30, 100*time.Millisecond); err != nil {
+		if restoreErr := restorePHPFPMPool(targetPath, oldContent, hadOld, true, socketPath); restoreErr != nil {
+			return fmt.Errorf("网站 PHP-FPM Pool 未就绪: %v；自动恢复不完整，需要人工检查: %w", err, restoreErr)
+		}
+		return fmt.Errorf("网站 PHP-FPM Pool 未就绪: %v；旧 Pool 配置和 PHP-FPM 已恢复", err)
+	}
+
 	return nil
+}
+
+func restorePHPFPMPool(targetPath string, oldContent []byte, hadOld, restart bool, socketPath string) error {
+	if hadOld {
+		if err := writePHPFPMPoolFile(targetPath, oldContent, 0644); err != nil {
+			return fmt.Errorf("恢复旧 Pool 文件失败: %w", err)
+		}
+	} else if err := removePHPFPMPoolFile(targetPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("删除本次新建 Pool 文件失败: %w", err)
+	}
+	if !restart {
+		return nil
+	}
+	if err := runPHPFPMServiceAction("restart"); err != nil {
+		return fmt.Errorf("恢复旧配置后重启 PHP-FPM 失败: %w", err)
+	}
+	if err := waitForPHPFPMSocket(socketPath, 30, 100*time.Millisecond); err != nil {
+		return fmt.Errorf("恢复旧配置后网站 Pool 仍未就绪: %w", err)
+	}
+	return nil
+}
+
+func waitForPHPFPMSocket(path string, attempts int, interval time.Duration) error {
+	for i := 0; i < attempts; i++ {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		}
+		if i+1 < attempts {
+			time.Sleep(interval)
+		}
+	}
+	return fmt.Errorf("等待 PHP-FPM Socket 超时: %s", path)
 }
 
 func (e *TemplateEngine) RemoveNginxConfig(targetPath string, enabledPath string) error {

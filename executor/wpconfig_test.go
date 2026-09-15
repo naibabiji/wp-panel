@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -127,5 +128,43 @@ func TestFixWPConfigCredentialsRepairsDroppedTablePrefixVariableName(t *testing.
 	updated := string(updatedBytes)
 	if !strings.Contains(updated, "$table_prefix = 'wp_';") {
 		t.Fatalf("damaged table prefix assignment was not repaired:\n%s", updated)
+	}
+}
+
+func TestFixWPConfigCredentialsRejectsSymlinkAndPreservesTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "outside.php")
+	original := "<?php\ndefine('DB_NAME', 'old');\ndefine('DB_USER', 'old');\n$table_prefix = 'wp_';\n"
+	if err := os.WriteFile(target, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "wp-config.php")); err != nil {
+		t.Fatal(err)
+	}
+	if err := FixWPConfigCredentials(dir, "example.com", "new", "new", "wp_"); err == nil {
+		t.Fatal("expected symlink rejection")
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != original {
+		t.Fatalf("outside target changed: %q err=%v", got, err)
+	}
+}
+
+func TestFixWPConfigCredentialsLintFailurePreservesOriginal(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "wp-config.php")
+	original := "<?php\ndefine('DB_NAME', 'old');\ndefine('DB_USER', 'old');\n$table_prefix = 'wp_';\n"
+	if err := os.WriteFile(path, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	oldLint := lintManagedPHPFile
+	lintManagedPHPFile = func(string) error { return fmt.Errorf("invalid php") }
+	t.Cleanup(func() { lintManagedPHPFile = oldLint })
+	if err := FixWPConfigCredentials(dir, "example.com", "new", "new", "wp_"); err == nil {
+		t.Fatal("expected lint failure")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != original {
+		t.Fatalf("original changed: %q err=%v", got, err)
 	}
 }

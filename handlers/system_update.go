@@ -7,18 +7,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/executor"
+	"github.com/naibabiji/wp-panel/i18n"
 	"github.com/naibabiji/wp-panel/models"
 
 	"github.com/gin-gonic/gin"
 )
 
-type SystemUpdateHandler struct{}
-
-const (
-	systemUpdateSourceSSHMessage = "系统软件源刷新失败，请通过 SSH 登录服务器检查并处理。"
-	systemUpdateManualSSHMessage = "系统更新遇到需要交互确认或人工处理的项目，请通过 SSH 登录服务器完成更新。"
-)
+type SystemUpdateHandler struct {
+	Config *config.Config
+}
 
 type systemPackage struct {
 	Name    string `json:"name"`
@@ -34,7 +33,7 @@ var sysPkgCache struct {
 
 func (h *SystemUpdateHandler) Check(c *gin.Context) {
 	sysPkgCache.mu.Lock()
-	if time.Now().Before(sysPkgCache.expireAt) {
+	if c.Query("fresh") != "1" && time.Now().Before(sysPkgCache.expireAt) {
 		pkgs := sysPkgCache.pkgs
 		sysPkgCache.mu.Unlock()
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
@@ -59,29 +58,44 @@ func (h *SystemUpdateHandler) Check(c *gin.Context) {
 }
 
 func (h *SystemUpdateHandler) Update(c *gin.Context) {
-	_, err := exec.Command("bash", "-c", "apt update 2>&1").CombinedOutput()
+	status, err := executor.StartSystemPackageUpdate(h.Config)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(systemUpdateSourceSSHMessage))
+		if strings.Contains(err.Error(), "正在执行") {
+			c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "settings.system_update_already_running")))
+			return
+		}
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "settings.system_update_start_failed")))
 		return
 	}
+	c.JSON(http.StatusAccepted, models.SuccessResponse(systemUpdateStatusResponse(c, status)))
+}
 
-	out2, err := exec.Command("bash", "-c", "apt upgrade -y 2>&1").CombinedOutput()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(systemUpdateManualSSHMessage))
-		return
+func (h *SystemUpdateHandler) Status(c *gin.Context) {
+	status := executor.ReconcileSystemPackageUpdateStatus(h.Config)
+	if status.Status == "success" {
+		sysPkgCache.mu.Lock()
+		sysPkgCache.expireAt = time.Time{}
+		sysPkgCache.pkgs = nil
+		sysPkgCache.mu.Unlock()
+		executor.ClearSystemUpdateAlertCache()
 	}
+	c.JSON(http.StatusOK, models.SuccessResponse(systemUpdateStatusResponse(c, status)))
+}
 
-	// clear cache so next check reflects updated state
-	sysPkgCache.mu.Lock()
-	sysPkgCache.expireAt = time.Time{}
-	sysPkgCache.pkgs = nil
-	sysPkgCache.mu.Unlock()
-	executor.ClearSystemUpdateAlertCache()
-
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"message": "系统更新完成",
-		"output":  string(out2),
-	}))
+func systemUpdateStatusResponse(c *gin.Context, status executor.SystemPackageUpdateStatus) gin.H {
+	message := ""
+	if status.MessageKey != "" {
+		message = i18n.TE(c.Request, status.MessageKey)
+	}
+	return gin.H{
+		"id":          status.ID,
+		"status":      status.Status,
+		"stage":       status.Stage,
+		"message":     message,
+		"message_key": status.MessageKey,
+		"started_at":  status.StartedAt,
+		"updated_at":  status.UpdatedAt,
+	}
 }
 
 func getUpgradablePackages() []systemPackage {

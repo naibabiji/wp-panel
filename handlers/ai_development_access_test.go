@@ -20,7 +20,8 @@ func TestAIDevelopmentCredentialPackageUsesConfiguredPortAndPrivateMode(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := buildAIDevelopmentCredentialPackage("example.com", "203.0.113.10", 2222, "wp_example", "/var/www/example", credential)
+	knownHosts := "wp-panel-ai-target ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE3h7V1s95BrjhMuVZ7oBvP3G4XCNiCBN3qO3U1YQ6Ks\n"
+	data, err := buildAIDevelopmentCredentialPackage("example.com", "203.0.113.10", 2222, "wp_example", "/var/www/example", knownHosts, credential)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +44,7 @@ func TestAIDevelopmentCredentialPackageUsesConfiguredPortAndPrivateMode(t *testi
 		"README.md":                  0644,
 		".gitignore":                 0644,
 		".wp-panel-ai/id_ed25519":    0600,
+		".wp-panel-ai/known_hosts":   0600,
 		".wp-panel-ai/connect.sh":    0700,
 		".wp-panel-ai/connect.ps1":   0644,
 		".wp-panel-ai/ssh_config":    0600,
@@ -88,7 +90,7 @@ func TestAIDevelopmentCredentialPackageUsesConfiguredPortAndPrivateMode(t *testi
 	if strings.Contains(string(content), "IdentityFile") {
 		t.Fatalf("ssh_config must not rely on a working-directory-relative IdentityFile: %s", content)
 	}
-	for _, required := range []string{"AGENTS.md", "CLAUDE.md", "README.md", ".gitignore", ".wp-panel-ai/connect.sh", ".wp-panel-ai/connect.ps1", ".wp-panel-ai/CONNECTION.md"} {
+	for _, required := range []string{"AGENTS.md", "CLAUDE.md", "README.md", ".gitignore", ".wp-panel-ai/connect.sh", ".wp-panel-ai/connect.ps1", ".wp-panel-ai/CONNECTION.md", ".wp-panel-ai/known_hosts"} {
 		if files[prefix+required] == nil {
 			t.Fatalf("%s missing", required)
 		}
@@ -97,9 +99,14 @@ func TestAIDevelopmentCredentialPackageUsesConfiguredPortAndPrivateMode(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"AI-CONTEXT.md", "DEVELOPMENT-PLAN.md", "AI-CHANGELOG.md", "read-only discovery", "Wait for explicit approval", "Do not automatically create backups"} {
+	for _, required := range []string{"WP-PANEL-AI-HANDOFF.md", "WP-PANEL-CAPABILITIES.md", "authoritative", "Work only on this website", "cannot coexist"} {
 		if !strings.Contains(string(agentInstructions), required) {
 			t.Fatalf("AGENTS.md missing %q: %s", required, agentInstructions)
+		}
+	}
+	for _, forbidden := range []string{"AI-CONTEXT.md", "DEVELOPMENT-PLAN.md", "AI-CHANGELOG.md", "Git is optional", "wait for explicit approval"} {
+		if strings.Contains(string(agentInstructions), forbidden) {
+			t.Fatalf("AGENTS.md unexpectedly contains development guidance %q: %s", forbidden, agentInstructions)
 		}
 	}
 	gitignore, err := readZipFile(files[prefix+".gitignore"])
@@ -116,14 +123,19 @@ func TestAIDevelopmentCredentialPackageUsesConfiguredPortAndPrivateMode(t *testi
 	if !strings.Contains(string(connectScript), `-i "$key"`) {
 		t.Fatalf("connect.sh does not resolve the private key from its own directory: %s", connectScript)
 	}
-	if !strings.Contains(string(connectScript), `chmod 600 "$key"`) {
+	if !strings.Contains(string(connectScript), `chmod 600 "$key" "$known_hosts"`) {
 		t.Fatalf("connect.sh does not secure the private key: %s", connectScript)
+	}
+	for _, required := range []string{`UserKnownHostsFile=$known_hosts`, "known_hosts"} {
+		if !strings.Contains(string(connectScript), required) {
+			t.Fatalf("connect.sh missing %q: %s", required, connectScript)
+		}
 	}
 	powerShellScript, err := readZipFile(files[prefix+".wp-panel-ai/connect.ps1"])
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"icacls.exe", "/inheritance:r", ":(F)", "Position = 0", "ValueFromRemainingArguments", "$RemoteCommand -join ' '", "& ssh.exe @SSHArguments"} {
+	for _, required := range []string{"icacls.exe", "/inheritance:r", ":(F)", "Position = 0", "ValueFromRemainingArguments", "$RemoteCommand -join ' '", "& ssh.exe @SSHArguments", "UserKnownHostsFile=$KnownHostsPath", "@($KeyPath, $KnownHostsPath)"} {
 		if !strings.Contains(string(powerShellScript), required) {
 			t.Fatalf("connect.ps1 missing %q: %s", required, powerShellScript)
 		}
@@ -135,7 +147,8 @@ func TestAIDevelopmentConnectScriptSecuresPrivateKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := buildAIDevelopmentCredentialPackage("example.com", "203.0.113.10", 22, "wp_example", "/var/www/example", credential)
+	knownHosts := "wp-panel-ai-target ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE3h7V1s95BrjhMuVZ7oBvP3G4XCNiCBN3qO3U1YQ6Ks\n"
+	data, err := buildAIDevelopmentCredentialPackage("example.com", "203.0.113.10", 22, "wp_example", "/var/www/example", knownHosts, credential)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +162,7 @@ func TestAIDevelopmentConnectScriptSecuresPrivateKey(t *testing.T) {
 	}
 	prefix := "example.com-wp-panel-ai/.wp-panel-ai/"
 	dir := t.TempDir()
-	for _, name := range []string{"connect.sh", "id_ed25519", "ssh_config"} {
+	for _, name := range []string{"connect.sh", "id_ed25519", "ssh_config", "known_hosts"} {
 		content, err := readZipFile(files[prefix+name])
 		if err != nil {
 			t.Fatal(err)

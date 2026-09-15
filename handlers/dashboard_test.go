@@ -1,8 +1,12 @@
 package handlers
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestFormatMetricLabelUsesServerLocalTime(t *testing.T) {
@@ -24,5 +28,15 @@ func TestFormatMetricLabelUsesServerLocalTime(t *testing.T) {
 		if got := formatMetricLabel(ts, tt.rangeName); got != tt.want {
 			t.Errorf("formatMetricLabel(%q) = %q, want %q", tt.rangeName, got, tt.want)
 		}
+	}
+}
+
+func TestMetricsRejectsUnimplemented30DayRange(t *testing.T) {
+	router := gin.New()
+	router.GET("/metrics", (&DashboardHandler{}).GetMetrics)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics?range=30d", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

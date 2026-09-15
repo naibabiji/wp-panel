@@ -23,7 +23,11 @@ func TestIsBannedIgnoresWppanelLoginSource(t *testing.T) {
 	tracker := &LoginAttemptTracker{DB: db}
 	insertTestBan(t, tracker, "203.0.113.10", "wppanel-login")
 
-	if tracker.IsBanned("203.0.113.10") {
+	banned, err := tracker.IsBanned("203.0.113.10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if banned {
 		t.Fatal("a wppanel-login-only ban must not block panel access")
 	}
 }
@@ -36,8 +40,23 @@ func TestIsBannedHonorsOtherSources(t *testing.T) {
 	for i, jail := range jails {
 		ip := fmt.Sprintf("203.0.113.%d", i+1)
 		insertTestBan(t, tracker, ip, jail)
-		if !tracker.IsBanned(ip) {
+		banned, err := tracker.IsBanned(ip)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !banned {
 			t.Fatalf("a %s ban should still block panel access", jail)
 		}
+	}
+}
+
+func TestIsBannedReportsDatabaseFailure(t *testing.T) {
+	db := newScanDefenseTestDB(t)
+	tracker := &LoginAttemptTracker{DB: db}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if banned, err := tracker.IsBanned("203.0.113.10"); err == nil || banned {
+		t.Fatalf("banned=%t err=%v, want database error", banned, err)
 	}
 }

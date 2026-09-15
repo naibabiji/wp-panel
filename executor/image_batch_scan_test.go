@@ -2,7 +2,9 @@ package executor
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/naibabiji/wp-panel/config"
@@ -27,6 +29,20 @@ func setUpImageBatchTestSite(t *testing.T) (wwwRoot, webRoot string) {
 	config.AppConfig = &config.Config{Paths: config.PathsConfig{WWWRoot: wwwRoot}}
 	t.Cleanup(func() { config.AppConfig = oldConfig })
 	return wwwRoot, webRoot
+}
+
+func TestRunImageBatchCommandLimitsCombinedOutput(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "head -c 40000 /dev/zero; head -c 40000 /dev/zero >&2")
+	output, exceeded, err := runImageBatchCommand(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exceeded {
+		t.Fatal("combined image optimizer output was not marked as exceeded")
+	}
+	if len(output) != imageBatchOutputLimit || strings.Trim(string(output), "\x00") != "" {
+		t.Fatalf("kept output length=%d want=%d", len(output), imageBatchOutputLimit)
+	}
 }
 
 func TestScanSiteUploadsForImagesFindsJPEGAndPNGOnly(t *testing.T) {

@@ -19,6 +19,21 @@ import (
 
 type CronHandler struct{}
 
+var enqueueCronRender = func() *executor.Task {
+	return executor.GlobalQueue.Enqueue(executor.TaskRenderCron, nil)
+}
+
+func waitForCronRender(c *gin.Context) bool {
+	task := enqueueCronRender()
+	result := <-task.ResultCh
+	if result.Success {
+		return true
+	}
+	log.Printf("同步系统Cron失败: %s", result.Message)
+	c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "cron.system_update_failed")))
+	return false
+}
+
 func (h *CronHandler) List(c *gin.Context) {
 	db := database.GetDB()
 	rows, err := db.Query(
@@ -133,8 +148,9 @@ func (h *CronHandler) Create(c *gin.Context) {
 		ensureWPCronDisabled(*req.SiteID)
 	}
 
-	task := executor.GlobalQueue.Enqueue(executor.TaskRenderCron, nil)
-	<-task.ResultCh
+	if !waitForCronRender(c) {
+		return
+	}
 
 	msg := "Cron任务创建成功"
 	if taskType == "wp_cron" {
@@ -219,8 +235,9 @@ func (h *CronHandler) Update(c *gin.Context) {
 		removeWPCronIfLast(oldSiteID)
 	}
 
-	task := executor.GlobalQueue.Enqueue(executor.TaskRenderCron, nil)
-	<-task.ResultCh
+	if !waitForCronRender(c) {
+		return
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "Cron任务已更新"}))
 }
@@ -243,8 +260,9 @@ func (h *CronHandler) Delete(c *gin.Context) {
 		removeWPCronIfLast(siteID)
 	}
 
-	task := executor.GlobalQueue.Enqueue(executor.TaskRenderCron, nil)
-	<-task.ResultCh
+	if !waitForCronRender(c) {
+		return
+	}
 
 	msg := "Cron任务已删除"
 	if taskType == "wp_cron" && siteID > 0 {

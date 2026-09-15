@@ -802,6 +802,35 @@ func TestWPInventoryEnqueueDoesNotChangeRunningJobPriority(t *testing.T) {
 	}
 }
 
+func TestWPInventoryScheduledEnqueueSkipsActiveMigration(t *testing.T) {
+	store, siteID := newWPInventoryStoreTest(t)
+	insertWPInventoryMigrationLock(t, store.db, siteID, "inventory.example.com")
+	if _, _, err := store.enqueueEligibleScheduled(context.Background(), siteID, time.Now().UTC()); !errors.Is(err, errWPInventoryScheduledSiteIneligible) {
+		t.Fatalf("enqueue error=%v", err)
+	}
+	if got := countRows(t, store.db, "site_wp_inventory_jobs"); got != 0 {
+		t.Fatalf("jobs=%d", got)
+	}
+}
+
+func insertWPInventoryMigrationLock(t *testing.T, db *sql.DB, siteID int, domain string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO site_migration_peers(id,status) VALUES('peer_inventory_test','paired')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO site_migration_batches(id,peer_id,direction,status) VALUES('batch_inventory_test','peer_inventory_test','source','active')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO site_migration_sites(id,batch_id,source_site_id,source_domain,target_domain,site_type,status,stage)
+		VALUES('migration_inventory_test','batch_inventory_test',?,?,?,'wordpress','running','transferring_files')`, siteID, domain, domain); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO site_migration_locks(domain,site_id,migration_site_id,direction,status)
+		VALUES (?,?,'migration_inventory_test','source','active')`, domain, siteID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWPInventoryBulkEnqueueReportsPartialBatchFailureAndContinues(t *testing.T) {
 	store, _ := newWPInventoryStoreTest(t)
 	if _, err := store.db.Exec(`DELETE FROM websites`); err != nil {

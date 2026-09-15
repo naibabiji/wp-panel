@@ -851,6 +851,11 @@ func dumpDatabaseToGzip(dbName, dbPass, filePath string) error {
 	return nil
 }
 
+type oldDBBackup struct {
+	id       int
+	filename string
+}
+
 func cleanupOldBackups(siteID int, domain string, keepCount int) {
 	db := database.GetDB()
 	cfg := config.AppConfig
@@ -866,23 +871,33 @@ func cleanupOldBackups(siteID int, domain string, keepCount int) {
 	if err != nil {
 		return
 	}
-	type oldBackup struct {
-		id       int
-		filename string
-	}
-	var backups []oldBackup
+	var backups []oldDBBackup
 	for rows.Next() {
-		var b oldBackup
+		var b oldDBBackup
 		if rows.Scan(&b.id, &b.filename) == nil {
 			backups = append(backups, b)
 		}
 	}
 	rows.Close()
+	cleanupOldDBBackupsWith(backups,
+		func(filename string) error {
+			return os.Remove(filepath.Join(cfg.Panel.BackupDir, domain, "db", filename))
+		},
+		func(id int) error {
+			_, err := db.Exec("DELETE FROM db_backups WHERE id = ?", id)
+			return err
+		})
+}
 
+func cleanupOldDBBackupsWith(backups []oldDBBackup, removeFile func(string) error, deleteRecord func(int) error) {
 	for _, b := range backups {
-		filePath := filepath.Join(cfg.Panel.BackupDir, domain, "db", b.filename)
-		os.Remove(filePath)
-		db.Exec("DELETE FROM db_backups WHERE id = ?", b.id)
+		if err := removeFile(b.filename); err != nil && !os.IsNotExist(err) {
+			log.Printf("清理过期数据库备份失败 [%s]: %v", b.filename, err)
+			continue
+		}
+		if err := deleteRecord(b.id); err != nil {
+			log.Printf("清理过期数据库备份记录失败 [%s]: %v", b.filename, err)
+		}
 	}
 }
 

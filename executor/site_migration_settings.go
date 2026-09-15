@@ -14,6 +14,7 @@ type SiteMigrationRuntimeSettings struct {
 	Aliases                     []string                       `json:"aliases"`
 	DocumentRootSubdir          string                         `json:"document_root_subdir"`
 	SSLEnabled                  bool                           `json:"ssl_enabled"`
+	SSLCertSource               string                         `json:"ssl_cert_source"`
 	TemplateVersion             string                         `json:"template_version"`
 	AccessLogMode               string                         `json:"access_log_mode"`
 	FastCGICacheEnabled         bool                           `json:"fastcgi_cache_enabled"`
@@ -83,7 +84,7 @@ func (s *SiteMigrationSettingsService) SourceSettings(ctx context.Context, migra
 	var settings SiteMigrationRuntimeSettings
 	var aliases, expires, snapshotRaw string
 	var ssl, fastcgi, monitoring, disableUpdates, disableEditing, xmlrpc, disableApplicationPasswords, debug, fileLock, cdn int
-	err := s.db.QueryRowContext(ctx, `SELECT w.aliases,w.document_root_subdir,w.ssl_enabled,w.template_version,w.access_log_mode,
+	err := s.db.QueryRowContext(ctx, `SELECT w.aliases,w.document_root_subdir,w.ssl_enabled,w.ssl_cert_source,w.template_version,w.access_log_mode,
 		w.fastcgi_cache_enabled,w.fastcgi_cache_ttl,w.monitoring_enabled,w.monitoring_interval,w.disable_wp_updates,
 		w.disable_file_editing,w.xmlrpc_enabled,w.disable_application_passwords,w.wp_debug_enabled,w.wp_post_revisions,w.wp_memory_limit,
 		w.file_lock_enabled,w.file_lock_mode,w.password_reset_mode,w.log_retention_days,w.cdn_realip_enabled,
@@ -93,7 +94,7 @@ func (s *SiteMigrationSettingsService) SourceSettings(ctx context.Context, migra
 		JOIN site_migration_locks ml ON ml.migration_site_id=ms.id AND ml.site_id=ms.source_site_id AND ml.direction='source' AND ml.status='active'
 		JOIN websites w ON w.id=ms.source_site_id
 		WHERE ms.id=? AND ms.stage IN ('source_frozen','manifest_ready','transferring_files','transferring_database')`, migrationSiteID).Scan(
-		&aliases, &settings.DocumentRootSubdir, &ssl, &settings.TemplateVersion, &settings.AccessLogMode,
+		&aliases, &settings.DocumentRootSubdir, &ssl, &settings.SSLCertSource, &settings.TemplateVersion, &settings.AccessLogMode,
 		&fastcgi, &settings.FastCGICacheTTL, &monitoring, &settings.MonitoringInterval, &disableUpdates,
 		&disableEditing, &xmlrpc, &disableApplicationPasswords, &debug, &settings.WPPostRevisions, &settings.WPMemoryLimit,
 		&fileLock, &settings.FileLockMode, &settings.PasswordResetMode, &settings.LogRetentionDays, &cdn,
@@ -223,6 +224,15 @@ func validateSiteMigrationRuntimeSettings(settings *SiteMigrationRuntimeSettings
 	}
 	if settings.TemplateVersion == "" {
 		settings.TemplateVersion = "v1.0"
+	}
+	if !settings.SSLEnabled {
+		settings.SSLCertSource = ""
+	} else if settings.SSLCertSource == "" {
+		// Older peers did not send a source. Preserve the certificate without
+		// allowing the target to replace it automatically.
+		settings.SSLCertSource = "manual"
+	} else if settings.SSLCertSource != "auto" && settings.SSLCertSource != "manual" {
+		return errors.New("invalid migration SSL certificate source")
 	}
 	if settings.AccessLogMode == "" {
 		settings.AccessLogMode = "error_only"

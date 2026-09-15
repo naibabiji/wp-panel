@@ -43,3 +43,15 @@ func TestSiteOpLockReleaseIsNoOpWhenNotLocked(t *testing.T) {
 		t.Fatal("releasing an unlocked site should stay unlocked")
 	}
 }
+
+func TestSiteFileOpLockSharesTheSiteMutationSlot(t *testing.T) {
+	siteID := 900005
+	t.Cleanup(func() { ReleaseSiteOpLock(siteID) })
+
+	if !TryAcquireSiteFileOpLock(siteID, "archive_extract") {
+		t.Fatal("file operation acquire should succeed")
+	}
+	if TryAcquireSiteOpLock(siteID, "migration") {
+		t.Fatal("migration acquire should fail while file operation is active")
+	}
+}

@@ -39,7 +39,7 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 func (h *DashboardHandler) GetMetrics(c *gin.Context) {
 	var query models.MetricsQuery
 	if err := c.ShouldBindQuery(&query); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误: range 必须是 24h、7d 或 30d"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误: range 必须是 24h、7d 或 15d"))
 		return
 	}
 

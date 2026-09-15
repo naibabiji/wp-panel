@@ -281,7 +281,11 @@ func runImageOptimizationJob(ctx context.Context, jobID int64, siteID int, webRo
 	// 即便任务被停止，已经优化成功的文件也要把 filesize 回写掉，不要因为中途
 	// 停止就留下一批"文件已经变小、元数据还是旧值"的不一致状态。
 	if len(manifest) > 0 {
-		flushImageFilesizeManifest(context.Background(), webRoot, systemUser, siteID, manifest)
+		if !flushImageFilesizeManifest(context.Background(), webRoot, systemUser, siteID, manifest) {
+			forgetImageOptimizationFingerprints(db, siteID, manifest)
+			finishImageOptimizationJob(db, jobID, "failed", "WordPress 图片文件大小元数据同步失败，可重新运行任务重试")
+			return
+		}
 	}
 
 	if stopped {
@@ -289,6 +293,14 @@ func runImageOptimizationJob(ctx context.Context, jobID int64, siteID int, webRo
 		return
 	}
 	finishImageOptimizationJob(db, jobID, "succeeded", "")
+}
+
+func forgetImageOptimizationFingerprints(db *sql.DB, siteID int, manifest map[string]int64) {
+	for relativePath := range manifest {
+		if _, err := db.Exec(`DELETE FROM site_image_optimization_files WHERE site_id=? AND relative_path=?`, siteID, relativePath); err != nil {
+			log.Printf("[图片优化] site=%d 清理待重试指纹失败 %s: %v", siteID, relativePath, err)
+		}
+	}
 }
 
 func finishImageOptimizationJob(db *sql.DB, jobID int64, status, lastError string) {

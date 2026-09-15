@@ -75,6 +75,12 @@ func (s *SessionStore) Delete(token string) {
 	delete(s.sessions, token)
 }
 
+func (s *SessionStore) DeleteAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions = make(map[string]*Session)
+}
+
 func SessionRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, err := c.Cookie("wp_session")

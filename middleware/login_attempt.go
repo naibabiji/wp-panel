@@ -51,7 +51,7 @@ func (t *LoginAttemptTracker) RecordAttempt(ip string, attemptType string) {
 // typos on a site they'd need the panel to go fix is a worse outcome than
 // letting that one signal not also gate panel access; the hosted site itself
 // is still protected by the wppanel-login jail at the Nginx/nftables layer.
-func (t *LoginAttemptTracker) IsBanned(ip string) bool {
+func (t *LoginAttemptTracker) IsBanned(ip string) (bool, error) {
 	var count int
 	err := t.DB.QueryRow(
 		`SELECT COUNT(*) FROM firewall_bans
@@ -62,9 +62,9 @@ func (t *LoginAttemptTracker) IsBanned(ip string) bool {
 		ip,
 	).Scan(&count)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return count > 0
+	return count > 0, nil
 }
 
 func (t *LoginAttemptTracker) countRecent(ip string) int {

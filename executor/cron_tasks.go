@@ -8,7 +8,9 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/naibabiji/wp-panel/config"
@@ -16,8 +18,44 @@ import (
 )
 
 var cronLogFile = "/www/server/panel/logs/cron.log"
+var cronJobLockDir = "/run/lock"
+
+var errCronJobAlreadyRunning = errors.New("cron job is already running")
+
+var restartCronService = func() (string, error) {
+	return executeCommand("systemctl", "restart", "cron")
+}
 
 const cronLogKeepLines = 1000
+
+// ReconcileInterruptedManualCronJobs releases claims owned by the main
+// process's in-memory queue. The scheduled Cron CLI never sets running, so a
+// running=1 row at main-service startup can only be a manual execution lost
+// when the previous panel process exited.
+func ReconcileInterruptedManualCronJobs(db *sql.DB) (int64, error) {
+	if db == nil {
+		return 0, errors.New("database unavailable")
+	}
+	result, err := db.Exec(`UPDATE cron_jobs SET running=0 WHERE running=1`)
+	if err != nil {
+		return 0, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if count == 0 {
+		return 0, nil
+	}
+
+	now := time.Now().Format("2006-01-02 15:04:05")
+	if f, openErr := os.OpenFile(cronLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); openErr == nil {
+		_, _ = fmt.Fprintf(f, "[%s] INTERRUPTED 手动任务因面板进程重启中断，共 %d 个\n", now, count)
+		_ = f.Close()
+		pruneCronLog(cronLogFile, cronLogKeepLines)
+	}
+	return count, nil
+}
 
 func executeRenderCron(task *Task) TaskResult {
 	return renderCronConfig()
@@ -66,7 +104,10 @@ func renderCronConfig() TaskResult {
 		return TaskResult{Success: false, Message: "写入Cron文件失败"}
 	}
 
-	_, _ = executeCommand("systemctl", "restart", "cron")
+	if output, err := restartCronService(); err != nil {
+		log.Printf("重启Cron服务失败: %v, output: %s", err, strings.TrimSpace(output))
+		return TaskResult{Success: false, Message: "Cron配置已写入，但重启Cron服务失败"}
+	}
 
 	return TaskResult{Success: true, Message: "Cron配置已更新"}
 }
@@ -79,6 +120,14 @@ func executeRunCron(task *Task) TaskResult {
 	// The HTTP handler claims running=1 before enqueueing. Always release that
 	// claim, including a state change between confirmation and queue execution.
 	defer database.GetDB().Exec(`UPDATE cron_jobs SET running=0 WHERE id=?`, payload.JobID)
+	lock, err := acquireCronJobExecutionLock(payload.JobID)
+	if err != nil {
+		if errors.Is(err, errCronJobAlreadyRunning) {
+			return TaskResult{Success: false, Message: "任务正在执行中，请稍后再试"}
+		}
+		return TaskResult{Success: false, Message: "取得任务运行锁失败"}
+	}
+	defer lock.Close()
 
 	suspended, _, reason, err := CronJobRuntimeSuspended(payload.JobID)
 	if err != nil {
@@ -171,6 +220,18 @@ func CronJobRuntimeSuspended(jobID int) (bool, string, string, error) {
 
 // RunScheduledCron is the short-lived system Cron entrypoint. It must remain before migrations in main.
 func RunScheduledCron(jobID int) TaskResult {
+	lock, err := acquireCronJobExecutionLock(jobID)
+	if err != nil {
+		if errors.Is(err, errCronJobAlreadyRunning) {
+			appendCronMessage("SKIPPED", jobID, "任务仍在执行，本次自动触发已跳过")
+			return TaskResult{Success: true, Message: "任务仍在执行，本次自动触发已跳过"}
+		}
+		message := "取得任务运行锁失败: " + err.Error()
+		appendCronGateError(jobID, message)
+		return TaskResult{Success: false, Message: message}
+	}
+	defer lock.Close()
+
 	job, enabled, err := loadCronJob(jobID)
 	if err != nil {
 		message := "查询任务失败: " + err.Error()
@@ -252,10 +313,17 @@ func runCronJob(jobID int, scheduled bool) TaskResult {
 		}
 	}
 
-	_, _ = db.Exec(
-		`UPDATE cron_jobs SET last_run_at = ?, last_status = ?, last_output = ?, running = 0 WHERE id = ?`,
-		now, status, out, jobID,
-	)
+	if scheduled {
+		_, _ = db.Exec(
+			`UPDATE cron_jobs SET last_run_at = ?, last_status = ?, last_output = ? WHERE id = ?`,
+			now, status, out, jobID,
+		)
+	} else {
+		_, _ = db.Exec(
+			`UPDATE cron_jobs SET last_run_at = ?, last_status = ?, last_output = ?, running = 0 WHERE id = ?`,
+			now, status, out, jobID,
+		)
+	}
 
 	// Append to cron log file, keep the latest bounded history.
 	f, err := os.OpenFile(cronLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -279,14 +347,50 @@ func runCronJob(jobID int, scheduled bool) TaskResult {
 }
 
 func appendCronGateError(jobID int, message string) {
+	appendCronMessage("GATE ERROR", jobID, message)
+}
+
+func appendCronMessage(kind string, jobID int, message string) {
 	now := time.Now().Format("2006-01-02 15:04:05")
 	f, err := os.OpenFile(cronLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}
-	_, _ = fmt.Fprintf(f, "[%s] GATE ERROR job_id=%d: %s\n", now, jobID, message)
+	_, _ = fmt.Fprintf(f, "[%s] %s job_id=%d: %s\n", now, kind, jobID, message)
 	_ = f.Close()
 	pruneCronLog(cronLogFile, cronLogKeepLines)
+}
+
+type cronJobExecutionLock struct {
+	file *os.File
+}
+
+func acquireCronJobExecutionLock(jobID int) (*cronJobExecutionLock, error) {
+	if jobID <= 0 {
+		return nil, errors.New("invalid cron job ID")
+	}
+	path := filepath.Join(cronJobLockDir, fmt.Sprintf("wp-panel-cron-%d.lock", jobID))
+	fd, err := syscall.Open(path, syscall.O_CREAT|syscall.O_RDWR|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), path)
+	if err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = file.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, errCronJobAlreadyRunning
+		}
+		return nil, err
+	}
+	return &cronJobExecutionLock{file: file}, nil
+}
+
+func (l *cronJobExecutionLock) Close() error {
+	if l == nil || l.file == nil {
+		return nil
+	}
+	_ = syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
+	return l.file.Close()
 }
 
 func pruneCronLog(path string, keep int) {

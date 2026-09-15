@@ -1,9 +1,76 @@
 package executor
 
 import (
+	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestSetServiceStateRejectsUnknownService(t *testing.T) {
+	err := SetServiceState("not-managed", "restart")
+	if !errors.Is(err, ErrUnknownGuardService) {
+		t.Fatalf("error=%v, want ErrUnknownGuardService", err)
+	}
+}
+
+func TestSetServiceStateRejectsCommandSuccessWithoutActiveState(t *testing.T) {
+	oldCommand := guardCommand
+	oldTimeout, oldPoll := guardStateWaitTimeout, guardStatePollInterval
+	guardCommand = func(_ string, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "show" {
+			return []byte("ActiveState=failed\nNRestarts=0\n"), nil
+		}
+		return nil, nil
+	}
+	guardStateWaitTimeout, guardStatePollInterval = 5*time.Millisecond, time.Millisecond
+	t.Cleanup(func() {
+		guardCommand = oldCommand
+		guardStateWaitTimeout, guardStatePollInterval = oldTimeout, oldPoll
+	})
+
+	err := SetServiceState("nginx", "start")
+	if err == nil || !strings.Contains(err.Error(), "目标状态") {
+		t.Fatalf("error=%v, want final-state failure", err)
+	}
+}
+
+func TestSetServiceStateRestoresServiceWhenPauseFileCannotBeSaved(t *testing.T) {
+	oldCommand := guardCommand
+	oldPath := guard.pausedFile
+	service := guard.services[0]
+	oldPaused, oldRunning := service.Paused, service.Running
+	service.Paused, service.Running = false, true
+	guard.pausedFile = filepath.Join(t.TempDir(), "missing", "guard.json")
+	active := true
+	guardCommand = func(_ string, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "stop" {
+			active = false
+		}
+		if len(args) > 0 && args[0] == "start" {
+			active = true
+		}
+		if len(args) > 0 && args[0] == "show" {
+			state := "inactive"
+			if active {
+				state = "active"
+			}
+			return []byte("ActiveState=" + state + "\nNRestarts=0\n"), nil
+		}
+		return nil, nil
+	}
+	t.Cleanup(func() {
+		guardCommand = oldCommand
+		guard.pausedFile = oldPath
+		service.Paused, service.Running = oldPaused, oldRunning
+	})
+
+	err := SetServiceState("nginx", "stop")
+	if err == nil || !active || service.Paused || !service.Running {
+		t.Fatalf("error=%v active=%v paused=%v running=%v", err, active, service.Paused, service.Running)
+	}
+}
 
 func TestClassifyServiceFailure(t *testing.T) {
 	tests := []struct {

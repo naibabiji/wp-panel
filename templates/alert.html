@@ -370,7 +370,10 @@ function alertManager() {
                     body[k] = this.rules[k] ? 'true' : 'false';
                 }
                 await api('/alert/settings', { method: 'PUT', body });
-            } catch(e) {}
+            } catch(e) {
+                showToast(e.message || t('common.operation_failed'), 'error');
+                await this.fetchAll();
+            }
         },
         async saveWPSecCfg() {
             this.wpSecSaving = true;

@@ -170,7 +170,7 @@
 
             <hr class="my-4 border-gray-700">
 
-            <div x-data="systemUpdate()" x-init="scheduleCheck()">
+            <div x-data="systemUpdate()" x-init="init()">
                 <div class="flex items-center justify-between mb-2">
                     <span class="text-sm text-gray-400">{{t .Lang "settings.system_updates"}}</span>
                         <span class="text-sm text-white font-mono" x-show="checked && count > 0" x-text="t('settings.available_count', { count })"></span>
@@ -192,11 +192,10 @@
                     <p class="text-xs text-gray-500 mt-2">{{t .Lang "settings.system_update_help"}}</p>
                 </div>
                 <div class="flex items-center space-x-3">
-                    <button @click="check()" :disabled="checking" class="btn-secondary text-xs" x-text="checking ? t('settings.checking') : t('settings.refresh')"></button>
+                    <button @click="check()" :disabled="checking || updating" class="btn-secondary text-xs" x-text="checking ? t('settings.checking') : t('settings.refresh')"></button>
                     <button @click="doUpdate()" x-show="count > 0" :disabled="updating" class="btn-primary text-xs" x-text="updating ? t('settings.updating') : t('settings.one_click_update')"></button>
                 </div>
                 <p x-show="count > 0" class="text-xs text-yellow-500 mt-2">{{t .Lang "settings.system_update_warning"}}</p>
-                <pre x-show="output" class="text-xs text-gray-400 mt-3 p-3 rounded max-h-48 overflow-y-auto" style="background-color: #020617;" x-text="output"></pre>
                 <p x-show="msg" class="text-sm mt-2" :class="ok ? 'text-green-400' : 'text-red-400'" x-text="msg"></p>
             </div>
         </div>
@@ -270,11 +269,11 @@
 
 	</div>
 
-    <div class="card mb-6" x-data="dbBackup()" x-init="fetchBackups()">
+    <div class="card mb-6" x-data="dbBackup()" x-init="init()">
         <div class="flex items-center justify-between mb-4">
             <h3 class="text-lg font-semibold text-white">{{t .Lang "settings.panel_db_backup"}}</h3>
             <div class="flex items-center space-x-2">
-                <button @click="doBackup()" :disabled="backingUp" class="btn-primary text-sm" x-text="backingUp ? t('settings.backing_up') : t('settings.backup_now')"></button>
+                <button @click="doBackup()" :disabled="backingUp || restoring" class="btn-primary text-sm" x-text="backingUp ? t('settings.backing_up') : t('settings.backup_now')"></button>
             </div>
         </div>
         <p class="text-gray-400 text-xs mb-2">{{t .Lang "settings.panel_db_backup_help"}}</p>
@@ -297,8 +296,8 @@
                             <td class="table-cell text-sm" x-text="b.size_text"></td>
                             <td class="table-cell">
                                 <button @click="doDownload(b.filename)" class="btn-primary text-xs py-1 px-2">{{t .Lang "settings.download"}}</button>
-                                <button @click="doRestore(b.filename)" class="btn-warning text-xs py-1 px-2 ml-1">{{t .Lang "settings.restore"}}</button>
-                                <button @click="doDelete(b.filename)" class="btn-danger text-xs py-1 px-2 ml-1">{{t .Lang "settings.delete"}}</button>
+                                <button @click="doRestore(b.filename)" :disabled="restoring" class="btn-warning text-xs py-1 px-2 ml-1">{{t .Lang "settings.restore"}}</button>
+                                <button @click="doDelete(b.filename)" :disabled="restoring" class="btn-danger text-xs py-1 px-2 ml-1">{{t .Lang "settings.delete"}}</button>
                             </td>
                         </tr>
                     </template>
@@ -329,8 +328,7 @@
                             <td class="table-cell text-sm" x-text="log.operation"></td>
                             <td class="table-cell text-sm" x-text="log.target || '--'"></td>
                             <td class="table-cell">
-                                <span :class="log.status === 'success' ? 'badge-success' : 'badge-danger'"
-                                      x-text="log.status === 'success' ? t('settings.success') : t('settings.failed')"></span>
+                                <span :class="statusClass(log.status)" x-text="statusText(log.status)"></span>
                             </td>
                         </tr>
                     </template>
@@ -749,6 +747,12 @@ function dbBackup() {
     return {
         backups: [],
         backingUp: false,
+        restoring: false,
+        async init() {
+            await this.fetchBackups();
+            const restoreID = localStorage.getItem('wpPanelDBRestoreID');
+            if (restoreID) await this.waitForRestore(restoreID);
+        },
         async fetchBackups() {
             try { const r = await api('/settings/db-backup'); if (r.success) this.backups = r.data || []; } catch(e) {}
         },
@@ -767,11 +771,34 @@ function dbBackup() {
         },
         async doRestore(filename) {
             if (!await confirmModal(t('settings.confirm_restore_db_backup'))) return;
+            this.restoring = true;
             try {
                 const r = await api('/settings/db-backup/restore', { method: 'POST', body: { filename } });
                 showToast(r.data?.message || t('settings.restoring'), 'success');
-                setTimeout(() => { location.reload(); }, 5000);
-            } catch(e) { showToast(e.message, 'error'); }
+                localStorage.setItem('wpPanelDBRestoreID', r.data.restore_id);
+                await this.waitForRestore(r.data.restore_id);
+            } catch(e) {
+                this.restoring = false;
+                showToast(e.message, 'error');
+            }
+        },
+        async waitForRestore(restoreID) {
+            this.restoring = true;
+            for (let i = 0; i < 90; i++) {
+                try {
+                    const r = await api('/settings/db-backup/restore-status', { silent: true });
+                    const status = r.data || {};
+                    if (status.id === restoreID && status.status !== 'running' && status.status !== 'idle') {
+                        localStorage.removeItem('wpPanelDBRestoreID');
+                        showToast(status.message || t('settings.restoring'), status.status === 'success' ? 'success' : 'error');
+                        setTimeout(() => location.reload(), 1500);
+                        return;
+                    }
+                } catch(e) {}
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            this.restoring = false;
+            showToast(t('settings.panel_db_restore_status_unknown'), 'error');
         },
         async doDelete(filename) {
             if (!await confirmModal(t('settings.confirm_delete_backup'))) return;
@@ -806,6 +833,23 @@ function operationLogs() {
             this.logPage = p;
             this.fetchLogs();
         },
+        statusText(status) {
+            const labels = {
+                success: t('settings.success'),
+                failed: t('settings.failed'),
+                running: t('settings.running'),
+                waiting: t('settings.waiting'),
+                skipped: t('settings.skipped'),
+                info: t('settings.info')
+            };
+            return labels[status] || t('settings.unknown_status');
+        },
+        statusClass(status) {
+            if (status === 'success') return 'badge-success';
+            if (status === 'failed') return 'badge-danger';
+            if (status === 'running' || status === 'waiting') return 'badge-warning';
+            return 'badge-info';
+        },
         get logPageNumbers() {
             const pages = [];
             const total = this.logTotalPages;
@@ -827,15 +871,18 @@ function systemUpdate() {
         updating: false,
         msg: '',
         ok: false,
-        output: '',
+        pollTimer: null,
+        init() {
+            this.resume();
+            this.scheduleCheck();
+        },
         scheduleCheck() {
             deferTask(() => this.check(), 1600);
         },
-        async check() {
+        async check(fresh = false) {
             this.checking = true;
-            this.msg = '';
             try {
-                const r = await api('/system/updates');
+                const r = await api('/system/updates' + (fresh ? '?fresh=1' : ''));
                 if (r.success) {
                     this.packages = r.data.packages || [];
                     this.count = r.data.count || 0;
@@ -844,19 +891,45 @@ function systemUpdate() {
             } catch(e) { showToast(e.message, 'error'); }
             this.checking = false;
         },
+        async resume() {
+            this.pollTimer = null;
+            try {
+                const r = await api('/system/updates/status');
+                if (!r.success || !r.data) return;
+                this.applyStatus(r.data);
+            } catch(e) {
+                console.error('system update status error:', e);
+                if (this.updating && !this.pollTimer) {
+                    this.pollTimer = setTimeout(() => this.resume(), 3000);
+                }
+            }
+        },
+        applyStatus(status) {
+            this.updating = status.status === 'running';
+            if (status.status !== 'idle') {
+                this.msg = status.message || '';
+                this.ok = status.status === 'success';
+            }
+            if (this.updating) {
+                clearTimeout(this.pollTimer);
+                this.pollTimer = setTimeout(() => {
+                    this.pollTimer = null;
+                    this.resume();
+                }, 1500);
+            } else if (status.status === 'success') {
+                this.check(true);
+            }
+        },
         async doUpdate() {
             if (!await confirmModal(t('settings.confirm_system_update'))) return;
             this.updating = true;
-            this.msg = '';
-            this.output = '';
+            this.ok = false;
+            this.msg = t('settings.system_update_status_queued');
             try {
-                const r = await api('/system/updates/do', { method: 'POST', timeout: 120000 });
-                this.ok = r.success;
-                this.msg = r.data?.message || (r.success ? t('settings.system_update_completed') : t('settings.system_update_failed'));
-                this.output = r.data?.output || '';
-                if (r.success) { this.packages = []; this.count = 0; }
+                const r = await api('/system/updates/do', { method: 'POST' });
+                if (r.success) this.applyStatus(r.data);
             } catch(e) { this.ok = false; this.msg = e.message; }
-            this.updating = false;
+            if (!this.pollTimer) this.updating = false;
         }
     }
 }

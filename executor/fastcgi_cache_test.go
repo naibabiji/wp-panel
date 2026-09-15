@@ -25,6 +25,103 @@ func installStubNginx(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
+func TestUpdateSiteFastCGICachePublishesBeforeSuccess(t *testing.T) {
+	openTestDB(t)
+	result, err := database.GetDB().Exec(`INSERT INTO websites
+		(name,domain,status,site_type,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path,fastcgi_cache_enabled,fastcgi_cache_ttl)
+		VALUES ('site','cache.test','active','wordpress','nobody','/tmp/cache.test','','','','','','0',300)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := result.LastInsertId()
+
+	oldRegenerate := regenerateSiteNginxForCache
+	regenerateSiteNginxForCache = func(siteID int) error {
+		if siteID != int(id) {
+			t.Fatalf("siteID=%d", siteID)
+		}
+		return nil
+	}
+	t.Cleanup(func() { regenerateSiteNginxForCache = oldRegenerate })
+
+	if err := UpdateSiteFastCGICache(int(id), 1, 600); err != nil {
+		t.Fatal(err)
+	}
+	var enabled, ttl int
+	if err := database.GetDB().QueryRow(`SELECT fastcgi_cache_enabled,fastcgi_cache_ttl FROM websites WHERE id=?`, id).Scan(&enabled, &ttl); err != nil {
+		t.Fatal(err)
+	}
+	if enabled != 1 || ttl != 600 {
+		t.Fatalf("cache settings=(%d,%d)", enabled, ttl)
+	}
+}
+
+func TestUpdateSiteFastCGICacheRestoresOldSettingsOnPublishFailure(t *testing.T) {
+	openTestDB(t)
+	result, err := database.GetDB().Exec(`INSERT INTO websites
+		(name,domain,status,site_type,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path,fastcgi_cache_enabled,fastcgi_cache_ttl)
+		VALUES ('site','cache.test','active','wordpress','nobody','/tmp/cache.test','','','','','','1',300)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := result.LastInsertId()
+
+	oldRegenerate := regenerateSiteNginxForCache
+	calls := 0
+	regenerateSiteNginxForCache = func(int) error {
+		calls++
+		if calls == 1 {
+			return errors.New("nginx test failed")
+		}
+		return nil
+	}
+	t.Cleanup(func() { regenerateSiteNginxForCache = oldRegenerate })
+
+	if err := UpdateSiteFastCGICache(int(id), 0, 900); err == nil || !strings.Contains(err.Error(), "已恢复") {
+		t.Fatalf("error=%v", err)
+	}
+	var enabled, ttl int
+	if err := database.GetDB().QueryRow(`SELECT fastcgi_cache_enabled,fastcgi_cache_ttl FROM websites WHERE id=?`, id).Scan(&enabled, &ttl); err != nil {
+		t.Fatal(err)
+	}
+	if enabled != 1 || ttl != 300 || calls != 2 {
+		t.Fatalf("cache settings=(%d,%d) calls=%d", enabled, ttl, calls)
+	}
+}
+
+func TestClearSiteCacheRestoresOldKeyOnPublishFailure(t *testing.T) {
+	openTestDB(t)
+	result, err := database.GetDB().Exec(`INSERT INTO websites
+		(name,domain,status,site_type,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path,fastcgi_cache_key)
+		VALUES ('site','cache.test','active','wordpress','nobody','/tmp/cache.test','','','','','','old-key')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := result.LastInsertId()
+
+	oldRegenerate := regenerateSiteNginxForCache
+	calls := 0
+	regenerateSiteNginxForCache = func(int) error {
+		calls++
+		if calls == 1 {
+			return errors.New("reload failed")
+		}
+		return nil
+	}
+	t.Cleanup(func() { regenerateSiteNginxForCache = oldRegenerate })
+
+	if err := ClearSiteCache(int(id)); err == nil || !strings.Contains(err.Error(), "已恢复") {
+		t.Fatalf("error=%v", err)
+	}
+	var key string
+	if err := database.GetDB().QueryRow(`SELECT fastcgi_cache_key FROM websites WHERE id=?`, id).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	if key != "old-key" || calls != 2 {
+		t.Fatalf("key=%q calls=%d", key, calls)
+	}
+}
+
 func TestCompanionAutomaticUpgradeRequiresExistingPluginAndActiveSite(t *testing.T) {
 	openTestDB(t)
 	root := t.TempDir()
@@ -126,6 +223,9 @@ func TestCompanionAutomaticUpgradeStopsWhenPluginRemovedBeforePublish(t *testing
 }
 
 func TestCompanionUpgradeIgnoresAIAndMaintenanceWindow(t *testing.T) {
+	oldPermissions := setCompanionPluginPermissions
+	setCompanionPluginPermissions = func(string, string, string) error { return nil }
+	t.Cleanup(func() { setCompanionPluginPermissions = oldPermissions })
 	openTestDB(t)
 	root := t.TempDir()
 	pluginDir := filepath.Join(root, "wp-content", "plugins", pluginDirName)

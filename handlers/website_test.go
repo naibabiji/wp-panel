@@ -28,6 +28,41 @@ func TestNormalizeWPSiteURL(t *testing.T) {
 	}
 }
 
+func TestToggleStatusRejectsEnableForErrorSite(t *testing.T) {
+	oldDB := database.DB
+	if err := database.Open(filepath.Join(t.TempDir(), "panel.db")); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		database.Close()
+		database.DB = oldDB
+	})
+	result, err := database.GetDB().Exec(`INSERT INTO websites
+		(name,domain,status,site_type,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path)
+		VALUES ('error site','error.example.com','error','wordpress','u','/www/error','/logs/error','db','u','/php/error','/nginx/error')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handler := &WebsiteHandler{}
+	router.PUT("/api/websites/:id/status", handler.ToggleStatus)
+	req := httptest.NewRequest(http.MethodPut, "/api/websites/"+strconv.FormatInt(id, 10)+"/status", strings.NewReader(`{"action":"enable"}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestReplaceWPSiteURLDomainPreservesURLParts(t *testing.T) {
 	got, err := replaceWPSiteURLDomain("https://old.example.com:8443/wp/", "old.example.com", "new.example.com")
 	if err != nil {

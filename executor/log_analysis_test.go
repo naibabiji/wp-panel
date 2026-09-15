@@ -15,6 +15,41 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestReconcileInterruptedLogAnalysisJobsOnlyFailsActiveRows(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE log_analysis_jobs(id INTEGER PRIMARY KEY,status TEXT,error_message TEXT,updated_at DATETIME);
+		INSERT INTO log_analysis_jobs VALUES
+			(1,'pending','',CURRENT_TIMESTAMP),
+			(2,'running','',datetime('now','-2 hours')),
+			(3,'completed','',datetime('now','-1 day')),
+			(4,'failed','original failure',datetime('now','-1 day'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := ReconcileInterruptedLogAnalysisJobs(db)
+	if err != nil || count != 2 {
+		t.Fatalf("reconcile count=%d err=%v", count, err)
+	}
+	for id, want := range map[int]struct{ status, message string }{
+		1: {models.LogAnalysisFailed, LogAnalysisRestartInterruptedError},
+		2: {models.LogAnalysisFailed, LogAnalysisRestartInterruptedError},
+		3: {models.LogAnalysisCompleted, ""},
+		4: {models.LogAnalysisFailed, "original failure"},
+	} {
+		var status, message string
+		if err := db.QueryRow(`SELECT status,error_message FROM log_analysis_jobs WHERE id=?`, id).Scan(&status, &message); err != nil {
+			t.Fatal(err)
+		}
+		if status != want.status || message != want.message {
+			t.Fatalf("job %d status=%q message=%q, want status=%q message=%q", id, status, message, want.status, want.message)
+		}
+	}
+}
+
 func TestAnalyzeWebsiteLogsScansRotationsAndVerifiesBots(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {

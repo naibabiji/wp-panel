@@ -14,6 +14,12 @@ import (
 
 func setupCronGateTest(t *testing.T) *sql.DB {
 	t.Helper()
+	oldLockDir := cronJobLockDir
+	cronJobLockDir = t.TempDir()
+	t.Cleanup(func() { cronJobLockDir = oldLockDir })
+	oldLogFile := cronLogFile
+	cronLogFile = filepath.Join(t.TempDir(), "cron.log")
+	t.Cleanup(func() { cronLogFile = oldLogFile })
 	openTestDB(t)
 	insertMinimalWebsite(t, "paused.example.com")
 	db := database.GetDB()
@@ -119,6 +125,94 @@ func TestRunScheduledCronExecutesActiveSiteJob(t *testing.T) {
 	}
 }
 
+func TestRunScheduledCronSkipsWhenSameJobIsAlreadyRunning(t *testing.T) {
+	db := setupCronGateTest(t)
+	mustExec(t, db, `UPDATE websites SET status='active' WHERE id=1`)
+	marker := filepath.Join(t.TempDir(), "ran")
+	if _, err := db.Exec(`INSERT INTO cron_jobs
+		(id,name,cron_expression,command,task_type,site_id,enabled,last_status,last_output)
+		VALUES(17,'overlapping command','* * * * *',?,'command',1,1,'success','previous')`, "printf ran > "+marker); err != nil {
+		t.Fatal(err)
+	}
+
+	oldLockDir := cronJobLockDir
+	cronJobLockDir = t.TempDir()
+	t.Cleanup(func() { cronJobLockDir = oldLockDir })
+	lock, err := acquireCronJobExecutionLock(17)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+
+	result := RunScheduledCron(17)
+	if !result.Success || !strings.Contains(result.Message, "已跳过") {
+		t.Fatalf("RunScheduledCron overlap result = %+v", result)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("overlapping task executed, marker err=%v", err)
+	}
+	var lastRun sql.NullTime
+	var status, output string
+	if err := db.QueryRow(`SELECT last_run_at,last_status,last_output FROM cron_jobs WHERE id=17`).Scan(&lastRun, &status, &output); err != nil {
+		t.Fatal(err)
+	}
+	if lastRun.Valid || status != "success" || output != "previous" {
+		t.Fatalf("overlap skip changed last result: last=%v status=%q output=%q", lastRun, status, output)
+	}
+}
+
+func TestManualCronUsesSameExecutionLockAsScheduledCron(t *testing.T) {
+	db := setupCronGateTest(t)
+	mustExec(t, db, `UPDATE websites SET status='active' WHERE id=1`)
+	mustExec(t, db, `INSERT INTO cron_jobs
+		(id,name,cron_expression,command,task_type,site_id,enabled,running)
+		VALUES(19,'manual overlap','* * * * *','exit 99','command',1,1,1)`)
+
+	oldLockDir := cronJobLockDir
+	cronJobLockDir = t.TempDir()
+	t.Cleanup(func() { cronJobLockDir = oldLockDir })
+	lock, err := acquireCronJobExecutionLock(19)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+
+	result := executeRunCron(&Task{Payload: &RunCronPayload{JobID: 19, Name: "manual overlap"}})
+	if result.Success || !strings.Contains(result.Message, "正在执行") {
+		t.Fatalf("executeRunCron overlap result = %+v", result)
+	}
+	var running int
+	if err := db.QueryRow(`SELECT running FROM cron_jobs WHERE id=19`).Scan(&running); err != nil {
+		t.Fatal(err)
+	}
+	if running != 0 {
+		t.Fatalf("manual claim was not released: running=%d", running)
+	}
+}
+
+func TestScheduledCronDoesNotClearManualRunningClaim(t *testing.T) {
+	db := setupCronGateTest(t)
+	mustExec(t, db, `UPDATE websites SET status='active' WHERE id=1`)
+	mustExec(t, db, `INSERT INTO cron_jobs
+		(id,name,cron_expression,command,task_type,site_id,enabled,running)
+		VALUES(20,'scheduled result','* * * * *','true','command',1,1,1)`)
+	oldLockDir := cronJobLockDir
+	cronJobLockDir = t.TempDir()
+	t.Cleanup(func() { cronJobLockDir = oldLockDir })
+
+	result := RunScheduledCron(20)
+	if !result.Success {
+		t.Fatalf("RunScheduledCron result = %+v", result)
+	}
+	var running int
+	if err := db.QueryRow(`SELECT running FROM cron_jobs WHERE id=20`).Scan(&running); err != nil {
+		t.Fatal(err)
+	}
+	if running != 1 {
+		t.Fatalf("scheduled execution cleared manual claim: running=%d", running)
+	}
+}
+
 func TestRunScheduledCronLogsGateErrors(t *testing.T) {
 	setupCronGateTest(t)
 	oldLogFile := cronLogFile
@@ -159,6 +253,42 @@ func TestPruneCronLogKeepsConfiguredLineLimit(t *testing.T) {
 	}
 }
 
+func TestReconcileInterruptedManualCronJobsReleasesClaimAndPreservesLastResult(t *testing.T) {
+	db := setupCronGateTest(t)
+	mustExec(t, db, `INSERT INTO cron_jobs
+		(id,name,cron_expression,command,task_type,enabled,running,last_run_at,last_status,last_output)
+		VALUES(18,'interrupted manual','* * * * *','echo test','command',1,1,'2026-09-14 10:00:00','success','previous output')`)
+	oldLogFile := cronLogFile
+	cronLogFile = filepath.Join(t.TempDir(), "cron.log")
+	t.Cleanup(func() { cronLogFile = oldLogFile })
+
+	count, err := ReconcileInterruptedManualCronJobs(db)
+	if err != nil || count != 1 {
+		t.Fatalf("reconcile count=%d err=%v", count, err)
+	}
+	var running int
+	var lastRun sql.NullTime
+	var lastStatus, lastOutput string
+	if err := db.QueryRow(`SELECT running,last_run_at,last_status,last_output FROM cron_jobs WHERE id=18`).Scan(&running, &lastRun, &lastStatus, &lastOutput); err != nil {
+		t.Fatal(err)
+	}
+	if running != 0 || !lastRun.Valid || lastRun.Time.Format("2006-01-02 15:04:05") != "2026-09-14 10:00:00" || lastStatus != "success" || lastOutput != "previous output" {
+		t.Fatalf("job after reconcile: running=%d last_run=%v status=%q output=%q", running, lastRun, lastStatus, lastOutput)
+	}
+	data, err := os.ReadFile(cronLogFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "INTERRUPTED 手动任务因面板进程重启中断，共 1 个") {
+		t.Fatalf("cron log=%q", data)
+	}
+
+	count, err = ReconcileInterruptedManualCronJobs(db)
+	if err != nil || count != 0 {
+		t.Fatalf("second reconcile count=%d err=%v", count, err)
+	}
+}
+
 func TestRenderCronUsesUnifiedJobIDEntrypoint(t *testing.T) {
 	db := setupCronGateTest(t)
 	mustExec(t, db, `INSERT INTO cron_jobs
@@ -188,6 +318,32 @@ func TestRenderCronUsesUnifiedJobIDEntrypoint(t *testing.T) {
 	text := string(content)
 	if !strings.Contains(text, "--run-scheduled-cron=13") || strings.Contains(text, "--file-backup=") || strings.Contains(text, "curl ") {
 		t.Fatalf("unexpected rendered cron:\n%s", text)
+	}
+}
+
+func TestRenderCronReportsRestartFailureAndKeepsRenderedTarget(t *testing.T) {
+	db := setupCronGateTest(t)
+	mustExec(t, db, `INSERT INTO cron_jobs
+		(id,name,cron_expression,command,task_type,enabled)
+		VALUES(17,'restart failure','10 3 * * *','echo test','command',1)`)
+
+	oldCfg := config.AppConfig
+	config.AppConfig = &config.Config{Paths: config.PathsConfig{CronFile: filepath.Join(t.TempDir(), "wp-panel")}}
+	t.Cleanup(func() { config.AppConfig = oldCfg })
+	oldRestart := restartCronService
+	restartCronService = func() (string, error) { return "restart failed", fmt.Errorf("exit status 1") }
+	t.Cleanup(func() { restartCronService = oldRestart })
+
+	result := renderCronConfig()
+	if result.Success || !strings.Contains(result.Message, "重启Cron服务失败") {
+		t.Fatalf("renderCronConfig = %+v", result)
+	}
+	content, err := os.ReadFile(config.AppConfig.Paths.CronFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "--run-scheduled-cron=17") {
+		t.Fatalf("rendered target did not retain database state:\n%s", content)
 	}
 }
 

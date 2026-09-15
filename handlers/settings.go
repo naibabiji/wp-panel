@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -17,6 +18,7 @@ import (
 	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/i18n"
+	"github.com/naibabiji/wp-panel/middleware"
 	"github.com/naibabiji/wp-panel/models"
 
 	"github.com/gin-gonic/gin"
@@ -25,14 +27,61 @@ import (
 
 type SettingsHandler struct {
 	WPPackageService *executor.WPPackageService
+	ConfigPath       string
 }
+
+type settingsUpdateRequest struct {
+	PanelTitle                *string `json:"panel_title"`
+	Username                  *string `json:"username"`
+	BasicAuthUser             *string `json:"basic_auth_user"`
+	OldPassword               *string `json:"old_password"`
+	NewPassword               *string `json:"new_password"`
+	BasicAuthPw               *string `json:"basic_auth_password"`
+	Timezone                  *string `json:"timezone"`
+	Hostname                  *string `json:"hostname"`
+	NtpSync                   *bool   `json:"ntp_sync"`
+	GithubProxy               *string `json:"github_proxy"`
+	PanelAutoUpdateEnabled    *string `json:"panel_auto_update_enabled"`
+	PanelAutoUpdateMode       *string `json:"panel_auto_update_mode"`
+	PanelAutoUpdateWindow     *string `json:"panel_auto_update_window"`
+	PanelAutoUpdateDelay      *string `json:"panel_auto_update_release_delay_minutes"`
+	PanelAutoUpdateSigTimeout *string `json:"panel_auto_update_signature_timeout_minutes"`
+	WPPackageAutoCheckEnabled *string `json:"wp_package_auto_check_enabled"`
+}
+
+const defaultPanelConfigPath = "/www/server/panel/config.json"
+
+func (h *SettingsHandler) configPath() string {
+	if strings.TrimSpace(h.ConfigPath) != "" {
+		return h.ConfigPath
+	}
+	return defaultPanelConfigPath
+}
+
+var (
+	setSystemTimezone = func(timezone string) error {
+		return exec.Command("timedatectl", "set-timezone", timezone).Run()
+	}
+	setSystemHostname = func(hostname string) error {
+		return exec.Command("hostnamectl", "set-hostname", hostname).Run()
+	}
+	enableSystemNTP = func() error {
+		if err := exec.Command("timedatectl", "set-ntp", "true").Run(); err != nil {
+			return err
+		}
+		return exec.Command("systemctl", "restart", "systemd-timesyncd").Run()
+	}
+	readSystemTimezone = getTimezone
+	readSystemHostname = getHostname
+	readSystemNTP      = getNTPEnabled
+)
 
 func (h *SettingsHandler) GetSettings(c *gin.Context) {
 	db := database.GetDB()
 	var username string
 	db.QueryRow("SELECT username FROM admin_users LIMIT 1").Scan(&username)
 
-	basicAuthUser := readConfigValue("basic_auth", "username")
+	basicAuthUser := readConfigValue(h.configPath(), "basic_auth", "username")
 
 	var panelTitle string
 	db.QueryRow("SELECT svalue FROM security_settings WHERE skey = 'panel_title'").Scan(&panelTitle)
@@ -51,7 +100,12 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 		"panel_auto_update_last_success_at", "panel_auto_update_last_success_version",
 	} {
 		var v string
-		db.QueryRow("SELECT svalue FROM security_settings WHERE skey = ?", key).Scan(&v)
+		err := db.QueryRow("SELECT svalue FROM security_settings WHERE skey = ?", key).Scan(&v)
+		if err != nil && err != sql.ErrNoRows {
+			log.Printf("读取面板自动更新设置失败 key=%s: %v", key, err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取自动更新设置失败，请稍后重试"))
+			return
+		}
 		autoUpdate[key] = v
 	}
 
@@ -74,47 +128,35 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 }
 
 func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
-	var req struct {
-		PanelTitle                *string `json:"panel_title"`
-		Username                  *string `json:"username"`
-		BasicAuthUser             *string `json:"basic_auth_user"`
-		OldPassword               *string `json:"old_password"`
-		NewPassword               *string `json:"new_password"`
-		BasicAuthPw               *string `json:"basic_auth_password"`
-		Timezone                  *string `json:"timezone"`
-		Hostname                  *string `json:"hostname"`
-		NtpSync                   *bool   `json:"ntp_sync"`
-		GithubProxy               *string `json:"github_proxy"`
-		PanelAutoUpdateEnabled    *string `json:"panel_auto_update_enabled"`
-		PanelAutoUpdateMode       *string `json:"panel_auto_update_mode"`
-		PanelAutoUpdateWindow     *string `json:"panel_auto_update_window"`
-		PanelAutoUpdateDelay      *string `json:"panel_auto_update_release_delay_minutes"`
-		PanelAutoUpdateSigTimeout *string `json:"panel_auto_update_signature_timeout_minutes"`
-		WPPackageAutoCheckEnabled *string `json:"wp_package_auto_check_enabled"`
-	}
+	var req settingsUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("参数错误"))
 		return
 	}
 
 	db := database.GetDB()
-
-	if req.PanelTitle != nil && *req.PanelTitle != "" {
-		_, err := db.Exec("UPDATE security_settings SET svalue = ?, updated_at = CURRENT_TIMESTAMP WHERE skey = 'panel_title'", *req.PanelTitle)
-		if err != nil {
-			_, _ = db.Exec("INSERT INTO security_settings (skey, svalue, description) VALUES ('panel_title', ?, '面板标题')", *req.PanelTitle)
-		}
+	dbSettings, validationMessage := validateDatabaseSettings(req)
+	if validationMessage != "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(validationMessage))
+		return
 	}
 
 	if req.Username != nil && *req.Username != "" {
-		if _, err := db.Exec("UPDATE admin_users SET username = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1", *req.Username); err != nil {
+		result, err := db.Exec("UPDATE admin_users SET username = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1 AND username <> ?", *req.Username, *req.Username)
+		if err != nil {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新用户名失败"))
 			return
+		}
+		if changed, err := result.RowsAffected(); err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("确认用户名更新结果失败"))
+			return
+		} else if changed > 0 {
+			middleware.GlobalSessionStore.DeleteAll()
 		}
 	}
 
 	if req.BasicAuthUser != nil && *req.BasicAuthUser != "" {
-		if err := updateConfigValue("basic_auth", "username", *req.BasicAuthUser); err != nil {
+		if err := updateConfigValue(h.configPath(), "basic_auth", "username", *req.BasicAuthUser); err != nil {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新BasicAuth用户名失败"))
 			return
 		}
@@ -140,15 +182,18 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse("当前密码错误"))
 			return
 		}
-		newHash, err := bcrypt.GenerateFromPassword([]byte(*req.NewPassword), 12)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("密码加密失败"))
-			return
-		}
-		_, err = db.Exec("UPDATE admin_users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1", string(newHash))
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新密码失败"))
-			return
+		if bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(*req.NewPassword)) != nil {
+			newHash, err := bcrypt.GenerateFromPassword([]byte(*req.NewPassword), 12)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse("密码加密失败"))
+				return
+			}
+			_, err = db.Exec("UPDATE admin_users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1", string(newHash))
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新密码失败"))
+				return
+			}
+			middleware.GlobalSessionStore.DeleteAll()
 		}
 	}
 
@@ -162,7 +207,7 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("密码加密失败"))
 			return
 		}
-		if err := updateConfigValue("basic_auth", "password_hash", string(newHash)); err != nil {
+		if err := updateConfigValue(h.configPath(), "basic_auth", "password_hash", string(newHash)); err != nil {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新BasicAuth密码失败"))
 			return
 		}
@@ -177,8 +222,15 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的时区"))
 			return
 		}
-		if err := exec.Command("timedatectl", "set-timezone", tz).Run(); err != nil {
+		if err := setSystemTimezone(tz); err != nil {
 			log.Printf("设置时区失败 (%s): %v", tz, err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("设置时区失败，请检查系统时间服务"))
+			return
+		}
+		if actual := readSystemTimezone(); actual != tz {
+			log.Printf("设置时区后实际值不一致: want=%s actual=%s", tz, actual)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("时区命令已执行，但服务器实际时区未更新"))
+			return
 		}
 	}
 
@@ -190,86 +242,123 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse("无效的主机名"))
 			return
 		}
-		exec.Command("hostnamectl", "set-hostname", host).Run()
+		if err := setSystemHostname(host); err != nil {
+			log.Printf("设置主机名失败 (%s): %v", host, err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("设置主机名失败，请检查系统主机名服务"))
+			return
+		}
+		if actual := readSystemHostname(); actual != host {
+			log.Printf("设置主机名后实际值不一致: want=%s actual=%s", host, actual)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("主机名命令已执行，但服务器实际主机名未更新"))
+			return
+		}
 	}
 
 	if req.NtpSync != nil && *req.NtpSync {
-		exec.Command("bash", "-c", "timedatectl set-ntp true 2>/dev/null; systemctl restart systemd-timesyncd 2>/dev/null; ntpdate -u pool.ntp.org 2>/dev/null || true").Run()
-	}
-
-	if req.GithubProxy != nil {
-		proxy := strings.TrimSpace(*req.GithubProxy)
-		proxy = strings.TrimRight(proxy, "/")
-		if proxy != "" && !strings.HasPrefix(proxy, "https://") {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("反代地址必须以 https:// 开头"))
+		if err := enableSystemNTP(); err != nil {
+			log.Printf("启用系统时间同步失败: %v", err)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("时间同步启动失败，请检查系统时间服务"))
 			return
 		}
-		_, err := db.Exec("UPDATE security_settings SET svalue = ?, updated_at = CURRENT_TIMESTAMP WHERE skey = 'github_proxy'", proxy)
-		if err != nil {
-			_, _ = db.Exec("INSERT INTO security_settings (skey, svalue, description) VALUES ('github_proxy', ?, 'GitHub 反代地址')", proxy)
+		if !readSystemNTP() {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("时间同步命令已执行，但服务器没有启用自动时间同步"))
+			return
 		}
 	}
 
-	if req.PanelAutoUpdateEnabled != nil {
-		v := strings.TrimSpace(*req.PanelAutoUpdateEnabled)
-		if v != "true" && v != "false" {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("自动更新开关参数错误"))
-			return
-		}
-		saveSecuritySetting("panel_auto_update_enabled", v)
-	}
-	if req.PanelAutoUpdateMode != nil {
-		v := strings.TrimSpace(*req.PanelAutoUpdateMode)
-		if v != "patch_only" && v != "all_stable" {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("自动更新模式参数错误"))
-			return
-		}
-		saveSecuritySetting("panel_auto_update_mode", v)
-	}
-	if req.PanelAutoUpdateWindow != nil {
-		v := strings.TrimSpace(*req.PanelAutoUpdateWindow)
-		if !regexp.MustCompile(`^\d{2}:\d{2}-\d{2}:\d{2}$`).MatchString(v) {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("自动更新时间窗口格式应为 HH:MM-HH:MM"))
-			return
-		}
-		saveSecuritySetting("panel_auto_update_window", v)
-	}
-	if req.PanelAutoUpdateDelay != nil {
-		if !saveMinuteSetting(c, "panel_auto_update_release_delay_minutes", *req.PanelAutoUpdateDelay, 1, 1440) {
-			return
-		}
-	}
-	if req.PanelAutoUpdateSigTimeout != nil {
-		if !saveMinuteSetting(c, "panel_auto_update_signature_timeout_minutes", *req.PanelAutoUpdateSigTimeout, 5, 1440) {
-			return
-		}
-	}
-	if req.WPPackageAutoCheckEnabled != nil {
-		v := strings.TrimSpace(*req.WPPackageAutoCheckEnabled)
-		if v != "true" && v != "false" {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("自动检测开关参数错误"))
-			return
-		}
-		saveSecuritySetting("wp_package_auto_check_enabled", v)
+	if err := saveSecuritySettingsTransaction(db, dbSettings); err != nil {
+		log.Printf("保存面板数据库设置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("设置保存失败，请稍后重试"))
+		return
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "设置已更新"}))
 }
 
-func saveSecuritySetting(key, value string) {
-	db := database.GetDB()
-	_, _ = db.Exec(`INSERT INTO security_settings (skey, svalue, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(skey) DO UPDATE SET svalue = excluded.svalue, updated_at = excluded.updated_at`, key, value)
+func validateDatabaseSettings(req settingsUpdateRequest) (map[string]string, string) {
+	updates := make(map[string]string)
+	if req.PanelTitle != nil && *req.PanelTitle != "" {
+		updates["panel_title"] = *req.PanelTitle
+	}
+	if req.GithubProxy != nil {
+		proxy := strings.TrimRight(strings.TrimSpace(*req.GithubProxy), "/")
+		if proxy != "" && !strings.HasPrefix(proxy, "https://") {
+			return nil, "反代地址必须以 https:// 开头"
+		}
+		updates["github_proxy"] = proxy
+	}
+	if req.PanelAutoUpdateEnabled != nil {
+		v := strings.TrimSpace(*req.PanelAutoUpdateEnabled)
+		if v != "true" && v != "false" {
+			return nil, "自动更新开关参数错误"
+		}
+		updates["panel_auto_update_enabled"] = v
+	}
+	if req.PanelAutoUpdateMode != nil {
+		v := strings.TrimSpace(*req.PanelAutoUpdateMode)
+		if v != "patch_only" && v != "all_stable" {
+			return nil, "自动更新模式参数错误"
+		}
+		updates["panel_auto_update_mode"] = v
+	}
+	if req.PanelAutoUpdateWindow != nil {
+		v := strings.TrimSpace(*req.PanelAutoUpdateWindow)
+		if !regexp.MustCompile(`^\d{2}:\d{2}-\d{2}:\d{2}$`).MatchString(v) {
+			return nil, "自动更新时间窗口格式应为 HH:MM-HH:MM"
+		}
+		parts := strings.Split(v, "-")
+		if _, err := time.Parse("15:04", parts[0]); err != nil {
+			return nil, "自动更新时间窗口包含无效时间"
+		}
+		if _, err := time.Parse("15:04", parts[1]); err != nil {
+			return nil, "自动更新时间窗口包含无效时间"
+		}
+		updates["panel_auto_update_window"] = v
+	}
+	minuteSettings := []struct {
+		raw      *string
+		key      string
+		min, max int
+	}{
+		{req.PanelAutoUpdateDelay, "panel_auto_update_release_delay_minutes", 1, 1440},
+		{req.PanelAutoUpdateSigTimeout, "panel_auto_update_signature_timeout_minutes", 5, 1440},
+	}
+	for _, setting := range minuteSettings {
+		if setting.raw == nil {
+			continue
+		}
+		v, err := strconv.Atoi(strings.TrimSpace(*setting.raw))
+		if err != nil || v < setting.min || v > setting.max {
+			return nil, fmt.Sprintf("分钟数必须在 %d-%d 之间", setting.min, setting.max)
+		}
+		updates[setting.key] = strconv.Itoa(v)
+	}
+	if req.WPPackageAutoCheckEnabled != nil {
+		v := strings.TrimSpace(*req.WPPackageAutoCheckEnabled)
+		if v != "true" && v != "false" {
+			return nil, "自动检测开关参数错误"
+		}
+		updates["wp_package_auto_check_enabled"] = v
+	}
+	return updates, ""
 }
 
-func saveMinuteSetting(c *gin.Context, key, raw string, min, max int) bool {
-	v, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || v < min || v > max {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("分钟数必须在 %d-%d 之间", min, max)))
-		return false
+func saveSecuritySettingsTransaction(db *sql.DB, updates map[string]string) error {
+	if len(updates) == 0 {
+		return nil
 	}
-	saveSecuritySetting(key, strconv.Itoa(v))
-	return true
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for key, value := range updates {
+		if _, err := tx.Exec(`INSERT INTO security_settings (skey, svalue, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(skey) DO UPDATE SET svalue = excluded.svalue, updated_at = excluded.updated_at`, key, value); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (h *SettingsHandler) TestProxy(c *gin.Context) {
@@ -375,8 +464,8 @@ func GetPanelTitle() string {
 	return title
 }
 
-func readConfigValue(section, key string) string {
-	data, err := os.ReadFile("/www/server/panel/config.json")
+func readConfigValue(configPath, section, key string) string {
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return ""
 	}
@@ -399,6 +488,11 @@ func getNTPSyncStatus() (bool, string) {
 	synced := strings.TrimSpace(string(out)) == "yes"
 	server := "pool.ntp.org"
 	return synced, server
+}
+
+func getNTPEnabled() bool {
+	out, err := exec.Command("timedatectl", "show", "--property=NTP", "--value").CombinedOutput()
+	return err == nil && strings.TrimSpace(string(out)) == "yes"
 }
 
 func getTimezone() string {
@@ -585,8 +679,7 @@ func formatFileSize(size int64) string {
 	}
 }
 
-func updateConfigValue(section, key, value string) error {
-	configPath := "/www/server/panel/config.json"
+func updateConfigValue(configPath, section, key, value string) error {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return fmt.Errorf("读取配置文件失败")
@@ -673,54 +766,30 @@ func (h *SettingsHandler) RestoreDBBackup(c *gin.Context) {
 		return
 	}
 
-	dbPath := cfg.SQLite.Path
-
-	// 先做一份安全备份（当前运行中的数据库），用于回滚
-	safeBackup, safeErr := database.BackupDatabase(backupDir)
-	if safeErr != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("恢复前安全备份失败: "+safeErr.Error()))
+	backupVersion, err := database.DBBackupSchemaVersion(backupPath)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("读取备份版本失败: "+err.Error()))
+		return
+	}
+	if backupVersion != "" && executor.CompareVersions(backupVersion, database.LatestVersion()) > 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("该备份来自更高版本的 WP Panel，当前版本无法安全恢复"))
 		return
 	}
 
-	// 写恢复脚本：原子替换（先 cp 到 .tmp 再 mv）→ 清理 WAL/SHM → 重启；cp/mv 失败时回滚到安全备份。
-	// 对路径中的单引号做转义，避免 shell 注入
-	sb := strings.ReplaceAll(safeBackup, "'", "'\\''")
-	bp := strings.ReplaceAll(backupPath, "'", "'\\''")
-	dp := strings.ReplaceAll(dbPath, "'", "'\\''")
-
-	script := "#!/bin/bash\n" +
-		"sleep 1\n" +
-		"rm -f '" + dp + "'.tmp\n" +
-		// 原子替换：先复制到 .tmp，再 mv（同文件系统下 mv 是原子的）
-		"cp -f '" + bp + "' '" + dp + "'.tmp && " +
-		"mv -f '" + dp + "'.tmp '" + dp + "'\n" +
-		"restore_status=$?\n" +
-		"rm -f '" + dp + "'.tmp\n" +
-		"if [ $restore_status -ne 0 ]; then\n" +
-		// cp/mv 失败 → 回滚到安全备份
-		"  echo 'DB restore cp/mv failed, rolling back...' >&2\n" +
-		"  cp -f '" + sb + "' '" + dp + "'\n" +
-		"fi\n" +
-		"rm -f '" + dp + "-wal' '" + dp + "-shm'\n" +
-		"systemctl restart wp-panel\n" +
-		"rm -f /tmp/wp-panel-db-restore.sh\n"
-
-	scriptPath := "/tmp/wp-panel-db-restore.sh"
-	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("创建恢复脚本失败"))
-		return
-	}
-
-	// 异步执行
-	if err := exec.Command("bash", scriptPath).Start(); err != nil {
-		os.Remove(scriptPath)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("启动恢复脚本失败: "+err.Error()))
+	status, err := executor.StartPanelDBRestore(cfg, backupPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(err.Error()))
 		return
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"message": "数据库恢复中，面板将自动重启。如启动失败，安全备份位于 " + filepath.Base(safeBackup),
+		"message":    "数据库恢复中，面板将自动重启并检查结果",
+		"restore_id": status.ID,
 	}))
+}
+
+func (h *SettingsHandler) GetDBRestoreStatus(c *gin.Context) {
+	c.JSON(http.StatusOK, models.SuccessResponse(executor.ReconcilePanelDBRestoreStatus(config.AppConfig)))
 }
 
 func (h *SettingsHandler) DeleteDBBackup(c *gin.Context) {

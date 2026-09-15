@@ -2,14 +2,64 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/naibabiji/wp-panel/database"
 )
+
+func TestUpdateCacheSettingsReportsNginxPublishFailure(t *testing.T) {
+	setupCacheHelperTestDB(t)
+	oldUpdate := updateSiteFastCGICache
+	updateSiteFastCGICache = func(siteID, enabled, ttl int) error {
+		if siteID != 1 || enabled != 0 || ttl != 600 {
+			t.Fatalf("update args=(%d,%d,%d)", siteID, enabled, ttl)
+		}
+		return errors.New("nginx reload failed")
+	}
+	t.Cleanup(func() { updateSiteFastCGICache = oldUpdate })
+
+	router := gin.New()
+	router.PUT("/api/cache", (&CacheHelperHandler{}).UpdateCacheSettings)
+	req := httptest.NewRequest(http.MethodPut, "/api/cache", strings.NewReader(`{"domain":"example.com","ttl":600}`))
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-WP-Panel-Key", "secret")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "未生效") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestClearByDomainReportsCacheClearFailure(t *testing.T) {
+	setupCacheHelperTestDB(t)
+	oldClear := clearSiteCache
+	clearSiteCache = func(siteID int) error {
+		if siteID != 1 {
+			t.Fatalf("siteID=%d", siteID)
+		}
+		return errors.New("nginx reload failed")
+	}
+	t.Cleanup(func() { clearSiteCache = oldClear })
+
+	router := gin.New()
+	router.POST("/api/cache/clear", (&CacheHelperHandler{}).ClearByDomain)
+	req := httptest.NewRequest(http.MethodPost, "/api/cache/clear", strings.NewReader(`{"domain":"example.com"}`))
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-WP-Panel-Key", "secret")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "未清除") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
 
 func TestFindByDomainReturnsManagedSecurityStatuses(t *testing.T) {
 	setupCacheHelperTestDB(t)

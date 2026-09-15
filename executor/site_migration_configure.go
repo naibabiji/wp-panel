@@ -118,7 +118,7 @@ func (o productionSiteMigrationTargetConfigureOps) ApplyConfigs(spec siteMigrati
 	if err != nil {
 		return err
 	}
-	if err := engine.ApplyPHPFPMPool(phpConfig, spec.PHPPoolPath, spec.LogDir); err != nil {
+	if err := engine.ApplyPHPFPMPool(phpConfig, spec.PHPPoolPath, spec.LogDir, spec.PHPSocketPath); err != nil {
 		return err
 	}
 	cdnGroups := make([]models.CDNRealIPGroup, 0, len(settings.CDNGroups))
@@ -336,9 +336,9 @@ func (p *SiteMigrationTargetPublisher) insertTargetWebsite(ctx context.Context, 
 		return 0, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `INSERT INTO websites (name,domain,aliases,status,system_user,web_root,document_root_subdir,log_dir,db_name,db_user,php_pool_path,nginx_conf_path,site_type,ssl_enabled,ssl_cert_path,ssl_key_path,template_version,access_log_mode,fastcgi_cache_enabled,fastcgi_cache_ttl,fastcgi_cache_key,plugin_api_key,monitoring_enabled,monitoring_interval,disable_wp_updates,disable_file_editing,xmlrpc_enabled,disable_application_passwords,wp_debug_enabled,wp_post_revisions,wp_memory_limit,file_lock_enabled,file_lock_mode,password_reset_mode,log_retention_days,cdn_realip_enabled,php_fpm_max_children,expires_at)
-		VALUES (?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		buildSiteName(spec.Domain), spec.Domain, strings.Join(settings.Aliases, "\n"), spec.SystemUser, spec.WebRoot, spec.DocumentRootSubdir, spec.LogDir, spec.DBName, spec.DBUser, spec.PHPPoolPath, spec.NginxConfPath, spec.SiteType, boolInt(published.SSLEnabled), published.CertPath, published.KeyPath, settings.TemplateVersion, settings.AccessLogMode, boolInt(settings.FastCGICacheEnabled), settings.FastCGICacheTTL, NewCacheKey(), identity.APIKey, 0, settings.MonitoringInterval, boolInt(settings.DisableWPUpdates), boolInt(settings.DisableFileEditing), boolInt(settings.XMLRPCEnabled), boolInt(settings.DisableApplicationPasswords), boolInt(settings.WPDebugEnabled), settings.WPPostRevisions, settings.WPMemoryLimit, boolInt(settings.FileLockEnabled), settings.FileLockMode, settings.PasswordResetMode, settings.LogRetentionDays, boolInt(settings.CDNRealIPEnabled), maxChildren, nilIfEmpty(settings.ExpiresAt))
+	result, err := tx.ExecContext(ctx, `INSERT INTO websites (name,domain,aliases,status,system_user,web_root,document_root_subdir,log_dir,db_name,db_user,php_pool_path,nginx_conf_path,site_type,ssl_enabled,ssl_cert_path,ssl_key_path,ssl_cert_source,template_version,access_log_mode,fastcgi_cache_enabled,fastcgi_cache_ttl,fastcgi_cache_key,plugin_api_key,monitoring_enabled,monitoring_interval,disable_wp_updates,disable_file_editing,xmlrpc_enabled,disable_application_passwords,wp_debug_enabled,wp_post_revisions,wp_memory_limit,file_lock_enabled,file_lock_mode,password_reset_mode,log_retention_days,cdn_realip_enabled,php_fpm_max_children,expires_at)
+		VALUES (?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		buildSiteName(spec.Domain), spec.Domain, strings.Join(settings.Aliases, "\n"), spec.SystemUser, spec.WebRoot, spec.DocumentRootSubdir, spec.LogDir, spec.DBName, spec.DBUser, spec.PHPPoolPath, spec.NginxConfPath, spec.SiteType, boolInt(published.SSLEnabled), published.CertPath, published.KeyPath, settings.SSLCertSource, settings.TemplateVersion, settings.AccessLogMode, boolInt(settings.FastCGICacheEnabled), settings.FastCGICacheTTL, NewCacheKey(), identity.APIKey, 0, settings.MonitoringInterval, boolInt(settings.DisableWPUpdates), boolInt(settings.DisableFileEditing), boolInt(settings.XMLRPCEnabled), boolInt(settings.DisableApplicationPasswords), boolInt(settings.WPDebugEnabled), settings.WPPostRevisions, settings.WPMemoryLimit, boolInt(settings.FileLockEnabled), settings.FileLockMode, settings.PasswordResetMode, settings.LogRetentionDays, boolInt(settings.CDNRealIPEnabled), maxChildren, nilIfEmpty(settings.ExpiresAt))
 	if err != nil {
 		return 0, err
 	}

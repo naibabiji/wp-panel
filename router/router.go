@@ -190,6 +190,7 @@ var i18nKeys = []string{
 	"settings.proxy_required",
 	"settings.refresh",
 	"settings.restoring",
+	"settings.panel_db_restore_status_unknown",
 	"settings.save_account_settings",
 	"settings.save_ai_settings",
 	"settings.save_failed",
@@ -198,8 +199,26 @@ var i18nKeys = []string{
 	"settings.saved",
 	"settings.saving",
 	"settings.success",
+	"settings.running",
+	"settings.waiting",
+	"settings.skipped",
+	"settings.info",
+	"settings.unknown_status",
+	"settings.system_update_already_running",
 	"settings.system_update_completed",
 	"settings.system_update_failed",
+	"settings.system_update_start_failed",
+	"settings.system_update_status_checking_packages",
+	"settings.system_update_status_checking_services",
+	"settings.system_update_status_failed",
+	"settings.system_update_status_health_failed",
+	"settings.system_update_status_interrupted",
+	"settings.system_update_status_preflight",
+	"settings.system_update_status_queued",
+	"settings.system_update_status_refresh",
+	"settings.system_update_status_start_failed",
+	"settings.system_update_status_success",
+	"settings.system_update_status_upgrading",
 	"settings.test",
 	"settings.test_connection",
 	"settings.test_failed",
@@ -333,6 +352,7 @@ var i18nKeys = []string{
 	"website.status_paused",
 	"website.status_running",
 	"website.status_migrated",
+	"website.status_deleting",
 	"website.restore_migrated",
 	"website.restore_migrated_detail",
 	"website.restore_migrated_confirm",
@@ -372,8 +392,11 @@ var i18nKeys = []string{
 	"website.ssl_enabled",
 	"website.ssl_not_enabled",
 	"website.ssl_pending",
+	"website.online_monitoring",
+	"website.anomaly_monitoring",
 	"website.monitoring_enabled",
 	"website.monitoring_disabled",
+	"website.not_applicable",
 	"website.access_log_full",
 	"website.access_log_error_only",
 	"website.access_log_off",
@@ -508,6 +531,7 @@ var i18nKeys = []string{
 	"log_analysis.analysis_failed",
 	"log_analysis.analysis_finished",
 	"log_analysis.analysis_running",
+	"log_analysis.interrupted_by_restart",
 	"log_analysis.load_failed",
 	"log_analysis.risk_high",
 	"log_analysis.risk_low",
@@ -565,6 +589,10 @@ var i18nKeys = []string{
 	"extension.reset_confirm",
 	"extension.restored_default",
 	"extension.saved",
+	"extension.save_failed",
+	"extension.delete_failed",
+	"extension.reset_failed",
+	"extension.invalid_entry",
 	"files.chunk_upload_failed",
 	"files.clipboard_copy",
 	"files.clipboard_cut",
@@ -1133,6 +1161,7 @@ var i18nKeys = []string{
 	"wp_plugin_batch.load_failed",
 	"wp_plugin_batch.rollback_button",
 	"wp_plugin_batch.rollback_confirm",
+	"wp_plugin_batch.rollback_reuse_confirm",
 	"wp_plugin_batch.rollback_failed",
 	"wp_plugin_batch.rollback_submitting",
 	"wp_plugin_batch.rollback_success",
@@ -1193,6 +1222,8 @@ var i18nKeys = []string{
 	"wp_update_backup.restore_failed",
 	"wp_update_backup.restoring",
 	"wp_update_backup.restore_confirm",
+	"wp_update_backup.restore_batch_confirm",
+	"wp_update_backup.batch_shared",
 	"wp_update_backup.restore_started",
 	"wp_update_backup.restore_success",
 	"wp_update_backup.restore_task_failed",
@@ -1251,8 +1282,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 			c.Status(http.StatusServiceUnavailable)
 			return
 		}
-		var version string
-		if err := db.QueryRow("SELECT version FROM schema_version ORDER BY updated_at DESC, rowid DESC LIMIT 1").Scan(&version); err != nil || version == "" {
+		var schemaVersion string
+		if err := db.QueryRow("SELECT version FROM schema_version ORDER BY updated_at DESC, rowid DESC LIMIT 1").Scan(&schemaVersion); err != nil || schemaVersion == "" {
 			c.Status(http.StatusServiceUnavailable)
 			return
 		}
@@ -1263,7 +1294,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 				return
 			}
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true})
+		c.JSON(http.StatusOK, gin.H{"ok": true, "version": version})
 	})
 
 	db := database.GetDB()
@@ -1376,7 +1407,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 		})
 	})
 
-	panelGroup.POST("/api/auth/login", func(c *gin.Context) {
+	panelGroup.POST("/api/auth/login", middleware.CSRF(), func(c *gin.Context) {
 		authHandler := &handlers.AuthHandler{DB: db, Prefix: suffix, Tracker: attemptTracker}
 		authHandler.Login(c)
 	})
@@ -1615,7 +1646,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	if err != nil {
 		log.Printf("WordPress package service disabled: code=%s", executor.ArchiveErrorCode(err))
 	}
-	settingsHandler := &handlers.SettingsHandler{WPPackageService: wpPackageService}
+	settingsHandler := &handlers.SettingsHandler{WPPackageService: wpPackageService, ConfigPath: configPath}
 	aiHandler := &handlers.AIHandler{}
 	logAnalysisHandler := &handlers.LogAnalysisHandler{}
 	protected.GET("/api/settings", settingsHandler.GetSettings)
@@ -1631,6 +1662,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/settings/db-backup", settingsHandler.GetDBBackups)
 	protected.POST("/api/settings/db-backup", settingsHandler.CreateDBBackup)
 	protected.POST("/api/settings/db-backup/restore", settingsHandler.RestoreDBBackup)
+	protected.GET("/api/settings/db-backup/restore-status", settingsHandler.GetDBRestoreStatus)
 	protected.DELETE("/api/settings/db-backup", settingsHandler.DeleteDBBackup)
 	protected.GET("/api/settings/db-backup/:filename/download", settingsHandler.DownloadDBBackup)
 	protected.GET("/api/proxy/test", settingsHandler.TestProxy)
@@ -1738,8 +1770,9 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/update/check", updateHandler.Check)
 	protected.GET("/api/update/status", updateHandler.Status)
 	protected.POST("/api/update/do", updateHandler.Update)
-	sysUpdateHandler := &handlers.SystemUpdateHandler{}
+	sysUpdateHandler := &handlers.SystemUpdateHandler{Config: cfg}
 	protected.GET("/api/system/updates", sysUpdateHandler.Check)
+	protected.GET("/api/system/updates/status", sysUpdateHandler.Status)
 	protected.POST("/api/system/updates/do", sysUpdateHandler.Update)
 
 	tmpl := template.Must(template.New("").Funcs(i18n.FuncMap()).ParseFS(tmplFS, "templates/*.html"))

@@ -36,6 +36,7 @@ type Website struct {
 	AccessLogMode               string           `json:"access_log_mode"`
 	SSLExpiresAt                *time.Time       `json:"ssl_expires_at"`
 	SSLLastError                string           `json:"ssl_last_error"`
+	SSLCertSource               string           `json:"ssl_cert_source"`
 	SSLExportEnabled            bool             `json:"ssl_export_enabled"`
 	FCacheEnabled               bool             `json:"fastcgi_cache_enabled"`
 	FCacheTTL                   int              `json:"fastcgi_cache_ttl"`

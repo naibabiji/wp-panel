@@ -134,6 +134,28 @@ func VerifyDBBackup(backupPath string) error {
 	return nil
 }
 
+// DBBackupSchemaVersion returns the recorded panel schema version. An empty
+// value is allowed for legacy databases that predate schema_version.
+func DBBackupSchemaVersion(backupPath string) (string, error) {
+	db, err := sql.Open("sqlite", "file:"+backupPath+"?mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	var exists int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_version'`).Scan(&exists); err != nil {
+		return "", err
+	}
+	if exists == 0 {
+		return "", nil
+	}
+	var version string
+	if err := db.QueryRow(`SELECT version FROM schema_version ORDER BY updated_at DESC,rowid DESC LIMIT 1`).Scan(&version); err != nil && err != sql.ErrNoRows {
+		return "", err
+	}
+	return version, nil
+}
+
 func formatDBSize(size int64) string {
 	const (
 		KB = 1024

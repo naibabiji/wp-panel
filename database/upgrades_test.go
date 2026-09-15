@@ -70,7 +70,7 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 		t.Fatalf("fresh website disable_application_passwords = %d, want 1, err=%v", disableApplicationPasswords, err)
 	}
 
-	for _, col := range []string{"php_pool_path", "nginx_conf_path", "wp_memory_limit", "file_lock_enabled", "file_lock_enabled_at", "file_lock_mode", "file_lock_apply_status", "cdn_realip_enabled", "ssl_last_error", "ssl_export_enabled", "document_root_subdir", "password_reset_mode"} {
+	for _, col := range []string{"php_pool_path", "nginx_conf_path", "wp_memory_limit", "file_lock_enabled", "file_lock_enabled_at", "file_lock_mode", "file_lock_apply_status", "cdn_realip_enabled", "ssl_last_error", "ssl_cert_source", "ssl_export_enabled", "document_root_subdir", "password_reset_mode"} {
 		var exists int
 		if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('websites') WHERE name = ?", col).Scan(&exists); err != nil {
 			t.Fatalf("query websites column %s: %v", col, err)
@@ -396,7 +396,7 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.64" {
+	if got := LatestVersion(); got != "1.0.65" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
 	for _, column := range []string{"database_backup_mode", "database_backup_source_id", "auto_rollback", "batch_id"} {

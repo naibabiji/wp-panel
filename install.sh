@@ -31,6 +31,7 @@ PANEL_CANDIDATE=""
 REPAIR_BIN_EXISTED=false
 REPAIR_UNIT_EXISTED=false
 REPAIR_TLS_EXISTED=false
+REPAIR_DB_EXISTED=false
 REPAIR_MUTATED=false
 
 if [[ "${WP_PANEL_PREFER_CN_MIRROR:-0}" == "1" ]] || [[ "${WP_PANEL_PREFER_CN_MIRROR:-}" == "true" ]]; then
@@ -227,6 +228,7 @@ create_repair_backup() {
     REPAIR_BACKUP_DIR="$INSTALL_DIR/backups/install-repair/${timestamp}-$$"
     [[ -s "$BIN_PATH" ]] && REPAIR_BIN_EXISTED=true
     [[ -f "$SERVICE_PATH" ]] && REPAIR_UNIT_EXISTED=true
+    [[ -f "$DB_PATH" ]] && REPAIR_DB_EXISTED=true
     if [[ -f "$INSTALL_DIR/certs/panel.crt" ]] && [[ -f "$INSTALL_DIR/certs/panel.key" ]]; then
         REPAIR_TLS_EXISTED=true
     fi
@@ -258,7 +260,28 @@ repair_rollback() {
     [[ "$REPAIR_MUTATED" == true ]] || return 0
     [[ -n "$REPAIR_BACKUP_DIR" ]] && [[ -d "$REPAIR_BACKUP_DIR" ]] || return 0
 
-    log_warn "repair未完成，正在恢复本次替换的面板文件"
+    local db_rollback_ok=true
+    local db_rollback_tmp="${DB_PATH}.repair-rollback.$$"
+
+    log_warn "repair未完成，正在恢复repair前的面板程序和数据库"
+    # 新二进制可能已经升级SQLite结构。必须先停服并恢复同一时间点的数据库，
+    # 不能让恢复后的旧二进制继续读取新结构。
+    if ! systemctl stop wp-panel 2>/dev/null; then
+        log_warn "严重：无法停止wp-panel，未恢复面板数据库，保持服务停止后请联系开发者处理"
+        db_rollback_ok=false
+    elif $REPAIR_DB_EXISTED; then
+        rm -f "$db_rollback_tmp"
+        if install -m 0600 "$REPAIR_BACKUP_DIR/panel.db" "$db_rollback_tmp" && mv "$db_rollback_tmp" "$DB_PATH"; then
+            rm -f "${DB_PATH}-wal" "${DB_PATH}-shm"
+        else
+            rm -f "$db_rollback_tmp"
+            log_warn "严重：repair前的面板数据库恢复失败，旧面板不会重新启动，请联系开发者处理"
+            db_rollback_ok=false
+        fi
+    else
+        rm -f "$DB_PATH" "${DB_PATH}-wal" "${DB_PATH}-shm"
+    fi
+
     if $REPAIR_BIN_EXISTED; then
         install -m 0755 "$REPAIR_BACKUP_DIR/wp-panel" "$BIN_PATH"
     else
@@ -276,7 +299,7 @@ repair_rollback() {
         rm -f "$INSTALL_DIR/certs/panel.crt" "$INSTALL_DIR/certs/panel.key"
     fi
     systemctl daemon-reload 2>/dev/null || true
-    if $REPAIR_SERVICE_WAS_ACTIVE; then
+    if $REPAIR_SERVICE_WAS_ACTIVE && $db_rollback_ok; then
         systemctl start wp-panel 2>/dev/null || true
     else
         systemctl stop wp-panel 2>/dev/null || true

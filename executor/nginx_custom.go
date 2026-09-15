@@ -2,6 +2,8 @@ package executor
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -12,7 +14,32 @@ import (
 	"github.com/naibabiji/wp-panel/models"
 )
 
-const nginxCustomDir = "/www/server/panel/nginx-custom"
+var nginxCustomDir = "/www/server/panel/nginx-custom"
+
+var runNginxCustomCommand = func(args ...string) ([]byte, error) {
+	return exec.Command("nginx", args...).CombinedOutput()
+}
+
+var (
+	persistAccessLogMode = saveAccessLogMode
+	applyAccessLogNginx  = func(engine *TemplateEngine, content, targetPath, enabledPath string) error {
+		return engine.ApplyNginxConfig(content, targetPath, enabledPath)
+	}
+	persistDocumentRoot    = saveDocumentRoot
+	applyDocumentRootNginx = func(engine *TemplateEngine, content, targetPath, enabledPath string) error {
+		return engine.ApplyNginxConfig(content, targetPath, enabledPath)
+	}
+)
+
+func restoreNginxCustomFile(path string, content []byte, existed bool) error {
+	if existed {
+		return os.WriteFile(path, content, 0644)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
 
 func executeSaveNginxCustom(task *Task) TaskResult {
 	payload, ok := task.Payload.(*SaveNginxCustomPayload)
@@ -36,28 +63,52 @@ func executeSaveNginxCustom(task *Task) TaskResult {
 	prePath := filepath.Join(nginxCustomDir, domain+".pre.conf")
 	mainPath := filepath.Join(nginxCustomDir, domain+".conf")
 
-	oldPre, _ := os.ReadFile(prePath)
-	oldMain, _ := os.ReadFile(mainPath)
+	oldPre, preReadErr := os.ReadFile(prePath)
+	oldMain, mainReadErr := os.ReadFile(mainPath)
+	preExisted := preReadErr == nil
+	mainExisted := mainReadErr == nil
+	restoreOldFiles := func() error {
+		return errors.Join(
+			restoreNginxCustomFile(prePath, oldPre, preExisted),
+			restoreNginxCustomFile(mainPath, oldMain, mainExisted),
+		)
+	}
 
 	if err := os.WriteFile(prePath, []byte(payload.PreContent), 0644); err != nil {
 		log.Printf("写入 pre.conf 失败: %v", err)
 		return TaskResult{Success: false, Message: "写入 pre.conf 失败"}
 	}
 	if err := os.WriteFile(mainPath, []byte(payload.Content), 0644); err != nil {
-		os.WriteFile(prePath, oldPre, 0644)
+		_ = restoreNginxCustomFile(prePath, oldPre, preExisted)
 		log.Printf("写入 conf 失败: %v", err)
 		return TaskResult{Success: false, Message: "写入 conf 失败"}
 	}
 
-	ngxTest := exec.Command("nginx", "-t")
-	out, err := ngxTest.CombinedOutput()
+	out, err := runNginxCustomCommand("-t")
 	if err != nil {
-		os.WriteFile(prePath, oldPre, 0644)
-		os.WriteFile(mainPath, oldMain, 0644)
+		if restoreErr := restoreOldFiles(); restoreErr != nil {
+			log.Printf("Nginx 语法检查失败且恢复旧自定义配置失败: test=%v restore=%v", err, restoreErr)
+		}
 		return TaskResult{Success: false, Message: "Nginx 语法检查失败:\n" + string(out)}
 	}
 
-	exec.Command("nginx", "-s", "reload").Run()
+	reloadOut, reloadErr := runNginxCustomCommand("-s", "reload")
+	if reloadErr != nil {
+		restoreErr := restoreOldFiles()
+		var recoveryErr error
+		if restoreErr == nil {
+			if recoveryTestOut, err := runNginxCustomCommand("-t"); err != nil {
+				recoveryErr = fmt.Errorf("恢复后语法检查失败: %w: %s", err, recoveryTestOut)
+			} else if recoveryReloadOut, err := runNginxCustomCommand("-s", "reload"); err != nil {
+				recoveryErr = fmt.Errorf("恢复后重载失败: %w: %s", err, recoveryReloadOut)
+			}
+		}
+		log.Printf("Nginx 自定义配置重载失败并回滚: reload=%v output=%s restore=%v recovery=%v", reloadErr, string(reloadOut), restoreErr, recoveryErr)
+		if restoreErr != nil || recoveryErr != nil {
+			return TaskResult{Success: false, Message: "Nginx 重载失败，旧配置恢复未完成，请检查 Nginx 服务"}
+		}
+		return TaskResult{Success: false, Message: "Nginx 重载失败，已恢复保存前的自定义配置"}
+	}
 
 	return TaskResult{Success: true, Message: "Nginx 自定义配置已保存并生效"}
 }
@@ -69,6 +120,12 @@ func executeSetAccessLogMode(task *Task) TaskResult {
 	}
 
 	site := payload.Site
+	if site == nil {
+		return TaskResult{Success: false, Message: "网站不存在"}
+	}
+	if blocked := rejectPausedSiteConfiguration(site.ID); blocked != nil {
+		return *blocked
+	}
 	cfg := config.AppConfig
 
 	engine := NewTemplateEngine(cfg.Panel.BackupDir)
@@ -84,15 +141,18 @@ func executeSetAccessLogMode(task *Task) TaskResult {
 		return taskFailure("渲染 Nginx 配置失败", err)
 	}
 
-	if err := engine.ApplyNginxConfig(nginxConfig, site.NginxConfPath,
-		nginxEnabledPath(cfg, site.NginxConfPath, site.Domain)); err != nil {
-		log.Printf("应用 Nginx 配置失败: %v", err)
-		return taskFailure("应用 Nginx 配置失败", err)
+	if err := persistAccessLogMode(site.ID, payload.Mode); err != nil {
+		return taskFailure("保存访问日志模式失败", err)
 	}
 
-	// Update database
-	db := database.GetDB()
-	db.Exec("UPDATE websites SET access_log_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", payload.Mode, site.ID)
+	if err := applyAccessLogNginx(engine, nginxConfig, site.NginxConfPath,
+		nginxEnabledPath(cfg, site.NginxConfPath, site.Domain)); err != nil {
+		log.Printf("应用 Nginx 配置失败: %v", err)
+		if restoreErr := persistAccessLogMode(site.ID, site.AccessLogMode); restoreErr != nil {
+			return TaskResult{Success: false, Message: "应用 Nginx 配置失败，访问日志状态恢复失败，请人工检查"}
+		}
+		return taskFailure("应用 Nginx 配置失败", err)
+	}
 
 	// Clear log file when turning off
 	if payload.Mode == "off" {
@@ -112,6 +172,20 @@ func executeSetAccessLogMode(task *Task) TaskResult {
 	return TaskResult{Success: true, Message: msg}
 }
 
+func saveAccessLogMode(siteID int, mode string) error {
+	result, err := database.GetDB().Exec(
+		"UPDATE websites SET access_log_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", mode, siteID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return errors.New("网站访问日志状态未更新")
+	}
+	return nil
+}
+
 func executeSetCDNRealIP(task *Task) TaskResult {
 	payload, ok := task.Payload.(*SetCDNRealIPPayload)
 	if !ok {
@@ -120,6 +194,9 @@ func executeSetCDNRealIP(task *Task) TaskResult {
 	site := payload.Site
 	if site == nil {
 		return TaskResult{Success: false, Message: "网站不存在"}
+	}
+	if blocked := rejectPausedSiteConfiguration(site.ID); blocked != nil {
+		return *blocked
 	}
 
 	var groups []models.CDNRealIPGroup
@@ -213,6 +290,14 @@ func executeSetDocumentRoot(task *Task) TaskResult {
 	} else if blocked {
 		return TaskResult{Success: false, Message: "该网站已开启 AI 开发访问，请先关闭授权"}
 	}
+	if locked, err := SiteMigrationLocked(context.Background(), site.ID, site.Domain); err != nil {
+		return TaskResult{Success: false, Message: "检查站点迁移锁失败"}
+	} else if locked {
+		return TaskResult{Success: false, Message: "网站正在迁移维护中"}
+	}
+	if blocked := rejectPausedSiteConfiguration(site.ID); blocked != nil {
+		return *blocked
+	}
 	if site.SiteType != "php" {
 		return TaskResult{Success: false, Message: "只有通用 PHP 网站支持修改 Web 入口目录"}
 	}
@@ -239,19 +324,34 @@ func executeSetDocumentRoot(task *Task) TaskResult {
 		log.Printf("渲染 Nginx 配置失败: %v", err)
 		return taskFailure("渲染 Nginx 配置失败", err)
 	}
-	if err := engine.ApplyNginxConfig(nginxConfig, site.NginxConfPath,
+	if err := persistDocumentRoot(site.ID, documentRootSubdir); err != nil {
+		return taskFailure("保存 Web 入口目录失败", err)
+	}
+	if err := applyDocumentRootNginx(engine, nginxConfig, site.NginxConfPath,
 		nginxEnabledPath(cfg, site.NginxConfPath, site.Domain)); err != nil {
 		log.Printf("应用 Nginx 配置失败: %v", err)
+		if restoreErr := persistDocumentRoot(site.ID, site.DocumentRootSubdir); restoreErr != nil {
+			return TaskResult{Success: false, Message: "应用 Nginx 配置失败，Web 入口目录状态恢复失败，请人工检查"}
+		}
 		return taskFailure("应用 Nginx 配置失败", err)
-	}
-
-	db := database.GetDB()
-	if _, err := db.Exec("UPDATE websites SET document_root_subdir = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", documentRootSubdir, site.ID); err != nil {
-		return TaskResult{Success: false, Message: "保存 Web 入口目录失败: " + err.Error()}
 	}
 
 	if documentRootSubdir == "" {
 		return TaskResult{Success: true, Message: "Web 入口目录已切换为项目根"}
 	}
 	return TaskResult{Success: true, Message: "Web 入口目录已切换为 public"}
+}
+
+func saveDocumentRoot(siteID int, subdir string) error {
+	result, err := database.GetDB().Exec(
+		"UPDATE websites SET document_root_subdir = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", subdir, siteID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return errors.New("网站 Web 入口目录状态未更新")
+	}
+	return nil
 }

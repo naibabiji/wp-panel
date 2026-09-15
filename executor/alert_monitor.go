@@ -3,8 +3,11 @@ package executor
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
+	"errors"
 	"fmt"
 	"html"
+	"log"
 	"net"
 	"net/http"
 	"os/exec"
@@ -26,6 +29,7 @@ type alertRule struct {
 	lastFired         time.Time
 	firing            bool
 	lastAlertMsg      string
+	runtimeStateDirty bool
 }
 
 type alertManager struct {
@@ -44,6 +48,7 @@ var (
 	panelCurrentVersion      string
 	cloudflareProxyDetector  = isLikelyCloudflareProxied
 	cloudflareDNSLookup      = net.DefaultResolver.LookupIPAddr
+	reportAlertStateError    = log.Printf
 	cloudflareDetectionCache = struct {
 		sync.Mutex
 		entries map[string]cloudflareDetectionEntry
@@ -125,6 +130,7 @@ func (m *alertManager) runChecks() {
 	hasWebhook := webhookConfigured(wCfg)
 
 	for _, r := range m.rules {
+		retryDirtyAlertRuntimeState(r)
 		if !isRuleEnabled(r.key) {
 			disableAlertRule(r)
 			continue
@@ -185,6 +191,12 @@ func (m *alertManager) runChecks() {
 		} else if wasPending != !r.pendingSince.IsZero() || (!firing && !r.pendingSince.IsZero()) {
 			persistAlertRuntimeState(r)
 		}
+	}
+}
+
+func retryDirtyAlertRuntimeState(r *alertRule) {
+	if r != nil && r.runtimeStateDirty {
+		_ = persistAlertRuntimeState(r)
 	}
 }
 
@@ -252,7 +264,11 @@ func loadAlertRuntimeState(rules []*alertRule) {
 		var status, pending, fired, message string
 		err := db.QueryRow(`SELECT status, pending_since, last_fired_at, last_message
 			FROM alert_runtime_state WHERE alert_type = ?`, r.key).Scan(&status, &pending, &fired, &message)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
 		if err != nil {
+			reportAlertStateError("读取告警运行状态失败 [%s]: %v", r.key, err)
 			continue
 		}
 		r.firing = status == "firing"
@@ -262,9 +278,9 @@ func loadAlertRuntimeState(rules []*alertRule) {
 	}
 }
 
-func persistAlertRuntimeState(r *alertRule) {
+func persistAlertRuntimeState(r *alertRule) error {
 	if r == nil || r.eventOnly || database.GetDB() == nil {
-		return
+		return nil
 	}
 	status := "normal"
 	if r.firing {
@@ -272,13 +288,18 @@ func persistAlertRuntimeState(r *alertRule) {
 	} else if !r.pendingSince.IsZero() {
 		status = "pending"
 	}
-	_, _ = database.GetDB().Exec(`INSERT INTO alert_runtime_state
+	_, err := database.GetDB().Exec(`INSERT INTO alert_runtime_state
 		(alert_type, status, pending_since, last_fired_at, last_message, updated_at)
 		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(alert_type) DO UPDATE SET status=excluded.status,
 		pending_since=excluded.pending_since, last_fired_at=excluded.last_fired_at,
 		last_message=excluded.last_message, updated_at=CURRENT_TIMESTAMP`,
 		r.key, status, formatAlertStateTime(r.pendingSince), formatAlertStateTime(r.lastFired), r.lastAlertMsg)
+	r.runtimeStateDirty = err != nil
+	if err != nil {
+		reportAlertStateError("保存告警运行状态失败 [%s]，下一轮将重试: %v", r.key, err)
+	}
+	return err
 }
 
 func formatAlertStateTime(t time.Time) string {

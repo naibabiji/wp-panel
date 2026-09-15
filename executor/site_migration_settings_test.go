@@ -17,7 +17,7 @@ func TestSiteMigrationSettingsSourceCapturesRuntimeWithoutSecrets(t *testing.T) 
 	if _, err := store.db.Exec(`INSERT INTO site_migration_locks(domain,site_id,migration_site_id,direction,status) VALUES ('example.com',1,'migration_0000001','source','active')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`UPDATE websites SET aliases='WWW.example.com',ssl_enabled=1,fastcgi_cache_enabled=1,fastcgi_cache_ttl=900,monitoring_enabled=1,log_retention_days=0,php_fpm_max_children=17 WHERE id=1`); err != nil {
+	if _, err := store.db.Exec(`UPDATE websites SET aliases='WWW.example.com',ssl_enabled=1,ssl_cert_source='auto',fastcgi_cache_enabled=1,fastcgi_cache_ttl=900,monitoring_enabled=1,log_retention_days=0,php_fpm_max_children=17 WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`INSERT INTO cron_jobs (name,cron_expression,command,site_id,run_as_user,task_type,enabled) VALUES ('WP Cron','*/5 * * * *','example.com',1,'wp_example','wp_cron',1),('Custom','0 * * * *','echo unsafe',1,'wp_example','command',1)`); err != nil {
@@ -28,8 +28,18 @@ func TestSiteMigrationSettingsSourceCapturesRuntimeWithoutSecrets(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(settings.Aliases, ",") != "www.example.com" || !settings.SSLEnabled || !settings.FastCGICacheEnabled || settings.FastCGICacheTTL != 900 || !settings.MonitoringEnabled || settings.LogRetentionDays != 0 || settings.PHPFPMMaxChildren != 17 || len(settings.CronJobs) != 1 || settings.CronJobs[0].TaskType != "wp_cron" || settings.SkippedCustomCommands != 1 {
+	if strings.Join(settings.Aliases, ",") != "www.example.com" || !settings.SSLEnabled || settings.SSLCertSource != "auto" || !settings.FastCGICacheEnabled || settings.FastCGICacheTTL != 900 || !settings.MonitoringEnabled || settings.LogRetentionDays != 0 || settings.PHPFPMMaxChildren != 17 || len(settings.CronJobs) != 1 || settings.CronJobs[0].TaskType != "wp_cron" || settings.SkippedCustomCommands != 1 {
 		t.Fatalf("settings=%+v", settings)
+	}
+}
+
+func TestSiteMigrationRuntimeSettingsDefaultsUnknownLegacySSLSourceToManual(t *testing.T) {
+	settings := SiteMigrationRuntimeSettings{SSLEnabled: true, MarkerToken: strings.Repeat("m", 48), FastCGICacheTTL: 300, MonitoringInterval: 5, WPPostRevisions: -1, PasswordResetMode: "allow", LogRetentionDays: 7, PHPFPMMaxChildren: 2}
+	if err := validateSiteMigrationRuntimeSettings(&settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings.SSLCertSource != "manual" {
+		t.Fatalf("ssl source=%q, want manual", settings.SSLCertSource)
 	}
 }
 

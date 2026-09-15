@@ -64,20 +64,31 @@ func TestRepairRollbackFaultInjection(t *testing.T) {
 		mustWriteTestFile(t, filepath.Join(backup, "wp-panel.service"), "old-unit", 0644)
 		mustWriteTestFile(t, filepath.Join(backup, "panel.crt"), "old-cert", 0644)
 		mustWriteTestFile(t, filepath.Join(backup, "panel.key"), "old-key", 0600)
+		mustWriteTestFile(t, filepath.Join(backup, "panel.db"), "old-database", 0600)
 		binary := filepath.Join(root, "wp-panel")
 		unit := filepath.Join(root, "wp-panel.service")
+		database := filepath.Join(root, "panel.db")
 		mustWriteTestFile(t, binary, "new-binary", 0755)
 		mustWriteTestFile(t, unit, "new-unit", 0644)
+		mustWriteTestFile(t, database, "new-database", 0600)
+		mustWriteTestFile(t, database+"-wal", "new-wal", 0600)
+		mustWriteTestFile(t, database+"-shm", "new-shm", 0600)
 		mustWriteTestFile(t, filepath.Join(certDir, "panel.crt"), "new-cert", 0644)
 		mustWriteTestFile(t, filepath.Join(certDir, "panel.key"), "new-key", 0600)
 		logPath := filepath.Join(root, "systemctl.log")
 
-		runRollbackFixture(t, rollback, root, backup, binary, unit, logPath, true, true, true, "preserve")
+		runRollbackFixture(t, rollback, root, backup, binary, unit, database, logPath, true, true, true, true, "preserve", false)
 		assertTestFile(t, binary, "old-binary")
 		assertTestFile(t, unit, "old-unit")
 		assertTestFile(t, filepath.Join(certDir, "panel.crt"), "old-cert")
 		assertTestFile(t, filepath.Join(certDir, "panel.key"), "old-key")
-		assertTestFile(t, logPath, "daemon-reload\nstart wp-panel\n")
+		assertTestFile(t, database, "old-database")
+		for _, sidecar := range []string{database + "-wal", database + "-shm"} {
+			if _, err := os.Stat(sidecar); !os.IsNotExist(err) {
+				t.Fatalf("SQLite sidecar still exists after rollback: %s", sidecar)
+			}
+		}
+		assertTestFile(t, logPath, "stop wp-panel\ndaemon-reload\nstart wp-panel\n")
 	})
 
 	t.Run("removes newly created files and preserves inactive service", func(t *testing.T) {
@@ -88,19 +99,40 @@ func TestRepairRollbackFaultInjection(t *testing.T) {
 		}
 		binary := filepath.Join(root, "wp-panel")
 		unit := filepath.Join(root, "wp-panel.service")
+		database := filepath.Join(root, "panel.db")
 		mustWriteTestFile(t, binary, "new-binary", 0755)
 		mustWriteTestFile(t, unit, "new-unit", 0644)
 		mustWriteTestFile(t, filepath.Join(root, "certs", "panel.crt"), "new-cert", 0644)
 		mustWriteTestFile(t, filepath.Join(root, "certs", "panel.key"), "new-key", 0600)
+		mustWriteTestFile(t, database, "new-database", 0600)
+		mustWriteTestFile(t, database+"-wal", "new-wal", 0600)
 		logPath := filepath.Join(root, "systemctl.log")
 
-		runRollbackFixture(t, rollback, root, backup, binary, unit, logPath, false, false, false, "generate")
-		for _, path := range []string{binary, unit, filepath.Join(root, "certs", "panel.crt"), filepath.Join(root, "certs", "panel.key")} {
+		runRollbackFixture(t, rollback, root, backup, binary, unit, database, logPath, false, false, false, false, "generate", false)
+		for _, path := range []string{binary, unit, database, database + "-wal", filepath.Join(root, "certs", "panel.crt"), filepath.Join(root, "certs", "panel.key")} {
 			if _, err := os.Stat(path); !os.IsNotExist(err) {
 				t.Fatalf("new repair file still exists after rollback: %s", path)
 			}
 		}
-		assertTestFile(t, logPath, "daemon-reload\nstop wp-panel\n")
+		assertTestFile(t, logPath, "stop wp-panel\ndaemon-reload\nstop wp-panel\n")
+	})
+
+	t.Run("keeps old service stopped when database restore fails", func(t *testing.T) {
+		root := t.TempDir()
+		backup := filepath.Join(root, "backup")
+		mustWriteTestFile(t, filepath.Join(backup, "wp-panel"), "old-binary", 0755)
+		mustWriteTestFile(t, filepath.Join(backup, "panel.db"), "old-database", 0600)
+		binary := filepath.Join(root, "wp-panel")
+		unit := filepath.Join(root, "wp-panel.service")
+		database := filepath.Join(root, "panel.db")
+		mustWriteTestFile(t, binary, "new-binary", 0755)
+		mustWriteTestFile(t, database, "new-database", 0600)
+		logPath := filepath.Join(root, "systemctl.log")
+
+		runRollbackFixture(t, rollback, root, backup, binary, unit, database, logPath, true, false, false, true, "preserve", true)
+		assertTestFile(t, binary, "old-binary")
+		assertTestFile(t, database, "new-database")
+		assertTestFile(t, logPath, "stop wp-panel\ndaemon-reload\nstop wp-panel\n")
 	})
 }
 
@@ -140,7 +172,7 @@ func extractShellFunction(t *testing.T, script, name, nextName string) string {
 	return script[start : start+end]
 }
 
-func runRollbackFixture(t *testing.T, rollback, root, backup, binary, unit, logPath string, binExisted, unitExisted, tlsExisted bool, tlsAction string) {
+func runRollbackFixture(t *testing.T, rollback, root, backup, binary, unit, database, logPath string, binExisted, unitExisted, tlsExisted, dbExisted bool, tlsAction string, dbRestoreFails bool) {
 	t.Helper()
 	shell := fmt.Sprintf(`set -e
 REPAIR_MODE=true
@@ -150,18 +182,27 @@ REPAIR_BACKUP_DIR=%s
 REPAIR_BIN_EXISTED=%t
 REPAIR_UNIT_EXISTED=%t
 REPAIR_TLS_EXISTED=%t
+REPAIR_DB_EXISTED=%t
 REPAIR_TLS_ACTION=%s
 REPAIR_SERVICE_WAS_ACTIVE=%t
 BIN_PATH=%s
 SERVICE_PATH=%s
+DB_PATH=%s
 INSTALL_DIR=%s
 SYSTEMCTL_LOG=%s
 log_warn() { :; }
-install() { cp "${@: -2:1}" "${@: -1}"; chmod "$2" "${@: -1}"; }
+DB_RESTORE_FAILS=%t
+install() {
+    if $DB_RESTORE_FAILS && [[ "${@: -1}" == "${DB_PATH}.repair-rollback.$$" ]]; then
+        return 1
+    fi
+    cp "${@: -2:1}" "${@: -1}"
+    chmod "$2" "${@: -1}"
+}
 systemctl() { printf '%%s\n' "$*" >> "$SYSTEMCTL_LOG"; }
 %s
 repair_rollback
-`, strconv.Quote(backup), binExisted, unitExisted, tlsExisted, strconv.Quote(tlsAction), binExisted, strconv.Quote(binary), strconv.Quote(unit), strconv.Quote(root), strconv.Quote(logPath), rollback)
+`, strconv.Quote(backup), binExisted, unitExisted, tlsExisted, dbExisted, strconv.Quote(tlsAction), binExisted, strconv.Quote(binary), strconv.Quote(unit), strconv.Quote(database), strconv.Quote(root), strconv.Quote(logPath), dbRestoreFails, rollback)
 	cmd := exec.Command("bash", "-c", shell)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("rollback fixture failed: %v\n%s", err, output)

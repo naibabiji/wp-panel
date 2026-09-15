@@ -30,7 +30,8 @@ func sitePluginConfigPath(domain string) string {
 }
 
 // WriteSitePluginIdentity creates or replaces the panel-issued identity for a site.
-// WordPress never owns this file; it only receives read access through its PHP-FPM pool.
+// The site user owns this file as part of the site's companion-plugin assets;
+// the panel can recreate it if the site administrator removes or changes it.
 func WriteSitePluginIdentity(domain, systemUser, panelURL, apiKey string, disableApplicationPasswords bool) error {
 	if !IsValidDomain(domain) || systemUser == "" || panelURL == "" || len(apiKey) < 32 {
 		return errors.New("invalid site plugin identity")
@@ -69,7 +70,9 @@ func WriteSitePluginIdentity(domain, systemUser, panelURL, apiKey string, disabl
 	if err := os.Rename(tmpPath, sitePluginConfigPath(domain)); err != nil {
 		return fmt.Errorf("write site plugin identity: %w", err)
 	}
-	InstallPluginPermissions(domain, systemUser, "")
+	if err := InstallPluginPermissions(domain, systemUser, ""); err != nil {
+		return fmt.Errorf("set site plugin identity permissions: %w", err)
+	}
 	return nil
 }
 

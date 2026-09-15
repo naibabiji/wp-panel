@@ -54,6 +54,7 @@ type WPPluginBatchItem struct {
 	TaskStatus            string `json:"task_status,omitempty"`
 	TaskStage             string `json:"task_stage,omitempty"`
 	TaskRollbackStatus    string `json:"task_rollback_status,omitempty"`
+	DatabaseBackupMode    string `json:"database_backup_mode,omitempty"`
 	TaskRequiresAttention bool   `json:"task_requires_attention,omitempty"`
 	TaskManualDisposition string `json:"task_manual_disposition,omitempty"`
 	CurrentVersion        string `json:"current_version,omitempty"`

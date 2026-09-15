@@ -36,6 +36,7 @@ var migrations = append([]string{
 		ssl_key_path          TEXT    DEFAULT '',
 		ssl_expires_at        DATETIME,
 		ssl_last_error        TEXT    NOT NULL DEFAULT '',
+		ssl_cert_source       TEXT    NOT NULL DEFAULT '',
 		ssl_export_enabled    INTEGER NOT NULL DEFAULT 0,
 		template_version      TEXT    NOT NULL DEFAULT 'v1.0',
 		access_log_mode       TEXT    NOT NULL DEFAULT 'error_only',

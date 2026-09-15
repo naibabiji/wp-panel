@@ -44,6 +44,7 @@ type WPUpdateBatchItem struct {
 	TaskStatus            string
 	TaskStage             string
 	TaskRollbackStatus    string
+	DatabaseBackupMode    string
 	TaskRequiresAttention bool
 	TaskManualDisposition string
 	CurrentVersion        string
@@ -140,7 +141,7 @@ func (s *wpUpdateStore) listBatchesForSite(ctx context.Context, siteID int) ([]W
 func (s *wpUpdateStore) listBatchItems(ctx context.Context, batchID string) ([]WPUpdateBatchItem, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.batch_id,i.position,i.component_key,i.status,i.message,COALESCE(i.task_id,''),
 		i.retry_count,COALESCE(i.next_retry_at,''),
-		COALESCE(t.status,''),COALESCE(t.stage,''),COALESCE(t.rollback_status,''),COALESCE(t.requires_attention,0),COALESCE(t.manual_disposition,''),
+		COALESCE(t.status,''),COALESCE(t.stage,''),COALESCE(t.rollback_status,''),COALESCE(t.database_backup_mode,''),COALESCE(t.requires_attention,0),COALESCE(t.manual_disposition,''),
 		COALESCE(t.current_version,''),COALESCE(t.target_version,''),i.created_at,i.updated_at
 		FROM wp_update_batch_items i LEFT JOIN wp_update_tasks t ON t.id=i.task_id
 		WHERE i.batch_id=? ORDER BY i.position`, batchID)
@@ -154,7 +155,7 @@ func (s *wpUpdateStore) listBatchItems(ctx context.Context, batchID string) ([]W
 		var attention int
 		if err := rows.Scan(&it.ID, &it.BatchID, &it.Position, &it.ComponentKey, &it.Status, &it.Message, &it.TaskID,
 			&it.RetryCount, &it.NextRetryAt,
-			&it.TaskStatus, &it.TaskStage, &it.TaskRollbackStatus, &attention, &it.TaskManualDisposition,
+			&it.TaskStatus, &it.TaskStage, &it.TaskRollbackStatus, &it.DatabaseBackupMode, &attention, &it.TaskManualDisposition,
 			&it.CurrentVersion, &it.TargetVersion, &it.CreatedAt, &it.UpdatedAt); err != nil {
 			return nil, err
 		}

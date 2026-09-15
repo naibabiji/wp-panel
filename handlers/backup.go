@@ -407,7 +407,19 @@ func (h *BackupHandler) ClearDatabase(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
+	if !executor.TryAcquireSiteOpLock(id, "clear_database") {
+		c.JSON(http.StatusConflict, models.ErrorResponse("该网站正在执行其它维护操作，请稍后重试"))
+		return
+	}
+	defer executor.ReleaseSiteOpLock(id)
 	if rejectIfAIDevelopmentAccessActive(c, id) {
+		return
+	}
+	if locked, err := executor.SiteMigrationLocked(c.Request.Context(), site.ID, site.Domain); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("检查网站搬家状态失败"))
+		return
+	} else if locked {
+		c.JSON(http.StatusConflict, models.ErrorResponse("网站正在搬家，不能清空数据库"))
 		return
 	}
 

@@ -64,7 +64,7 @@
                         <span class="text-xs px-2 py-1 rounded" :class="overallRiskClass()" x-text="overallRiskText()"></span>
                     </div>
 
-                    <div x-show="job?.error_message" class="p-3 rounded text-sm text-yellow-300 border border-yellow-900 bg-yellow-950/20" x-text="job?.error_message"></div>
+                    <div x-show="job?.error_message" class="p-3 rounded text-sm text-yellow-300 border border-yellow-900 bg-yellow-950/20" x-text="errorText(job?.error_message)"></div>
 
                     <template x-if="report">
                         <div class="space-y-6">
@@ -205,6 +205,7 @@ function logAnalysisPage() {
         eventTypeText(value) { if (value === 'sensitive_file_scan') return t('log_analysis.security_event_sensitive_file_scan'); if (value === 'sqli_probe') return t('log_analysis.security_event_sqli_probe'); if (value === 'fake_search_bot') return t('log_analysis.security_event_fake_search_bot'); if (value === 'suspicious_php') return t('log_analysis.security_event_suspicious_php'); if (value === 'client_ip_spoof') return t('log_analysis.security_event_client_ip_spoof'); return value; },
         formatTime(value) { return value ? new Date(value).toLocaleString() : '--'; },
         statusText(status) { return status === 'completed' ? '{{t .Lang "log_analysis.completed"}}' : status === 'failed' ? '{{t .Lang "log_analysis.failed"}}' : '{{t .Lang "log_analysis.running"}}'; },
+        errorText(value) { return ['restart_interrupted','analysis interrupted'].includes(value) ? t('log_analysis.interrupted_by_restart') : value; },
         verificationText(value) { return value === 'verified' ? '{{t .Lang "log_analysis.verified"}}' : value === 'fake' ? '{{t .Lang "log_analysis.fake"}}' : value === 'unverified' ? '{{t .Lang "log_analysis.unverified"}}' : '{{t .Lang "log_analysis.unknown"}}'; },
         findingClass(level) { return level === 'high' ? 'border-red-900 bg-red-950/20' : level === 'medium' ? 'border-yellow-900 bg-yellow-950/20' : 'border-green-900 bg-green-950/20'; },
         overallRisk() { if (!this.report) return 'low'; if ((this.report.findings || []).some(x => x.severity === 'high')) return 'high'; if ((this.report.findings || []).some(x => x.severity === 'medium')) return 'medium'; return 'low'; },

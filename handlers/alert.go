@@ -44,7 +44,7 @@ func (h *AlertHandler) SaveSettings(c *gin.Context) {
 		return
 	}
 
-	db := database.GetDB()
+	updates := make(map[string]string)
 	for key, val := range raw {
 		strVal, ok, err := normalizeAlertSetting(key, val)
 		if err != nil {
@@ -54,10 +54,12 @@ func (h *AlertHandler) SaveSettings(c *gin.Context) {
 		if !ok {
 			continue
 		}
-		if _, err := db.Exec("INSERT INTO security_settings (skey, svalue, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(skey) DO UPDATE SET svalue = excluded.svalue, updated_at = excluded.updated_at", key, strVal); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("告警设置保存失败"))
-			return
-		}
+		updates[key] = strVal
+	}
+	if err := saveSecuritySettingsTransaction(database.GetDB(), updates); err != nil {
+		log.Printf("保存告警设置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("告警设置保存失败"))
+		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
 }

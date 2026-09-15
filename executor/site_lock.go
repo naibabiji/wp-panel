@@ -45,6 +45,19 @@ func TryAcquireCompanionDeployLock(siteID int) bool {
 	return true
 }
 
+// TryAcquireSiteFileOpLock serializes a long file operation with other site
+// mutations while allowing an already-authorized maintenance window to remain
+// active. File operations perform their own path-level maintenance checks.
+func TryAcquireSiteFileOpLock(siteID int, reason string) bool {
+	wpSiteOpMu.Lock()
+	defer wpSiteOpMu.Unlock()
+	if _, busy := wpSiteOpBusy[siteID]; busy {
+		return false
+	}
+	wpSiteOpBusy[siteID] = reason
+	return true
+}
+
 // Only the maintenance executor can enter its own persisted window.
 func tryAcquireMaintenanceOp(siteID int) bool {
 	wpSiteOpMu.Lock()

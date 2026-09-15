@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -8,6 +10,33 @@ import (
 	"testing"
 	"time"
 )
+
+func TestHealthCheckVersionRequiresRunningTargetVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"version":"v1.2.3"}`))
+	}))
+	defer server.Close()
+
+	if err := healthCheckVersion(server.URL, "1.2.3"); err != nil {
+		t.Fatalf("matching version rejected: %v", err)
+	}
+	if err := healthCheckVersion(server.URL, "v1.2.4"); err == nil {
+		t.Fatal("old running version accepted as the update target")
+	}
+}
+
+func TestHealthCheckVersionRejectsMissingVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	if err := healthCheckVersion(server.URL, "v1.2.3"); err == nil {
+		t.Fatal("health response without a process version was accepted")
+	}
+}
 
 func TestCompareVersions(t *testing.T) {
 	tests := []struct {
@@ -74,6 +103,11 @@ func TestWithinAutoUpdateWindow(t *testing.T) {
 	early := time.Date(2026, 6, 19, 1, 30, 0, 0, time.Local)
 	if !withinAutoUpdateWindow("23:00-02:00", early) {
 		t.Fatal("time inside cross-day early window was rejected")
+	}
+	for _, invalid := range []string{"", "25:00-26:00", "not-a-window"} {
+		if withinAutoUpdateWindow(invalid, base) {
+			t.Fatalf("invalid window %q was accepted", invalid)
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -11,7 +12,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -31,6 +31,16 @@ type acmeUser struct {
 	key          crypto.PrivateKey
 }
 
+var (
+	applySSLNginxConfig  = applySSLNginxToSite
+	applyHTTPNginxConfig = applyHTTPNginxToSite
+	persistSSLState      = persistSSLDatabaseState
+	persistSSLDisabled   = persistSSLDisabledDatabaseState
+	restoreSSLState      = restoreSSLDatabaseState
+	restoreSSLCertDir    = restorePublishedSSLCertDir
+	removeSSLCertDir     = os.RemoveAll
+)
+
 func (u *acmeUser) GetEmail() string                        { return u.Email }
 func (u *acmeUser) GetRegistration() *registration.Resource { return u.Registration }
 func (u *acmeUser) GetPrivateKey() crypto.PrivateKey        { return u.key }
@@ -42,6 +52,12 @@ func executeEnableSSL(task *Task) TaskResult {
 	}
 
 	site := payload.Site
+	if site == nil {
+		return TaskResult{Success: false, Message: "网站不存在"}
+	}
+	if blocked := rejectPausedSiteConfiguration(site.ID); blocked != nil {
+		return *blocked
+	}
 	cfg := config.AppConfig
 	certDir := filepath.Join(cfg.Paths.Certificates, site.Domain)
 	certPath := filepath.Join(certDir, "fullchain.pem")
@@ -92,11 +108,23 @@ func executeEnableSSL(task *Task) TaskResult {
 		}
 	}
 
+	if applyErr = publishSSLCertificate(site, certDir, stageDir, certPath, keyPath, expiry, payload.Mode); applyErr != nil {
+		log.Printf("应用SSL配置失败: %v", applyErr)
+		return taskFailure("应用SSL配置失败", applyErr)
+	}
+
+	return TaskResult{
+		Success: true,
+		Message: fmt.Sprintf("网站 %s SSL 已启用（到期: %s）", site.Domain, expiry.Format("2006-01-02")),
+	}
+}
+
+func publishSSLCertificate(site *models.Website, certDir, stageDir, certPath, keyPath string, expiry time.Time, source string) error {
 	backupDir := fmt.Sprintf("%s.previous-%d", certDir, time.Now().UnixNano())
 	hadOldCertDir := false
 	if _, err := os.Stat(certDir); err == nil {
 		if err := os.Rename(certDir, backupDir); err != nil {
-			return taskFailure("备份现有证书失败", err)
+			return fmt.Errorf("备份现有证书失败: %w", err)
 		}
 		hadOldCertDir = true
 	}
@@ -104,25 +132,28 @@ func executeEnableSSL(task *Task) TaskResult {
 		if hadOldCertDir {
 			logRecoveryFailure("安装新证书失败后恢复旧证书", os.Rename(backupDir, certDir))
 		}
-		return taskFailure("安装新证书失败", err)
+		return fmt.Errorf("安装新证书失败: %w", err)
 	}
 
-	if applyErr = applySSLToSite(site, certPath, keyPath, expiry); applyErr != nil {
-		logRecoveryFailure("应用SSL配置失败后清理新证书", os.RemoveAll(certDir))
-		if hadOldCertDir {
-			logRecoveryFailure("应用SSL配置失败后恢复旧证书", os.Rename(backupDir, certDir))
+	if err := persistSSLState(site.ID, certPath, keyPath, expiry, source); err != nil {
+		if restoreErr := restoreSSLCertDir(certDir, backupDir, hadOldCertDir); restoreErr != nil {
+			return fmt.Errorf("保存SSL状态失败: %v；恢复旧证书也失败: %w", err, restoreErr)
 		}
-		log.Printf("应用SSL配置失败: %v", applyErr)
-		return taskFailure("应用SSL配置失败", applyErr)
+		return fmt.Errorf("保存SSL状态失败: %w", err)
+	}
+
+	if err := applySSLNginxConfig(site, certPath, keyPath); err != nil {
+		dbRestoreErr := restoreSSLState(site)
+		certRestoreErr := restoreSSLCertDir(certDir, backupDir, hadOldCertDir)
+		if dbRestoreErr != nil || certRestoreErr != nil {
+			return fmt.Errorf("应用Nginx配置失败: %v；恢复数据库失败: %v；恢复旧证书失败: %v", err, dbRestoreErr, certRestoreErr)
+		}
+		return fmt.Errorf("应用Nginx配置失败，已恢复原状态: %w", err)
 	}
 	if hadOldCertDir {
 		logRecoveryFailure("清理旧证书备份", os.RemoveAll(backupDir))
 	}
-
-	return TaskResult{
-		Success: true,
-		Message: fmt.Sprintf("网站 %s SSL 已启用（到期: %s）", site.Domain, expiry.Format("2006-01-02")),
-	}
+	return nil
 }
 
 func FriendlySSLError(err error) string {
@@ -154,34 +185,40 @@ func executeRemoveSSL(task *Task) TaskResult {
 	}
 
 	site := payload.Site
-	cfg := config.AppConfig
-
-	certDir := filepath.Join(cfg.Paths.Certificates, site.Domain)
-	os.RemoveAll(certDir)
-
-	engine := NewTemplateEngine(cfg.Panel.BackupDir)
-	nginxData, err := nginxDataFromSiteChecked(site)
-	if err != nil {
-		return taskFailure("CDN 真实 IP 配置无效", err)
+	if site == nil {
+		return TaskResult{Success: false, Message: "网站不存在"}
 	}
-	nginxData.UseSSL = false
-	nginxData.SSLCertPath = ""
-	nginxData.SSLKeyPath = ""
-
-	nginxConfig, err := engine.RenderNginxConfig(nginxData)
-	if err != nil {
-		log.Printf("渲染 HTTP 配置失败: %v", err)
-		return taskFailure("渲染 HTTP 配置失败", err)
+	if blocked := rejectPausedSiteConfiguration(site.ID); blocked != nil {
+		return *blocked
+	}
+	if locked, err := SiteMigrationLocked(context.Background(), site.ID, site.Domain); err != nil {
+		return taskFailure("检查网站搬家状态失败", err)
+	} else if locked {
+		return TaskResult{Success: false, Message: "网站正在搬家，不能删除 SSL 证书"}
 	}
 
-	if err := engine.ApplyNginxConfig(nginxConfig, site.NginxConfPath,
-		nginxEnabledPath(cfg, site.NginxConfPath, site.Domain)); err != nil {
-		log.Printf("应用 HTTP 配置失败: %v", err)
-		return taskFailure("应用 HTTP 配置失败", err)
+	return removeSSLCertificate(site, filepath.Join(config.AppConfig.Paths.Certificates, site.Domain))
+}
+
+func removeSSLCertificate(site *models.Website, certDir string) TaskResult {
+	if err := persistSSLDisabled(site.ID); err != nil {
+		log.Printf("保存 SSL 关闭状态失败: %v", err)
+		return taskFailure("保存 SSL 关闭状态失败", err)
 	}
 
-	db := database.GetDB()
-	db.Exec(`UPDATE websites SET ssl_enabled = 0, ssl_cert_path = '', ssl_key_path = '', ssl_expires_at = NULL, ssl_last_error = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, site.ID)
+	if err := applyHTTPNginxConfig(site); err != nil {
+		if restoreErr := restoreSSLState(site); restoreErr != nil {
+			log.Printf("应用 HTTP 配置失败，且恢复 SSL 数据库状态失败: apply_error=%v restore_error=%v", err, restoreErr)
+			return TaskResult{Success: false, Message: "切换 HTTP 失败，且原 SSL 状态恢复失败，请立即检查网站配置"}
+		}
+		log.Printf("应用 HTTP 配置失败，数据库 SSL 状态已恢复且证书未删除: %v", err)
+		return TaskResult{Success: false, Message: "切换 HTTP 失败，数据库 SSL 状态已恢复且证书未删除，请检查 Nginx 当前配置"}
+	}
+
+	if err := removeSSLCertDir(certDir); err != nil {
+		log.Printf("SSL 已关闭，但旧证书文件清理失败: %v", err)
+		return TaskResult{Success: false, Message: "SSL 已关闭并恢复为 HTTP，但旧证书文件清理失败，请人工检查"}
+	}
 
 	return TaskResult{Success: true, Message: "网站 " + site.Domain + " SSL 证书已删除，已恢复为 HTTP"}
 }
@@ -383,7 +420,7 @@ func (w *webrootProvider) CleanUp(domain, token, keyAuth string) error {
 	return nil
 }
 
-func applySSLToSite(site *models.Website, certPath, keyPath string, expiry time.Time) error {
+func applySSLNginxToSite(site *models.Website, certPath, keyPath string) error {
 	cfg := config.AppConfig
 
 	engine := NewTemplateEngine(cfg.Panel.BackupDir)
@@ -405,12 +442,84 @@ func applySSLToSite(site *models.Website, certPath, keyPath string, expiry time.
 		return fmt.Errorf("应用 Nginx 配置失败: %w", err)
 	}
 
-	db := database.GetDB()
-	_, err = db.Exec(
-		`UPDATE websites SET ssl_enabled = 1, ssl_cert_path = ?, ssl_key_path = ?, ssl_expires_at = ?, ssl_last_error = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		certPath, keyPath, expiry, site.ID,
+	return nil
+}
+
+func applyHTTPNginxToSite(site *models.Website) error {
+	cfg := config.AppConfig
+	engine := NewTemplateEngine(cfg.Panel.BackupDir)
+	nginxData, err := nginxDataFromSiteChecked(site)
+	if err != nil {
+		return fmt.Errorf("CDN 真实 IP 配置无效: %w", err)
+	}
+	nginxData.UseSSL = false
+	nginxData.SSLCertPath = ""
+	nginxData.SSLKeyPath = ""
+
+	nginxConfig, err := engine.RenderNginxConfig(nginxData)
+	if err != nil {
+		return fmt.Errorf("渲染 HTTP 配置失败: %w", err)
+	}
+	if err := engine.ApplyNginxConfig(nginxConfig, site.NginxConfPath,
+		nginxEnabledPath(cfg, site.NginxConfPath, site.Domain)); err != nil {
+		return fmt.Errorf("应用 HTTP 配置失败: %w", err)
+	}
+	return nil
+}
+
+func persistSSLDatabaseState(siteID int, certPath, keyPath string, expiry time.Time, source string) error {
+	result, err := database.GetDB().Exec(
+		`UPDATE websites SET ssl_enabled = 1, ssl_cert_path = ?, ssl_key_path = ?, ssl_expires_at = ?, ssl_last_error = '', ssl_cert_source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		certPath, keyPath, expiry, source, siteID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return fmt.Errorf("网站SSL状态未更新")
+	}
+	return nil
+}
+
+func persistSSLDisabledDatabaseState(siteID int) error {
+	result, err := database.GetDB().Exec(
+		`UPDATE websites SET ssl_enabled = 0, ssl_cert_path = '', ssl_key_path = '', ssl_expires_at = NULL, ssl_last_error = '', ssl_cert_source = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		siteID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return fmt.Errorf("网站SSL关闭状态未更新")
+	}
+	return nil
+}
+
+func restoreSSLDatabaseState(site *models.Website) error {
+	result, err := database.GetDB().Exec(
+		`UPDATE websites SET ssl_enabled = ?, ssl_cert_path = ?, ssl_key_path = ?, ssl_expires_at = ?, ssl_last_error = ?, ssl_cert_source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		boolInt(site.SSLEnabled), site.SSLCertPath, site.SSLKeyPath, site.SSLExpiresAt, site.SSLLastError, site.SSLCertSource, site.ID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return fmt.Errorf("网站原SSL状态未恢复")
+	}
+	return nil
+}
+
+func restorePublishedSSLCertDir(certDir, backupDir string, hadOld bool) error {
+	if err := os.RemoveAll(certDir); err != nil {
+		return err
+	}
+	if hadOld {
+		return os.Rename(backupDir, certDir)
+	}
+	return nil
 }
 
 func validateCertificate(certPath string, domain string) (time.Time, error) {
@@ -482,7 +591,7 @@ func executeRenewSSL(task *Task) TaskResult {
 	rows, err := db.Query(
 		`SELECT id, name, domain, aliases, status, system_user, web_root, document_root_subdir, log_dir,
 		        db_name, db_user, php_pool_path, nginx_conf_path, site_type, ssl_enabled,
-		        ssl_cert_path, ssl_key_path, template_version, ssl_expires_at
+		        ssl_cert_path, ssl_key_path, ssl_cert_source, template_version, ssl_expires_at
 		 FROM websites WHERE ssl_enabled = 1 AND ssl_cert_path != ''`,
 	)
 	if err != nil {
@@ -505,7 +614,7 @@ func executeRenewSSL(task *Task) TaskResult {
 		if scanErr := rows.Scan(
 			&w.ID, &w.Name, &w.Domain, &aliases, &status, &w.SystemUser,
 			&w.WebRoot, &w.DocumentRootSubdir, &w.LogDir, &w.DBName, &w.DBUser, &w.PHPPoolPath,
-			&w.NginxConfPath, &w.SiteType, &sslEnabled, &w.SSLCertPath, &w.SSLKeyPath,
+			&w.NginxConfPath, &w.SiteType, &sslEnabled, &w.SSLCertPath, &w.SSLKeyPath, &w.SSLCertSource,
 			&w.TemplateVersion, &sslExpiresAt,
 		); scanErr != nil {
 			failed = append(failed, w.Domain+"(读取失败)")
@@ -515,6 +624,9 @@ func executeRenewSSL(task *Task) TaskResult {
 		w.Status = models.WebsiteStatus(status)
 		w.SSLEnabled = sslEnabled == 1
 		w.SSLExpiresAt = sslExpiresAt
+		if !sslAutoRenewalEligible(&w) {
+			continue
+		}
 
 		expiry, certErr := validateCertificate(w.SSLCertPath, w.Domain)
 		if certErr != nil {
@@ -531,32 +643,64 @@ func executeRenewSSL(task *Task) TaskResult {
 			failed = append(failed, w.Domain+"(证书已过期)")
 			continue
 		}
+		if !TryAcquireSiteOpLock(w.ID, "ssl_renewal") {
+			failed = append(failed, w.Domain+"(网站正在执行其它维护操作)")
+			continue
+		}
+		locked, lockErr := SiteMigrationLocked(context.Background(), w.ID, w.Domain)
+		if lockErr != nil || locked {
+			ReleaseSiteOpLock(w.ID)
+			if lockErr != nil {
+				failed = append(failed, w.Domain+"(检查搬家状态失败)")
+			} else {
+				failed = append(failed, w.Domain+"(网站正在搬家)")
+			}
+			continue
+		}
 
 		documentRoot, docRootErr := EnsureEffectiveDocumentRoot(w.WebRoot, w.SiteType, w.DocumentRootSubdir, w.SystemUser)
 		if docRootErr != nil {
+			ReleaseSiteOpLock(w.ID)
 			log.Printf("SSL续期准备验证目录失败 domain=%s: %v", w.Domain, docRootErr)
 			failed = append(failed, w.Domain+"(验证目录失败)")
 			continue
 		}
 
-		newExpiry, renewErr := obtainLegoCert(w.Domain, w.Aliases, documentRoot,
-			filepath.Join(cfg.Paths.Certificates, w.Domain))
-		if renewErr != nil {
-			log.Printf("SSL续期失败 domain=%s: %v", w.Domain, renewErr)
-			db.Exec("UPDATE websites SET ssl_last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-				FriendlySSLError(renewErr), w.ID)
-			failed = append(failed, w.Domain+"(续期失败)")
+		certDir := filepath.Join(cfg.Paths.Certificates, w.Domain)
+		stageDir := fmt.Sprintf("%s.pending-%d", certDir, time.Now().UnixNano())
+		if err := os.MkdirAll(stageDir, 0700); err != nil {
+			ReleaseSiteOpLock(w.ID)
+			failed = append(failed, w.Domain+"(准备续期目录失败)")
 			continue
 		}
-
-		db.Exec("UPDATE websites SET ssl_expires_at = ?, ssl_last_error = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-			newExpiry, w.ID)
+		newExpiry, renewErr := obtainLegoCert(w.Domain, w.Aliases, documentRoot, stageDir)
+		if renewErr != nil {
+			_ = os.RemoveAll(stageDir)
+			ReleaseSiteOpLock(w.ID)
+			log.Printf("SSL续期失败 domain=%s: %v", w.Domain, renewErr)
+			if stateErr := persistSSLRenewalError(w.ID, FriendlySSLError(renewErr)); stateErr != nil {
+				log.Printf("SSL续期错误状态保存失败 domain=%s: %v", w.Domain, stateErr)
+				failed = append(failed, w.Domain+"(续期失败且错误状态未保存)")
+			} else {
+				failed = append(failed, w.Domain+"(续期失败)")
+			}
+			continue
+		}
+		if renewErr = publishSSLCertificate(&w, certDir, stageDir, filepath.Join(certDir, "fullchain.pem"), filepath.Join(certDir, "privkey.pem"), newExpiry, "auto"); renewErr != nil {
+			_ = os.RemoveAll(stageDir)
+			ReleaseSiteOpLock(w.ID)
+			log.Printf("SSL续期发布失败 domain=%s: %v", w.Domain, renewErr)
+			_ = persistSSLRenewalError(w.ID, "SSL 续期发布失败")
+			failed = append(failed, w.Domain+"(续期发布失败)")
+			continue
+		}
+		ReleaseSiteOpLock(w.ID)
 
 		renewed = append(renewed, w.Domain)
 	}
-
-	if len(renewed) > 0 {
-		exec.Command("nginx", "-s", "reload").Run()
+	if err := rows.Err(); err != nil {
+		failed = append(failed, "读取网站列表失败")
+		log.Printf("遍历SSL站点失败: %v", err)
 	}
 
 	msg := fmt.Sprintf("续期完成。成功: %d", len(renewed))
@@ -568,7 +712,23 @@ func executeRenewSSL(task *Task) TaskResult {
 		log.Printf("SSL 自动续期: %s", msg)
 	}
 
-	return TaskResult{Success: true, Message: msg, Data: map[string]interface{}{"renewed": renewed, "failed": failed}}
+	return TaskResult{Success: len(failed) == 0, Message: msg, Data: map[string]interface{}{"renewed": renewed, "failed": failed}}
+}
+
+func sslAutoRenewalEligible(site *models.Website) bool {
+	return site != nil && site.Status != models.StatusPaused && site.SSLCertSource == "auto"
+}
+
+func persistSSLRenewalError(siteID int, message string) error {
+	result, err := database.GetDB().Exec("UPDATE websites SET ssl_last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", message, siteID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return fmt.Errorf("网站 SSL 续期错误状态未更新")
+	}
+	return nil
 }
 
 func StartSSLRenewalScheduler() {

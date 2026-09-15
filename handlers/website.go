@@ -31,7 +31,7 @@ import (
 // canonical column list shared by all website queries.
 const websiteCols = `id, name, domain, aliases, status, system_user, web_root, document_root_subdir, log_dir,
 	db_name, db_user, php_pool_path, nginx_conf_path, site_type, ssl_enabled,
-	ssl_cert_path, ssl_key_path, ssl_expires_at, ssl_last_error, ssl_export_enabled, template_version, access_log_mode,
+	ssl_cert_path, ssl_key_path, ssl_expires_at, ssl_last_error, ssl_cert_source, ssl_export_enabled, template_version, access_log_mode,
 	fastcgi_cache_enabled, fastcgi_cache_ttl, fastcgi_cache_key,
 	monitoring_enabled, monitoring_interval, disable_wp_updates, disable_file_editing,
 		xmlrpc_enabled, disable_application_passwords, wp_debug_enabled, wp_post_revisions, wp_memory_limit,
@@ -42,6 +42,12 @@ const websiteCols = `id, name, domain, aliases, status, system_user, web_root, d
 const fileLockBlockedMessage = "该站点已开启文件锁定，请先解除文件锁定后再执行此维护操作"
 
 var wpOptimizationSiteLocks sync.Map // siteID(int) -> *sync.Mutex
+
+var (
+	updateSiteFastCGICache            = executor.UpdateSiteFastCGICache
+	publishSiteNginxWithCacheRollback = executor.PublishSiteNginxWithCacheRollback
+	clearSiteCache                    = executor.ClearSiteCache
+)
 
 func wpOptimizationSiteLock(id int) *sync.Mutex {
 	value, _ := wpOptimizationSiteLocks.LoadOrStore(id, &sync.Mutex{})
@@ -104,7 +110,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 		&w.ID, &w.Name, &w.Domain, &aliases, &status, &w.SystemUser,
 		&w.WebRoot, &w.DocumentRootSubdir, &w.LogDir, &w.DBName, &w.DBUser, &w.PHPPoolPath,
 		&w.NginxConfPath, &w.SiteType, &sslEnabled, &w.SSLCertPath, &w.SSLKeyPath,
-		&w.SSLExpiresAt, &w.SSLLastError, &sslExportEnabled, &w.TemplateVersion, &w.AccessLogMode,
+		&w.SSLExpiresAt, &w.SSLLastError, &w.SSLCertSource, &sslExportEnabled, &w.TemplateVersion, &w.AccessLogMode,
 		&fCacheEnabled, &w.FCacheTTL, &w.FCacheKey,
 		&monitoringEnabled, &monitoringInterval, &disableWPUpdates, &disableFileEditing,
 		&xmlrpcEnabled, &disableApplicationPasswords, &wpDebugEnabled, &wpPostRevisions, &wpMemoryLimit,
@@ -338,11 +344,13 @@ func (h *WebsiteHandler) List(c *gin.Context) {
 
 	type siteRow struct {
 		models.Website
-		AccessLogEnabled bool   `json:"access_log_enabled"`
-		AccessLogMode    string `json:"access_log_mode"`
-		FCacheEnabled    bool   `json:"fastcgi_cache_enabled"`
-		BackupEnabled    bool   `json:"backup_enabled"`
-		AIDevelopment    bool   `json:"ai_development_enabled"`
+		AccessLogEnabled            bool   `json:"access_log_enabled"`
+		AccessLogMode               string `json:"access_log_mode"`
+		FCacheEnabled               bool   `json:"fastcgi_cache_enabled"`
+		BackupEnabled               bool   `json:"backup_enabled"`
+		AIDevelopment               bool   `json:"ai_development_enabled"`
+		AnomalyMonitoringEnabled    bool   `json:"anomaly_monitoring_enabled"`
+		AnomalyMonitoringApplicable bool   `json:"anomaly_monitoring_applicable"`
 	}
 	aiDevelopmentSites := make(map[int]bool)
 	aiRows, err := db.Query("SELECT site_id FROM website_ai_development_access")
@@ -363,14 +371,40 @@ func (h *WebsiteHandler) List(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取 AI 开发授权状态失败"))
 		return
 	}
+	anomalyMonitoringSites := make(map[int]bool)
+	anomalyRows, err := db.Query("SELECT site_id, enabled FROM site_wp_anomaly_state")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询异常监控状态失败"))
+		return
+	}
+	for anomalyRows.Next() {
+		var siteID, enabled int
+		if err := anomalyRows.Scan(&siteID, &enabled); err != nil {
+			anomalyRows.Close()
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取异常监控状态失败"))
+			return
+		}
+		anomalyMonitoringSites[siteID] = enabled == 1
+	}
+	if err := anomalyRows.Err(); err != nil {
+		anomalyRows.Close()
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取异常监控状态失败"))
+		return
+	}
+	if err := anomalyRows.Close(); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("读取异常监控状态失败"))
+		return
+	}
 	result := make([]siteRow, len(websites))
 	for i, w := range websites {
 		result[i] = siteRow{
-			Website:          w,
-			AccessLogMode:    w.AccessLogMode,
-			FCacheEnabled:    w.FCacheEnabled,
-			AccessLogEnabled: w.AccessLogMode != "off",
-			AIDevelopment:    aiDevelopmentSites[w.ID],
+			Website:                     w,
+			AccessLogMode:               w.AccessLogMode,
+			FCacheEnabled:               w.FCacheEnabled,
+			AccessLogEnabled:            w.AccessLogMode != "off",
+			AIDevelopment:               aiDevelopmentSites[w.ID],
+			AnomalyMonitoringEnabled:    anomalyMonitoringSites[w.ID],
+			AnomalyMonitoringApplicable: w.SiteType == "wordpress",
 		}
 		var be int
 		db.QueryRow("SELECT enabled FROM backup_settings WHERE site_id = ?", w.ID).Scan(&be)
@@ -668,7 +702,7 @@ func (h *WebsiteHandler) ToggleStatus(c *gin.Context) {
 		}
 		taskType = executor.TaskPauseSite
 	case "enable":
-		if site.Status == models.StatusMigrated {
+		if site.Status != models.StatusPaused {
 			c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "website.status_action_unavailable")))
 			return
 		}
@@ -756,6 +790,11 @@ func (h *WebsiteHandler) RemoveSSL(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("该网站未启用SSL"))
 		return
 	}
+	if !executor.TryAcquireSiteOpLock(site.ID, "remove_ssl") {
+		c.JSON(http.StatusConflict, models.ErrorResponse("该网站正在执行其它维护操作，请稍后重试"))
+		return
+	}
+	defer executor.ReleaseSiteOpLock(site.ID)
 
 	task := executor.GlobalQueue.Enqueue(executor.TaskRemoveSSL, &executor.RemoveSSLPayload{Site: site})
 	result := <-task.ResultCh
@@ -1137,6 +1176,11 @@ func (h *WebsiteHandler) ChangeDBPassword(c *gin.Context) {
 		c.JSON(http.StatusLocked, models.ErrorResponse(fileLockBlockedMessage))
 		return
 	}
+	if !executor.TryAcquireSiteOpLock(site.ID, "change_db_password") {
+		c.JSON(http.StatusConflict, models.ErrorResponse("该网站正在执行其它维护操作，请稍后重试"))
+		return
+	}
+	defer executor.ReleaseSiteOpLock(site.ID)
 
 	var req struct {
 		NewPassword string `json:"new_password"`
@@ -1181,6 +1225,24 @@ func (h *WebsiteHandler) FixWPConfig(c *gin.Context) {
 	req.TablePrefix = strings.TrimSpace(req.TablePrefix)
 	if req.TablePrefix != "" && !executor.IsValidWPTablePrefix(req.TablePrefix) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("表前缀只能包含字母、数字和下划线，且长度不能超过 56 个字符"))
+		return
+	}
+	if !executor.TryAcquireSiteOpLock(site.ID, "wp_config_repair") {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "maintenance.operation_unavailable")))
+		return
+	}
+	defer executor.ReleaseSiteOpLock(site.ID)
+	site = getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+	if site.FileLockEnabled {
+		c.JSON(http.StatusLocked, models.ErrorResponse(fileLockBlockedMessage))
+		return
+	}
+	if locked, lockErr := executor.SiteMigrationLocked(c.Request.Context(), site.ID, site.Domain); lockErr != nil || locked {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "maintenance.operation_unavailable")))
 		return
 	}
 
@@ -1385,6 +1447,34 @@ func (h *WebsiteHandler) UpdateWPSiteURLs(c *gin.Context) {
 		}
 		return
 	}
+	if !executor.TryAcquireSiteOpLock(site.ID, "wp_site_urls_update") {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "maintenance.operation_unavailable")))
+		return
+	}
+	defer executor.ReleaseSiteOpLock(site.ID)
+	site = getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		return
+	}
+	if site.TablePrefix == "" {
+		if prefix, prefixErr := executor.ReadWPTablePrefix(site.WebRoot); prefixErr == nil {
+			site.TablePrefix = prefix
+		}
+	}
+	if !executor.IsValidWPTablePrefix(site.TablePrefix) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("未检测到表前缀，请先同步数据库信息"))
+		return
+	}
+	locked, lockErr := executor.SiteMigrationLocked(c.Request.Context(), site.ID, site.Domain)
+	if lockErr != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("无法确认网站搬家状态，请稍后重试"))
+		return
+	}
+	if locked {
+		c.JSON(http.StatusConflict, models.ErrorResponse("网站正在搬家，暂时不能修改 WordPress 站点 URL"))
+		return
+	}
 	if err := executor.UpdateWPSiteURLs(site.DBName, site.TablePrefix, req.SiteURL, req.HomeURL, cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新失败: "+err.Error()))
 		return
@@ -1523,6 +1613,19 @@ func (h *WebsiteHandler) UpdateWPAdministrator(c *gin.Context) {
 			executor.ReleaseSiteOpLock(site.ID)
 		}
 	}()
+	site = prepareWPAdministratorSite(c)
+	if site == nil {
+		return
+	}
+	locked, lockErr := executor.SiteMigrationLocked(c.Request.Context(), site.ID, site.Domain)
+	if lockErr != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "maintenance.operation_unavailable")))
+		return
+	}
+	if locked {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "maintenance.operation_unavailable")))
+		return
+	}
 
 	if err := executor.PreflightWPAdministratorUpdate(c.Request.Context(), site, req); err != nil {
 		log.Printf("WordPress 管理员修改预检失败 site=%d user=%d: %v", site.ID, req.UserID, err)
@@ -2142,7 +2245,10 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 		return
 	}
 
-	executor.InstallPluginPermissions(domain, systemUser, pluginDir)
+	if err := executor.InstallPluginPermissions(domain, systemUser, pluginDir); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("插件已部署，但权限设置失败: "+err.Error()))
+		return
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"message":   "插件已安装",
@@ -2221,13 +2327,10 @@ func (h *WebsiteHandler) UpdateCache(c *gin.Context) {
 	if req.Enabled {
 		enabled = 1
 	}
-	database.GetDB().Exec("UPDATE websites SET fastcgi_cache_enabled = ?, fastcgi_cache_ttl = ? WHERE id = ?", enabled, req.TTL, id)
-
-	executor.GoSafe(func() {
-		if err := executor.RegenerateSiteNginx(id); err != nil {
-			log.Printf("刷新站点 Nginx 配置失败 site=%d: %v", id, err)
-		}
-	})
+	if err := updateSiteFastCGICache(id, enabled, req.TTL); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("缓存设置未生效: "+err.Error()))
+		return
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "缓存设置已更新"}))
 }
@@ -2378,11 +2481,11 @@ func (h *WebsiteHandler) SaveWPOptimizations(c *gin.Context) {
 
 	// FastCGI / XML-RPC 配置变化时重载 Nginx
 	if oldFCacheEnabled != fcEnabled || oldFCacheTTL != req.FCacheTTL || oldXMLRPCEnabled != xmlrpcEnabled {
-		executor.GoSafe(func() {
-			if err := executor.RegenerateSiteNginx(id); err != nil {
-				log.Printf("刷新站点 Nginx 配置失败 site=%d: %v", id, err)
-			}
-		})
+		if err := publishSiteNginxWithCacheRollback(id, oldFCacheEnabled, oldFCacheTTL); err != nil {
+			recordHandlerOperationLog("wp_optimizations", domain, "failed", err.Error())
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("其它设置已保存，但缓存或 Nginx 设置未生效: "+err.Error()))
+			return
+		}
 	}
 	if domain != "" {
 		recordHandlerOperationLog("wp_optimizations", domain, "success", wpOptimizationsLogMessage(req.FCacheEnabled, req.FCacheTTL, req.DisableWPUpdates, req.DisableFileEditing, req.XMLRPCEnabled, req.DisableApplicationPasswords, req.WPDebugEnabled, wpDebugDisplay, req.WPPostRevisions, req.WPMemoryLimit))
@@ -2638,7 +2741,20 @@ func (h *WebsiteHandler) SaveMonitoring(c *gin.Context) {
 	if req.Enabled {
 		enabled = 1
 	}
-	database.GetDB().Exec("UPDATE websites SET monitoring_enabled = ?, monitoring_interval = ? WHERE id = ?", enabled, req.Interval, id)
+	result, err := database.GetDB().Exec("UPDATE websites SET monitoring_enabled = ?, monitoring_interval = ? WHERE id = ?", enabled, req.Interval, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("监控设置未保存"))
+		return
+	}
+	affected, err := result.RowsAffected()
+	if err != nil || affected != 1 {
+		if affected == 0 {
+			c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
+		} else {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("无法确认监控设置是否保存"))
+		}
+		return
+	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "已保存"}))
 }
 
@@ -2649,7 +2765,10 @@ func (h *WebsiteHandler) ClearCache(c *gin.Context) {
 		return
 	}
 
-	executor.GoSafe(func() { executor.ClearSiteCache(id) })
+	if err := clearSiteCache(id); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("缓存未清除: "+err.Error()))
+		return
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "缓存已清除，旧缓存将在60分钟内自动回收"}))
 }
@@ -2676,6 +2795,13 @@ func (h *WebsiteHandler) ReinstallWordPress(c *gin.Context) {
 		return
 	}
 	if rejectIfAIDevelopmentAccessActive(c, id) {
+		return
+	}
+	if locked, lockErr := executor.SiteMigrationLocked(c.Request.Context(), id, domain); lockErr != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "common.operation_failed")))
+		return
+	} else if locked {
+		c.JSON(http.StatusConflict, models.ErrorResponse("网站正在搬家，不能重装 WordPress"))
 		return
 	}
 
@@ -2830,20 +2956,15 @@ func (h *CacheHelperHandler) UpdateCacheSettings(c *gin.Context) {
 		req.TTL = 86400
 	}
 	db := database.GetDB()
-	_, err := db.Exec("UPDATE websites SET fastcgi_cache_ttl = ? WHERE (domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%') ESCAPE '\\')", req.TTL, req.Domain, escapeLike(req.Domain))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("更新失败"))
+	var siteID int
+	var enabled int
+	if err := db.QueryRow("SELECT id, fastcgi_cache_enabled FROM websites WHERE (domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%') ESCAPE '\\')", req.Domain, escapeLike(req.Domain)).Scan(&siteID, &enabled); err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("网站不存在"))
 		return
 	}
-
-	var siteID int
-	db.QueryRow("SELECT id FROM websites WHERE (domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%') ESCAPE '\\')", req.Domain, escapeLike(req.Domain)).Scan(&siteID)
-	if siteID > 0 {
-		executor.GoSafe(func() {
-			if err := executor.RegenerateSiteNginx(siteID); err != nil {
-				log.Printf("刷新站点 Nginx 配置失败 site=%d: %v", siteID, err)
-			}
-		})
+	if err := updateSiteFastCGICache(siteID, enabled, req.TTL); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("TTL 更新未生效: "+err.Error()))
+		return
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "TTL 已更新", "ttl": req.TTL}))
@@ -2872,7 +2993,10 @@ func (h *CacheHelperHandler) ClearByDomain(c *gin.Context) {
 		return
 	}
 
-	executor.GoSafe(func() { executor.ClearSiteCache(siteID) })
+	if err := clearSiteCache(siteID); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("缓存未清除: "+err.Error()))
+		return
+	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "缓存已清除"}))
 }
 
@@ -3097,11 +3221,11 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 			return
 		}
 		if oldFCacheEnabled != fcEnabled || oldFCacheTTL != req.TTL {
-			executor.GoSafe(func() {
-				if err := executor.RegenerateSiteNginx(site.ID); err != nil {
-					log.Printf("刷新站点 Nginx 配置失败 site=%d: %v", site.ID, err)
-				}
-			})
+			if err := publishSiteNginxWithCacheRollback(site.ID, oldFCacheEnabled, oldFCacheTTL); err != nil {
+				recordHandlerOperationLog("wp_optimizations", req.Domain, "failed", err.Error())
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse("缓存设置未生效: "+err.Error()))
+				return
+			}
 		}
 		recordHandlerOperationLog("wp_optimizations", req.Domain, "success", fmt.Sprintf("文件保护期间保存可用设置：FastCGI缓存=%t, TTL=%d秒", req.Enabled, req.TTL))
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "可用设置已保存，受文件保护的设置保持不变"}))
@@ -3149,14 +3273,10 @@ func (h *CacheHelperHandler) UpdateOptimizerSettings(c *gin.Context) {
 
 	// FastCGI 配置变化时重载 Nginx
 	if oldFCacheEnabled != fcEnabled || oldFCacheTTL != req.TTL {
-		var siteID int
-		db.QueryRow("SELECT id FROM websites WHERE domain = ? OR (char(10) || aliases || char(10)) LIKE ('%' || char(10) || ? || char(10) || '%') ESCAPE '\\'", req.Domain, escapeLike(req.Domain)).Scan(&siteID)
-		if siteID > 0 {
-			executor.GoSafe(func() {
-				if err := executor.RegenerateSiteNginx(siteID); err != nil {
-					log.Printf("刷新站点 Nginx 配置失败 site=%d: %v", siteID, err)
-				}
-			})
+		if err := publishSiteNginxWithCacheRollback(site.ID, oldFCacheEnabled, oldFCacheTTL); err != nil {
+			recordHandlerOperationLog("wp_optimizations", req.Domain, "failed", err.Error())
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("其它设置已保存，但缓存设置未生效: "+err.Error()))
+			return
 		}
 	}
 	recordHandlerOperationLog("wp_optimizations", req.Domain, "success", wpOptimizationsLogMessage(req.Enabled, req.TTL, req.DisableWPUpdates, req.DisableFileEditing, false, false, req.WPDebugEnabled, wpDebugDisplay, req.WPPostRevisions, req.WPMemoryLimit))

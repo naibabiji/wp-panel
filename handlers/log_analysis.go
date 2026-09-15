@@ -154,7 +154,6 @@ func (h *LogAnalysisHandler) Start(c *gin.Context) {
 		return
 	}
 	defer releaseStart()
-	_ = recoverStaleLogAnalysisJobs(db)
 	var runningID int
 	if err := db.QueryRow(`SELECT id FROM log_analysis_jobs WHERE site_id=? AND status IN (?,?) ORDER BY id DESC LIMIT 1`,
 		site.ID, models.LogAnalysisPending, models.LogAnalysisRunning).Scan(&runningID); err == nil {
@@ -175,12 +174,6 @@ func (h *LogAnalysisHandler) Start(c *gin.Context) {
 		runLogAnalysis(int(jobID), &siteCopy, req.StartAt, req.EndAt, lang)
 	})
 	c.JSON(http.StatusAccepted, models.SuccessResponse(gin.H{"id": jobID, "status": models.LogAnalysisPending}))
-}
-
-func recoverStaleLogAnalysisJobs(db *sql.DB) error {
-	_, err := db.Exec(`UPDATE log_analysis_jobs SET status=?, error_message=?, updated_at=CURRENT_TIMESTAMP
-		WHERE status IN (?,?) AND updated_at <= datetime('now','-30 minutes')`, models.LogAnalysisFailed, "analysis interrupted", models.LogAnalysisPending, models.LogAnalysisRunning)
-	return err
 }
 
 func (h *LogAnalysisHandler) Get(c *gin.Context) {

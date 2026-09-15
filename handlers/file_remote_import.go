@@ -101,6 +101,10 @@ func (h *FileHandler) RemoteImport(c *gin.Context) {
 		respondFileWriteError(c, err)
 		return
 	}
+	if err := checkFileMigrationWrite(*req.SiteID); err != nil {
+		c.JSON(http.StatusConflict, models.ErrorResponse(err.Error()))
+		return
+	}
 	if info, err := os.Stat(filepath.Dir(destPath)); err != nil || !info.IsDir() {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "files.target_directory_missing")))
 		return
@@ -121,7 +125,7 @@ func (h *FileHandler) RemoteImport(c *gin.Context) {
 	}
 
 	task := createRemoteImportTask(filename, lang)
-	go runRemoteImport(task.ID, u.String(), req.AllowInsecureTLS, destPath, siteRoot, systemUser)
+	go runRemoteImport(task.ID, u.String(), req.AllowInsecureTLS, *req.SiteID, destPath, siteRoot, systemUser)
 
 	c.JSON(http.StatusOK, models.SuccessResponse(taskSnapshot(task.ID)))
 }
@@ -206,7 +210,7 @@ func updateRemoteImportTask(id string, update func(*remoteImportTask)) {
 	task.UpdatedAt = time.Now().Unix()
 }
 
-func runRemoteImport(taskID, rawURL string, allowInsecureTLS bool, destPath, siteRoot, systemUser string) {
+func runRemoteImport(taskID, rawURL string, allowInsecureTLS bool, siteID int, destPath, siteRoot, systemUser string) {
 	tmpPath := destPath + ".download_tmp-" + filepath.Base(taskID)
 	copyOK := false
 	defer func() {
@@ -307,18 +311,26 @@ func runRemoteImport(taskID, rawURL string, allowInsecureTLS bool, destPath, sit
 		failRemoteImportTask(taskID, i18n.T(taskLang(taskID), "files.remote_import_chmod_failed"))
 		return
 	}
+	if siteRoot != "" && systemUser != "" {
+		if err := executor.ChownSitePath(tmpPath, siteRoot, systemUser); err != nil {
+			failRemoteImportTask(taskID, i18n.T(taskLang(taskID), "files.remote_import_save_failed", i18n.P{"error": err.Error()}))
+			return
+		}
+	}
+	if err := checkSiteFileLockWrite(siteID, destPath, false, false); err != nil {
+		failRemoteImportTask(taskID, err.Error())
+		return
+	}
+	if err := checkFileMigrationWrite(siteID); err != nil {
+		failRemoteImportTask(taskID, err.Error())
+		return
+	}
 	if err := os.Rename(tmpPath, destPath); err != nil {
 		failRemoteImportTask(taskID, i18n.T(taskLang(taskID), "files.remote_import_rename_failed"))
 		return
 	}
 	copyOK = true
 	message := i18n.T(taskLang(taskID), "files.remote_import_completed")
-	if siteRoot != "" && systemUser != "" {
-		if err := executor.ChownSitePath(destPath, siteRoot, systemUser); err != nil {
-			log.Printf("远程导入权限设置失败 path=%s user=%s: %v", destPath, systemUser, err)
-			message = i18n.T(taskLang(taskID), "files.remote_import_completed_fix_permissions")
-		}
-	}
 	updateRemoteImportTask(taskID, func(t *remoteImportTask) {
 		t.Status = "success"
 		t.Message = message

@@ -491,6 +491,16 @@ func TestWPFleetOverviewRouteRegistered(t *testing.T) {
 	}
 }
 
+func TestLoginRouteUsesCSRFMiddleware(t *testing.T) {
+	source, err := os.ReadFile("router.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(source, []byte(`panelGroup.POST("/api/auth/login", middleware.CSRF(), func(c *gin.Context)`)) {
+		t.Fatal("login route is missing CSRF middleware")
+	}
+}
+
 func TestWPFleetOverviewPanelIsIsolatedAndWired(t *testing.T) {
 	websites, err := os.ReadFile("../templates/websites.html")
 	if err != nil {
@@ -562,6 +572,52 @@ func TestWPFleetOverviewPanelIsIsolatedAndWired(t *testing.T) {
 	rendered := renderPage(t, "wordpress_overview.html", "wordpress_overview_content")
 	if !bytes.Contains(rendered, []byte(`function wpFleetOverview()`)) {
 		t.Fatal("rendered WordPress overview page is missing the fleet overview component")
+	}
+}
+
+func TestWebsiteListShowsSeparateMonitoringColumns(t *testing.T) {
+	websites, err := os.ReadFile("../templates/websites.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range [][]byte{
+		[]byte(`{{t .Lang "website.online_monitoring"}}`),
+		[]byte(`{{t .Lang "website.anomaly_monitoring"}}`),
+		[]byte(`site.anomaly_monitoring_applicable`),
+		[]byte(`site.anomaly_monitoring_enabled`),
+		[]byte(`t('website.not_applicable')`),
+		[]byte(`colspan="12"`),
+		[]byte(`transition-colors hover:bg-gray-700/40`),
+	} {
+		if !bytes.Contains(websites, required) {
+			t.Fatalf("websites template missing %q", required)
+		}
+	}
+	if bytes.Contains(websites, []byte(`{{t .Lang "website.monitoring"}}`)) {
+		t.Fatal("website list still uses the ambiguous combined monitoring heading")
+	}
+}
+
+func TestWebsiteListShowsStatusTaskMessage(t *testing.T) {
+	websites, err := os.ReadFile("../templates/websites.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(websites, []byte(`showToast(resp.data?.message || t('common.operation_success'), 'success')`)) {
+		t.Fatal("website status action does not display the task result message")
+	}
+	if !bytes.Contains(websites, []byte(`if (status === 'deleting') return t('website.status_deleting')`)) {
+		t.Fatal("website list does not display the persisted deleting state")
+	}
+}
+
+func TestWebsiteListHoverStyleIsCompiled(t *testing.T) {
+	css, err := os.ReadFile("../static/css/main.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(css, []byte(`hover\:bg-gray-700\/40:hover`)) {
+		t.Fatal("compiled CSS is missing the website row hover rule")
 	}
 }
 
@@ -1241,7 +1297,10 @@ func TestWPInventoryPanelAPIContract(t *testing.T) {
 		[]byte(`@click="selectTab('backups')"`),
 		[]byte(`'/wp-update-backups'`),
 		[]byte(`'/wp-update-backups/' + encodeURIComponent(backup.backup_id) + '/restore'`),
-		[]byte(`t('wp_update_backup.restore_confirm'`),
+		[]byte(`'wp_update_backup.restore_confirm'`),
+		[]byte(`'wp_update_backup.restore_batch_confirm'`),
+		[]byte(`backup.batch_shared`),
+		[]byte(`'wp_plugin_batch.rollback_reuse_confirm'`),
 		[]byte(`this.invalidatePages();`),
 		[]byte(`await this.loadSummary();`),
 		[]byte(`setTimeout(() =>`),

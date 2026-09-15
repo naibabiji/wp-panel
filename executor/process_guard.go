@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,9 +20,13 @@ import (
 
 const guardCommandTimeout = 5 * time.Second
 
+var ErrUnknownGuardService = errors.New("unknown guarded service")
+
 var (
 	guardCommand            = runGuardCommand
 	serviceIncidentNotifier = sendServiceIncidentNotification
+	guardStateWaitTimeout   = 3 * time.Second
+	guardStatePollInterval  = 100 * time.Millisecond
 )
 
 type GuardService struct {
@@ -94,37 +100,71 @@ func SetServiceState(serviceName, action string) error {
 		}
 	}
 	if s == nil {
-		return nil
+		return fmt.Errorf("%w: %s", ErrUnknownGuardService, serviceName)
 	}
 
+	oldPaused := s.Paused
+	oldRunning := s.Running
+	if state := readGuardServiceState(serviceName); state.valid {
+		oldRunning = state.active
+	}
+	var commandAction string
+	var wantActive bool
 	switch action {
 	case "start":
-		if out, err := exec.Command("systemctl", "start", serviceName).CombinedOutput(); err != nil {
-			return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
-		}
-		s.Paused = false
-		time.Sleep(300 * time.Millisecond)
-		out, _ := exec.Command("systemctl", "is-active", serviceName).Output()
-		s.Running = strings.TrimSpace(string(out)) == "active"
+		commandAction, wantActive = "start", true
 	case "stop":
-		s.Paused = true
-		if out, err := exec.Command("systemctl", "stop", serviceName).CombinedOutput(); err != nil {
-			s.Paused = false
-			return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
-		}
-		s.Running = false
+		commandAction, wantActive = "stop", false
 	case "restart":
-		if out, err := exec.Command("systemctl", "restart", serviceName).CombinedOutput(); err != nil {
-			return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
-		}
-		s.Paused = false
-		time.Sleep(300 * time.Millisecond)
-		out, _ := exec.Command("systemctl", "is-active", serviceName).Output()
-		s.Running = strings.TrimSpace(string(out)) == "active"
+		commandAction, wantActive = "restart", true
+	default:
+		return fmt.Errorf("unknown guard action: %s", action)
 	}
-
-	guard.savePaused()
+	if out, err := guardCommand("systemctl", commandAction, serviceName); err != nil {
+		return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
+	}
+	if err := waitForGuardServiceState(serviceName, wantActive); err != nil {
+		if compensateErr := compensateGuardServiceState(serviceName, oldRunning); compensateErr != nil {
+			return fmt.Errorf("%v；恢复服务原状态失败: %v", err, compensateErr)
+		}
+		return err
+	}
+	s.Paused = action == "stop"
+	s.Running = wantActive
+	if err := guard.savePaused(); err != nil {
+		s.Paused = oldPaused
+		s.Running = oldRunning
+		if compensateErr := compensateGuardServiceState(serviceName, oldRunning); compensateErr != nil {
+			return fmt.Errorf("保存服务守护状态失败: %v；恢复服务原状态失败: %v", err, compensateErr)
+		}
+		return fmt.Errorf("保存服务守护状态失败，服务已恢复原状态: %w", err)
+	}
 	return nil
+}
+
+func waitForGuardServiceState(serviceName string, active bool) error {
+	deadline := time.Now().Add(guardStateWaitTimeout)
+	for {
+		state := readGuardServiceState(serviceName)
+		if state.valid && state.active == active && (active || state.activeState == "inactive" || state.activeState == "failed") {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("服务 %s 未在限时内进入目标状态", serviceName)
+		}
+		time.Sleep(guardStatePollInterval)
+	}
+}
+
+func compensateGuardServiceState(serviceName string, active bool) error {
+	action := "stop"
+	if active {
+		action = "start"
+	}
+	if out, err := guardCommand("systemctl", action, serviceName); err != nil {
+		return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
+	}
+	return waitForGuardServiceState(serviceName, active)
 }
 
 func (pg *ProcessGuard) loop() {
@@ -226,22 +266,48 @@ func (pg *ProcessGuard) loadPaused() {
 	}
 }
 
-func (pg *ProcessGuard) savePaused() {
+func (pg *ProcessGuard) savePaused() error {
 	paused := make(map[string]bool)
 	for _, s := range pg.services {
 		paused[s.ServiceName] = s.Paused
 	}
-	data, _ := json.Marshal(paused)
-	os.WriteFile(pg.pausedFile, data, 0600)
+	data, err := json.Marshal(paused)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(pg.pausedFile)
+	tmp, err := os.CreateTemp(dir, ".guard-paused-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, pg.pausedFile)
 }
 
 type guardServiceState struct {
-	active     bool
-	valid      bool
-	restarts   uint64
-	result     string
-	exitCode   string
-	exitStatus string
+	active      bool
+	activeState string
+	valid       bool
+	restarts    uint64
+	result      string
+	exitCode    string
+	exitStatus  string
 }
 
 func readGuardServiceState(service string) guardServiceState {
@@ -264,6 +330,7 @@ func readGuardServiceState(service string) guardServiceState {
 		}
 		switch key {
 		case "ActiveState":
+			state.activeState = value
 			state.active = value == "active"
 		case "NRestarts":
 			state.restarts, _ = strconv.ParseUint(value, 10, 64)

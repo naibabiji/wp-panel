@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,65 @@ import (
 	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/models"
 )
+
+func TestCreateSiteSystemUserCleansUpWhenGroupSetupFails(t *testing.T) {
+	var commands []string
+	run := func(name string, _ ...string) (string, error) {
+		commands = append(commands, name)
+		return "", nil
+	}
+
+	rollback, err := createSiteSystemUser("wp_example", run, func(string) error {
+		return errors.New("group unavailable")
+	})
+	if err == nil || !strings.Contains(err.Error(), "已清理") {
+		t.Fatalf("error = %v, want truthful cleanup result", err)
+	}
+	if rollback != nil {
+		t.Fatal("failed setup returned a later rollback")
+	}
+	if got := strings.Join(commands, ","); got != "useradd,userdel" {
+		t.Fatalf("commands = %q, want useradd,userdel", got)
+	}
+}
+
+func TestCreateSiteSystemUserDoesNotDeleteUnknownExistingUser(t *testing.T) {
+	var commands []string
+	run := func(name string, _ ...string) (string, error) {
+		commands = append(commands, name)
+		return "", errors.New("already exists")
+	}
+
+	rollback, err := createSiteSystemUser("wp_example", run, func(string) error {
+		t.Fatal("group setup must not run after useradd fails")
+		return nil
+	})
+	if err == nil || rollback != nil {
+		t.Fatalf("rollback present = %t, error = %v", rollback != nil, err)
+	}
+	if got := strings.Join(commands, ","); got != "useradd" {
+		t.Fatalf("commands = %q, want only useradd", got)
+	}
+}
+
+func TestCreateSiteSystemUserReturnsRollbackAfterSuccess(t *testing.T) {
+	var commands []string
+	run := func(name string, _ ...string) (string, error) {
+		commands = append(commands, name)
+		return "", nil
+	}
+
+	rollback, err := createSiteSystemUser("wp_example", run, func(string) error { return nil })
+	if err != nil || rollback == nil {
+		t.Fatalf("rollback present = %t, error = %v", rollback != nil, err)
+	}
+	if err := rollback(); err != nil {
+		t.Fatalf("rollback failed: %v", err)
+	}
+	if got := strings.Join(commands, ","); got != "useradd,userdel" {
+		t.Fatalf("commands = %q, want useradd,userdel", got)
+	}
+}
 
 func TestCreateWebsiteInsertOverridesLegacyLogRetentionDefault(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
@@ -25,7 +85,7 @@ func TestCreateWebsiteInsertOverridesLegacyLogRetentionDefault(t *testing.T) {
 		name TEXT, domain TEXT, aliases TEXT, status TEXT, system_user TEXT, web_root TEXT,
 		document_root_subdir TEXT, log_dir TEXT, db_name TEXT, db_user TEXT, php_pool_path TEXT,
 		nginx_conf_path TEXT, site_type TEXT, ssl_enabled INTEGER, ssl_cert_path TEXT,
-		ssl_key_path TEXT, ssl_expires_at DATETIME, ssl_last_error TEXT, template_version TEXT,
+		ssl_key_path TEXT, ssl_expires_at DATETIME, ssl_last_error TEXT, ssl_cert_source TEXT, template_version TEXT,
 		access_log_mode TEXT, disable_application_passwords INTEGER,
 		log_retention_days INTEGER NOT NULL DEFAULT 7, php_fpm_max_children INTEGER, expires_at DATETIME
 	)`)
@@ -36,7 +96,7 @@ func TestCreateWebsiteInsertOverridesLegacyLogRetentionDefault(t *testing.T) {
 	_, err = db.Exec(createWebsiteInsertSQL,
 		"legacy-default", "legacy-default.example.com", "", "wp_legacy", "/www/legacy", "", "/logs/legacy",
 		"db_legacy", "user_legacy", "/php/legacy.conf", "/nginx/legacy.conf", "wordpress", 0,
-		"", "", nil, "", defaultSiteLogRetentionDays, 5, nil,
+		"", "", nil, "", "", defaultSiteLogRetentionDays, 5, nil,
 	)
 	if err != nil {
 		t.Fatalf("execute create website insert: %v", err)
@@ -113,6 +173,64 @@ func TestDeleteSiteAndAssociatedCronJobsDeletesOnlyMatchingSite(t *testing.T) {
 	}
 	if deletedAgain {
 		t.Fatal("deleteSiteAndAssociatedCronJobs = true on second call, want false (nothing left to delete)")
+	}
+}
+
+func TestMarkWebsiteDeletingBeforeFinalDelete(t *testing.T) {
+	openTestDB(t)
+	db := database.GetDB()
+	insertMinimalWebsite(t, "delete-state.example.com")
+
+	if err := markWebsiteDeleting(db, 1); err != nil {
+		t.Fatalf("markWebsiteDeleting error = %v", err)
+	}
+	// A retry must accept the state left by an interrupted or failed delete.
+	if err := markWebsiteDeleting(db, 1); err != nil {
+		t.Fatalf("markWebsiteDeleting retry error = %v", err)
+	}
+
+	var status models.WebsiteStatus
+	if err := db.QueryRow(`SELECT status FROM websites WHERE id=1`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != models.StatusDeleting {
+		t.Fatalf("website status = %q, want deleting", status)
+	}
+}
+
+func TestFinalDeleteFailureLeavesWebsiteDeletingAndRetryCompletes(t *testing.T) {
+	openTestDB(t)
+	db := database.GetDB()
+	insertMinimalWebsite(t, "delete-retry.example.com")
+	if err := markWebsiteDeleting(db, 1); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `CREATE TRIGGER reject_website_delete BEFORE DELETE ON websites BEGIN SELECT RAISE(ABORT, 'injected delete failure'); END`)
+
+	if _, err := deleteSiteAndAssociatedCronJobs(db, 1); err == nil {
+		t.Fatal("deleteSiteAndAssociatedCronJobs error = nil, want injected failure")
+	}
+	var status models.WebsiteStatus
+	if err := db.QueryRow(`SELECT status FROM websites WHERE id=1`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != models.StatusDeleting {
+		t.Fatalf("website status after failed final delete = %q, want deleting", status)
+	}
+
+	mustExec(t, db, `DROP TRIGGER reject_website_delete`)
+	if err := markWebsiteDeleting(db, 1); err != nil {
+		t.Fatalf("retry markWebsiteDeleting error = %v", err)
+	}
+	if _, err := deleteSiteAndAssociatedCronJobs(db, 1); err != nil {
+		t.Fatalf("retry deleteSiteAndAssociatedCronJobs error = %v", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM websites WHERE id=1`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("website count after retry = %d, want 0", count)
 	}
 }
 

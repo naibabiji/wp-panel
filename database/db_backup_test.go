@@ -69,3 +69,25 @@ func TestRestoreDBBackupPathValidatesFilename(t *testing.T) {
 		})
 	}
 }
+
+func TestDBBackupSchemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "panel.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE schema_version(version TEXT NOT NULL,updated_at DATETIME DEFAULT CURRENT_TIMESTAMP); INSERT INTO schema_version(version) VALUES ('9.1.2')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	version, err := DBBackupSchemaVersion(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != "9.1.2" {
+		t.Fatalf("version = %q", version)
+	}
+}

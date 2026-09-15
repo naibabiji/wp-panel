@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -91,6 +92,51 @@ func TestAlertRuntimeStateSurvivesReload(t *testing.T) {
 	loadAlertRuntimeState([]*alertRule{reloaded})
 	if !reloaded.firing || !reloaded.lastFired.Equal(now) || reloaded.lastAlertMsg != "still expiring" {
 		t.Fatalf("runtime state not restored: %+v", reloaded)
+	}
+}
+
+func TestAlertRuntimeStateRetriesAfterDatabaseRecovers(t *testing.T) {
+	db := openAlertTestDB(t)
+	r := &alertRule{key: "alert_ssl", firing: true, lastAlertMsg: "expiring"}
+	if err := persistAlertRuntimeState(r); err == nil || !r.runtimeStateDirty {
+		t.Fatalf("missing table should leave dirty state: err=%v rule=%+v", err, r)
+	}
+	mustExec(t, db, `CREATE TABLE alert_runtime_state (
+		alert_type TEXT PRIMARY KEY, status TEXT, pending_since TEXT,
+		last_fired_at TEXT, last_message TEXT, updated_at DATETIME)`)
+	retryDirtyAlertRuntimeState(r)
+	if r.runtimeStateDirty {
+		t.Fatalf("retry should converge after recovery: rule=%+v", r)
+	}
+	var status, message string
+	if err := db.QueryRow(`SELECT status,last_message FROM alert_runtime_state WHERE alert_type='alert_ssl'`).Scan(&status, &message); err != nil {
+		t.Fatal(err)
+	}
+	if status != "firing" || message != "expiring" {
+		t.Fatalf("status=%q message=%q", status, message)
+	}
+}
+
+func TestLoadAlertRuntimeStateDistinguishesMissingRowFromReadFailure(t *testing.T) {
+	db := openAlertTestDB(t)
+	mustExec(t, db, `CREATE TABLE alert_runtime_state (
+		alert_type TEXT PRIMARY KEY, status TEXT, pending_since TEXT,
+		last_fired_at TEXT, last_message TEXT, updated_at DATETIME)`)
+	previousReporter := reportAlertStateError
+	var reports []string
+	reportAlertStateError = func(format string, args ...any) {
+		reports = append(reports, fmt.Sprintf(format, args...))
+	}
+	t.Cleanup(func() { reportAlertStateError = previousReporter })
+
+	loadAlertRuntimeState([]*alertRule{{key: "alert_ssl"}})
+	if len(reports) != 0 {
+		t.Fatalf("missing row should be normal, reports=%v", reports)
+	}
+	mustExec(t, db, `DROP TABLE alert_runtime_state`)
+	loadAlertRuntimeState([]*alertRule{{key: "alert_ssl"}})
+	if len(reports) != 1 || !strings.Contains(reports[0], "读取告警运行状态失败") {
+		t.Fatalf("read failure should be reported once, reports=%v", reports)
 	}
 }
 

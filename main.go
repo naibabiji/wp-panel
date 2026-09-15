@@ -60,7 +60,23 @@ func main() {
 	showInfo := flag.Bool("info", false, "查看面板信息")
 	repairConfigCheck := flag.Bool("repair-config-check", false, "内部使用：只读校验 repair 配置")
 	updateWatchdog := flag.String("update-watchdog", "", "内部使用：面板更新健康检查守护")
+	panelDBRestorePlan := flag.String("panel-db-restore-plan", "", "内部使用：执行面板数据库恢复计划")
+	systemPackageUpdatePlan := flag.String("system-package-update-plan", "", "内部使用：执行系统软件包更新计划")
 	flag.Parse()
+	if *systemPackageUpdatePlan != "" {
+		if err := executor.RunSystemPackageUpdatePlan(*systemPackageUpdatePlan); err != nil {
+			log.Printf("系统软件包更新失败: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if *panelDBRestorePlan != "" {
+		if err := executor.RunPanelDBRestorePlan(*panelDBRestorePlan); err != nil {
+			log.Printf("面板数据库恢复失败: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if *repairConfigCheck {
 		result, err := config.CheckRepairConfig(*configPath)
@@ -151,11 +167,16 @@ func main() {
 	// 异步补装不应排在维护窗口启动恢复之前。
 	executor.GoSafe(executor.EnsurePHPExifExtension)
 	executor.GoSafe(executor.EnsureImageBatchBinaries)
-	if err := executor.NewAIDevelopmentAccessService(database.GetDB()).ReconcilePending(context.Background()); err != nil {
+	aiDevelopmentService := executor.NewAIDevelopmentAccessService(database.GetDB())
+	if err := aiDevelopmentService.ReconcilePending(context.Background()); err != nil {
 		log.Printf("AI 开发授权中间状态恢复失败（相关网站将继续保持操作门禁）: %v", err)
 	}
 	executor.ResetStuckImageOptimizationJobs()
 	executor.FinalizePendingPanelUpdate(cfg, Version)
+	executor.SetAIDevelopmentPanelVersion(Version)
+	if err := aiDevelopmentService.RefreshEnabledHandoffs(context.Background()); err != nil {
+		log.Printf("AI 开发服务器交接文档刷新失败: %v", err)
+	}
 
 	if *resetAdmin {
 		resetAllAdmin(cfg, *configPath)
@@ -207,6 +228,16 @@ func main() {
 	seedAdminUser(cfg)
 
 	log.Println("数据库初始化完成")
+	if reconciled, err := executor.ReconcileInterruptedManualCronJobs(database.GetDB()); err != nil {
+		log.Printf("手动计划任务中断状态收敛失败: %v", err)
+	} else if reconciled > 0 {
+		log.Printf("已收敛 %d 个因面板重启中断的手动计划任务", reconciled)
+	}
+	if reconciled, err := executor.ReconcileInterruptedLogAnalysisJobs(database.GetDB()); err != nil {
+		log.Printf("日志分析中断状态收敛失败: %v", err)
+	} else if reconciled > 0 {
+		log.Printf("已收敛 %d 个因面板重启中断的日志分析任务", reconciled)
+	}
 	if reconciled, err := executor.ReconcileMigratedWebsiteStatuses(context.Background(), database.GetDB(), cfg); err != nil {
 		log.Printf("已搬家源站状态收敛跳过: %v", err)
 	} else if reconciled > 0 {

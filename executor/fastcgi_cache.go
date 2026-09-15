@@ -26,6 +26,9 @@ import (
 
 const pluginDirName = "wp-panel-optimizer"
 
+var setCompanionPluginPermissions = InstallPluginPermissions
+var regenerateSiteNginxForCache = RegenerateSiteNginx
+
 var errCompanionRemovedBeforePublish = errors.New("installed companion was removed before publish")
 
 const cacheConfPath = "/etc/nginx/conf.d/wppanel-cache.conf"
@@ -214,6 +217,8 @@ func deploySiteCompanionOwned(siteID int, files map[string][]byte, version strin
 			return false, err
 		}
 		prepare = func(staging string) error { return sealCompanionDirectory(staging, gid) }
+	} else {
+		prepare = func(staging string) error { return setCompanionPluginPermissions("", site.SystemUser, staging) }
 	}
 	var beforePublish func() error
 	if requireExisting {
@@ -225,9 +230,7 @@ func deploySiteCompanionOwned(siteID int, files map[string][]byte, version strin
 		}
 		return false, err
 	}
-	if !site.FileLockEnabled {
-		InstallPluginPermissions(site.Domain, site.SystemUser, pluginDir)
-	} else if state.Window == nil {
+	if site.FileLockEnabled && state.Window == nil {
 		refreshWPCodeIntegrityBaselineBestEffort(site.ID, "配套插件更新成功")
 	}
 	return true, nil
@@ -505,17 +508,70 @@ func NewAPIKey() string {
 	return hex.EncodeToString(b)
 }
 
-func ClearSiteCache(siteID int) {
+func UpdateSiteFastCGICache(siteID, enabled, ttl int) error {
 	db := database.GetDB()
-	key := NewCacheKey()
-	db.Exec("UPDATE websites SET fastcgi_cache_key = ? WHERE id = ?", key, siteID)
-	if err := RegenerateSiteNginx(siteID); err != nil {
-		log.Printf("刷新站点 Nginx 配置失败 site=%d: %v", siteID, err)
+	var oldEnabled, oldTTL int
+	if err := db.QueryRow(`SELECT fastcgi_cache_enabled, fastcgi_cache_ttl FROM websites WHERE id=?`, siteID).Scan(&oldEnabled, &oldTTL); err != nil {
+		return fmt.Errorf("读取原缓存设置失败: %w", err)
+	}
+	result, err := db.Exec(`UPDATE websites SET fastcgi_cache_enabled=?, fastcgi_cache_ttl=? WHERE id=?`, enabled, ttl, siteID)
+	if err != nil {
+		return fmt.Errorf("保存缓存设置失败: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		if err != nil {
+			return fmt.Errorf("确认缓存设置失败: %w", err)
+		}
+		return errors.New("网站不存在")
+	}
+	return publishSiteNginxWithCacheRollback(siteID, oldEnabled, oldTTL)
+}
+
+func publishSiteNginxWithCacheRollback(siteID, oldEnabled, oldTTL int) error {
+	if err := regenerateSiteNginxForCache(siteID); err == nil {
+		return nil
+	} else {
+		applyErr := err
+		if _, rollbackErr := database.GetDB().Exec(`UPDATE websites SET fastcgi_cache_enabled=?, fastcgi_cache_ttl=? WHERE id=?`, oldEnabled, oldTTL, siteID); rollbackErr != nil {
+			return fmt.Errorf("应用 Nginx 配置失败: %v；恢复缓存设置失败: %w", applyErr, rollbackErr)
+		}
+		if rollbackErr := regenerateSiteNginxForCache(siteID); rollbackErr != nil {
+			return fmt.Errorf("应用 Nginx 配置失败: %v；恢复旧 Nginx 配置失败: %w", applyErr, rollbackErr)
+		}
+		return fmt.Errorf("应用 Nginx 配置失败，缓存设置已恢复: %w", applyErr)
 	}
 }
 
+func PublishSiteNginxWithCacheRollback(siteID, oldEnabled, oldTTL int) error {
+	return publishSiteNginxWithCacheRollback(siteID, oldEnabled, oldTTL)
+}
+
+func ClearSiteCache(siteID int) error {
+	db := database.GetDB()
+	var oldKey string
+	if err := db.QueryRow(`SELECT fastcgi_cache_key FROM websites WHERE id=?`, siteID).Scan(&oldKey); err != nil {
+		return fmt.Errorf("读取缓存标识失败: %w", err)
+	}
+	key := NewCacheKey()
+	if _, err := db.Exec("UPDATE websites SET fastcgi_cache_key = ? WHERE id = ?", key, siteID); err != nil {
+		return fmt.Errorf("更新缓存标识失败: %w", err)
+	}
+	if err := regenerateSiteNginxForCache(siteID); err != nil {
+		if _, rollbackErr := db.Exec(`UPDATE websites SET fastcgi_cache_key=? WHERE id=?`, oldKey, siteID); rollbackErr != nil {
+			return fmt.Errorf("清除缓存应用失败: %v；恢复缓存标识失败: %w", err, rollbackErr)
+		}
+		if rollbackErr := regenerateSiteNginxForCache(siteID); rollbackErr != nil {
+			return fmt.Errorf("清除缓存应用失败: %v；恢复旧 Nginx 配置失败: %w", err, rollbackErr)
+		}
+		return fmt.Errorf("清除缓存失败，原缓存标识已恢复: %w", err)
+	}
+	return nil
+}
+
 func ClearWPSiteRuntimeCaches(siteID int, domain, webRoot string) {
-	ClearSiteCache(siteID)
+	if err := ClearSiteCache(siteID); err != nil {
+		log.Printf("清理 FastCGI 缓存失败 site=%d: %v", siteID, err)
+	}
 	if err := ClearWPRedisObjectCache(domain, webRoot); err != nil {
 		log.Printf("清理 Redis Object Cache 失败 domain=%s: %v", domain, err)
 	}
@@ -795,7 +851,7 @@ func RegenerateAllSitesFPM() error {
 			continue
 		}
 
-		if err := engine.ApplyPHPFPMPool(phpConfig, phpPoolPath, logDir); err != nil {
+		if err := engine.ApplyPHPFPMPool(phpConfig, phpPoolPath, logDir, filepath.Join(cfg.Paths.PHPFPMSock, poolName+".sock")); err != nil {
 			log.Printf("[FPM重建] %s: 应用配置失败: %v", domain, err)
 			failures = append(failures, fmt.Sprintf("%s: %v", domain, err))
 			continue

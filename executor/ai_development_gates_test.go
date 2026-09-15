@@ -16,7 +16,10 @@ func withAIDevelopmentGateTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`CREATE TABLE website_ai_development_access (site_id INTEGER PRIMARY KEY); INSERT INTO website_ai_development_access(site_id) VALUES (7)`)
+	_, err = db.Exec(`CREATE TABLE website_ai_development_access (site_id INTEGER PRIMARY KEY);
+		CREATE TABLE websites (id INTEGER PRIMARY KEY, status TEXT NOT NULL);
+		INSERT INTO websites(id,status) VALUES (7,'active');
+		INSERT INTO website_ai_development_access(site_id) VALUES (7)`)
 	if err != nil {
 		db.Close()
 		t.Fatal(err)

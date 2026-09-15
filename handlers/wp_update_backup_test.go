@@ -45,6 +45,32 @@ func TestWPUpdateBackupListIsSiteScopedAndPathFree(t *testing.T) {
 	}
 }
 
+func TestWPUpdateBackupListMarksBatchSharedDatabaseBackup(t *testing.T) {
+	setupWPUpdateBackupTest(t)
+	insertWPUpdateBackupTestTask(t, 1, "wpu_4123456789abcdef0123456789abcdef", filepath.Join(t.TempDir(), "database.sql.gz"))
+	if _, err := database.GetDB().Exec(`UPDATE wp_update_tasks SET batch_id='wpub_0123456789abcdef0123456789abcdef' WHERE site_id=1`); err != nil {
+		t.Fatal(err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/api/websites/:id/wp-update-backups", (&WPUpdateBackupHandler{BackupDir: t.TempDir()}).List)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/websites/1/wp-update-backups", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Data []models.WPUpdateBackup `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 1 || !response.Data[0].BatchShared {
+		t.Fatalf("backups=%+v, want shared batch database marker", response.Data)
+	}
+}
+
 func TestWPUpdateBackupRestoreRejectsUnavailableFile(t *testing.T) {
 	setupWPUpdateBackupTest(t)
 	root := t.TempDir()
@@ -93,6 +119,49 @@ func TestWPUpdateBackupRestoreRejectsConcurrentSiteOperation(t *testing.T) {
 	r.ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWPUpdateBackupRestoreRejectsPersistentSiteWriters(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*testing.T)
+	}{
+		{name: "migration", setup: func(t *testing.T) {
+			_, _ = database.GetDB().Exec(`INSERT INTO site_migration_peers(id,status) VALUES('peer_restore_test','paired')`)
+			_, _ = database.GetDB().Exec(`INSERT INTO site_migration_batches(id,peer_id,direction,status) VALUES('batch_restore_test','peer_restore_test','source','active')`)
+			_, _ = database.GetDB().Exec(`INSERT INTO site_migration_sites(id,batch_id,source_site_id,source_domain,target_domain,site_type,status,stage)
+				VALUES('migration_update_restore','batch_restore_test',1,'one.example','one.example','wordpress','running','transferring_files')`)
+			_, err := database.GetDB().Exec(`INSERT INTO site_migration_locks(domain,site_id,migration_site_id,direction,status)
+				VALUES('one.example',1,'migration_update_restore','source','active')`)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "ai development", setup: func(t *testing.T) {
+			_, err := database.GetDB().Exec(`INSERT INTO website_ai_development_access
+				(site_id,status,operation,system_user,web_root,original_home,original_shell,public_key,key_fingerprint,requested_by)
+				VALUES(1,'enabled','','wp_test','/www/wwwroot/one.example','/tmp','/usr/sbin/nologin','key','fingerprint','test')`)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupWPUpdateBackupTest(t)
+			root := t.TempDir()
+			insertRealWPUpdateBackupTestFile(t, root, 1, "wpu_5123456789abcdef0123456789abcdef")
+			tc.setup(t)
+			r := gin.New()
+			r.POST("/api/websites/:id/wp-update-backups/:backup_id/restore", (&WPUpdateBackupHandler{BackupDir: root}).Restore)
+			req := httptest.NewRequest(http.MethodPost, "/api/websites/1/wp-update-backups/1/restore", strings.NewReader(`{"confirm":true}`))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 

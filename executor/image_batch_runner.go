@@ -38,6 +38,7 @@ var imageBatchBinaryArgs = map[string][]string{
 const (
 	imageBatchRuntimeRoot  = "/var/wp-panel/image-optimizer"
 	imageBatchExecTimeout  = 30 * time.Second
+	imageBatchOutputLimit  = 64 << 10
 	imageFilesizeTimeout   = 60 * time.Second
 	imageFilesizeResultMax = 4 << 10
 )
@@ -136,7 +137,10 @@ func optimizeImageFile(ctx context.Context, webRoot, systemUser, relativePath, m
 	defer cancel()
 	cmd := exec.CommandContext(execCtx, runuserPath, args...)
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"}
-	out, runErr := cmd.CombinedOutput()
+	out, outputExceeded, runErr := runImageBatchCommand(cmd)
+	if outputExceeded {
+		return before, before, beforeInfo.ModTime().Unix(), fmt.Errorf("%s 输出超过限制", binaryName)
+	}
 	if runErr != nil {
 		return before, before, beforeInfo.ModTime().Unix(), fmt.Errorf("%s 执行失败: %w\n%s", binaryName, runErr, string(out))
 	}
@@ -149,6 +153,14 @@ func optimizeImageFile(ctx context.Context, webRoot, systemUser, relativePath, m
 	// 安全网：如果重编码后文件反而变大，理论上 jpegoptim/optipng 不应该发生，
 	// 但不假设"无损重编码一定更小"，让调用方决定要不要按失败处理。
 	return before, after, afterInfo.ModTime().Unix(), nil
+}
+
+func runImageBatchCommand(cmd *exec.Cmd) ([]byte, bool, error) {
+	output := newCountingSink(imageBatchOutputLimit, true)
+	cmd.Stdout, cmd.Stderr = output, output
+	err := cmd.Run()
+	_, exceeded, kept := output.snapshot()
+	return kept, exceeded, err
 }
 
 func validateImageBatchFilePath(siteRoot, relativePath string) (string, error) {

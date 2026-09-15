@@ -121,6 +121,11 @@ func ensureSitePrimaryGroup(systemUser string) error {
 			}
 		}
 	}
+	if account, userErr := user.Lookup(systemUser); userErr == nil {
+		if group, groupErr := user.LookupGroup(systemUser); groupErr == nil && account.Gid == group.Gid {
+			return nil
+		}
+	}
 
 	if _, err := executeCommand("usermod", "-g", systemUser, systemUser); err != nil {
 		return fmt.Errorf("set primary group for %s: %w", systemUser, err)
@@ -1016,29 +1021,44 @@ func HardenSiteUnixIsolation() error {
 }
 
 // InstallPluginPermissions 安装插件时设置插件目录和密钥目录权限。
-// 与 HardenSiteSensitivePermissions 不同，此函数不 chown 整站，且所有错误静默忽略（不阻断插件安装）。
-func InstallPluginPermissions(domain, systemUser, pluginDir string) {
+// 与 HardenSiteSensitivePermissions 不同，此函数不 chown 整站。
+func InstallPluginPermissions(domain, systemUser, pluginDir string) error {
 	systemUser = strings.TrimSpace(systemUser)
 	if systemUser == "" {
-		return
+		return fmt.Errorf("system user is empty")
 	}
 
-	ensureSitePrimaryGroup(systemUser)
+	if err := ensureSitePrimaryGroup(systemUser); err != nil {
+		return err
+	}
 	owner := siteOwner(systemUser)
 
 	if pluginDir != "" {
-		executeCommand("chown", "-R", owner, pluginDir)
+		if _, err := executeCommand("chown", "-R", owner, pluginDir); err != nil {
+			return fmt.Errorf("set companion plugin owner: %w", err)
+		}
 	}
 
 	if domain != "" {
 		secretsDir := sitePluginSecretsDir(domain)
 		if _, err := os.Stat(secretsDir); err == nil {
-			os.Chmod(secretsDir, 0700)
+			if err := os.Chmod(secretsDir, 0700); err != nil {
+				return fmt.Errorf("set companion identity directory permissions: %w", err)
+			}
 			cfgPath := sitePluginConfigPath(domain)
 			if _, err := os.Stat(cfgPath); err == nil {
-				os.Chmod(cfgPath, 0600)
+				if err := os.Chmod(cfgPath, 0600); err != nil {
+					return fmt.Errorf("set companion identity permissions: %w", err)
+				}
+			} else if !os.IsNotExist(err) {
+				return fmt.Errorf("inspect companion identity: %w", err)
 			}
-			executeCommand("chown", "-R", owner, secretsDir)
+			if _, err := executeCommand("chown", "-R", owner, secretsDir); err != nil {
+				return fmt.Errorf("set companion identity owner: %w", err)
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect companion identity directory: %w", err)
 		}
 	}
+	return nil
 }

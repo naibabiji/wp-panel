@@ -15,9 +15,14 @@ import (
 
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
+	"golang.org/x/crypto/ssh"
 )
 
 const aiDevelopmentHomeRoot = "/var/lib/wp-panel/ai-homes"
+
+const aiDevelopmentCapabilitiesSchemaVersion = 1
+
+var aiDevelopmentPanelVersion = "unknown"
 
 const (
 	aiDevelopmentUsermodRetryDelay = 200 * time.Millisecond
@@ -33,12 +38,15 @@ var aiDevelopmentSessionPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 var ErrAIDevelopmentSiteBusy = errors.New("site has active PHP processes")
 
 type AIDevelopmentSite struct {
-	ID         int64
-	Domain     string
-	SystemUser string
-	WebRoot    string
-	DBName     string
-	DBUser     string
+	ID            int64
+	Domain        string
+	SystemUser    string
+	WebRoot       string
+	LogDir        string
+	PHPPoolPath   string
+	NginxConfPath string
+	DBName        string
+	DBUser        string
 }
 
 type aiDevelopmentPasswd struct {
@@ -75,6 +83,14 @@ func NewAIDevelopmentAccessService(db *sql.DB) *AIDevelopmentAccessService {
 	}
 }
 
+// SetAIDevelopmentPanelVersion supplies public handoff metadata. It is called
+// once during process startup before any request can generate a handoff.
+func SetAIDevelopmentPanelVersion(version string) {
+	if value := strings.TrimSpace(version); value != "" {
+		aiDevelopmentPanelVersion = value
+	}
+}
+
 // ReconcilePending fails closed after a panel interruption. An enabling record
 // cannot have delivered its private key yet, so it is safely rolled back; a
 // disabling record resumes the same idempotent shutdown path.
@@ -95,12 +111,49 @@ func (s *AIDevelopmentAccessService) ReconcilePending(ctx context.Context) error
 	if err := rows.Close(); err != nil {
 		return err
 	}
+	var reconcileErrors []error
 	for _, siteID := range siteIDs {
 		if err := s.disable(ctx, siteID, true); err != nil {
-			return fmt.Errorf("reconcile AI development access for site %d: %w", siteID, err)
+			reconcileErrors = append(reconcileErrors, fmt.Errorf("reconcile AI development access for site %d: %w", siteID, err))
 		}
 	}
-	return nil
+	return errors.Join(reconcileErrors...)
+}
+
+// RefreshEnabledHandoffs keeps the server-side documents authoritative across
+// panel upgrades without rotating credentials or interrupting active sessions.
+func (s *AIDevelopmentAccessService) RefreshEnabledHandoffs(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT w.id,w.domain,w.system_user,w.web_root,w.log_dir,w.php_pool_path,w.nginx_conf_path,w.db_name,w.db_user,a.key_fingerprint
+		FROM website_ai_development_access a
+		JOIN websites w ON w.id=a.site_id
+		WHERE a.status='enabled' AND a.operation=''
+		ORDER BY w.id`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type enabledHandoff struct {
+		site        AIDevelopmentSite
+		fingerprint string
+	}
+	var items []enabledHandoff
+	for rows.Next() {
+		var item enabledHandoff
+		if err := rows.Scan(&item.site.ID, &item.site.Domain, &item.site.SystemUser, &item.site.WebRoot, &item.site.LogDir, &item.site.PHPPoolPath, &item.site.NginxConfPath, &item.site.DBName, &item.site.DBUser, &item.fingerprint); err != nil {
+			return err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	var refreshErrors []error
+	for _, item := range items {
+		if err := s.system.UpdateHandoff(ctx, item.site, item.fingerprint); err != nil {
+			refreshErrors = append(refreshErrors, fmt.Errorf("refresh AI handoff for site %d: %w", item.site.ID, err))
+		}
+	}
+	return errors.Join(refreshErrors...)
 }
 
 func (s *AIDevelopmentAccessService) Enable(ctx context.Context, site AIDevelopmentSite, publicKey, fingerprint, requestedBy string, force bool) error {
@@ -110,6 +163,11 @@ func (s *AIDevelopmentAccessService) Enable(ctx context.Context, site AIDevelopm
 	defer ReleaseSiteOpLock(int(site.ID))
 	if err := validateAIDevelopmentSite(site); err != nil {
 		return err
+	}
+	if locked, err := (&siteMigrationStore{db: s.db}).isLocked(ctx, int(site.ID), site.Domain); err != nil {
+		return fmt.Errorf("check site migration lock: %w", err)
+	} else if locked {
+		return errSiteMigrationBusy
 	}
 	if strings.TrimSpace(publicKey) == "" || strings.TrimSpace(fingerprint) == "" {
 		return errors.New("SSH key is incomplete")
@@ -152,6 +210,15 @@ func (s *AIDevelopmentAccessService) Enable(ctx context.Context, site AIDevelopm
 }
 
 func (s *AIDevelopmentAccessService) Rotate(ctx context.Context, site AIDevelopmentSite, publicKey, fingerprint string) error {
+	if !TryAcquireSiteOpLock(int(site.ID), "ai_development") {
+		return ErrMaintenanceBusy
+	}
+	defer ReleaseSiteOpLock(int(site.ID))
+	if locked, err := (&siteMigrationStore{db: s.db}).isLocked(ctx, int(site.ID), site.Domain); err != nil {
+		return fmt.Errorf("check site migration lock: %w", err)
+	} else if locked {
+		return errSiteMigrationBusy
+	}
 	siteID := site.ID
 	item, err := database.GetAIDevelopmentAccess(ctx, s.db, siteID)
 	if err != nil {
@@ -420,8 +487,13 @@ func wrapAIDevelopmentUsermodBusy(err error) error {
 }
 
 func (productionAIDevelopmentSystem) UpdateHandoff(_ context.Context, site AIDevelopmentSite, fingerprint string) error {
-	handoff := buildAIDevelopmentHandoff(site, fingerprint)
-	return writeAIDevelopmentFile(filepath.Join(aiDevelopmentHome(site.SystemUser), "WP-PANEL-AI-HANDOFF.md"), []byte(handoff), 0444)
+	generatedAt := time.Now().UTC()
+	handoff := buildAIDevelopmentHandoff(site, fingerprint, generatedAt)
+	home := aiDevelopmentHome(site.SystemUser)
+	if err := writeAIDevelopmentFile(filepath.Join(home, "WP-PANEL-AI-HANDOFF.md"), []byte(handoff), 0444); err != nil {
+		return err
+	}
+	return writeAIDevelopmentFile(filepath.Join(home, "WP-PANEL-CAPABILITIES.md"), []byte(buildAIDevelopmentCapabilities(generatedAt)), 0444)
 }
 
 func (productionAIDevelopmentSystem) InstallKey(_ context.Context, systemUser, publicKey string) error {
@@ -594,30 +666,107 @@ func shellSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-func buildAIDevelopmentHandoff(site AIDevelopmentSite, fingerprint string) string {
+func buildAIDevelopmentHandoff(site AIDevelopmentSite, fingerprint string, generatedAt time.Time) string {
 	return fmt.Sprintf(`# WP Panel AI Development Handoff
 
+Panel version: %s
+Capabilities schema version: %d
+Generated at: %s
 Site: %s
 WebRoot: %s
 System user: %s
+Site PHP-FPM pool config: %s (read-only, managed by WP Panel)
+Site Nginx config: %s (read-only, managed by WP Panel)
+Site log directory: %s
 SSH key fingerprint: %s
 
 You have full control of this site's files and its WordPress database. You do not have sudo access and must not attempt to modify WP Panel, system services, or other sites.
 
-Before any change, follow the local control project's AGENTS.md workflow. Perform read-only discovery first and create AI-CONTEXT.md in the local control-project root, not in this WebRoot. Inspect WordPress/PHP/tool versions, themes and child themes, plugins, custom code, multisite, WooCommerce integration indicators, Git state, build tools and relevant logs. Do not expose secrets or copy full configuration files into local documents.
+This server-side handoff and ~/WP-PANEL-CAPABILITIES.md are authoritative. The downloaded package is only a connection bootstrap and may predate a panel upgrade. If local package instructions conflict with these server documents, follow the server documents. Re-read them before any panel-related recommendation or workflow.
 
-Ask the user to confirm staging versus production, a recent restorable backup, the desired outcome and acceptance criteria, protected business flows, permission for test data or temporary accounts, third-party sandbox constraints and any Git workflow. Then create DEVELOPMENT-PLAN.md locally and wait for explicit approval before modifying files or the database. During approved work maintain AI-CHANGELOG.md locally.
-
-Do not automatically create backups, WordPress users, orders or other test data. Do not ask for root, WP Panel or database passwords. Use WP-CLI for normal inspection; request a temporary WordPress administrator only when browser-admin testing is necessary, explain why, obtain permission and never record the password in project documents.
-
-Start every WordPress command with an explicit target:
+For WordPress commands, target this website explicitly:
 
     wp --path=%s <command>
 
-If WP-CLI or Node.js/npm is unavailable, ask the administrator to open WP Panel -> Software -> Development Tools. Do not ask for the root password and do not attempt system package installation.
+For website PHP limits such as memory_limit, upload_max_filesize, post_max_size, max_execution_time, disable_functions, and open_basedir, use the php_admin_value entries in the site PHP-FPM pool config above. CLI PHP and the global php.ini may use different values and do not represent this website's PHP-FPM requests.
 
-When development is complete, report changed files, database/test-data changes, and verification results. Ask the administrator to review the site and disable AI development access.
-`, site.Domain, site.WebRoot, site.SystemUser, fingerprint, site.WebRoot)
+## This is a WP Panel managed server
+
+Do not assume this server is managed by aaPanel/BT Panel, 1Panel, cPanel, Plesk, or a generic hand-built LEMP stack. Their menu names, paths, commands, and configuration ownership do not apply here. WP Panel owns server-level Nginx, PHP-FPM, MariaDB, Redis, SSL, backup, scheduled-task, Fail2ban, nftables, and site identity workflows. Managed files may be regenerated when settings are saved, repaired, upgraded, or restarted.
+
+Before recommending or performing a server-level, backup, SSL, security, performance, update, migration, logging, PHP, Nginx, database-administration, or scheduled-task action, read ~/WP-PANEL-CAPABILITIES.md. A listed capability does not prove its current state; ask the user to check the documented WP Panel page when the state is uncertain.
+
+AI development access cannot coexist with a WordPress maintenance window or site migration. The user must close AI development access in WP Panel before either workflow; closing access terminates this SSH session.
+
+Use the exact WP Panel entry documented in the capability file. Do not improvise equivalent server configuration, ad-hoc system cron jobs, raw service commands, or edits to panel-managed files. If no matching capability is documented, say so and ask the user to check WP Panel instead of inventing a menu, API or path.
+`, aiDevelopmentPanelVersion, aiDevelopmentCapabilitiesSchemaVersion, generatedAt.Format(time.RFC3339), site.Domain, site.WebRoot, site.SystemUser, site.PHPPoolPath, site.NginxConfPath, site.LogDir, fingerprint, site.WebRoot)
+}
+
+type aiDevelopmentCapability struct {
+	ID         string
+	Need       string
+	Entry      string
+	Capability string
+	Boundary   string
+}
+
+func buildAIDevelopmentCapabilities(generatedAt time.Time) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `# WP Panel Capabilities for a Site AI
+
+Panel version: %s
+Capabilities schema version: %d
+Generated at: %s
+
+The schema version changes when the document structure or field meaning changes. A panel version of "dev" identifies a test build and cannot be compared as a release version.
+
+Read this file when work touches server configuration, optimization, diagnosis, security, backups, SSL, updates, migration, logging, PHP, Nginx, databases, or scheduled tasks.
+
+This is a capability directory, not a live status report. A listed capability may be disabled, unconfigured, unhealthy, unavailable for this site type, or blocked by another operation. When current state is uncertain, ask the user to check the named WP Panel page. Never invent a menu, button, API, path, or current status.
+
+WP Panel is not aaPanel/BT Panel, 1Panel, cPanel, Plesk, or a generic hand-built LEMP stack. Use only the entries below. Server-level configuration is panel-owned and may be regenerated.
+
+`, aiDevelopmentPanelVersion, aiDevelopmentCapabilitiesSchemaVersion, generatedAt.Format(time.RFC3339))
+	for _, capability := range aiDevelopmentCapabilities {
+		fmt.Fprintf(&b, "## %s — %s\n\n- Panel entry: %s\n- Supported capability: %s\n- Boundary: %s\n\n", capability.ID, capability.Need, capability.Entry, capability.Capability, capability.Boundary)
+	}
+	b.WriteString(`## When no matching capability is documented
+
+Say plainly that WP Panel currently has no confirmed entry for the need. Do not guess a menu or borrow instructions from another panel. Ask the user to check WP Panel. Never request root or WP Panel credentials, modify another site, or edit panel-managed server configuration.
+`)
+	return b.String()
+}
+
+// ReadSSHHostKnownHosts returns this server's existing public host keys in a
+// package-local known_hosts form. No private host-key material is read.
+func ReadSSHHostKnownHosts() (string, error) {
+	return readSSHHostKnownHosts([]string{
+		"/etc/ssh/ssh_host_ed25519_key.pub",
+		"/etc/ssh/ssh_host_ecdsa_key.pub",
+		"/etc/ssh/ssh_host_rsa_key.pub",
+	})
+}
+
+func readSSHHostKnownHosts(paths []string) (string, error) {
+	var lines []string
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("read SSH host public key: %w", err)
+		}
+		key, _, _, _, err := ssh.ParseAuthorizedKey(data)
+		if err != nil {
+			return "", fmt.Errorf("parse SSH host public key: %w", err)
+		}
+		lines = append(lines, "wp-panel-ai-target "+strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))))
+	}
+	if len(lines) == 0 {
+		return "", errors.New("no supported SSH host public key found")
+	}
+	return strings.Join(lines, "\n") + "\n", nil
 }
 
 func VerifyAIDevelopmentDatabaseIsolation(ctx context.Context, site AIDevelopmentSite) error {

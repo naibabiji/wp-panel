@@ -7,9 +7,124 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/naibabiji/wp-panel/database"
 )
+
+func TestWaitForPHPFPMSocket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "php-fpm.sock")
+	if err := waitForPHPFPMSocket(path, 1, 0); err == nil {
+		t.Fatal("missing socket should time out")
+	}
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitForPHPFPMSocket(path, 1, time.Millisecond); err != nil {
+		t.Fatalf("existing socket should be accepted: %v", err)
+	}
+}
+
+func setupPHPFPMPoolRestoreTest(t *testing.T) {
+	t.Helper()
+	oldWrite := writePHPFPMPoolFile
+	oldRemove := removePHPFPMPoolFile
+	oldServiceAction := runPHPFPMServiceAction
+	t.Cleanup(func() {
+		writePHPFPMPoolFile = oldWrite
+		removePHPFPMPoolFile = oldRemove
+		runPHPFPMServiceAction = oldServiceAction
+	})
+}
+
+func TestRestorePHPFPMPoolRestoresFileServiceAndSocket(t *testing.T) {
+	setupPHPFPMPoolRestoreTest(t)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "site.conf")
+	socket := filepath.Join(dir, "site.sock")
+	if err := os.WriteFile(target, []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(socket, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	actions := 0
+	runPHPFPMServiceAction = func(action string) error {
+		actions++
+		if action != "restart" {
+			t.Fatalf("action=%q, want restart", action)
+		}
+		return nil
+	}
+	if err := restorePHPFPMPool(target, []byte("old"), true, true, socket); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "old" || actions != 1 {
+		t.Fatalf("content=%q actions=%d", content, actions)
+	}
+}
+
+func TestRestorePHPFPMPoolReportsFileRestoreFailure(t *testing.T) {
+	setupPHPFPMPoolRestoreTest(t)
+	writePHPFPMPoolFile = func(string, []byte, os.FileMode) error { return fmt.Errorf("disk full") }
+	if err := restorePHPFPMPool("site.conf", []byte("old"), true, false, "site.sock"); err == nil || !strings.Contains(err.Error(), "恢复旧 Pool 文件失败") {
+		t.Fatalf("error=%v, want file restore failure", err)
+	}
+}
+
+func TestRestorePHPFPMPoolReportsRestartFailure(t *testing.T) {
+	setupPHPFPMPoolRestoreTest(t)
+	target := filepath.Join(t.TempDir(), "site.conf")
+	runPHPFPMServiceAction = func(string) error { return fmt.Errorf("restart failed") }
+	if err := restorePHPFPMPool(target, []byte("old"), true, true, "site.sock"); err == nil || !strings.Contains(err.Error(), "重启 PHP-FPM 失败") {
+		t.Fatalf("error=%v, want restart failure", err)
+	}
+}
+
+func TestWriteNginxConfigAfterBackupRestoresOldConfigOnWriteFailure(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "example.conf")
+	backup := filepath.Join(dir, "example.conf.bak")
+	if err := os.WriteFile(backup, []byte("old config"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeErr := fmt.Errorf("disk full")
+	err := writeNginxConfigAfterBackup(target, backup, []byte("new config"), func(string, []byte, os.FileMode) error {
+		return writeErr
+	})
+	if err == nil || !strings.Contains(err.Error(), "旧配置已恢复") {
+		t.Fatalf("error=%v, want restored failure", err)
+	}
+	content, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(content) != "old config" {
+		t.Fatalf("target=%q, want old config", content)
+	}
+	if _, statErr := os.Stat(backup); !os.IsNotExist(statErr) {
+		t.Fatalf("backup should have moved back, stat error=%v", statErr)
+	}
+}
+
+func TestWriteNginxConfigAfterBackupReportsRestoreFailure(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "missing", "example.conf")
+	backup := filepath.Join(dir, "example.conf.bak")
+	if err := os.WriteFile(backup, []byte("old config"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := writeNginxConfigAfterBackup(target, backup, []byte("new config"), func(string, []byte, os.FileMode) error {
+		return fmt.Errorf("disk full")
+	})
+	if err == nil || !strings.Contains(err.Error(), "恢复旧配置也失败") {
+		t.Fatalf("error=%v, want restore failure", err)
+	}
+}
 
 func TestNginxGlobalLogMapConfigPreservesConnectionPeer(t *testing.T) {
 	config := nginxGlobalLogMapConfig()

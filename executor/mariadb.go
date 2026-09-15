@@ -14,6 +14,7 @@ import (
 
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
+	"github.com/naibabiji/wp-panel/models"
 )
 
 var mysqlIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
@@ -141,8 +142,33 @@ func changeMariaDBPassword(dbUser, newPassword string, cfg *config.Config) error
 		fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'", dbUser, newPassword)); err != nil {
 		return fmt.Errorf("修改数据库密码失败: %w", err)
 	}
+	return nil
+}
 
-	return runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", "FLUSH PRIVILEGES")
+type dbPasswordConfigWriter func(string, []byte, os.FileMode) error
+type mariaDBPasswordChanger func(string, string, *config.Config) error
+
+func applyWordPressDBPasswordChange(configPath string, oldContent, newContent []byte, site *models.Website, newPassword string, cfg *config.Config, writeConfig dbPasswordConfigWriter, changePassword mariaDBPasswordChanger) TaskResult {
+	if err := writeConfig(configPath, newContent, 0600); err != nil {
+		log.Printf("更新 wp-config.php 失败: %v", err)
+		return TaskResult{Success: false, Message: "更新 wp-config.php 失败"}
+	}
+
+	if err := changePassword(site.DBUser, newPassword, cfg); err != nil {
+		if rollbackErr := writeConfig(configPath, oldContent, 0600); rollbackErr != nil {
+			log.Printf("MariaDB 操作失败，且 wp-config.php 恢复失败: database_error=%v rollback_error=%v", err, rollbackErr)
+			return TaskResult{Success: false, Message: "数据库密码修改失败，且 wp-config.php 恢复失败，请立即检查网站数据库配置"}
+		}
+		log.Printf("MariaDB 操作失败，wp-config.php 已恢复: %v", err)
+		return TaskResult{Success: false, Message: "MariaDB 操作失败"}
+	}
+
+	masked := maskPassword(newPassword)
+	return TaskResult{
+		Success: true,
+		Message: "数据库密码已更新",
+		Data:    map[string]interface{}{"new_password": masked},
+	}
 }
 
 func executeChangeDBPassword(task *Task) TaskResult {
@@ -189,27 +215,11 @@ func executeChangeDBPassword(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "未找到 DB_PASSWORD 定义，wp-config.php 可能格式异常"}
 	}
 
-	if err := os.WriteFile(configPath, []byte(newContent), 0600); err != nil {
-		log.Printf("更新 wp-config.php 失败: %v", err)
-		return TaskResult{Success: false, Message: "更新 wp-config.php 失败"}
+	result := applyWordPressDBPasswordChange(configPath, content, []byte(newContent), site, newPassword, cfg, os.WriteFile, changeMariaDBPassword)
+	if result.Success {
+		database.GetDB().Exec("UPDATE websites SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", site.ID)
 	}
-
-	if err := changeMariaDBPassword(site.DBUser, newPassword, cfg); err != nil {
-		os.WriteFile(configPath, content, 0600)
-		log.Printf("MariaDB 操作失败，已回滚 wp-config.php: %v", err)
-		return TaskResult{Success: false, Message: "MariaDB 操作失败"}
-	}
-
-	masked := maskPassword(newPassword)
-
-	db := database.GetDB()
-	db.Exec("UPDATE websites SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", site.ID)
-
-	return TaskResult{
-		Success: true,
-		Message: "数据库密码已更新",
-		Data:    map[string]interface{}{"new_password": masked},
-	}
+	return result
 }
 
 // DetectDBTablePrefix 查询数据库中实际的 WordPress 表前缀
@@ -358,27 +368,38 @@ func UpdateWPSiteURLs(dbName, tablePrefix, newSiteURL, newHomeURL string, cfg *c
 	if err != nil {
 		return err
 	}
-
-	if newSiteURL != "" {
-		escURL := strings.ReplaceAll(newSiteURL, "'", "''")
-		query := fmt.Sprintf(
-			"UPDATE `%s`.`%s` SET option_value = '%s' WHERE option_name = 'siteurl'",
-			dbName, tableName, escURL)
-		if err := runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", query); err != nil {
-			return fmt.Errorf("更新 siteurl 失败: %w", err)
-		}
+	if cfg == nil {
+		return fmt.Errorf("面板配置未初始化")
+	}
+	currentSiteURL, currentHomeURL, err := ReadWPSiteURLs(dbName, tablePrefix, cfg)
+	if err != nil {
+		return err
+	}
+	if currentSiteURL == "" || currentHomeURL == "" {
+		return fmt.Errorf("WordPress siteurl 或 home 记录不存在")
+	}
+	if newSiteURL == "" {
+		newSiteURL = currentSiteURL
+	}
+	if newHomeURL == "" {
+		newHomeURL = currentHomeURL
 	}
 
-	if newHomeURL != "" {
-		escURL := strings.ReplaceAll(newHomeURL, "'", "''")
-		query := fmt.Sprintf(
-			"UPDATE `%s`.`%s` SET option_value = '%s' WHERE option_name = 'home'",
-			dbName, tableName, escURL)
-		if err := runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", query); err != nil {
-			return fmt.Errorf("更新 home 失败: %w", err)
-		}
+	escSiteURL := strings.ReplaceAll(newSiteURL, "'", "''")
+	escHomeURL := strings.ReplaceAll(newHomeURL, "'", "''")
+	query := fmt.Sprintf(
+		"UPDATE `%s`.`%s` SET option_value = CASE option_name WHEN 'siteurl' THEN '%s' WHEN 'home' THEN '%s' END WHERE option_name IN ('siteurl','home')",
+		dbName, tableName, escSiteURL, escHomeURL)
+	if err := runMySQL(cfg.MariaDB.RootPassword, "-u", cfg.MariaDB.RootUser, "-e", query); err != nil {
+		return fmt.Errorf("更新 WordPress 站点 URL 失败: %w", err)
 	}
-
+	actualSiteURL, actualHomeURL, err := ReadWPSiteURLs(dbName, tablePrefix, cfg)
+	if err != nil {
+		return fmt.Errorf("核对 WordPress 站点 URL 失败: %w", err)
+	}
+	if actualSiteURL != newSiteURL || actualHomeURL != newHomeURL {
+		return fmt.Errorf("WordPress 站点 URL 核对失败")
+	}
 	return nil
 }
 

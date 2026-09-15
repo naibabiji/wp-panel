@@ -95,9 +95,9 @@ func (f *fakePluginBatchConfirmer) ConfirmForBatch(ctx context.Context, siteID i
 	stamp := wpUpdateDBTime(time.Now().UTC())
 	if _, err := f.store.db.ExecContext(ctx, `INSERT INTO wp_update_tasks
 		(id,site_id,component_type,component_key,task_kind,trigger_type,status,stage,
-		 current_version,target_version,package_source,download_url,auto_rollback,batch_id,requested_at,created_at,updated_at)
-		VALUES (?,?,'plugin',?,'update','manual','queued','queued','1.0.0','1.1.0','wordpress.org','https://example.com/x.zip',0,?,?,?,?)`,
-		id, siteID, componentKey, batchID, stamp, stamp, stamp); err != nil {
+		 current_version,target_version,package_source,download_url,database_backup_mode,database_backup_source_id,auto_rollback,batch_id,requested_at,created_at,updated_at)
+		VALUES (?,?,'plugin',?,'update','manual','queued','queued','1.0.0','1.1.0','wordpress.org','https://example.com/x.zip',?,?,0,?,?,?,?)`,
+		id, siteID, componentKey, backupMode, nullableBackupSource(sourceID), batchID, stamp, stamp, stamp); err != nil {
 		return models.WPPluginUpdateTask{}, err
 	}
 	f.confirmed = append(f.confirmed, componentKey)
@@ -222,6 +222,9 @@ func TestWPPluginBatchOrchestratorReusesSharedBackupAcrossFailedItem(t *testing.
 	items, err = store.listBatchItems(context.Background(), batch.ID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if items[0].DatabaseBackupMode != "fresh" || items[1].DatabaseBackupMode != "reuse" {
+		t.Fatalf("item backup modes=%q/%q, want fresh/reuse for accurate rollback warnings", items[0].DatabaseBackupMode, items[1].DatabaseBackupMode)
 	}
 	// item2 也"完成"（成功），但 item1 仍然卡在等待决定，批量不能被判定为已完成。
 	if _, err := store.db.Exec(`UPDATE wp_update_tasks SET status='success',finished_at=?,updated_at=? WHERE id=?`,

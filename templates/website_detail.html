@@ -30,7 +30,7 @@
                 <div>
                     <dt class="text-sm text-gray-400">{{t .Lang "website.status"}}</dt>
                     <dd class="flex flex-wrap items-center gap-2">
-                        <span :class="site.status === 'active' ? 'badge-success' : 'badge-warning'" x-text="site.status === 'active' ? t('website.status_running') : (site.status === 'migrated' ? t('website.status_migrated') : t('website.status_paused'))"></span>
+                        <span :class="site.status === 'active' ? 'badge-success' : 'badge-warning'" x-text="site.status === 'active' ? t('website.status_running') : (site.status === 'migrated' ? t('website.status_migrated') : (site.status === 'deleting' ? t('website.status_deleting') : t('website.status_paused')))"></span>
                         <span x-show="aiAccess.status !== 'disabled'" class="text-xs px-2 py-1 rounded bg-purple-900/60 text-purple-200">{{t .Lang "ai_development.active_badge"}}</span>
                         <button x-show="site.status === 'migrated'" @click="restoreMigrated()" class="text-sm text-blue-400 hover:text-blue-300" x-text="t('website.restore_migrated_detail')"></button>
                     </dd>

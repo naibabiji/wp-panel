@@ -21,10 +21,26 @@ import (
 )
 
 const (
-	logAnalysisMaxBytes   = int64(512 * 1024 * 1024)
-	logAnalysisMaxSamples = 30
-	logAnalysisTopLimit   = 12
+	logAnalysisMaxBytes                = int64(512 * 1024 * 1024)
+	logAnalysisMaxSamples              = 30
+	logAnalysisTopLimit                = 12
+	LogAnalysisRestartInterruptedError = "restart_interrupted"
 )
+
+// ReconcileInterruptedLogAnalysisJobs is called only by the main service
+// after startup. Analysis goroutines belong to the previous panel process and
+// cannot survive its exit, so every pending/running row is interrupted.
+func ReconcileInterruptedLogAnalysisJobs(db *sql.DB) (int64, error) {
+	if db == nil {
+		return 0, fmt.Errorf("database unavailable")
+	}
+	result, err := db.Exec(`UPDATE log_analysis_jobs SET status=?, error_message=?, updated_at=CURRENT_TIMESTAMP
+		WHERE status IN (?,?)`, models.LogAnalysisFailed, LogAnalysisRestartInterruptedError, models.LogAnalysisPending, models.LogAnalysisRunning)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
 
 var combinedLogPattern = regexp.MustCompile(`^(\S+) \S+ \S+ \[([^]]+)\] "(\S+) ([^ ]+) [^"]+" (\d{3}) \S+ "[^"]*" "([^"]*)"`)
 var accessLogPeerPattern = regexp.MustCompile(`(?:^|\s)peer=(\S+)\s*$`)

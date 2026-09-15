@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,7 +9,37 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/naibabiji/wp-panel/database"
+	"github.com/naibabiji/wp-panel/executor"
 )
+
+func failCronRenderForTest(t *testing.T) {
+	t.Helper()
+	old := enqueueCronRender
+	enqueueCronRender = func() *executor.Task {
+		resultCh := make(chan executor.TaskResult, 1)
+		resultCh <- executor.TaskResult{Success: false, Message: "test restart failure"}
+		return &executor.Task{ResultCh: resultCh}
+	}
+	t.Cleanup(func() { enqueueCronRender = old })
+}
+
+func cronJSONRequest(t *testing.T, method, target, body string, params gin.Params) *httptest.ResponseRecorder {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(method, target, bytes.NewBufferString(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Params = params
+	switch method {
+	case http.MethodPost:
+		new(CronHandler).Create(ctx)
+	case http.MethodPut:
+		new(CronHandler).Update(ctx)
+	case http.MethodDelete:
+		new(CronHandler).Delete(ctx)
+	}
+	return recorder
+}
 
 func TestValidateCronInputRejectsSiteBoundCommandTask(t *testing.T) {
 	siteID := 1
@@ -96,4 +127,51 @@ func TestCronRunCannotConfirmPastMigrationLock(t *testing.T) {
 	if recorder.Code != http.StatusConflict {
 		t.Fatalf("migration run status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
+}
+
+func TestCronMutationsReportRenderFailureAndRetainRequestedDatabaseState(t *testing.T) {
+	t.Run("create", func(t *testing.T) {
+		setupBackupOverviewTestDB(t)
+		failCronRenderForTest(t)
+		recorder := cronJSONRequest(t, http.MethodPost, "/api/cron", `{"name":"created","cron_expression":"5 1 * * *","command":"echo created","task_type":"command"}`, nil)
+		if recorder.Code != http.StatusInternalServerError {
+			t.Fatalf("create status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+		var count int
+		if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM cron_jobs WHERE name='created'`).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("created row count=%d err=%v", count, err)
+		}
+	})
+
+	t.Run("update", func(t *testing.T) {
+		setupBackupOverviewTestDB(t)
+		if _, err := database.GetDB().Exec(`INSERT INTO cron_jobs(id,name,cron_expression,command,task_type,enabled) VALUES(51,'old','* * * * *','echo old','command',1)`); err != nil {
+			t.Fatal(err)
+		}
+		failCronRenderForTest(t)
+		recorder := cronJSONRequest(t, http.MethodPut, "/api/cron/51", `{"name":"updated","cron_expression":"10 2 * * *","command":"echo updated","task_type":"command"}`, gin.Params{{Key: "id", Value: "51"}})
+		if recorder.Code != http.StatusInternalServerError {
+			t.Fatalf("update status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+		var name string
+		if err := database.GetDB().QueryRow(`SELECT name FROM cron_jobs WHERE id=51`).Scan(&name); err != nil || name != "updated" {
+			t.Fatalf("updated name=%q err=%v", name, err)
+		}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		setupBackupOverviewTestDB(t)
+		if _, err := database.GetDB().Exec(`INSERT INTO cron_jobs(id,name,cron_expression,command,task_type,enabled) VALUES(52,'delete me','* * * * *','echo old','command',1)`); err != nil {
+			t.Fatal(err)
+		}
+		failCronRenderForTest(t)
+		recorder := cronJSONRequest(t, http.MethodDelete, "/api/cron/52", "", gin.Params{{Key: "id", Value: "52"}})
+		if recorder.Code != http.StatusInternalServerError {
+			t.Fatalf("delete status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+		var count int
+		if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM cron_jobs WHERE id=52`).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("deleted row count=%d err=%v", count, err)
+		}
+	})
 }

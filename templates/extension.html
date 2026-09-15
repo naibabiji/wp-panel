@@ -84,7 +84,12 @@ function extensionConfig() {
         async remove(arr, i) {
             const item = arr[i];
             if (item && item.id > 0) {
-                try { await api('/extensions/' + item.id, { method: 'DELETE' }); } catch(e) {}
+                try {
+                    await api('/extensions/' + item.id, { method: 'DELETE' });
+                } catch(e) {
+                    this.showMsg(e.message, true);
+                    return;
+                }
             }
             arr.splice(i, 1);
         },

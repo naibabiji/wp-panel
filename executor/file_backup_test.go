@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -138,4 +139,82 @@ func TestRecordFileBackupLogsWithoutPanicOnInsertFailure(t *testing.T) {
 	// file_backups 写入失败不应 panic，也不应影响调用方（已生成的备份文件保留）；
 	// 失败情况通过日志可见，而不是静默吞掉。
 	recordFileBackup(1, "file_full_20260101_000000.tar.gz", 123, "full", "record-fail.example.com")
+}
+
+func TestCleanupOldDBBackupsKeepsRecordWhenFileRemovalFails(t *testing.T) {
+	deleted := false
+	cleanupOldDBBackupsWith([]oldDBBackup{{id: 7, filename: "old.sql.gz"}},
+		func(string) error { return errors.New("disk error") },
+		func(int) error { deleted = true; return nil })
+	if deleted {
+		t.Fatal("database record deleted after file removal failure")
+	}
+}
+
+func TestCleanupOldDBBackupsDeletesMissingFileRecord(t *testing.T) {
+	deleted := false
+	cleanupOldDBBackupsWith([]oldDBBackup{{id: 7, filename: "missing.sql.gz"}},
+		func(string) error { return os.ErrNotExist },
+		func(id int) error { deleted = id == 7; return nil })
+	if !deleted {
+		t.Fatal("missing file record was not deleted")
+	}
+}
+
+func TestWriteBackupStampUsesFrozenCutoff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".last_backup.stamp")
+	cutoff := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := writeBackupStamp(path, cutoff); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(cutoff) {
+		t.Fatalf("stamp mtime = %s, want %s", info.ModTime(), cutoff)
+	}
+}
+
+func TestCreateIncrementalFileArchivePropagatesFindFailure(t *testing.T) {
+	stamp := filepath.Join(t.TempDir(), "stamp")
+	if err := os.WriteFile(stamp, []byte("stamp"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := createIncrementalFileArchive(filepath.Join(t.TempDir(), "missing"), stamp, filepath.Join(t.TempDir(), "out.tar.gz")); err == nil {
+		t.Fatal("missing uploads directory error = nil")
+	}
+}
+
+func TestCreateAndVerifyIncrementalFileArchive(t *testing.T) {
+	root := t.TempDir()
+	uploads := filepath.Join(root, "uploads")
+	if err := os.Mkdir(uploads, 0755); err != nil {
+		t.Fatal(err)
+	}
+	stamp := filepath.Join(root, "stamp")
+	if err := os.WriteFile(stamp, []byte("stamp"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(stamp, past, past); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(uploads, "new.txt"), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "incremental.tar.gz")
+	hasFiles, err := createIncrementalFileArchive(uploads, stamp, target)
+	if err != nil || !hasFiles {
+		t.Fatalf("createIncrementalFileArchive = %v, %v", hasFiles, err)
+	}
+	if err := verifyFileBackupArchive(target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("not an archive"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyFileBackupArchive(target); err == nil {
+		t.Fatal("corrupt archive verification error = nil")
+	}
 }
