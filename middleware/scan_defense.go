@@ -22,6 +22,55 @@ var scanDefenseAddPersistBan = executor.AddPersistBan
 
 var ensureNftablesOnce sync.Once
 
+const (
+	browserProbeWindow    = time.Minute
+	browserProbeThreshold = 10
+	browserProbeBan       = 30 * time.Minute
+)
+
+type browserProbeEntry struct {
+	startedAt time.Time
+	paths     map[string]struct{}
+}
+
+type browserProbeTracker struct {
+	mu          sync.Mutex
+	now         func() time.Time
+	lastCleanup time.Time
+	entries     map[string]*browserProbeEntry
+}
+
+func newBrowserProbeTracker() *browserProbeTracker {
+	return &browserProbeTracker{now: time.Now, entries: make(map[string]*browserProbeEntry)}
+}
+
+func (t *browserProbeTracker) record(ip, path string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	now := t.now()
+	if t.lastCleanup.IsZero() || now.Sub(t.lastCleanup) >= browserProbeWindow {
+		for key, entry := range t.entries {
+			if now.Sub(entry.startedAt) >= browserProbeWindow {
+				delete(t.entries, key)
+			}
+		}
+		t.lastCleanup = now
+	}
+
+	entry := t.entries[ip]
+	if entry == nil || now.Sub(entry.startedAt) >= browserProbeWindow {
+		entry = &browserProbeEntry{startedAt: now, paths: make(map[string]struct{})}
+		t.entries[ip] = entry
+	}
+	entry.paths[path] = struct{}{}
+	if len(entry.paths) < browserProbeThreshold {
+		return false
+	}
+	delete(t.entries, ip)
+	return true
+}
+
 func ensureNftables() {
 	ensureNftablesOnce.Do(func() {
 		if err := executor.EnsurePersistNftables(); err != nil {
@@ -123,6 +172,10 @@ func scanReason(c *gin.Context) string {
 }
 
 func banScanIP(db *sql.DB, ip string, reason string, hours int) {
+	banScanIPForDuration(db, ip, reason, time.Duration(hours)*time.Hour)
+}
+
+func banScanIPForDuration(db *sql.DB, ip string, reason string, duration time.Duration) {
 	if !executor.IsPublicIPAddress(ip) {
 		log.Printf("扫描封禁已忽略非公网 IP %s", ip)
 		return
@@ -134,7 +187,7 @@ func banScanIP(db *sql.DB, ip string, reason string, hours int) {
 		return
 	}
 
-	expires := time.Now().UTC().Add(time.Duration(hours) * time.Hour).Format("2006-01-02 15:04:05")
+	expires := time.Now().UTC().Add(duration).Format("2006-01-02 15:04:05")
 	tx, err := db.Begin()
 	if err != nil {
 		log.Printf("扫描封禁失败 ip=%s: %v", ip, err)
@@ -152,7 +205,7 @@ func banScanIP(db *sql.DB, ip string, reason string, hours int) {
 	}
 	if _, err := tx.Exec(`INSERT INTO firewall_ban_history
 		(ip_address,ban_level,reason,source_jail,expires_at,ban_count,is_manual,duration_seconds)
-		VALUES (?,4,?,'panel_scan',?,1,0,?)`, ip, reason, expires, hours*60*60); err != nil {
+		VALUES (?,4,?,'panel_scan',?,1,0,?)`, ip, reason, expires, int64(duration/time.Second)); err != nil {
 		log.Printf("扫描封禁历史写入失败 ip=%s: %v", ip, err)
 		return
 	}
@@ -165,11 +218,12 @@ func banScanIP(db *sql.DB, ip string, reason string, hours int) {
 		log.Printf("[扫描防御] IP %s 已写入数据库，但持久封禁层应用失败，将等待同步重试: %v", ip, err)
 		return
 	}
-	log.Printf("[扫描防御] 已封禁 IP %s (理由: %s, 时长: %d小时)", ip, reason, hours)
+	log.Printf("[扫描防御] 已封禁 IP %s (理由: %s, 时长: %s)", ip, reason, duration)
 }
 
 func ScanDefense(db *sql.DB, randomSuffix string) gin.HandlerFunc {
 	legitPrefix := "/" + randomSuffix
+	browserProbes := newBrowserProbeTracker()
 
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
@@ -179,17 +233,21 @@ func ScanDefense(db *sql.DB, randomSuffix string) gin.HandlerFunc {
 			return
 		}
 
-		if isCommonProbePath(path) || hasBasicAuthHeader(c) || isSiteMigrationMachineRequest(c) {
+		if isCommonProbePath(path) || isSiteMigrationMachineRequest(c) {
 			c.Next()
 			return
 		}
 
-		if !isBrowserLike(c) {
+		if !isBrowserLike(c) && !hasBasicAuthHeader(c) {
 			banScanIP(db, c.ClientIP(), scanReason(c), 720)
 			c.AbortWithStatus(http.StatusForbidden)
 			return
 		}
 
 		c.Next()
+		if c.Writer.Status() == http.StatusNotFound && browserProbes.record(c.ClientIP(), path) {
+			reason := "高频扫描: 60秒内访问10个不同的未知面板路径"
+			banScanIPForDuration(db, c.ClientIP(), reason, browserProbeBan)
+		}
 	}
 }

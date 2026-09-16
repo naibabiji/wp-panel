@@ -2,10 +2,12 @@ package middleware
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	_ "modernc.org/sqlite"
@@ -34,6 +36,60 @@ func TestScanDefenseAllowsBasicAuthHeaderWithoutBan(t *testing.T) {
 	}
 	if count := scanDefenseBanCount(t, db); count != 0 {
 		t.Fatalf("ban count = %d, want 0", count)
+	}
+}
+
+func TestScanDefenseBansTenthDistinctBrowserLikeNotFoundPath(t *testing.T) {
+	db := newScanDefenseTestDB(t)
+	router := newScanDefenseTestRouter(t, db)
+
+	for i := 0; i < browserProbeThreshold; i++ {
+		rec := performScanDefenseRequest(router, http.MethodGet, fmt.Sprintf("/missing-%d", i), "Mozilla/5.0", "")
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("request %d status=%d, want %d", i+1, rec.Code, http.StatusNotFound)
+		}
+		wantBans := 0
+		if i+1 == browserProbeThreshold {
+			wantBans = 1
+		}
+		if count := scanDefenseBanCount(t, db); count != wantBans {
+			t.Fatalf("request %d ban count=%d, want %d", i+1, count, wantBans)
+		}
+	}
+
+	var duration int
+	if err := db.QueryRow(`SELECT duration_seconds FROM firewall_ban_history LIMIT 1`).Scan(&duration); err != nil {
+		t.Fatal(err)
+	}
+	if duration != int(browserProbeBan/time.Second) {
+		t.Fatalf("duration=%d, want %d", duration, int(browserProbeBan/time.Second))
+	}
+}
+
+func TestScanDefenseCountsDistinctBrowserLikeNotFoundPaths(t *testing.T) {
+	db := newScanDefenseTestDB(t)
+	router := newScanDefenseTestRouter(t, db)
+
+	for i := 0; i < browserProbeThreshold+5; i++ {
+		rec := performScanDefenseRequest(router, http.MethodGet, "/same-missing-path", "Mozilla/5.0", "")
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("request %d status=%d, want %d", i+1, rec.Code, http.StatusNotFound)
+		}
+	}
+	if count := scanDefenseBanCount(t, db); count != 0 {
+		t.Fatalf("ban count=%d, want 0", count)
+	}
+}
+
+func TestScanDefenseCountsBasicAuthNotFoundPaths(t *testing.T) {
+	db := newScanDefenseTestDB(t)
+	router := newScanDefenseTestRouter(t, db)
+
+	for i := 0; i < browserProbeThreshold; i++ {
+		performScanDefenseRequest(router, http.MethodGet, fmt.Sprintf("/basic-missing-%d", i), "", "Basic dXNlcjpwYXNz")
+	}
+	if count := scanDefenseBanCount(t, db); count != 1 {
+		t.Fatalf("ban count=%d, want 1", count)
 	}
 }
 

@@ -18,6 +18,7 @@
 
 | 日期 | 主题 slug | 变更摘要 | 用户可见变化点 | 来源 | 状态 |
 |---|---|---|---|---|---|
+| 2026-09-16 | security | 面板未知路径扫描与搬家机器认证失败限速 | 浏览器标识或仅携带 Basic Auth 请求头不再绕过面板未知路径扫描统计；同一来源 60 秒访问 10 个不同未知路径会短期封禁。网站搬家机器接口连续认证失败会暂时限速，正确认证的正常搬家传输不受总请求量限制 | `docs/features/security-protection.md`、`docs/features/site-migration.md` | 待同步 |
 | 2026-09-15 | websites | AI 开发连接包首次连接与交接说明完善 | 新连接包自带并固定服务器 SSH 身份，新电脑无需预先保存指纹；身份不匹配会拒绝连接。服务器交接文档是最新网站、能力和边界准则，面板更新重启后会自动刷新，旧连接包与其冲突时以服务器文档为准；并列出本站日志及只读 PHP-FPM/Nginx 托管配置位置，避免用 CLI PHP 或全局配置误判站点限制。交接包不规定用户 AI 的 Git、计划、授权或开发方式 | `docs/ai-development-access-design.md`、`docs/features/website-runtime-and-cdn.md` | 待同步 |
 | 2026-09-15 | getting-started | 面板更新确认目标版本并核对回滚健康 | 更新后只有实际运行进程版本与目标版本一致才会显示成功；失败回滚会确认旧版本重新健康，重启或健康恢复失败会保留诊断计划并记录明确阶段 | `docs/features/getting-started-and-panel-update.md` | 待同步 |
 | 2026-09-15 | websites | 建站主组失败时清理本次系统用户 | 创建网站若新系统用户建立后主组确认失败，会清理本次创建的账号并提示真实结果；系统用户创建本身失败时不会删除可能由外部管理的同名账号 | `docs/features/website-runtime-and-cdn.md` | 待同步 |
