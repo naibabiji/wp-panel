@@ -29,27 +29,27 @@ WP Panel focuses on one job: **running WordPress sites efficiently on VPS server
 
 | Module | What it does |
 |------|------|
-| **Site management** | One-click site provisioning with isolated users, directories, Nginx, PHP-FPM, and databases; pause, enable, delete, and reinstall WordPress |
-| **Site migration** | Move WordPress or generic PHP sites between two WP Panel servers running the same version, with multi-site selection, per-site progress, retries, and explicit completion options |
-| **WordPress update management** | Manual per-site core/plugin/theme updates (preview, dedicated pre-update backup, maintenance mode, health check, automatic rollback on failure); multi-select batch plugin updates; licensed commercial plugins/themes can update through the vendor's channel |
-| **WordPress fleet overview** | Read-only inventory of each site's core version, plugins, themes, and available updates; a dedicated overview page summarizes all sites, with manual refresh and staggered background refresh |
+| **Site management** | Create WordPress sites in one step, then pause, enable, delete, or reinstall them; sites are isolated so a problem on one site is less likely to affect the others |
+| **Site migration** | Move sites between two WP Panel servers running the same version, select several sites at once, follow their progress, and retry failed jobs |
+| **WordPress updates** | Review and back up a site before updating WordPress, plugins, or themes; check the site afterward and restore it automatically if the update fails |
+| **WordPress overview** | See WordPress versions, plugins, themes, and available updates for all sites on one page instead of checking every dashboard |
+| **Maintenance protection** | Show a maintenance page while work is in progress and reopen the site afterward; temporary maintenance windows also end automatically |
 | **SSL certificates** | Automatic Let's Encrypt issuance, automatic renewal before expiry, manual replacement, and self-signed certificates |
-| **FastCGI cache** | Full-site Nginx caching with one-click purge support from the bundled WordPress plugin |
-| **Security defense** | Fail2ban + nftables progressive bans, allowlists for Cloudflare/Google/Bing, global rate limiting, and WordPress security event analysis |
-| **Password-recovery protection** | Per-site three-state toggle (allow / disable site-wide / disable for admins only); site-wide disable also hides the "Lost your password?" link on the login page |
-| **Database management** | MariaDB password changes, database backup and restore, upload restore, and automatic backups |
-| **Scheduled tasks** | Visual cron management, WP Cron replacement, incremental file backups, and system task inspection |
-| **File manager** | Upload, download, delete, rename, archive, extract, cut, copy, paste, multi-select, and chunked upload with resume support; search the current directory or its subdirectories by name, locate and download cross-directory results, and jump directly to the first or last page |
+| **Site speed** | Cache pages and clear the cache from WordPress with one click; optionally optimize uploaded images to reduce storage and loading time |
+| **Security defense** | Automatically slow or block common login attacks, malicious scans, and aggressive crawlers, while organizing suspicious activity for review |
+| **Password recovery protection** | Choose per site whether password recovery is allowed, disabled for everyone, or disabled only for administrator accounts |
+| **Database management** | Change database passwords, create automatic or manual backups, upload and restore backups, and open the database tool only when needed |
+| **Scheduled tasks** | Manage scheduled work from the panel, replace unreliable WordPress Cron, and check whether backups and other jobs are running normally |
+| **File manager** | Upload, download, copy, move, archive, extract, and search files much like a desktop file manager; large uploads can resume after interruption |
 | **Dashboard** | Live CPU, memory, disk, and load monitoring with 24h/7d/15d historical charts |
-| **System stability safeguards** | Automatic swap buffer creation on low-memory servers, OOM incident alerts, crash/anomaly diagnostics for MariaDB/PHP-FPM/Nginx/Redis, and incident resource snapshots |
-| **AI diagnostics** | One-click site health analysis with follow-up questions and diagnostic history, focused on logs and service-state clues |
-| **Alerting** | SMTP mail alerts with independent switches for CPU, memory, disk, service, SSL, site expiry, system update, and panel update rules |
-| **Software management** | PHP, Nginx, MariaDB, and Redis configuration editing, process supervision, and log viewing |
-| **Panel security** | Random entry path + BasicAuth + web login, bcrypt password hashing, and login-failure bans |
-| **Updates** | In-panel update checks, SHA256 + Ed25519 verification, automatic rollback on failure, and optional reverse-proxy support for China users |
-| **Suspicious access analysis** | Aggregated analysis of WordPress access logs with risk levels, suggested actions, and suspicious IP/path evidence |
-| **Crawler throttling** | Separate rate limits for bot user agents to reduce high-frequency scraper and script traffic |
-| **Remote backups** | Backup sync to remote targets via rsync/SSH or S3-compatible object storage, with optional local copy retention |
+| **System stability** | Add a memory safety buffer on small servers and preserve useful clues when memory runs out or an important service stops unexpectedly |
+| **Site change monitoring** | Watch for unusual changes to administrators, content, important settings, application passwords, and site files |
+| **AI diagnostics** | Gather site logs and service health in one step and continue with follow-up questions; diagnostics suggest next steps but do not change the site |
+| **Alerts** | Receive email alerts for low resources, stopped services, expiring certificates or sites, and available updates; each alert type can be switched separately |
+| **Software and runtime** | Manage PHP, Nginx, MariaDB, and Redis, inspect logs, and adjust PHP or Nginx settings for individual sites |
+| **Panel security** | Use a private login path and two login checks; repeated password failures or repeated scans of invalid paths are restricted automatically |
+| **Safe updates** | Check for panel and Debian software updates; panel packages are verified before installation and restored to the previous version if an update fails |
+| **Backups and offsite copies** | Back up sites and panel data automatically, and copy site backups to another server or object storage to reduce single-server risk |
 
 ## One-Click Installation
 
@@ -88,34 +88,27 @@ WP Panel can move WordPress or generic PHP sites between two servers running the
 - Backup history, access logs, security-event history, server-level remote-backup credentials, and custom-command scheduled tasks are not migrated.
 - The source site enters HTTP 503 maintenance mode during migration to prevent new data from being written.
 - The target server does not overwrite an existing site with the same domain. After migration, the administrator must verify the site and update DNS/CDN records manually.
+- Migration is not an instant whole-server snapshot. Run it during a quieter period and check the storefront, dashboard, forms, orders, and other important flows before changing DNS.
 
 Before starting, open the [Help Center](https://wp-panel.org/help/) and read the panel-to-panel site migration guide for prerequisites, steps, and completion options.
 
 ## Security
 
-**Short version: if the login URL and credentials stay private, outsiders do not get in.**
+**Short version: WP Panel hides the login page, requires two login checks, and automatically restricts repeated probing.**
 
-The panel uses four layers of protection:
-
-- Layer 0: **scan defense** - non-browser requests that touch port 8443 are identified immediately and banned at the nftables network layer for 30 days
-- Layer 1: **random entry path** - an 8-character random hex path gives 16^8 possible combinations, which makes blind scanning impractical
-- Layer 2: **BasicAuth** - the browser prompts for a username and password
-- Layer 3: **web login** - the page form asks for the panel password
-
-Only users who pass all four layers can enter the panel. Five failures at any layer trigger a ban.
+These protections make broad scanning and password guessing much harder, but they do not replace strong passwords, timely updates, and careful handling of login details. A normal login must first reach the server's unique private path and then pass both the browser prompt and the web login.
 
 ### Access Protection
 
-- scan defense automatically detects non-browser traffic such as curl, scripts, and scanners on port 8443
-- the random entry path is not meant to be guessed by brute force
-- BasicAuth and web login provide two separate authentication checks
-- traffic is encrypted over HTTPS only; the panel exposes only port 8443
-- API error messages avoid leaking internal paths and command output
+- every server gets its own private path, making the login page harder for an unfamiliar scanner to find
+- direct scanner traffic, or requests to 10 different invalid paths within one minute, are restricted automatically
+- finding the path is not enough: the browser prompt and web login are two separate checks
+- the login uses HTTPS, and error messages avoid exposing internal server details
 
 ### Anti-Bruteforce
 
-- five consecutive failures at any authentication layer trigger a 24-hour nftables ban
-- website and SSH Fail2ban rules use independent progressive durations: 10 minutes, 1 hour, 6 hours, 24 hours, then 7 days; automatic rules do not escalate to a permanent ban
+- five failures at the browser prompt or web login in a short period restrict that source for 24 hours
+- WordPress logins and SSH have their own protection; repeated attacks are restricted for progressively longer periods, up to seven days
 
 ### Site Isolation
 
@@ -125,32 +118,26 @@ Only users who pass all four layers can enter the panel. Five failures at any la
 
 ### WordPress-Specific Protection
 
-- detects failed `wp-login.php` authentication responses (HTTP 200) and disabled `xmlrpc.php` authentication requests (HTTP 403); successful logins and recognized password-recovery or reset actions are excluded
-- scans for sensitive files such as `.env`, `.git`, and archives, then bans the source automatically
-- detects 404 bursts and treats 30 hits in 60 seconds as a directory scan
-- Nginx rejects HTTPS connections for unknown domains to avoid certificate leaks
-- logged-in WordPress users are exempt from throttling so normal admin work stays smooth
-- **WordPress suspicious access analysis**: aggregates `wp-security.log` and `error.log` in 30-second windows, then outputs high/medium/low risk events, matched paths, suspicious IPs, and suggested actions; by default it only analyzes and does not auto-ban
-- **runtime security monitoring**: detects newly created suspicious PHP files and high-frequency access inside the `wp-content` runtime tree, then records file-security events
-- **crawler throttling**: separate `bot_limit_enabled` / `bot_limit_rpm` / `bot_limit_burst` policies keep normal user traffic unaffected while constraining high-frequency crawlers and scanners
+- recognizes repeated login attempts, searches for common sensitive files, and bursts of requests to pages that do not exist
+- rejects requests made with unknown domain names, reducing unnecessary exposure of site and certificate information
+- groups suspicious activity by risk and shows the source, target, and suggested response; analysis alone does not automatically ban a visitor
+- records newly created suspicious PHP files and unusually frequent access inside site directories
+- can slow aggressive crawlers separately while minimizing the effect on ordinary visitors and routine dashboard work
 
 ### AI Operations Diagnostics
 
-- AI diagnostics aggregate logs, PHP/database/service state, and runtime context for each site
-- follow-up questions stay inside the same session
-- diagnostics are read-only; they do not perform file changes, database changes, or repair commands
-- useful for spotting error trends, suggesting reproduction steps, and keeping a traceable recommendation history
+- collects logs and service health related to a site problem in one step, then supports follow-up questions
+- provides analysis and troubleshooting suggestions only; it does not change files, databases, or server settings
 
-### Backup and Offsite Archiving
+### Backups and Offsite Copies
 
-- site backup tasks support S3 object storage
-- endpoint reachability checks and transfer tests are available
-- failed syncs can keep a local copy, and cleanup can be recovered according to the configured policy
+- site backups can be copied to another server or S3-compatible storage
+- when a transfer fails, a local copy can be kept according to your settings
 
 ### Update Safety
 
-- panel updates use both SHA256 and Ed25519 checks, so a tampered GitHub Release cannot be forged into a valid package
-- failed updates roll back to the previous version automatically
+- update packages are checked to confirm they really came from WP Panel and were not damaged or replaced
+- a failed update automatically restores the previous version so the panel can remain available
 
 ### Code Transparency
 
@@ -159,7 +146,6 @@ Only users who pass all four layers can enter the panel. Five failures at any la
 - update checks connect only to GitHub, not to other external services
 - no web shell and no online code editor
 - passwords are stored with bcrypt cost 12, never in plain text
-- three rounds of AI security review have already fixed 44 potential issues
 
 ### Deep-Dive Security Notes
 
