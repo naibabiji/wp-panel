@@ -94,9 +94,9 @@ Before starting, open the [Help Center](https://wp-panel.org/help/) and read the
 
 ## Security
 
-**Short version: WP Panel hides the login page, requires two login checks, and automatically restricts repeated probing.**
+**Short version: if the server and your computer have not already been compromised, the private login path and both sets of credentials remain secret, and WP Panel is kept up to date, an outsider relying only on internet scanning or guessing is extremely unlikely to enter the panel.**
 
-These protections make broad scanning and password guessing much harder, but they do not replace strong passwords, timely updates, and careful handling of login details. A normal login must first reach the server's unique private path and then pass both the browser prompt and the web login.
+A normal login requires the server's unique private path, the browser prompt, and the web login. Repeated attempts to find the path or guess passwords are restricted automatically. No internet-connected software can promise that compromise is impossible, but WP Panel does not rely on a single password for protection.
 
 ### Access Protection
 
