@@ -514,7 +514,13 @@ function panelSettings() {
                 const elapsed = Date.now() - this.serverTimeFetchedAt;
                 const d = new Date(this.serverTimeBase + elapsed);
                 const opts = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-                this.serverTime = d.toLocaleString('zh-CN', opts);
+                if (this.timezone) opts.timeZone = this.timezone;
+                try {
+                    this.serverTime = d.toLocaleString('zh-CN', opts);
+                } catch (e) {
+                    delete opts.timeZone;
+                    this.serverTime = d.toLocaleString('zh-CN', opts);
+                }
             }
         },
         async saveAccount() {

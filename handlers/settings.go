@@ -69,8 +69,13 @@ var (
 		if err := exec.Command("timedatectl", "set-ntp", "true").Run(); err != nil {
 			return err
 		}
-		return exec.Command("systemctl", "restart", "systemd-timesyncd").Run()
+		unit := ntpTimeSyncUnit()
+		if unit == "" {
+			return nil
+		}
+		return exec.Command("systemctl", "restart", unit).Run()
 	}
+	ntpTimeSyncUnit    = detectNTPTimeSyncUnit
 	readSystemTimezone = getTimezone
 	readSystemHostname = getHostname
 	readSystemNTP      = getNTPEnabled
@@ -493,6 +498,34 @@ func getNTPSyncStatus() (bool, string) {
 func getNTPEnabled() bool {
 	out, err := exec.Command("timedatectl", "show", "--property=NTP", "--value").CombinedOutput()
 	return err == nil && strings.TrimSpace(string(out)) == "yes"
+}
+
+// detectNTPTimeSyncUnit 返回 Debian 13 上实际安装的时间同步 systemd 单元。
+// Debian 13 云服务商镜像常预装 chrony 并且不再提供 systemd-timesyncd 单元；
+// timedatectl set-ntp 本身对两者都有效，但重启动作必须作用于真实存在的
+// 单元，否则 systemctl restart 会因为单元不存在直接报错。
+func detectNTPTimeSyncUnit() string {
+	for _, unit := range []string{"chrony.service", "systemd-timesyncd.service"} {
+		if systemdUnitExists(unit) {
+			return unit
+		}
+	}
+	return ""
+}
+
+// systemdUnitExists 判断 unit 是否存在且未被 mask（masked 单元 restart 必然失败）。
+func systemdUnitExists(unit string) bool {
+	out, err := exec.Command("systemctl", "list-unit-files", unit).Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == unit && fields[1] != "masked" {
+			return true
+		}
+	}
+	return false
 }
 
 func getTimezone() string {
