@@ -2,8 +2,6 @@ package executor
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -25,7 +23,7 @@ func FixWPConfigCredentials(webRoot, domain, dbName, dbUser, tablePrefix string)
 	if err != nil {
 		return fmt.Errorf("wp-config.php 路径不安全: %w", err)
 	}
-	content, err := os.ReadFile(configPath)
+	content, err := readWPConfigSecure(webRoot)
 	if err != nil {
 		return fmt.Errorf("读取 wp-config.php 失败 (路径: %s): %w", configPath, err)
 	}
@@ -69,7 +67,10 @@ func FixWPConfigCredentials(webRoot, domain, dbName, dbUser, tablePrefix string)
 
 	result, _ = ensureWPConfigCachePrefixes(result, wpCacheKeySalt(domain))
 
-	if err := writeManagedPHPFile(webRoot, configPath, []byte(result), 0600); err != nil {
+	if err := lintManagedPHPData([]byte(result)); err != nil {
+		return fmt.Errorf("写入 wp-config.php 失败: %w", err)
+	}
+	if err := writeWPConfigSecure(webRoot, []byte(result)); err != nil {
 		return fmt.Errorf("写入 wp-config.php 失败: %w", err)
 	}
 	return nil
@@ -143,8 +144,7 @@ if (!defined('ABSPATH')) {
 require_once ABSPATH . 'wp-settings.php';
 `, phpSingleQuoteEscape(dbName), phpSingleQuoteEscape(dbUser), phpSingleQuoteEscape(dbPassword), salts, phpSingleQuoteEscape(tablePrefix), phpSingleQuoteEscape(cacheSalt), phpSingleQuoteEscape(cacheSalt))
 
-	configPath := filepath.Join(webRoot, "wp-config.php")
-	return os.WriteFile(configPath, []byte(config), 0600)
+	return writeWPConfigSecure(webRoot, []byte(config))
 }
 
 func replaceWPTablePrefix(content, tablePrefix string) (string, bool) {
@@ -172,8 +172,7 @@ func replaceWPTablePrefix(content, tablePrefix string) (string, bool) {
 }
 
 func ReadWPTablePrefix(webRoot string) (string, error) {
-	configPath := filepath.Join(webRoot, "wp-config.php")
-	content, err := os.ReadFile(configPath)
+	content, err := readWPConfigSecure(webRoot)
 	if err != nil {
 		return "", err
 	}
@@ -186,6 +185,42 @@ func ReadWPTablePrefix(webRoot string) (string, error) {
 		return "", fmt.Errorf("invalid WordPress table prefix")
 	}
 	return prefix, nil
+}
+
+func SetWPCronDisabled(webRoot string, disabled bool) error {
+	content, err := readWPConfigSecure(webRoot)
+	if err != nil {
+		return err
+	}
+	text := string(content)
+	if disabled {
+		if strings.Contains(text, "DISABLE_WP_CRON") {
+			return nil
+		}
+		marker := "/* That's all, stop editing!"
+		idx := strings.Index(text, marker)
+		if idx < 0 {
+			marker = "require_once ABSPATH . 'wp-settings.php';"
+			idx = strings.Index(text, marker)
+		}
+		if idx <= 0 {
+			return fmt.Errorf("wp-config.php marker not found")
+		}
+		text = text[:idx] + "define('DISABLE_WP_CRON', true);\n" + text[idx:]
+	} else {
+		if !strings.Contains(text, "DISABLE_WP_CRON") {
+			return nil
+		}
+		lines := strings.Split(text, "\n")
+		kept := lines[:0]
+		for _, line := range lines {
+			if !strings.Contains(line, "DISABLE_WP_CRON") {
+				kept = append(kept, line)
+			}
+		}
+		text = strings.Join(kept, "\n")
+	}
+	return writeWPConfigSecure(webRoot, []byte(text))
 }
 
 func extractWPTablePrefix(content string) (string, bool) {

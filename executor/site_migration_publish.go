@@ -371,8 +371,7 @@ func copyMigrationTree(source, target string) error {
 }
 
 func fixMigrationWPConfigCredentials(webRoot, domain string, identity siteMigrationDatabaseIdentity) error {
-	path := filepath.Join(webRoot, "wp-config.php")
-	content, err := os.ReadFile(path)
+	content, err := readWPConfigSecure(webRoot)
 	if err != nil {
 		return err
 	}
@@ -391,7 +390,7 @@ func fixMigrationWPConfigCredentials(webRoot, domain string, identity siteMigrat
 	}
 	result, _ = ensureWPConfigCachePrefixes(result, wpCacheKeySalt(domain))
 	result = freezeMigrationWPConfigCron(result)
-	return atomicWriteMigrationFile(path, []byte(result), 0600)
+	return writeWPConfigSecure(webRoot, []byte(result))
 }
 
 func freezeMigrationWPConfigCron(content string) string {

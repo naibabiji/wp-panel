@@ -326,7 +326,7 @@ func TestCopyMigrationTreePreservesInternalSymlinkAndRejectsExistingFile(t *test
 }
 
 func TestFixMigrationWPConfigCredentialsReplacesOnlyManagedIdentity(t *testing.T) {
-	root := t.TempDir()
+	root := newSecureSiteTestRoot(t)
 	config := "<?php\ndefine('DB_NAME', 'old');\ndefine(\"DB_USER\", \"old_user\");\ndefine('DB_PASSWORD', 'old_password');\ndefine('DISABLE_WP_CRON', false);\ndefine('CUSTOM_VALUE', 'keep');\n"
 	if err := os.WriteFile(filepath.Join(root, "wp-config.php"), []byte(config), 0644); err != nil {
 		t.Fatal(err)
@@ -341,7 +341,7 @@ func TestFixMigrationWPConfigCredentialsReplacesOnlyManagedIdentity(t *testing.T
 			t.Fatalf("missing %q in %s", want, content)
 		}
 	}
-	if info, _ := os.Stat(filepath.Join(root, "wp-config.php")); info.Mode().Perm() != 0600 {
+	if info, _ := os.Stat(filepath.Join(root, "wp-config.php")); info.Mode().Perm() != 0644 {
 		t.Fatalf("mode=%v", info.Mode().Perm())
 	}
 }

@@ -105,7 +105,7 @@ func ReadWebsiteDatabasePassword(site *models.Website) (string, error) {
 	if site == nil || site.SiteType != "wordpress" {
 		return "", errors.New("database password is required")
 	}
-	data, err := os.ReadFile(filepath.Join(site.WebRoot, "wp-config.php"))
+	data, err := readWPConfigSecure(site.WebRoot)
 	if err != nil {
 		return "", fmt.Errorf("read wp-config.php: %w", err)
 	}

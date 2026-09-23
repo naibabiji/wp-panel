@@ -402,7 +402,7 @@ func TestAIRequestTimeoutUsesPromptSizeAndConfiguredCeiling(t *testing.T) {
 func TestBuildAIDiagnosticPromptRedactsWPSecrets(t *testing.T) {
 	stubAIHTTPProbe(t, 200, 302)
 
-	root := t.TempDir()
+	root := newSecureSiteTestRoot(t)
 	logDir := t.TempDir()
 	config := `<?php
 define('DB_NAME', 'db_example');
@@ -456,7 +456,7 @@ func TestBuildAIDiagnosticPromptIncludesWPConfigSyntaxError(t *testing.T) {
 	}
 	t.Cleanup(func() { aiRunPHPLint = oldRunPHPLint })
 
-	root := t.TempDir()
+	root := newSecureSiteTestRoot(t)
 	logDir := t.TempDir()
 	configPath := filepath.Join(root, "wp-config.php")
 	if err := os.WriteFile(configPath, []byte("<?php\ndefine('DB_NAME', 'db_example';\n$table_prefix = 'wp_';\n"), 0600); err != nil {
@@ -509,7 +509,7 @@ func TestAICodeSuspectsDetectsActiveThemeWPDie(t *testing.T) {
 	config.AppConfig = &config.Config{}
 	t.Cleanup(func() { config.AppConfig = oldConfig })
 
-	root := t.TempDir()
+	root := newSecureSiteTestRoot(t)
 	if err := os.WriteFile(filepath.Join(root, "wp-config.php"), []byte("<?php\n$table_prefix = 'wp_';\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -552,7 +552,7 @@ func TestAIScanPHPFileClassifiesConditionalTerminationAsLow(t *testing.T) {
 	}
 	t.Cleanup(func() { aiRunPHPLint = oldRunPHPLint })
 
-	root := t.TempDir()
+	root := newSecureSiteTestRoot(t)
 	pluginDir := filepath.Join(root, "wp-content", "plugins", "wpterm")
 	if err := os.MkdirAll(pluginDir, 0755); err != nil {
 		t.Fatal(err)
@@ -668,7 +668,7 @@ func TestAIPromptWithinBudgetPreservesHighCodeSuspect(t *testing.T) {
 func TestBuildAIDiagnosticPromptIncludesWPPanelBoundaries(t *testing.T) {
 	stubAIHTTPProbe(t, 200, 302)
 
-	root := t.TempDir()
+	root := newSecureSiteTestRoot(t)
 	logDir := t.TempDir()
 	site := &models.Website{
 		ID:            1,
@@ -733,7 +733,7 @@ func TestBuildAIDiagnosticPromptIncludesPerformanceSummary(t *testing.T) {
 	config.AppConfig = &config.Config{}
 	t.Cleanup(func() { config.AppConfig = oldConfig })
 
-	root := t.TempDir()
+	root := newSecureSiteTestRoot(t)
 	if err := os.WriteFile(filepath.Join(root, "wp-config.php"), []byte("<?php\n$table_prefix = 'wp_';\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -800,7 +800,7 @@ func TestBuildAIDiagnosticPromptForbidsPageCachePluginWhenFastCGIEnabled(t *test
 	config.AppConfig = &config.Config{}
 	t.Cleanup(func() { config.AppConfig = oldConfig })
 
-	root := t.TempDir()
+	root := newSecureSiteTestRoot(t)
 	if err := os.WriteFile(filepath.Join(root, "wp-config.php"), []byte("<?php\n$table_prefix = 'wp_';\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -850,7 +850,7 @@ func TestBuildAIDiagnosticPromptForbidsPageCachePluginWhenFastCGIEnabled(t *test
 func TestBuildAIDiagnosticPromptIncludesCurrentHTTPChecksOverHistorical5xx(t *testing.T) {
 	stubAIHTTPProbe(t, 200, 302)
 
-	root := t.TempDir()
+	root := newSecureSiteTestRoot(t)
 	logDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "wp-config.php"), []byte("<?php\n$table_prefix = 'wp_';\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -894,7 +894,7 @@ func TestBuildAIFollowupPromptIncludesConversationAndCurrentContext(t *testing.T
 	openTestDB(t)
 	stubAIHTTPProbe(t, 200, 302)
 
-	root := t.TempDir()
+	root := newSecureSiteTestRoot(t)
 	logDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "wp-config.php"), []byte("<?php\n$table_prefix = 'wp_';\n"), 0600); err != nil {
 		t.Fatal(err)

@@ -9,7 +9,7 @@ import (
 )
 
 func TestApplyWPOptimizationsReversibleDoesNotOverwriteLaterChange(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSecureSiteTestRoot(t)
 	configPath := filepath.Join(dir, "wp-config.php")
 	before := "<?php\ndefine('WP_DEBUG', false);\n"
 	if err := os.WriteFile(configPath, []byte(before), 0600); err != nil {
@@ -38,7 +38,7 @@ func TestApplyWPOptimizationsReversibleDoesNotOverwriteLaterChange(t *testing.T)
 }
 
 func TestUpdateWPConfigSkipsUnchangedFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSecureSiteTestRoot(t)
 	configPath := filepath.Join(dir, "wp-config.php")
 	config := "<?php\ndefine('WP_DEBUG', false);\n"
 	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
@@ -58,7 +58,7 @@ func TestUpdateWPConfigSkipsUnchangedFile(t *testing.T) {
 }
 
 func TestApplyWPOptimizationsEnablesDebugAndKeepsDisplayOffByDefault(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSecureSiteTestRoot(t)
 	configPath := filepath.Join(dir, "wp-config.php")
 	config := "<?php\ndefine('WP_DEBUG', false);\n/* That's all, stop editing! Happy publishing. */\n"
 	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
@@ -85,7 +85,7 @@ func TestApplyWPOptimizationsEnablesDebugAndKeepsDisplayOffByDefault(t *testing.
 }
 
 func TestApplyWPOptimizationsCanDisplayDebugErrors(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSecureSiteTestRoot(t)
 	configPath := filepath.Join(dir, "wp-config.php")
 	config := "<?php\ndefine('WP_DEBUG', false);\ndefine('WP_DEBUG_DISPLAY', false);\n"
 	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
@@ -109,7 +109,7 @@ func TestApplyWPOptimizationsCanDisplayDebugErrors(t *testing.T) {
 }
 
 func TestWPDebugDisplayEnabledAcceptsUppercaseBoolean(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSecureSiteTestRoot(t)
 	if err := os.WriteFile(filepath.Join(dir, "wp-config.php"), []byte("<?php\ndefine('WP_DEBUG_DISPLAY', TRUE);\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestWPDebugDisplayEnabledAcceptsUppercaseBoolean(t *testing.T) {
 }
 
 func TestApplyWPOptimizationsHandlesDoubleQuotedDebugDisplay(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSecureSiteTestRoot(t)
 	configPath := filepath.Join(dir, "wp-config.php")
 	config := "<?php\ndefine('WP_DEBUG', true);\ndefine(\"WP_DEBUG_DISPLAY\", true);\n"
 	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
@@ -143,7 +143,7 @@ func TestApplyWPOptimizationsHandlesDoubleQuotedDebugDisplay(t *testing.T) {
 }
 
 func TestApplyWPOptimizationsDeduplicatesAndMovesDebugConstantsBeforeMarker(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSecureSiteTestRoot(t)
 	configPath := filepath.Join(dir, "wp-config.php")
 	config := "<?php\ndefine( 'WP_DEBUG', false );\n/* That's all, stop editing! Happy publishing. */\nrequire_once ABSPATH . 'wp-settings.php';\ndefine('WP_DEBUG', true);\ndefine('WP_DEBUG_LOG', true);\n"
 	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
@@ -169,7 +169,7 @@ func TestApplyWPOptimizationsDeduplicatesAndMovesDebugConstantsBeforeMarker(t *t
 }
 
 func TestApplyWPOptimizationsDisablesAllDebugConstants(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSecureSiteTestRoot(t)
 	configPath := filepath.Join(dir, "wp-config.php")
 	config := "<?php\ndefine('WP_DEBUG', true);\ndefine('WP_DEBUG_LOG', true);\ndefine('WP_DEBUG_DISPLAY', true);\n"
 	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {

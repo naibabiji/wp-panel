@@ -201,7 +201,7 @@ func executeChangeDBPassword(task *Task) TaskResult {
 	}
 
 	configPath := filepath.Join(site.WebRoot, "wp-config.php")
-	content, err := os.ReadFile(configPath)
+	content, err := readWPConfigSecure(site.WebRoot)
 	if err != nil {
 		log.Printf("读取 wp-config.php 失败: %v", err)
 		return TaskResult{Success: false, Message: "读取 wp-config.php 失败"}
@@ -215,7 +215,10 @@ func executeChangeDBPassword(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "未找到 DB_PASSWORD 定义，wp-config.php 可能格式异常"}
 	}
 
-	result := applyWordPressDBPasswordChange(configPath, content, []byte(newContent), site, newPassword, cfg, os.WriteFile, changeMariaDBPassword)
+	writeConfig := func(_ string, data []byte, _ os.FileMode) error {
+		return writeWPConfigSecure(site.WebRoot, data)
+	}
+	result := applyWordPressDBPasswordChange(configPath, content, []byte(newContent), site, newPassword, cfg, writeConfig, changeMariaDBPassword)
 	if result.Success {
 		database.GetDB().Exec("UPDATE websites SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", site.ID)
 	}

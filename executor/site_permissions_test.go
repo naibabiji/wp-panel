@@ -12,7 +12,7 @@ import (
 )
 
 func TestIsPathWithinRoot(t *testing.T) {
-	root := t.TempDir()
+	root := newSecureSiteTestRoot(t)
 	inside := filepath.Join(root, "wp-content")
 	outside := t.TempDir()
 	if err := os.MkdirAll(inside, 0755); err != nil {
@@ -28,7 +28,7 @@ func TestIsPathWithinRoot(t *testing.T) {
 }
 
 func TestChownSitePathRejectsUnsafeInputs(t *testing.T) {
-	root := t.TempDir()
+	root := newSecureSiteTestRoot(t)
 	inside := filepath.Join(root, "wp-content")
 	outside := t.TempDir()
 	if err := os.MkdirAll(inside, 0755); err != nil {
@@ -195,7 +195,7 @@ func TestApplyWPFileModsLockBlockRejectsDuplicateAndExpressionDefinitions(t *tes
 }
 
 func TestWPConfigHasUserFileModsLockIgnoresManagedBlock(t *testing.T) {
-	webRoot := t.TempDir()
+	webRoot := newSecureSiteTestRoot(t)
 	configPath := filepath.Join(webRoot, "wp-config.php")
 	managedOnly := "<?php\n" +
 		wpPanelFileLockBegin + "\n" +
@@ -252,7 +252,7 @@ func TestVerifySiteFileLockModeRejectsUnsupportedSiteAndCriticalSymlink(t *testi
 	if err := VerifySiteFileLockMode(&models.Website{SiteType: "php"}, FileLockModeStrict); err == nil {
 		t.Fatal("non-WordPress site accepted")
 	}
-	root := t.TempDir()
+	root := newSecureSiteTestRoot(t)
 	target := filepath.Join(t.TempDir(), "wp-config.php")
 	if err := os.WriteFile(target, []byte("<?php"), 0600); err != nil {
 		t.Fatal(err)
@@ -266,7 +266,7 @@ func TestVerifySiteFileLockModeRejectsUnsupportedSiteAndCriticalSymlink(t *testi
 }
 
 func TestWPFileLockRuntimeWritablePathPolicy(t *testing.T) {
-	root := t.TempDir()
+	root := newSecureSiteTestRoot(t)
 	upload := filepath.Join(root, "wp-content", "uploads", "2026", "photo.jpg")
 	cache := filepath.Join(root, "wp-content", "cache", "page.html")
 	language := filepath.Join(root, "wp-content", "languages", "zh_CN.mo")
@@ -343,7 +343,7 @@ func TestWPFileLockRuntimeWritablePathPolicy(t *testing.T) {
 }
 
 func TestPreviewSiteFileLockUsesModePolicy(t *testing.T) {
-	root := t.TempDir()
+	root := newSecureSiteTestRoot(t)
 	for _, dir := range []string{"uploads", "cache", "languages", "wflogs", "plugin-data", "plugins"} {
 		if err := os.MkdirAll(filepath.Join(root, "wp-content", dir), 0755); err != nil {
 			t.Fatal(err)

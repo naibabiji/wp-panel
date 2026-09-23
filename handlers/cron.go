@@ -4,7 +4,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -406,27 +405,7 @@ func ensureWPCronDisabled(siteID int) {
 		return
 	}
 
-	configPath := filepath.Join(webRoot, "wp-config.php")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return
-	}
-	if strings.Contains(string(data), "DISABLE_WP_CRON") {
-		return
-	}
-
-	insertion := "define('DISABLE_WP_CRON', true);\n"
-	content := string(data)
-	marker := "/* That's all, stop editing!"
-	idx := strings.Index(content, marker)
-	if idx < 0 {
-		marker = "require_once ABSPATH . 'wp-settings.php';"
-		idx = strings.Index(content, marker)
-	}
-	if idx > 0 {
-		newContent := content[:idx] + insertion + content[idx:]
-		os.WriteFile(configPath, []byte(newContent), 0644)
-	}
+	_ = executor.SetWPCronDisabled(webRoot, true)
 }
 
 func removeWPCronIfLast(siteID int) {
@@ -443,25 +422,7 @@ func removeWPCronIfLast(siteID int) {
 		return
 	}
 
-	configPath := filepath.Join(webRoot, "wp-config.php")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return
-	}
-	content := string(data)
-	if !strings.Contains(content, "DISABLE_WP_CRON") {
-		return
-	}
-
-	lines := strings.Split(content, "\n")
-	var newLines []string
-	for _, line := range lines {
-		if strings.Contains(line, "DISABLE_WP_CRON") {
-			continue
-		}
-		newLines = append(newLines, line)
-	}
-	os.WriteFile(configPath, []byte(strings.Join(newLines, "\n")), 0644)
+	_ = executor.SetWPCronDisabled(webRoot, false)
 }
 
 var cronFieldRe = regexp.MustCompile(`^[0-9*/,\-]+$`)

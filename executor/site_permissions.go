@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -142,14 +143,12 @@ func HardenSiteSensitivePermissions(domain, webRoot, systemUser string) error {
 		if _, err := executeCommand("chown", "-R", siteOwner(systemUser), webRoot); err != nil {
 			return err
 		}
-		configPath := filepath.Join(webRoot, "wp-config.php")
-		if _, err := os.Stat(configPath); err == nil {
-			if err := os.Chmod(configPath, 0600); err != nil {
+		if _, err := readWPConfigSecure(webRoot); err == nil {
+			if err := setWPConfigPermissionsSecure(webRoot, 0600); err != nil {
 				return err
 			}
-			if _, err := executeCommand("chown", siteOwner(systemUser), configPath); err != nil {
-				return err
-			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
 	}
 
@@ -908,8 +907,7 @@ func rejectSymlinkPath(path string) error {
 }
 
 func setWPFileModsLock(webRoot string, enabled bool) error {
-	configPath := filepath.Join(webRoot, "wp-config.php")
-	data, err := os.ReadFile(configPath)
+	data, err := readWPConfigSecure(webRoot)
 	if err != nil {
 		return err
 	}
@@ -921,15 +919,11 @@ func setWPFileModsLock(webRoot string, enabled bool) error {
 	if next == content {
 		return nil
 	}
-	info, err := os.Stat(configPath)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(configPath, []byte(next), info.Mode().Perm())
+	return writeWPConfigSecure(webRoot, []byte(next))
 }
 
 func wpConfigHasUserFileModsLock(webRoot string) bool {
-	data, err := os.ReadFile(filepath.Join(webRoot, "wp-config.php"))
+	data, err := readWPConfigSecure(webRoot)
 	if err != nil {
 		return false
 	}
@@ -938,7 +932,7 @@ func wpConfigHasUserFileModsLock(webRoot string) bool {
 }
 
 func wpConfigFileModsLocked(webRoot string) bool {
-	data, err := os.ReadFile(filepath.Join(webRoot, "wp-config.php"))
+	data, err := readWPConfigSecure(webRoot)
 	return err == nil && classifyWPFileModsDefinition(string(data)) == wpFileModsLiteralTrue
 }
 

@@ -3,8 +3,6 @@ package executor
 import (
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 
 	"github.com/naibabiji/wp-panel/database"
 )
@@ -35,8 +33,7 @@ func BackfillWPConfigCacheKeySalts() error {
 			return err
 		}
 
-		configPath := filepath.Join(webRoot, "wp-config.php")
-		data, err := os.ReadFile(configPath)
+		data, err := readWPConfigSecure(webRoot)
 		if err != nil {
 			log.Printf("[upgrade] skip cache prefixes for %s: read wp-config.php failed: %v", domain, err)
 			continue
@@ -46,7 +43,7 @@ func BackfillWPConfigCacheKeySalts() error {
 		if !inserted || updated == string(data) {
 			continue
 		}
-		if err := os.WriteFile(configPath, []byte(updated), 0600); err != nil {
+		if err := writeWPConfigSecure(webRoot, []byte(updated)); err != nil {
 			log.Printf("[upgrade] skip cache prefixes for %s: write wp-config.php failed: %v", domain, err)
 			continue
 		}

@@ -19,6 +19,27 @@ var lintManagedPHPFile = func(path string) error {
 	return nil
 }
 
+func lintManagedPHPData(data []byte) error {
+	tmp, err := os.CreateTemp("", ".wp-panel-php-lint-*")
+	if err != nil {
+		return err
+	}
+	path := tmp.Name()
+	defer os.Remove(path)
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return lintManagedPHPFile(path)
+}
+
 func managedWordPressPath(webRoot string, parts ...string) (string, error) {
 	webRoot = filepath.Clean(strings.TrimSpace(webRoot))
 	if webRoot == "" || webRoot == "." || webRoot == string(filepath.Separator) || !filepath.IsAbs(webRoot) {

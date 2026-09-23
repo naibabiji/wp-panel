@@ -12,12 +12,92 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
 )
 
 var errScheduledWorkNotAllowed = errors.New("网站当前不允许运行自动任务")
+
+var (
+	fileBackupLockWait         = 5 * time.Second
+	fileBackupLockTimeout      = 2 * time.Hour
+	fileBackupLockFileName     = "file-backup.lock"
+	fileBackupAfterInitialGate = func() {}
+)
+
+type fileBackupLock struct {
+	file *os.File
+}
+
+func (l *fileBackupLock) Close() error {
+	if l == nil || l.file == nil {
+		return nil
+	}
+	_ = syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
+	return l.file.Close()
+}
+
+func fileBackupLockPath() (string, error) {
+	if config.AppConfig == nil || strings.TrimSpace(config.AppConfig.Panel.DataDir) == "" {
+		return "", errors.New("面板数据目录未配置")
+	}
+	lockDir := filepath.Join(filepath.Clean(config.AppConfig.Panel.DataDir), "locks")
+	if err := os.MkdirAll(lockDir, 0700); err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(lockDir)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("备份锁目录不安全")
+	}
+	if err := os.Chmod(lockDir, 0700); err != nil {
+		return "", err
+	}
+	return filepath.Join(lockDir, fileBackupLockFileName), nil
+}
+
+func acquireFileBackupLock() (*fileBackupLock, error) {
+	path, err := fileBackupLockPath()
+	if err != nil {
+		return nil, err
+	}
+	fd, err := syscall.Open(path, syscall.O_CREAT|syscall.O_RDWR|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), path)
+	var stat syscall.Stat_t
+	if err := syscall.Fstat(fd, &stat); err != nil || stat.Mode&syscall.S_IFMT != syscall.S_IFREG || stat.Nlink != 1 || int(stat.Uid) != os.Geteuid() {
+		file.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("备份锁文件不安全")
+	}
+	if err := file.Chmod(0600); err != nil {
+		file.Close()
+		return nil, err
+	}
+	deadline := time.Now().Add(fileBackupLockTimeout)
+	for {
+		if err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
+			return &fileBackupLock{file: file}, nil
+		} else if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			file.Close()
+			return nil, err
+		}
+		if !time.Now().Before(deadline) {
+			file.Close()
+			return nil, fmt.Errorf("等待备份锁超时（有其他备份任务未完成），请稍后重试")
+		}
+		time.Sleep(fileBackupLockWait)
+	}
+}
 
 func ExecuteFileBackup(siteID int, mode string, keepCount int) (string, error) {
 	return executeFileBackup(siteID, mode, keepCount, false)
@@ -27,33 +107,6 @@ func executeFileBackup(siteID int, mode string, keepCount int, scheduled bool) (
 	if keepCount <= 0 {
 		keepCount = 3
 	}
-
-	// 文件备份排队锁：多个站点同时触发时依次执行，避免并发争抢磁盘/CPU
-	lockPath := "/tmp/wp-panel-file-backup.lock"
-	myPID := fmt.Sprintf("%d", os.Getpid())
-	acquired := false
-	for i := 0; i < 1440; i++ { // 最多等2小时（每5秒检查一次）
-		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
-		if err == nil {
-			f.WriteString(myPID)
-			f.Close()
-			acquired = true
-			break
-		}
-		// 检查锁持有者是否还活着
-		if stale, _ := os.ReadFile(lockPath); len(stale) > 0 {
-			pid := strings.TrimSpace(string(stale))
-			if _, err := os.Stat("/proc/" + pid); os.IsNotExist(err) {
-				os.Remove(lockPath) // 死锁清理
-				continue
-			}
-		}
-		time.Sleep(5 * time.Second)
-	}
-	if !acquired {
-		return "", fmt.Errorf("等待备份锁超时（有其他备份任务未完成），请稍后重试")
-	}
-	defer os.Remove(lockPath)
 	if scheduled {
 		allowed, _, err := siteScheduledWorkAllowed(siteID)
 		if err != nil {
@@ -62,11 +115,30 @@ func executeFileBackup(siteID int, mode string, keepCount int, scheduled bool) (
 		if !allowed {
 			return "", errScheduledWorkNotAllowed
 		}
+		fileBackupAfterInitialGate()
+	}
+
+	// Manual requests and short-lived scheduled-CLI processes share this flock.
+	// The lock lives below the root-owned panel data directory; legacy /tmp PID
+	// files are intentionally ignored and cannot block a new-version backup.
+	lock, err := acquireFileBackupLock()
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	if scheduled {
+		allowed, _, err := siteScheduledWorkAllowed(siteID)
+		if err != nil {
+			return "", fmt.Errorf("取得备份锁后检查网站运行状态失败: %w", err)
+		}
+		if !allowed {
+			return "", errScheduledWorkNotAllowed
+		}
 	}
 
 	db := database.GetDB()
 	var domain, webRoot string
-	err := db.QueryRow("SELECT domain, web_root FROM websites WHERE id = ?", siteID).Scan(&domain, &webRoot)
+	err = db.QueryRow("SELECT domain, web_root FROM websites WHERE id = ?", siteID).Scan(&domain, &webRoot)
 	if err != nil {
 		return "", fmt.Errorf("网站不存在")
 	}

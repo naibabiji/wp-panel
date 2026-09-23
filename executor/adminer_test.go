@@ -28,7 +28,7 @@ func TestReadWebsiteDatabasePassword(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := newSecureSiteTestRoot(t)
 			if err := os.WriteFile(filepath.Join(root, "wp-config.php"), []byte(tt.content), 0600); err != nil {
 				t.Fatal(err)
 			}

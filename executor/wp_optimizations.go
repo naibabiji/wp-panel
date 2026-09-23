@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -77,15 +75,14 @@ func ApplyWPOptimizationsReversible(webRoot string, opts WPOptimizations) (func(
 		return nil, err
 	}
 	return func() error {
-		configPath := filepath.Join(webRoot, "wp-config.php")
-		current, err := os.ReadFile(configPath)
+		current, err := readWPConfigSecure(webRoot)
 		if err != nil {
 			return err
 		}
 		if !bytes.Equal(current, after) {
 			return errWPConfigChanged
 		}
-		return writeWPConfig(configPath, before)
+		return writeWPConfigSecure(webRoot, before)
 	}, nil
 }
 
@@ -108,8 +105,7 @@ func SetWPUpdatesDisabled(webRoot string, disabled bool) error {
 }
 
 func updateWPConfig(webRoot string, transform func(string) string) ([]byte, []byte, error) {
-	configPath := filepath.Join(webRoot, "wp-config.php")
-	data, err := os.ReadFile(configPath)
+	data, err := readWPConfigSecure(webRoot)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -117,18 +113,10 @@ func updateWPConfig(webRoot string, transform func(string) string) ([]byte, []by
 	if bytes.Equal(data, updated) {
 		return data, updated, nil
 	}
-	if err := writeWPConfig(configPath, updated); err != nil {
+	if err := writeWPConfigSecure(webRoot, updated); err != nil {
 		return nil, nil, err
 	}
 	return data, updated, nil
-}
-
-func writeWPConfig(configPath string, data []byte) error {
-	info, err := os.Stat(configPath)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(configPath, data, info.Mode().Perm())
 }
 
 func constPattern(name string) *regexp.Regexp {
@@ -151,7 +139,7 @@ func setBoolConstant(content, name string, value bool) string {
 }
 
 func WPDebugDisplayEnabled(webRoot string) bool {
-	data, err := os.ReadFile(filepath.Join(webRoot, "wp-config.php"))
+	data, err := readWPConfigSecure(webRoot)
 	if err != nil {
 		return false
 	}

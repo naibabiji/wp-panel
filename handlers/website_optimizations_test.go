@@ -584,7 +584,11 @@ func setupWebsiteOptimizationsTestDB(t *testing.T) {
 		database.DB = oldDB
 	})
 
-	webRoot := t.TempDir()
+	parent := t.TempDir()
+	webRoot := filepath.Join(parent, "site")
+	if err := os.Mkdir(webRoot, 0755); err != nil {
+		t.Fatalf("create web root: %v", err)
+	}
 	config := `<?php
 define('DB_NAME', 'db_example');
 define('DB_USER', 'user_example');

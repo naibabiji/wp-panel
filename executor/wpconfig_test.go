@@ -85,7 +85,7 @@ func TestExtractWPTablePrefixWithoutTrailingUnderscore(t *testing.T) {
 }
 
 func TestFixWPConfigCredentialsKeepsTablePrefixVariableName(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSecureSiteTestRoot(t)
 	configPath := filepath.Join(dir, "wp-config.php")
 	content := "<?php\ndefine('DB_NAME', 'old_db');\ndefine('DB_USER', 'old_user');\n$table_prefix = 'wp_sadfasdfasf';\n/* That's all, stop editing! Happy publishing. */\n"
 	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
@@ -110,7 +110,7 @@ func TestFixWPConfigCredentialsKeepsTablePrefixVariableName(t *testing.T) {
 }
 
 func TestFixWPConfigCredentialsRepairsDroppedTablePrefixVariableName(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSecureSiteTestRoot(t)
 	configPath := filepath.Join(dir, "wp-config.php")
 	content := "<?php\ndefine('DB_NAME', 'old_db');\ndefine('DB_USER', 'old_user');\n/**\n * WordPress database table prefix.\n */\n = 'wp_sadfasdfasf';\n/* That's all, stop editing! Happy publishing. */\n"
 	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
@@ -132,7 +132,7 @@ func TestFixWPConfigCredentialsRepairsDroppedTablePrefixVariableName(t *testing.
 }
 
 func TestFixWPConfigCredentialsRejectsSymlinkAndPreservesTarget(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSecureSiteTestRoot(t)
 	target := filepath.Join(t.TempDir(), "outside.php")
 	original := "<?php\ndefine('DB_NAME', 'old');\ndefine('DB_USER', 'old');\n$table_prefix = 'wp_';\n"
 	if err := os.WriteFile(target, []byte(original), 0600); err != nil {
@@ -151,7 +151,7 @@ func TestFixWPConfigCredentialsRejectsSymlinkAndPreservesTarget(t *testing.T) {
 }
 
 func TestFixWPConfigCredentialsLintFailurePreservesOriginal(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSecureSiteTestRoot(t)
 	path := filepath.Join(dir, "wp-config.php")
 	original := "<?php\ndefine('DB_NAME', 'old');\ndefine('DB_USER', 'old');\n$table_prefix = 'wp_';\n"
 	if err := os.WriteFile(path, []byte(original), 0600); err != nil {

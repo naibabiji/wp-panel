@@ -600,7 +600,7 @@ func redisObjectCachePrefixes(domain, webRoot string) []string {
 	}
 
 	if strings.TrimSpace(webRoot) != "" {
-		if data, err := os.ReadFile(filepath.Join(webRoot, "wp-config.php")); err == nil {
+		if data, err := readWPConfigSecure(webRoot); err == nil {
 			content := string(data)
 			add(extractWPConfigStringConstant(content, "WP_REDIS_PREFIX"))
 			add(extractWPConfigStringConstant(content, "WP_CACHE_KEY_SALT"))

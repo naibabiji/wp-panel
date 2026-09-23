@@ -4,11 +4,136 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
 )
+
+func setupFileBackupLockTest(t *testing.T) {
+	t.Helper()
+	oldConfig := config.AppConfig
+	oldWait, oldTimeout := fileBackupLockWait, fileBackupLockTimeout
+	config.AppConfig = &config.Config{Panel: config.PanelConfig{DataDir: t.TempDir()}}
+	fileBackupLockWait = 5 * time.Millisecond
+	fileBackupLockTimeout = time.Second
+	t.Cleanup(func() {
+		config.AppConfig = oldConfig
+		fileBackupLockWait = oldWait
+		fileBackupLockTimeout = oldTimeout
+	})
+}
+
+func TestScheduledFileBackupRechecksRuntimeGateAfterWaitingForLock(t *testing.T) {
+	db := setupCronGateTest(t)
+	mustExec(t, db, `UPDATE websites SET status='active' WHERE id=1`)
+	setupFileBackupLockTest(t)
+
+	first, err := acquireFileBackupLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	passedInitialGate := make(chan struct{})
+	oldHook := fileBackupAfterInitialGate
+	fileBackupAfterInitialGate = func() { close(passedInitialGate) }
+	t.Cleanup(func() { fileBackupAfterInitialGate = oldHook })
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := executeFileBackup(1, "full", 3, true)
+		result <- err
+	}()
+	select {
+	case <-passedInitialGate:
+	case <-time.After(time.Second):
+		first.Close()
+		t.Fatal("scheduled backup did not pass initial runtime gate")
+	}
+	mustExec(t, db, `UPDATE websites SET status='paused' WHERE id=1`)
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if !errors.Is(err, errScheduledWorkNotAllowed) {
+			t.Fatalf("scheduled backup error = %v, want runtime gate", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("scheduled backup did not finish after lock release")
+	}
+}
+
+func TestFileBackupLockIgnoresLegacyTmpPIDFile(t *testing.T) {
+	setupFileBackupLockTest(t)
+	legacy := "/tmp/wp-panel-file-backup.lock"
+	f, err := os.OpenFile(legacy, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if errors.Is(err, os.ErrExist) {
+		t.Skip("legacy lock path already exists")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(strconv.Itoa(os.Getpid())); err != nil {
+		f.Close()
+		os.Remove(legacy)
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(legacy)
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(legacy) })
+
+	lock, err := acquireFileBackupLock()
+	if err != nil {
+		t.Fatalf("new lock was blocked by legacy /tmp file: %v", err)
+	}
+	defer lock.Close()
+	if _, err := os.Stat(filepath.Join(config.AppConfig.Panel.DataDir, "locks", fileBackupLockFileName)); err != nil {
+		t.Fatalf("new lock file missing: %v", err)
+	}
+}
+
+func TestFileBackupLockSerializesConcurrentCallers(t *testing.T) {
+	setupFileBackupLockTest(t)
+	first, err := acquireFileBackupLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	acquired := make(chan *fileBackupLock, 1)
+	errs := make(chan error, 1)
+	go func() {
+		lock, err := acquireFileBackupLock()
+		if err != nil {
+			errs <- err
+			return
+		}
+		acquired <- lock
+	}()
+	select {
+	case lock := <-acquired:
+		lock.Close()
+		first.Close()
+		t.Fatal("second caller acquired lock before first released it")
+	case err := <-errs:
+		first.Close()
+		t.Fatalf("second caller failed while waiting: %v", err)
+	case <-time.After(40 * time.Millisecond):
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case lock := <-acquired:
+		defer lock.Close()
+	case err := <-errs:
+		t.Fatal(err)
+	case <-time.After(time.Second):
+		t.Fatal("second caller did not acquire lock after release")
+	}
+}
 
 func TestCleanOldBackupsRemovesRotatedFileBackupsRows(t *testing.T) {
 	openTestDB(t)

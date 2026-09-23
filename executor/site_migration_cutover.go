@@ -82,8 +82,7 @@ func (productionSiteMigrationCutoverOps) RestoreWordPressCron(stagingRoot, webRo
 	if err != nil {
 		return err
 	}
-	targetPath := filepath.Join(webRoot, "wp-config.php")
-	target, err := os.ReadFile(targetPath)
+	target, err := readWPConfigSecure(webRoot)
 	if err != nil {
 		return err
 	}
@@ -97,11 +96,7 @@ func (productionSiteMigrationCutoverOps) RestoreWordPressCron(stagingRoot, webRo
 	if strings.Contains(updated, "WP Panel migration freeze") {
 		return errors.New("migration WP-Cron freeze marker remained")
 	}
-	if err := atomicWriteMigrationFile(targetPath, []byte(updated), 0600); err != nil {
-		return err
-	}
-	_, err = executeCommand("chown", siteOwner(systemUser), targetPath)
-	return err
+	return writeWPConfigSecure(webRoot, []byte(updated))
 }
 
 func (productionSiteMigrationCutoverOps) ReloadCron() error {

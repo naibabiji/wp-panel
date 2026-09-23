@@ -8,7 +8,7 @@ import (
 )
 
 func TestRedisObjectCachePrefixesIncludeWPConfigConstants(t *testing.T) {
-	webRoot := t.TempDir()
+	webRoot := newSecureSiteTestRoot(t)
 	content := `<?php
 define('WP_REDIS_PREFIX', 'vps17.top:');
 define('WP_CACHE_KEY_SALT', 'cache-vps17:');
@@ -25,7 +25,7 @@ define('WP_CACHE_KEY_SALT', 'cache-vps17:');
 }
 
 func TestRedisObjectCachePrefixesDeduplicateDefaults(t *testing.T) {
-	webRoot := t.TempDir()
+	webRoot := newSecureSiteTestRoot(t)
 	content := `<?php
 define("WP_REDIS_PREFIX", "1.vps17.top:");
 define('WP_CACHE_KEY_SALT', '1.vps17.top:');

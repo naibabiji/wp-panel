@@ -1272,7 +1272,7 @@ func aiWPConfigSummary(site *models.Website) map[string]interface{} {
 		result["message"] = "wp-config.php 路径越界"
 		return result
 	}
-	data, err := os.ReadFile(path)
+	data, err := readWPConfigSecure(site.WebRoot)
 	if err != nil {
 		result["message"] = "wp-config.php 不存在或不可读"
 		return result
@@ -1280,7 +1280,7 @@ func aiWPConfigSummary(site *models.Website) map[string]interface{} {
 	text := string(data)
 	result["checked"] = true
 	result["exists"] = true
-	result["php_syntax_check"] = aiWPConfigSyntaxCheck(site, path)
+	result["php_syntax_check"] = aiWPConfigSyntaxCheck(site, path, data)
 	dbName := aiExtractWPConstant(text, "DB_NAME")
 	dbUser := aiExtractWPConstant(text, "DB_USER")
 	dbHost := aiExtractWPConstant(text, "DB_HOST")
@@ -1298,7 +1298,7 @@ func aiWPConfigSummary(site *models.Website) map[string]interface{} {
 	return result
 }
 
-func aiWPConfigSyntaxCheck(site *models.Website, path string) map[string]interface{} {
+func aiWPConfigSyntaxCheck(site *models.Website, path string, data []byte) map[string]interface{} {
 	result := map[string]interface{}{
 		"checked": false,
 		"ok":      false,
@@ -1311,13 +1311,30 @@ func aiWPConfigSyntaxCheck(site *models.Website, path string) map[string]interfa
 		result["message"] = "wp-config.php 路径越界"
 		return result
 	}
-	if _, err := os.Stat(path); err != nil {
-		result["message"] = "wp-config.php 不存在或不可读"
+	tmp, createErr := os.CreateTemp("", ".wp-panel-wp-config-lint-*")
+	if createErr != nil {
+		result["message"] = "php -l 检查不可用: " + createErr.Error()
+		return result
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if chmodErr := tmp.Chmod(0600); chmodErr != nil {
+		tmp.Close()
+		result["message"] = "php -l 检查不可用: " + chmodErr.Error()
+		return result
+	}
+	if _, writeErr := tmp.Write(data); writeErr != nil {
+		tmp.Close()
+		result["message"] = "php -l 检查不可用: " + writeErr.Error()
+		return result
+	}
+	if closeErr := tmp.Close(); closeErr != nil {
+		result["message"] = "php -l 检查不可用: " + closeErr.Error()
 		return result
 	}
 
-	lintResult, err := aiRunPHPLint(path)
-	output := aiSanitizeWPConfigLintOutput(aiLintOutput(lintResult), path)
+	lintResult, err := aiRunPHPLint(tmpPath)
+	output := aiSanitizeWPConfigLintOutput(aiLintOutput(lintResult), tmpPath)
 	if err != nil {
 		if output == "" {
 			result["message"] = "php -l 检查不可用: " + err.Error()
