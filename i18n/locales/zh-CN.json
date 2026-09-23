@@ -923,7 +923,7 @@
     "opcache_clearing": "清空中...",
     "opcache_cleared": "OPcache 已清空",
     "opcache_clear_failed": "清空 OPcache 失败: {{error}}",
-    "opcache_clear_confirm": "这会让服务器上所有站点短暂重新编译一次 PHP 代码（通常无感知，不会中断请求），确认要清空 OPcache 吗？"
+    "opcache_clear_confirm": "清理 OPcache 会重载 PHP-FPM，服务器上所有网站正在处理的请求可能被中断（访客会看到一次错误页），建议在访问低峰时操作。OPcache 默认每隔几秒会自动发现代码变化，一般无需手动清理。确认要清空 OPcache 吗？"
   },
   "log_analysis": {
     "description": "完整扫描指定时间段的网站日志，生成本地统计和异常判断，并可进入 AI 诊断持续排查",

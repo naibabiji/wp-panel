@@ -818,6 +818,7 @@ func RegenerateAllSitesFPM() error {
 	cfg := config.AppConfig
 	engine := NewTemplateEngine(cfg.Panel.BackupDir)
 	var failures []string
+	var plans []phpFPMPoolBatchPlan
 
 	for rows.Next() {
 		var siteID, maxChildren int
@@ -851,15 +852,26 @@ func RegenerateAllSitesFPM() error {
 			continue
 		}
 
-		if err := engine.ApplyPHPFPMPool(phpConfig, phpPoolPath, logDir, filepath.Join(cfg.Paths.PHPFPMSock, poolName+".sock")); err != nil {
-			log.Printf("[FPM重建] %s: 应用配置失败: %v", domain, err)
-			failures = append(failures, fmt.Sprintf("%s: %v", domain, err))
-			continue
-		}
+		plans = append(plans, phpFPMPoolBatchPlan{
+			domain:        domain,
+			configContent: phpConfig,
+			targetPath:    phpPoolPath,
+			logDir:        logDir,
+			socketPath:    filepath.Join(cfg.Paths.PHPFPMSock, poolName+".sock"),
+		})
 	}
-	log.Printf("[FPM重建] 全部网站 PHP-FPM pool 配置已更新")
 	if err := rows.Err(); err != nil {
-		return err
+		failures = append(failures, err.Error())
+	}
+	result, applyErr := engine.applyPHPFPMPoolBatch(plans)
+	if applyErr != nil {
+		log.Printf("[FPM重建] 批量应用失败: %v", applyErr)
+		failures = append(failures, applyErr.Error())
+	}
+	log.Printf("[FPM重建] 完成：跳过=%d 变更=%d Socket恢复=%d reload尝试=%d restart尝试=%d 逐站降级=%t 失败=%d",
+		result.skipped, result.changed, result.recovery, result.reloadAttempts, result.restartAttempts, result.fallback, len(failures))
+	if len(plans) == 0 && len(failures) == 0 {
+		log.Printf("[FPM重建] 没有需要处理的网站 Pool")
 	}
 	if len(failures) > 0 {
 		return fmt.Errorf("部分站点 PHP-FPM Pool 重建失败: %s", strings.Join(failures, "; "))

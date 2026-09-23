@@ -42,21 +42,15 @@ func TestMaintenanceStartupPrecedesSiteWriters(t *testing.T) {
 			t.Errorf("%s must follow synchronous maintenance recovery", name)
 		}
 	}
-	// Ensure the recovery is guarded out of administrative/backup CLI paths.
+	// Ensure the recovery is guarded by the shared main-service mode decision.
 	guarded := false
 	ast.Inspect(file, func(node ast.Node) bool {
 		branch, ok := node.(*ast.IfStmt)
 		if !ok || !(branch.Body.Pos() < start && start < branch.Body.End()) {
 			return true
 		}
-		flags := map[string]bool{}
-		ast.Inspect(branch.Cond, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok {
-				flags[id.Name] = true
-			}
-			return true
-		})
-		guarded = flags["resetAdmin"] && flags["resetPass"] && flags["refreshWhitelist"] && flags["unbanAll"] && flags["fileBackup"] && flags["runAutoBackup"]
+		id, ok := branch.Cond.(*ast.Ident)
+		guarded = ok && id.Name == "mainServiceMode"
 		return true
 	})
 	if !guarded {

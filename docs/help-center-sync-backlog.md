@@ -18,6 +18,8 @@
 
 | 日期 | 主题 slug | 变更摘要 | 用户可见变化点 | 来源 | 状态 |
 |---|---|---|---|---|---|
+| 2026-09-24 | operations | 更正“清理 OPcache”的影响说明 | 软件页“清理 OPcache”会重载 PHP-FPM，服务器上所有网站正在处理的请求可能被中断（访客看到一次错误页），建议低峰操作；OPcache 默认每隔几秒自动发现代码变化，一般无需手动清理。此前确认框和说明称“不会中断请求”，与实际不符 | `docs/features/operations-and-settings.md` | 待同步 |
+| 2026-09-23 | wordpress | v1.6.5 安全修复：wp-config 异常文件与网站上级目录权限要求 | 面板修改 `wp-config.php`（优化设置、数据库密码、文件保护、WP Cron、修复配置、建站生成配置等）时，若该文件是软链接、硬链接，或属主与网站目录不一致，会拒绝并提示失败，需要先修复文件权限；网站上级目录（默认 `/www/wwwroot`）被设为其他用户可写（如 777）时同样拒绝，应改回 755 或 775；上级目录指向数据盘的软链接不受影响。文件备份排队不再受 `/tmp` 残留文件影响 | `docs/features/wordpress-management.md`、`docs/features/backup-and-restore.md` | 待同步 |
 | 2026-09-16 | security | 面板未知路径扫描与搬家机器认证失败限速 | 浏览器标识或仅携带 Basic Auth 请求头不再绕过面板未知路径扫描统计；同一来源 60 秒访问 10 个不同未知路径会短期封禁。网站搬家机器接口连续认证失败会暂时限速，正确认证的正常搬家传输不受总请求量限制 | `docs/features/security-protection.md`、`docs/features/site-migration.md` | 待同步 |
 | 2026-09-15 | websites | AI 开发连接包首次连接与交接说明完善 | 新连接包自带并固定服务器 SSH 身份，新电脑无需预先保存指纹；身份不匹配会拒绝连接。服务器交接文档是最新网站、能力和边界准则，面板更新重启后会自动刷新，旧连接包与其冲突时以服务器文档为准；并列出本站日志及只读 PHP-FPM/Nginx 托管配置位置，避免用 CLI PHP 或全局配置误判站点限制。交接包不规定用户 AI 的 Git、计划、授权或开发方式 | `docs/ai-development-access-design.md`、`docs/features/website-runtime-and-cdn.md` | 待同步 |
 | 2026-09-15 | getting-started | 面板更新确认目标版本并核对回滚健康 | 更新后只有实际运行进程版本与目标版本一致才会显示成功；失败回滚会确认旧版本重新健康，重启或健康恢复失败会保留诊断计划并记录明确阶段 | `docs/features/getting-started-and-panel-update.md` | 待同步 |

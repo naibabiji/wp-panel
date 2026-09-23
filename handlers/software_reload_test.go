@@ -198,12 +198,19 @@ func TestSoftwarePHPRebuildRecoveryFailureIsExplicit(t *testing.T) {
 }
 
 func TestSoftwarePHPRebuildSuccessKeepsNewConfig(t *testing.T) {
-	path, router := setupSoftwarePHPRebuildTest(t, "memory_limit = 128M\n", func() error { return nil })
+	calls := 0
+	path, router := setupSoftwarePHPRebuildTest(t, "memory_limit = 128M\n", func() error {
+		calls++
+		return nil
+	})
 	recorder := performSoftwarePHPConfigSave(router, "256M")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	if got, _ := os.ReadFile(path); !strings.Contains(string(got), "memory_limit = 256M") {
 		t.Fatalf("config=%q", got)
+	}
+	if calls != 1 {
+		t.Fatalf("regenerate calls=%d, want 1", calls)
 	}
 }

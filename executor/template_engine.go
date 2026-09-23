@@ -639,6 +639,8 @@ func writeNginxConfigAfterBackup(targetPath, backupPath string, content []byte, 
 var (
 	writePHPFPMPoolFile    = os.WriteFile
 	removePHPFPMPoolFile   = os.Remove
+	testPHPFPMConfig       = func() ([]byte, error) { return exec.Command("php-fpm8.3", "-t").CombinedOutput() }
+	checkPHPFPMSocket      = waitForPHPFPMSocket
 	runPHPFPMServiceAction = func(action string) error {
 		out, err := exec.Command("systemctl", action, "php8.3-fpm").CombinedOutput()
 		if err != nil {
@@ -658,8 +660,7 @@ func (e *TemplateEngine) ApplyPHPFPMPool(configContent string, targetPath string
 		return fmt.Errorf("写入PHP-FPM配置失败: %w", err)
 	}
 
-	testCmd := exec.Command("php-fpm8.3", "-t")
-	testOut, err := testCmd.CombinedOutput()
+	testOut, err := testPHPFPMConfig()
 	if err != nil {
 		applyErr := fmt.Errorf("PHP-FPM 配置检查失败: %s", strings.TrimSpace(string(testOut)))
 		if restoreErr := restorePHPFPMPool(targetPath, oldContent, hadOld, false, socketPath); restoreErr != nil {
@@ -683,7 +684,7 @@ func (e *TemplateEngine) ApplyPHPFPMPool(configContent string, targetPath string
 
 	// PHP-FPM 主服务可正常 reload/restart，不代表本次站点 Pool 已成功创建自己的 Socket。
 	// 必须检查调用方根据同一份受控配置计算出的站点 Socket，避免单站配置未加载仍返回成功。
-	if err := waitForPHPFPMSocket(socketPath, 30, 100*time.Millisecond); err != nil {
+	if err := checkPHPFPMSocket(socketPath, 30, 100*time.Millisecond); err != nil {
 		if restoreErr := restorePHPFPMPool(targetPath, oldContent, hadOld, true, socketPath); restoreErr != nil {
 			return fmt.Errorf("网站 PHP-FPM Pool 未就绪: %v；自动恢复不完整，需要人工检查: %w", err, restoreErr)
 		}
@@ -707,7 +708,7 @@ func restorePHPFPMPool(targetPath string, oldContent []byte, hadOld, restart boo
 	if err := runPHPFPMServiceAction("restart"); err != nil {
 		return fmt.Errorf("恢复旧配置后重启 PHP-FPM 失败: %w", err)
 	}
-	if err := waitForPHPFPMSocket(socketPath, 30, 100*time.Millisecond); err != nil {
+	if err := checkPHPFPMSocket(socketPath, 30, 100*time.Millisecond); err != nil {
 		return fmt.Errorf("恢复旧配置后网站 Pool 仍未就绪: %w", err)
 	}
 	return nil

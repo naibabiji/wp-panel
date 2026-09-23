@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -20,13 +21,44 @@ const optipngPackage = "optipng"
 // 生效。插件侧不查询这个函数的状态——它直接在 PHP 运行时用
 // is_callable('exif_read_data') 判断，装好之后下次页面加载自然可用。
 func EnsurePHPExifExtension() {
-	ensureAptPackage(phpExifPackage, func() {
-		if err := exec.Command("systemctl", "reload", "php8.3-fpm").Run(); err != nil {
-			log.Printf("[图片优化] %s 补装成功，但重载 php8.3-fpm 失败，需要人工重启使扩展生效: %v", phpExifPackage, err)
+	if phpFPMExtensionLoaded("exif") {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	if out, err := runImageOptimizerCommand(ctx, "apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=60", phpExifPackage); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Printf("[图片优化] 补装 %s 超时（3 分钟），后续面板重启会重试", phpExifPackage)
 			return
 		}
-		log.Printf("[图片优化] 已补装 %s 并重载 php8.3-fpm", phpExifPackage)
-	})
+		log.Printf("[图片优化] 补装 %s 失败: %v\n%s", phpExifPackage, err, string(out))
+		return
+	}
+	if !phpFPMExtensionLoaded("exif") {
+		log.Printf("[图片优化] 补装 %s 后 PHP-FPM 仍未加载 exif 扩展，未重载 php8.3-fpm，后续面板重启会重试", phpExifPackage)
+		return
+	}
+	if _, err := runImageOptimizerCommand(context.Background(), "systemctl", "reload", "php8.3-fpm"); err != nil {
+		log.Printf("[图片优化] %s 补装成功，但重载 php8.3-fpm 失败，需要人工重启使扩展生效: %v", phpExifPackage, err)
+		return
+	}
+	log.Printf("[图片优化] 已补装 %s 并重载 php8.3-fpm", phpExifPackage)
+}
+
+func phpFPMExtensionLoaded(extension string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	out, err := runImageOptimizerCommand(ctx, "php-fpm8.3", "-m")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.EqualFold(strings.TrimSpace(line), extension) {
+			return true
+		}
+	}
+	return false
 }
 
 // EnsureImageBatchBinaries 保证历史图库批量优化依赖的 jpegoptim/optipng 已安装。
@@ -78,4 +110,8 @@ func aptPackageInstalled(pkg string) bool {
 func binaryInPath(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
+}
+
+var runImageOptimizerCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }

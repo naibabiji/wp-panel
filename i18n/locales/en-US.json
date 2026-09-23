@@ -923,7 +923,7 @@
     "opcache_clearing": "Clearing...",
     "opcache_cleared": "OPcache cleared",
     "opcache_clear_failed": "Failed to clear OPcache: {{error}}",
-    "opcache_clear_confirm": "This will briefly recompile PHP code for every site on this server (usually unnoticeable, requests are not interrupted). Clear OPcache now?"
+    "opcache_clear_confirm": "Clearing OPcache reloads PHP-FPM. Requests that are currently being processed on every site on this server may be interrupted (visitors will see an error page once), so it is best done during low traffic. OPcache normally detects code changes on its own within a few seconds, so manual clearing is rarely needed. Clear OPcache now?"
   },
   "log_analysis": {
     "description": "Scan website logs for a selected period, generate local findings, and optionally continue troubleshooting in AI Diagnostics",

@@ -154,8 +154,16 @@ func main() {
 	if err := database.RunUpgrades(); err != nil {
 		log.Fatalf("数据库升级失败: %v", err)
 	}
+	mainServiceMode := isMainServiceMode(startupFlags{
+		resetAdmin:       *resetAdmin,
+		resetPassword:    *resetPass != "",
+		refreshWhitelist: *refreshWhitelist,
+		unbanAll:         *unbanAll,
+		fileBackup:       *fileBackup != "",
+		runAutoBackup:    *runAutoBackup,
+	})
 	// CLI 短任务不是服务重启，不能收回另一个主进程管理的维护窗口。
-	if !*resetAdmin && *resetPass == "" && !*refreshWhitelist && !*unbanAll && *fileBackup == "" && !*runAutoBackup {
+	if mainServiceMode {
 		maintenanceCtx, stopMaintenance := context.WithCancel(context.Background())
 		defer stopMaintenance()
 		// Start 同步完成第一轮回锁，然后才启动周期检查；必须先于站点写入和 worker。
@@ -163,19 +171,21 @@ func main() {
 			log.Printf("维护窗口启动恢复未完成（相关网站将保持写操作门禁并自动重试）: %v", err)
 		}
 	}
-	executor.AutoDeployPluginUpdates(PluginFS)
-	// 异步补装不应排在维护窗口启动恢复之前。
-	executor.GoSafe(executor.EnsurePHPExifExtension)
-	executor.GoSafe(executor.EnsureImageBatchBinaries)
-	aiDevelopmentService := executor.NewAIDevelopmentAccessService(database.GetDB())
-	if err := aiDevelopmentService.ReconcilePending(context.Background()); err != nil {
-		log.Printf("AI 开发授权中间状态恢复失败（相关网站将继续保持操作门禁）: %v", err)
-	}
-	executor.ResetStuckImageOptimizationJobs()
-	executor.FinalizePendingPanelUpdate(cfg, Version)
-	executor.SetAIDevelopmentPanelVersion(Version)
-	if err := aiDevelopmentService.RefreshEnabledHandoffs(context.Background()); err != nil {
-		log.Printf("AI 开发服务器交接文档刷新失败: %v", err)
+	if mainServiceMode {
+		executor.AutoDeployPluginUpdates(PluginFS)
+		// 异步补装不应排在维护窗口启动恢复之前。
+		executor.GoSafe(executor.EnsurePHPExifExtension)
+		executor.GoSafe(executor.EnsureImageBatchBinaries)
+		aiDevelopmentService := executor.NewAIDevelopmentAccessService(database.GetDB())
+		if err := aiDevelopmentService.ReconcilePending(context.Background()); err != nil {
+			log.Printf("AI 开发授权中间状态恢复失败（相关网站将继续保持操作门禁）: %v", err)
+		}
+		executor.ResetStuckImageOptimizationJobs()
+		executor.FinalizePendingPanelUpdate(cfg, Version)
+		executor.SetAIDevelopmentPanelVersion(Version)
+		if err := aiDevelopmentService.RefreshEnabledHandoffs(context.Background()); err != nil {
+			log.Printf("AI 开发服务器交接文档刷新失败: %v", err)
+		}
 	}
 
 	if *resetAdmin {
@@ -307,7 +317,7 @@ func main() {
 	executor.EnsureFastCGICacheConfig()
 	// WordPress safety baseline (idempotent, only writes if not present)
 	executor.EnsureWordPressBaseline()
-	// 升级后重建全部 Nginx 和 PHP-FPM 配置，确保新模板规则对旧站生效
+	// 启动时收敛全部 Nginx 和 PHP-FPM 配置；内容与运行状态已一致时由执行器跳过应用。
 	executor.GoSafe(func() {
 		if err := executor.RegenerateAllSitesNginx(); err != nil {
 			log.Printf("Nginx 批量重建部分失败: %v", err)
@@ -405,6 +415,24 @@ func main() {
 		}
 	}
 	executor.StopWPSecurityEventIngestor()
+}
+
+type startupFlags struct {
+	resetAdmin       bool
+	resetPassword    bool
+	refreshWhitelist bool
+	unbanAll         bool
+	fileBackup       bool
+	runAutoBackup    bool
+}
+
+func isMainServiceMode(flags startupFlags) bool {
+	return !flags.resetAdmin &&
+		!flags.resetPassword &&
+		!flags.refreshWhitelist &&
+		!flags.unbanAll &&
+		!flags.fileBackup &&
+		!flags.runAutoBackup
 }
 
 func startWPCoreUpdateWorker(cfg *config.Config, factory wpCoreUpdateWorkerFactory) (wpCoreUpdateWorkerLifecycle, error) {
