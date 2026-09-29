@@ -247,27 +247,38 @@ func (s *WPCoreUpdateService) loadCandidate(ctx context.Context, siteID int) (wp
 		stateLocale = installed.Locale
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT target_version,locale FROM site_wp_component_updates
-		WHERE site_id=? AND collection_id=? AND component_type='core' AND component_key='wordpress' AND response='upgrade' AND locale=?`, siteID, c.collectionID, stateLocale)
+		WHERE site_id=? AND collection_id=? AND component_type='core' AND component_key='wordpress' AND response='upgrade' AND locale IN (?, 'en_US')`, siteID, c.collectionID, stateLocale)
 	if err != nil {
 		return c, err
 	}
 	defer rows.Close()
-	count := 0
+	exactCandidates := make([]wpCoreUpdateCandidate, 0, 1)
+	englishCandidates := make([]wpCoreUpdateCandidate, 0, 1)
 	for rows.Next() {
-		count++
-		if err := rows.Scan(&c.targetVersion, &c.locale); err != nil {
+		candidate := c
+		if err := rows.Scan(&candidate.targetVersion, &candidate.locale); err != nil {
 			return c, err
+		}
+		if candidate.locale == stateLocale {
+			exactCandidates = append(exactCandidates, candidate)
+		} else {
+			englishCandidates = append(englishCandidates, candidate)
 		}
 	}
 	if rows.Err() != nil {
 		return c, rows.Err()
 	}
-	if count == 0 {
+	candidates := exactCandidates
+	if len(candidates) == 0 {
+		candidates = englishCandidates
+	}
+	if len(candidates) == 0 {
 		return c, errWPCoreUpdateNoCandidate
 	}
-	if count != 1 || c.targetVersion == "" || c.locale == "" || c.locale != stateLocale {
+	if len(candidates) != 1 || candidates[0].targetVersion == "" || candidates[0].locale == "" {
 		return c, ErrWPCoreUpdateConflict
 	}
+	c = candidates[0]
 	// A target at or below the installed version is not an error: it means the
 	// cached candidate is already satisfied (e.g. the site was rescanned or
 	// updated out-of-band after the candidate was stored). Treat it as "no

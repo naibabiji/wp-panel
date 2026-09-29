@@ -18,6 +18,7 @@
 
 | 日期 | 主题 slug | 变更摘要 | 用户可见变化点 | 来源 | 状态 |
 |---|---|---|---|---|---|
+| 2026-09-29 | wordpress | 非英语站点可使用官方英文核心包候选更新 | 当 WordPress.org 尚未发布与站点语言一致的新核心包、但已发布官方 `en_US` 稳定包时，面板不再错误显示“已是最新”；仍优先选择站点语言包，只接受唯一的官方英文稳定候选，并保留官方 checksum、备份、二次确认、健康检查和失败回滚 | `docs/features/wordpress-management.md`、ADR-0007 | 待同步 |
 | 2026-09-24 | operations | 更正“清理 OPcache”的影响说明 | 软件页“清理 OPcache”会重载 PHP-FPM，服务器上所有网站正在处理的请求可能被中断（访客看到一次错误页），建议低峰操作；OPcache 默认每隔几秒自动发现代码变化，一般无需手动清理。此前确认框和说明称“不会中断请求”，与实际不符 | `docs/features/operations-and-settings.md` | 待同步 |
 | 2026-09-23 | wordpress | v1.6.5 安全修复：wp-config 异常文件与网站上级目录权限要求 | 面板修改 `wp-config.php`（优化设置、数据库密码、文件保护、WP Cron、修复配置、建站生成配置等）时，若该文件是软链接、硬链接，或属主与网站目录不一致，会拒绝并提示失败，需要先修复文件权限；网站上级目录（默认 `/www/wwwroot`）被设为其他用户可写（如 777）时同样拒绝，应改回 755 或 775；上级目录指向数据盘的软链接不受影响。文件备份排队不再受 `/tmp` 残留文件影响 | `docs/features/wordpress-management.md`、`docs/features/backup-and-restore.md` | 待同步 |
 | 2026-09-16 | security | 面板未知路径扫描与搬家机器认证失败限速 | 浏览器标识或仅携带 Basic Auth 请求头不再绕过面板未知路径扫描统计；同一来源 60 秒访问 10 个不同未知路径会短期封禁。网站搬家机器接口连续认证失败会暂时限速，正确认证的正常搬家传输不受总请求量限制 | `docs/features/security-protection.md`、`docs/features/site-migration.md` | 待同步 |
