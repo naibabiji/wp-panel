@@ -43,20 +43,24 @@ func (h *DashboardHandler) GetMetrics(c *gin.Context) {
 		return
 	}
 
-	labels, cpu, memory, load := queryMetrics(query.Range)
+	labels, cpu, memory, load, ioWait, steal, diskRead, diskWrite := queryMetrics(query.Range)
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"labels": labels,
-		"cpu":    cpu,
-		"memory": memory,
-		"load":   load,
+		"labels":     labels,
+		"cpu":        cpu,
+		"memory":     memory,
+		"load":       load,
+		"io_wait":    ioWait,
+		"steal":      steal,
+		"disk_read":  diskRead,
+		"disk_write": diskWrite,
 	}))
 }
 
 func collectCurrentStats() *models.SystemStats {
 	stats := &models.SystemStats{}
 
-	cpu, _ := readCPUPercent()
+	cpu, ioWait, steal, _ := readCPUStats()
 	memTotal, memUsed, memPercent := readMemoryStats()
 	swapTotal, swapUsed := readSwapStats()
 	diskTotal, diskUsed := readDiskStats()
@@ -64,6 +68,8 @@ func collectCurrentStats() *models.SystemStats {
 	uptime := readUptime()
 
 	stats.CPUPercent = cpu
+	stats.CPUIOWaitPercent = ioWait
+	stats.CPUStealPercent = steal
 	stats.MemoryPercent = memPercent
 	stats.MemoryUsedBytes = memUsed
 	stats.MemoryTotalBytes = memTotal
@@ -79,7 +85,7 @@ func collectCurrentStats() *models.SystemStats {
 	return stats
 }
 
-func queryMetrics(r string) ([]string, []float64, []float64, []float64) {
+func queryMetrics(r string) ([]string, []float64, []float64, []float64, []float64, []float64, []int64, []int64) {
 	db := database.GetDB()
 	var since string
 
@@ -91,17 +97,18 @@ func queryMetrics(r string) ([]string, []float64, []float64, []float64) {
 	case "15d":
 		since = time.Now().UTC().Add(-15 * 24 * time.Hour).Format("2006-01-02 15:04:05")
 	default:
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil, nil, nil
 	}
 
-	query := `SELECT recorded_at, cpu_percent, memory_percent, load_avg_1
+	query := `SELECT recorded_at, cpu_percent, memory_percent, load_avg_1,
+	                  cpu_iowait_percent, cpu_steal_percent, disk_read_bytes, disk_write_bytes
 	           FROM monitoring_metrics
 	           WHERE recorded_at > ?
 	           ORDER BY recorded_at ASC`
 
 	rows, err := db.Query(query, since)
 	if err != nil {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil, nil, nil
 	}
 	defer rows.Close()
 
@@ -109,17 +116,26 @@ func queryMetrics(r string) ([]string, []float64, []float64, []float64) {
 	var cpu []float64
 	var memory []float64
 	var load []float64
+	var ioWait []float64
+	var steal []float64
+	var diskRead []int64
+	var diskWrite []int64
 
 	for rows.Next() {
 		var ts time.Time
-		var c, m, l float64
-		if err := rows.Scan(&ts, &c, &m, &l); err != nil {
+		var c, m, l, iw, st float64
+		var dr, dw int64
+		if err := rows.Scan(&ts, &c, &m, &l, &iw, &st, &dr, &dw); err != nil {
 			continue
 		}
 		labels = append(labels, formatMetricLabel(ts, r))
 		cpu = append(cpu, c)
 		memory = append(memory, m)
 		load = append(load, l)
+		ioWait = append(ioWait, iw)
+		steal = append(steal, st)
+		diskRead = append(diskRead, dr)
+		diskWrite = append(diskWrite, dw)
 	}
 
 	if labels == nil {
@@ -127,13 +143,17 @@ func queryMetrics(r string) ([]string, []float64, []float64, []float64) {
 		cpu = []float64{}
 		memory = []float64{}
 		load = []float64{}
+		ioWait = []float64{}
+		steal = []float64{}
+		diskRead = []int64{}
+		diskWrite = []int64{}
 	}
 
-	return labels, cpu, memory, load
+	return labels, cpu, memory, load, ioWait, steal, diskRead, diskWrite
 }
 
 func formatMetricLabel(ts time.Time, r string) string {
-	format := "15:04"
+	format := "01-02 15:04"
 	if r == "7d" {
 		format = "01-02 15:04"
 	} else if r == "15d" {

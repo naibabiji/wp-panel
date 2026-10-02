@@ -165,6 +165,24 @@ func (s *siteMigrationStore) heartbeat(ctx context.Context, id, owner string, no
 	return nil
 }
 
+func (s *siteMigrationStore) returnUnstartedClaim(ctx context.Context, id, owner string, now time.Time) error {
+	if !validSiteMigrationID(id) || !validSiteMigrationID(owner) || now.IsZero() {
+		return errors.New("invalid site migration unstarted claim")
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE site_migration_sites
+		SET status='queued',lease_owner='',lease_expires_at=NULL,
+			attempt_count=CASE WHEN attempt_count > 0 THEN attempt_count-1 ELSE 0 END,updated_at=?
+		WHERE id=? AND status='running' AND lease_owner=?`, now.UTC(), id, owner)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return errSiteMigrationNotClaimed
+	}
+	return nil
+}
+
 func (s *siteMigrationStore) finish(ctx context.Context, id, owner, status, errorCode string, now time.Time) error {
 	if !validSiteMigrationID(id) || !validSiteMigrationID(owner) || now.IsZero() ||
 		(status != "completed" && status != "failed_manual") {

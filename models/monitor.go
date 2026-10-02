@@ -10,6 +10,8 @@ type MonitoringMetric struct {
 	MemoryTotalBytes int64     `json:"memory_total_bytes"`
 	DiskReadBytes    int64     `json:"disk_read_bytes"`
 	DiskWriteBytes   int64     `json:"disk_write_bytes"`
+	CPUIOWaitPercent float64   `json:"cpu_iowait_percent"`
+	CPUStealPercent  float64   `json:"cpu_steal_percent"`
 	LoadAvg1         float64   `json:"load_avg_1"`
 	LoadAvg5         float64   `json:"load_avg_5"`
 	LoadAvg15        float64   `json:"load_avg_15"`
@@ -18,6 +20,8 @@ type MonitoringMetric struct {
 
 type SystemStats struct {
 	CPUPercent       float64 `json:"cpu_percent"`
+	CPUIOWaitPercent float64 `json:"cpu_iowait_percent"`
+	CPUStealPercent  float64 `json:"cpu_steal_percent"`
 	MemoryPercent    float64 `json:"memory_percent"`
 	MemoryUsedBytes  int64   `json:"memory_used_bytes"`
 	MemoryTotalBytes int64   `json:"memory_total_bytes"`

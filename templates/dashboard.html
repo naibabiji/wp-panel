@@ -27,6 +27,7 @@
         <div class="card">
             <p class="text-gray-400 text-sm">{{t .Lang "dashboard.cpu_usage"}}</p>
             <p class="text-3xl font-bold text-white mt-2" x-text="stats.cpu_percent?.toFixed(1) + '%'">--</p>
+            <p class="text-xs text-gray-500 mt-1" x-text="t('dashboard.cpu_wait_steal', { wait: (stats.cpu_iowait_percent || 0).toFixed(1), steal: (stats.cpu_steal_percent || 0).toFixed(1) })"></p>
         </div>
         <div class="card">
             <p class="text-gray-400 text-sm">{{t .Lang "dashboard.memory_usage"}}</p>
@@ -50,16 +51,64 @@
         </div>
     </div>
 
-    <div class="card mb-6" x-data="{ range: '24h' }">
-        <div class="flex items-center justify-between mb-4">
+    <div class="card mb-6" x-data="{ range: '24h', helpOpen: false, zoom: 1 }" @keydown.escape.window="helpOpen = false">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
             <h3 class="text-lg font-semibold text-white">{{t .Lang "dashboard.history_trend"}}</h3>
-            <div class="flex space-x-1">
-                <button @click="range='24h'; fetchMetrics('24h')" :class="range === '24h' ? 'btn-primary text-xs' : 'btn-secondary text-xs'" class="py-1 px-3">{{t .Lang "dashboard.hours_24"}}</button>
-                <button @click="range='7d'; fetchMetrics('7d')" :class="range === '7d' ? 'btn-primary text-xs' : 'btn-secondary text-xs'" class="py-1 px-3">{{t .Lang "dashboard.days_7"}}</button>
-                <button @click="range='15d'; fetchMetrics('15d')" :class="range === '15d' ? 'btn-primary text-xs' : 'btn-secondary text-xs'" class="py-1 px-3">{{t .Lang "dashboard.days_15"}}</button>
+            <div class="flex flex-wrap items-center gap-2">
+                <button @click="helpOpen = true" class="btn-secondary text-xs py-1 px-3">{{t .Lang "dashboard.how_to_read"}}</button>
+                <label class="flex items-center gap-2 text-xs text-gray-400">
+                    <span>{{t .Lang "dashboard.horizontal_zoom"}}</span>
+                    <input type="range" min="1" max="12" step="1" x-model.number="zoom" @input="$nextTick(() => setTrendChartScale())" class="w-24 accent-blue-500" aria-label="{{t .Lang "dashboard.horizontal_zoom"}}">
+                    <span class="w-7 text-right font-mono text-gray-300" x-text="zoom + '×'"></span>
+                </label>
+                <button x-show="zoom > 1" @click="zoom = 1; $nextTick(() => setTrendChartScale())" class="btn-secondary text-xs py-1 px-3">{{t .Lang "dashboard.reset_zoom"}}</button>
+                <div class="flex space-x-1">
+                    <button @click="range='24h'; fetchMetrics('24h')" :class="range === '24h' ? 'btn-primary text-xs' : 'btn-secondary text-xs'" class="py-1 px-3">{{t .Lang "dashboard.hours_24"}}</button>
+                    <button @click="range='7d'; fetchMetrics('7d')" :class="range === '7d' ? 'btn-primary text-xs' : 'btn-secondary text-xs'" class="py-1 px-3">{{t .Lang "dashboard.days_7"}}</button>
+                    <button @click="range='15d'; fetchMetrics('15d')" :class="range === '15d' ? 'btn-primary text-xs' : 'btn-secondary text-xs'" class="py-1 px-3">{{t .Lang "dashboard.days_15"}}</button>
+                </div>
             </div>
         </div>
-        <canvas id="metricsCanvas" class="w-full" height="80"></canvas>
+        <div class="overflow-x-auto pb-2">
+            <div class="min-w-full" :style="{ width: (zoom * 100) + '%' }">
+                <div class="relative w-full" style="height: 320px">
+                    <canvas id="metricsCanvas"></canvas>
+                </div>
+                <h4 class="sticky left-0 w-fit text-sm font-medium text-gray-300 mt-6 mb-2">{{t .Lang "dashboard.disk_io"}}</h4>
+                <div class="relative w-full" style="height: 220px">
+                    <canvas id="diskMetricsCanvas"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div x-cloak x-show="helpOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" @click.self="helpOpen = false">
+            <div class="bg-gray-800 border border-gray-700 rounded-lg shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="performance-guide-title">
+                <div class="flex items-center justify-between border-b border-gray-700 px-5 py-4">
+                    <h3 id="performance-guide-title" class="text-lg font-semibold text-white">{{t .Lang "dashboard.guide_title"}}</h3>
+                    <button @click="helpOpen = false" class="text-gray-400 hover:text-white" aria-label="{{t .Lang "dashboard.close"}}">&times;</button>
+                </div>
+                <div class="px-5 py-4 space-y-4 text-sm text-gray-300">
+                    <p>{{t .Lang "dashboard.guide_intro"}}</p>
+                    <div class="space-y-3">
+                        <p><strong class="text-white">CPU: </strong>{{t .Lang "dashboard.guide_cpu"}}</p>
+                        <p><strong class="text-white">IO Wait: </strong>{{t .Lang "dashboard.guide_iowait"}}</p>
+                        <p><strong class="text-white">Steal: </strong>{{t .Lang "dashboard.guide_steal"}}</p>
+                        <p><strong class="text-white">{{t .Lang "dashboard.system_load"}}: </strong>{{t .Lang "dashboard.guide_load"}}</p>
+                        <p><strong class="text-white">{{t .Lang "dashboard.disk_io"}}: </strong>{{t .Lang "dashboard.guide_disk"}}</p>
+                    </div>
+                    <div class="rounded border border-gray-700 bg-gray-900/60 p-3 space-y-2">
+                        <p class="font-medium text-white">{{t .Lang "dashboard.guide_disk_compare_title"}}</p>
+                        <p>{{t .Lang "dashboard.guide_disk_high_low"}}</p>
+                        <p>{{t .Lang "dashboard.guide_disk_high_high"}}</p>
+                        <p>{{t .Lang "dashboard.guide_disk_low_high"}}</p>
+                    </div>
+                    <p class="text-xs text-gray-400">{{t .Lang "dashboard.guide_note"}}</p>
+                </div>
+                <div class="border-t border-gray-700 px-5 py-3 text-right">
+                    <button @click="helpOpen = false" class="btn-secondary">{{t .Lang "dashboard.close"}}</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="card mb-6" x-data="siteResources()" x-init="initFetch()">
@@ -170,6 +219,25 @@ function dashboardStats() {
 // Chart.js — initialized outside Alpine to avoid proxy conflict
 (function() {
     let chart = null;
+    let diskChart = null;
+
+    function safeTrendDPR(canvas) {
+        const rect = canvas.parentElement.getBoundingClientRect();
+        const width = Math.max(1, rect.width);
+        const height = Math.max(1, rect.height);
+        const nativeDPR = Math.max(1, window.devicePixelRatio || 1);
+        const widthLimit = 30000 / width;
+        const areaLimit = Math.sqrt(16000000 / (width * height));
+        return Math.max(1, Math.min(nativeDPR, widthLimit, areaLimit));
+    }
+
+    window.setTrendChartScale = function() {
+        for (const item of [chart, diskChart]) {
+            if (!item) continue;
+            item.options.devicePixelRatio = safeTrendDPR(item.canvas);
+            item.resize();
+        }
+    };
 
     async function fetchMetrics(range) {
         try {
@@ -179,7 +247,15 @@ function dashboardStats() {
                 chart.data.datasets[0].data = resp.data.cpu || [];
                 chart.data.datasets[1].data = resp.data.memory || [];
                 chart.data.datasets[2].data = resp.data.load || [];
+                chart.data.datasets[3].data = resp.data.io_wait || [];
+                chart.data.datasets[4].data = resp.data.steal || [];
                 chart.update('none');
+                if (diskChart) {
+                    diskChart.data.labels = resp.data.labels || [];
+                    diskChart.data.datasets[0].data = resp.data.disk_read || [];
+                    diskChart.data.datasets[1].data = resp.data.disk_write || [];
+                    diskChart.update('none');
+                }
             }
         } catch (e) { console.error(e); }
     }
@@ -195,10 +271,14 @@ function dashboardStats() {
                     { label: 'CPU %', borderColor: '#3b82f6', backgroundColor: '#3b82f6', data: [], tension: 0.3, pointRadius: 0, pointHoverRadius: 5 },
                     { label: t('dashboard.chart_memory'), borderColor: '#22c55e', backgroundColor: '#22c55e', data: [], tension: 0.3, pointRadius: 0, pointHoverRadius: 5 },
                     { label: t('dashboard.chart_load'), borderColor: '#eab308', backgroundColor: '#eab308', data: [], tension: 0.3, pointRadius: 0, pointHoverRadius: 5 },
+                    { label: t('dashboard.chart_iowait'), borderColor: '#f97316', backgroundColor: '#f97316', data: [], tension: 0.3, pointRadius: 0, pointHoverRadius: 5 },
+                    { label: t('dashboard.chart_steal'), borderColor: '#a855f7', backgroundColor: '#a855f7', data: [], tension: 0.3, pointRadius: 0, pointHoverRadius: 5 },
                 ]
             },
             options: {
                 responsive: true,
+                maintainAspectRatio: false,
+                devicePixelRatio: safeTrendDPR(canvas),
                 interaction: {
                     mode: 'index',
                     intersect: false,
@@ -230,6 +310,34 @@ function dashboardStats() {
                 }
             }
         });
+
+        const diskCanvas = document.getElementById('diskMetricsCanvas');
+        if (diskCanvas) {
+            diskChart = new Chart(diskCanvas.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        { label: t('dashboard.chart_disk_read'), borderColor: '#06b6d4', backgroundColor: '#06b6d4', data: [], tension: 0.3, pointRadius: 0, pointHoverRadius: 5 },
+                        { label: t('dashboard.chart_disk_write'), borderColor: '#ec4899', backgroundColor: '#ec4899', data: [], tension: 0.3, pointRadius: 0, pointHoverRadius: 5 },
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    devicePixelRatio: safeTrendDPR(diskCanvas),
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: { ticks: { color: '#9ca3af', maxTicksLimit: 12, maxRotation: 0 }, grid: { color: '#374151' } },
+                        y: { beginAtZero: true, ticks: { color: '#9ca3af', callback: value => formatBytes(value) + '/s' }, grid: { color: '#374151' } }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#9ca3af' } },
+                        tooltip: { callbacks: { label: item => item.dataset.label + ': ' + formatBytes(item.parsed.y) + '/s' } }
+                    }
+                }
+            });
+        }
         fetchMetrics('24h');
     }
 

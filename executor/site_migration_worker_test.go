@@ -124,16 +124,8 @@ func TestSiteMigrationWorkerRunsFailureCleanupAfterRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	var status, owner string
-	var queryErr error
-	for i := 0; i < 20; i++ {
-		queryErr = store.db.QueryRow(`SELECT status,lease_owner FROM site_migration_sites WHERE id=?`, taskID).Scan(&status, &owner)
-		if queryErr == nil {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if queryErr != nil {
-		t.Fatal(queryErr)
+	if err := store.db.QueryRow(`SELECT status,lease_owner FROM site_migration_sites WHERE id=?`, taskID).Scan(&status, &owner); err != nil {
+		t.Fatal(err)
 	}
 	if status != "failed_retryable" || owner != "" {
 		t.Fatalf("status=%q owner=%q", status, owner)

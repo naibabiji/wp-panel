@@ -48,6 +48,12 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 	if oomTableExists != 1 {
 		t.Fatalf("system_oom_events exists = %d, want 1", oomTableExists)
 	}
+	for _, column := range []string{"cpu_iowait_percent", "cpu_steal_percent"} {
+		var exists int
+		if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('monitoring_metrics') WHERE name = ?", column).Scan(&exists); err != nil || exists != 1 {
+			t.Fatalf("fresh monitoring_metrics.%s exists=%d err=%v", column, exists, err)
+		}
+	}
 	var remoteStateTableExists int
 	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'remote_backup_site_state'").Scan(&remoteStateTableExists); err != nil {
 		t.Fatalf("query remote_backup_site_state: %v", err)
@@ -217,6 +223,33 @@ func TestUpgradeApplicationPasswordPolicyPreservesExistingWebsites(t *testing.T)
 	}
 	if err := DB.QueryRow(`SELECT disable_application_passwords FROM websites WHERE domain='new-after-upgrade.example'`).Scan(&disabled); err != nil || disabled != 1 {
 		t.Fatalf("new website after upgrade disable_application_passwords = %d, want 1, err=%v", disabled, err)
+	}
+}
+
+func TestUpgrade1066AddsCPUBreakdownMetrics(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"cpu_steal_percent", "cpu_iowait_percent"} {
+		if _, err := DB.Exec("ALTER TABLE monitoring_metrics DROP COLUMN " + column); err != nil {
+			t.Fatalf("prepare legacy monitoring_metrics: %v", err)
+		}
+	}
+	if _, err := DB.Exec(`DELETE FROM schema_version; INSERT INTO schema_version(version) VALUES ('1.0.65')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"cpu_iowait_percent", "cpu_steal_percent"} {
+		var exists int
+		if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('monitoring_metrics') WHERE name = ?", column).Scan(&exists); err != nil || exists != 1 {
+			t.Fatalf("monitoring_metrics.%s exists=%d err=%v", column, exists, err)
+		}
 	}
 }
 
@@ -396,7 +429,7 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.65" {
+	if got := LatestVersion(); got != "1.0.66" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
 	for _, column := range []string{"database_backup_mode", "database_backup_source_id", "auto_rollback", "batch_id"} {

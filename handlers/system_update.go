@@ -88,13 +88,15 @@ func systemUpdateStatusResponse(c *gin.Context, status executor.SystemPackageUpd
 		message = i18n.TE(c.Request, status.MessageKey)
 	}
 	return gin.H{
-		"id":          status.ID,
-		"status":      status.Status,
-		"stage":       status.Stage,
-		"message":     message,
-		"message_key": status.MessageKey,
-		"started_at":  status.StartedAt,
-		"updated_at":  status.UpdatedAt,
+		"id":               status.ID,
+		"status":           status.Status,
+		"stage":            status.Stage,
+		"message":          message,
+		"message_key":      status.MessageKey,
+		"started_at":       status.StartedAt,
+		"updated_at":       status.UpdatedAt,
+		"removal_packages": status.RemovalPackages,
+		"reboot_required":  status.RebootRequired,
 	}
 }
 

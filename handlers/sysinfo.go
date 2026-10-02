@@ -9,54 +9,61 @@ import (
 )
 
 var (
-	prevCPUIdle  float64
-	prevCPUTotal float64
-	cpuMu        sync.Mutex
+	prevCPU cpuTicks
+	cpuMu   sync.Mutex
 )
 
-func readCPUPercent() (float64, error) {
-	idle, total, err := readCPUTicks()
+type cpuTicks struct {
+	total  float64
+	idle   float64
+	iowait float64
+	steal  float64
+}
+
+func readCPUStats() (float64, float64, float64, error) {
+	current, err := readCPUTicks()
 	if err != nil {
-		return 0, err
+		return 0, 0, 0, err
 	}
-	if total == 0 {
-		return 0, nil
+	if current.total == 0 {
+		return 0, 0, 0, nil
 	}
 
 	cpuMu.Lock()
-	if prevCPUTotal == 0 {
-		prevCPUTotal, prevCPUIdle = total, idle
+	if prevCPU.total == 0 {
+		prevCPU = current
 		cpuMu.Unlock()
 		time.Sleep(200 * time.Millisecond)
-		idle, total, err = readCPUTicks()
+		current, err = readCPUTicks()
 		if err != nil {
-			return 0, err
+			return 0, 0, 0, err
 		}
 		cpuMu.Lock()
 	}
-	deltaTotal := total - prevCPUTotal
-	deltaIdle := idle - prevCPUIdle
-	prevCPUTotal, prevCPUIdle = total, idle
+	deltaTotal := current.total - prevCPU.total
+	deltaIdle := current.idle - prevCPU.idle
+	deltaIOWait := current.iowait - prevCPU.iowait
+	deltaSteal := current.steal - prevCPU.steal
+	prevCPU = current
 	cpuMu.Unlock()
 	if deltaTotal <= 0 {
-		return 0, nil
+		return 0, 0, 0, nil
 	}
-	pct := (1 - deltaIdle/deltaTotal) * 100
-	if pct < 0 {
-		pct = 0
-	}
-	if pct > 100 {
-		pct = 100
-	}
-	return pct, nil
+	busy := deltaTotal - deltaIdle - deltaIOWait - deltaSteal
+	return clampPercent(busy / deltaTotal * 100),
+		clampPercent(deltaIOWait / deltaTotal * 100),
+		clampPercent(deltaSteal / deltaTotal * 100), nil
 }
 
-func readCPUTicks() (float64, float64, error) {
+func readCPUTicks() (cpuTicks, error) {
 	data, err := os.ReadFile("/proc/stat")
 	if err != nil {
-		return 0, 0, err
+		return cpuTicks{}, err
 	}
+	return parseCPUTicks(string(data)), nil
+}
 
+func parseCPUTicks(data string) cpuTicks {
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
 		if strings.HasPrefix(line, "cpu ") {
@@ -64,18 +71,35 @@ func readCPUTicks() (float64, float64, error) {
 			if len(fields) < 5 {
 				continue
 			}
-			var total, idle float64
+			var ticks cpuTicks
 			for i, f := range fields[1:] {
+				if i >= 8 {
+					break
+				}
 				v, _ := strconv.ParseFloat(f, 64)
-				total += v
+				ticks.total += v
 				if i == 3 {
-					idle = v
+					ticks.idle = v
+				} else if i == 4 {
+					ticks.iowait = v
+				} else if i == 7 {
+					ticks.steal = v
 				}
 			}
-			return idle, total, nil
+			return ticks
 		}
 	}
-	return 0, 0, nil
+	return cpuTicks{}
+}
+
+func clampPercent(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
 }
 
 func readMemoryStats() (int64, int64, float64) {

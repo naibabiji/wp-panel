@@ -92,6 +92,25 @@ func TestSiteMigrationStoreClaimHeartbeatAndRecovery(t *testing.T) {
 	}
 }
 
+func TestSiteMigrationStoreReturnsUnstartedClaimToQueue(t *testing.T) {
+	store, _ := newSiteMigrationStoreTest(t)
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	job, err := store.claimNext(context.Background(), "worker_0000000001", now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.returnUnstartedClaim(context.Background(), job.ID, job.LeaseOwner, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	returned, err := getSiteMigrationSite(context.Background(), store.db, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if returned.Status != "queued" || returned.LeaseOwner != "" || returned.LeaseExpiresAt.Valid || returned.AttemptCount != 0 {
+		t.Fatalf("returned=%+v", returned)
+	}
+}
+
 func TestSiteMigrationStoreReleaseClaimPreservesProcessorState(t *testing.T) {
 	store, _ := newSiteMigrationStoreTest(t)
 	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)

@@ -197,6 +197,34 @@
                 </div>
                 <p x-show="count > 0" class="text-xs text-yellow-500 mt-2">{{t .Lang "settings.system_update_warning"}}</p>
                 <p x-show="msg" class="text-sm mt-2" :class="ok ? 'text-green-400' : 'text-red-400'" x-text="msg"></p>
+
+                <div x-cloak x-show="removalOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" @click.self="removalOpen = false" @keydown.escape.window="removalOpen = false">
+                    <div class="bg-gray-800 border border-gray-700 rounded-lg shadow-xl w-full max-w-xl max-h-[85vh] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="system-update-removal-title">
+                        <div class="flex items-center justify-between border-b border-gray-700 px-5 py-4">
+                            <h3 id="system-update-removal-title" class="text-lg font-semibold text-white">{{t .Lang "settings.system_update_removal_title"}}</h3>
+                            <button @click="removalOpen = false" class="text-gray-400 hover:text-white" aria-label="{{t .Lang "dashboard.close"}}">&times;</button>
+                        </div>
+                        <div class="px-5 py-4 space-y-4 text-sm text-gray-300">
+                            <p>{{t .Lang "settings.system_update_removal_intro"}}</p>
+                            <p class="text-green-400">{{t .Lang "settings.system_update_removal_unchanged"}}</p>
+                            <div class="rounded border border-gray-700 bg-gray-900/60 p-3">
+                                <p class="text-xs text-gray-400 mb-2">{{t .Lang "settings.system_update_removal_packages"}}</p>
+                                <ul class="space-y-1 font-mono text-sm text-white">
+                                    <template x-for="pkg in removalPackages" :key="pkg">
+                                        <li x-text="pkg"></li>
+                                    </template>
+                                    <li x-show="removalPackages.length === 0" class="font-sans text-yellow-400">{{t .Lang "settings.system_update_removal_unknown"}}</li>
+                                </ul>
+                            </div>
+                            <p>{{t .Lang "settings.system_update_removal_advice"}}</p>
+                            <p class="text-yellow-400">{{t .Lang "settings.system_update_removal_warning"}}</p>
+                        </div>
+                        <div class="flex flex-wrap justify-end gap-2 border-t border-gray-700 px-5 py-3">
+                            <button @click="copyRemovalDiagnosis()" class="btn-primary">{{t .Lang "settings.system_update_removal_copy"}}</button>
+                            <button @click="removalOpen = false" class="btn-secondary">{{t .Lang "settings.system_update_removal_close"}}</button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -877,6 +905,8 @@ function systemUpdate() {
         updating: false,
         msg: '',
         ok: false,
+        removalOpen: false,
+        removalPackages: [],
         pollTimer: null,
         init() {
             this.resume();
@@ -912,6 +942,8 @@ function systemUpdate() {
         },
         applyStatus(status) {
             this.updating = status.status === 'running';
+            this.removalPackages = status.removal_packages || [];
+            this.removalOpen = status.status === 'blocked';
             if (status.status !== 'idle') {
                 this.msg = status.message || '';
                 this.ok = status.status === 'success';
@@ -936,6 +968,18 @@ function systemUpdate() {
                 if (r.success) this.applyStatus(r.data);
             } catch(e) { this.ok = false; this.msg = e.message; }
             if (!this.pollTimer) this.updating = false;
+        },
+        async copyRemovalDiagnosis() {
+            const packages = this.removalPackages.length > 0
+                ? this.removalPackages.map(pkg => '- ' + pkg).join('\n')
+                : '- ' + t('settings.system_update_removal_unknown');
+            const text = t('settings.system_update_removal_ai_prompt', { packages });
+            try {
+                await navigator.clipboard.writeText(text);
+                showToast(t('settings.system_update_removal_copied'), 'success');
+            } catch (e) {
+                showToast(t('settings.system_update_removal_copy_failed'), 'error');
+            }
         }
     }
 }

@@ -126,6 +126,8 @@ var migrations = append([]string{
 		memory_total_bytes INTEGER,
 		disk_read_bytes    INTEGER,
 		disk_write_bytes   INTEGER,
+		cpu_iowait_percent REAL NOT NULL DEFAULT 0,
+		cpu_steal_percent  REAL NOT NULL DEFAULT 0,
 		load_avg_1         REAL,
 		load_avg_5         REAL,
 		load_avg_15        REAL,

@@ -58,6 +58,40 @@ func TestLogAnalysisPageIncludesContent(t *testing.T) {
 	}
 }
 
+func TestDashboardHistorySupportsHorizontalZoom(t *testing.T) {
+	output := renderPage(t, "dashboard.html", "dashboard_content")
+	for _, required := range [][]byte{
+		[]byte(`type="range" min="1" max="12"`),
+		[]byte(`x-model.number="zoom"`),
+		[]byte(`width: (zoom * 100) + '%'`),
+		[]byte(`@click="zoom = 1; $nextTick(() => setTrendChartScale())"`),
+		[]byte(`class="overflow-x-auto pb-2"`),
+		[]byte(`style="height: 320px"`),
+		[]byte(`style="height: 220px"`),
+		[]byte(`maintainAspectRatio: false`),
+		[]byte(`devicePixelRatio: safeTrendDPR`),
+		[]byte(`30000 / width`),
+		[]byte(`16000000 / (width * height)`),
+	} {
+		if !bytes.Contains(output, required) {
+			t.Fatalf("dashboard history zoom control missing %q", required)
+		}
+	}
+}
+
+func TestSettingsShowsBlockedUpdateWhenRemovalNamesAreUnknown(t *testing.T) {
+	output := renderPage(t, "settings.html", "settings_content")
+	for _, required := range [][]byte{
+		[]byte(`this.removalOpen = status.status === 'blocked'`),
+		[]byte(`settings.system_update_removal_unknown`),
+		[]byte(`this.removalPackages.length > 0`),
+	} {
+		if !bytes.Contains(output, required) {
+			t.Fatalf("settings removal fallback missing %q", required)
+		}
+	}
+}
+
 func TestLogAnalysisExplainsServerTrafficMetrics(t *testing.T) {
 	template, err := os.ReadFile("../templates/log_analysis.html")
 	if err != nil {

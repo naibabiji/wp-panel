@@ -19,7 +19,7 @@ func TestFormatMetricLabelUsesServerLocalTime(t *testing.T) {
 		rangeName string
 		want      string
 	}{
-		{rangeName: "24h", want: "15:45"},
+		{rangeName: "24h", want: "08-28 15:45"},
 		{rangeName: "7d", want: "08-28 15:45"},
 		{rangeName: "15d", want: "08-28"},
 	}

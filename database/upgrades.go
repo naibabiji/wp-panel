@@ -746,6 +746,39 @@ var upgrades = []Upgrade{
 		},
 		Func: backfillSSLCertificateSources,
 	},
+	{
+		Version:     "1.0.66",
+		Description: "记录 CPU IO 等待与虚拟机 steal 指标",
+		Func:        ensureMonitoringCPUBreakdownColumns,
+	},
+}
+
+func ensureMonitoringCPUBreakdownColumns() error {
+	var tableExists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='monitoring_metrics'`).Scan(&tableExists); err != nil {
+		return err
+	}
+	if tableExists == 0 {
+		return nil
+	}
+	for _, column := range []struct {
+		name string
+		sql  string
+	}{
+		{name: "cpu_iowait_percent", sql: `ALTER TABLE monitoring_metrics ADD COLUMN cpu_iowait_percent REAL NOT NULL DEFAULT 0`},
+		{name: "cpu_steal_percent", sql: `ALTER TABLE monitoring_metrics ADD COLUMN cpu_steal_percent REAL NOT NULL DEFAULT 0`},
+	} {
+		var exists int
+		if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('monitoring_metrics') WHERE name = ?`, column.name).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			if _, err := DB.Exec(column.sql); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func ensureWPUpdateDatabaseBackupColumns() error {

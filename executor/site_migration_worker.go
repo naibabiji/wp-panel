@@ -109,8 +109,23 @@ func (w *SiteMigrationWorker) Stop(ctx context.Context) error {
 func (w *SiteMigrationWorker) run(ctx context.Context) {
 	defer close(w.done)
 	for {
-		job, err := w.store.claimNext(ctx, w.owner, w.now().UTC(), w.lease)
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		// A claim is a short SQLite transaction. Do not cancel it midway during
+		// shutdown: database/sql may report context cancellation before its
+		// automatic rollback has released the connection-level SQLite lock.
+		// Stop still waits for this transaction before done is closed.
+		job, err := w.store.claimNext(context.WithoutCancel(ctx), w.owner, w.now().UTC(), w.lease)
 		if err == nil && job != nil {
+			if ctx.Err() != nil {
+				if releaseErr := w.store.returnUnstartedClaim(context.Background(), job.ID, w.owner, w.now().UTC()); releaseErr != nil {
+					log.Printf("网站搬家未启动任务租约归还失败 task=%s: %v", job.ID, releaseErr)
+				}
+				return
+			}
 			processErr := w.process(ctx, job)
 			if processErr != nil && ctx.Err() == nil {
 				log.Printf("网站搬家任务处理失败 task=%s: %v", job.ID, processErr)
