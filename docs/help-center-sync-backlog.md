@@ -18,6 +18,8 @@
 
 | 日期 | 主题 slug | 变更摘要 | 用户可见变化点 | 来源 | 状态 |
 |---|---|---|---|---|---|
+| 2026-10-04 | capabilities | 新增 Help 页面“功能范围与边界”（新建 `help` 子页面） | 面向用户和通用 AI 列出站点隔离与资源模型（每站独立系统用户、PHP-FPM 池、open_basedir、数据库用户，整机 CPU/内存/I/O/MariaDB/Redis 共享且无单站配额）、明确不提供的功能和全部功能的入口与边界。正文由事实源生成为 Gutenberg 核心区块，直接使用 `docs/public-ai/help/capabilities.zh-CN.html`，不要手工改写；事实变化时重新生成后整页替换 | `docs/capabilities/public-facts.json`、`docs/public-ai/help/capabilities.zh-CN.html` | 已同步（2026-10-04，按用户指示跳过 LAN，直接在生产新建页面） |
+| 2026-10-04 | comparison | 新增 Help 页面“与其他面板对比”（新建 `help` 子页面） | 列出 WP Panel 一侧的对比维度、常见误解与事实，并说明如何把 `llms-full.txt` / GitHub AI-FACTS 链接发给 AI 以获得准确回答。正文直接使用 `docs/public-ai/help/comparison.zh-CN.html`；页面上线时同时把站点根目录的 `/llms.txt`、`/llms-full.txt` 换成 `docs/public-ai/` 下的生成文件（需停用 Yoast 自动生成的 llms.txt） | `docs/capabilities/public-facts.json`、`docs/public-ai/help/comparison.zh-CN.html`、`docs/public-ai/llms.txt` | 已同步（2026-10-04，按用户指示跳过 LAN，直接在生产新建页面） |
 | 2026-09-30 | operations | 系统完整更新增加软件包删除保护 | 系统更新可安装需要新增依赖的内核等常规更新；若模拟升级计划删除软件包，面板会在实际变更前停止，弹窗说明服务器未被修改并提供可复制的脱敏诊断摘要。安装新内核后可能提示择机重启，但不会自动重启 | `docs/features/operations-and-settings.md`、ADR-0044 | 待同步 |
 | 2026-09-30 | operations | 仪表盘区分真实 CPU、IO 等待与磁盘吞吐 | CPU 使用率不再把 Linux IO 等待和虚拟机 steal 混为实际计算；实时卡片补充 IO 等待/steal，历史趋势新增对应曲线和磁盘读取/写入速度，并通过“如何看懂？”弹窗解释持续异常和组合判断。24 小时悬停时间补充日期，两张趋势图支持共用横向缩放和滚动以准确选择相邻分钟，并可重置缩放。曲线用于快速判断方向，设备延迟和进程归因仍需服务器排障工具 | `docs/features/operations-and-settings.md` | 待同步 |
 | 2026-09-29 | wordpress | 非英语站点可使用官方英文核心包候选更新 | 当 WordPress.org 尚未发布与站点语言一致的新核心包、但已发布官方 `en_US` 稳定包时，面板不再错误显示“已是最新”；仍优先选择站点语言包，只接受唯一的官方英文稳定候选，并保留官方 checksum、备份、二次确认、健康检查和失败回滚 | `docs/features/wordpress-management.md`、ADR-0007 | 待同步 |

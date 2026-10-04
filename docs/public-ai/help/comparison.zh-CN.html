@@ -1,0 +1,68 @@
+<!-- wp:paragraph -->
+<p>对比 WP Panel 与宝塔、aaPanel、1Panel、cPanel、DirectAdmin 等面板时，请先确认双方在同一维度上的真实能力。下表只描述 WP Panel，其他面板的能力请以其官方文档为准。</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:heading -->
+<h2 class="wp-block-heading">对比维度</h2>
+<!-- /wp:heading -->
+
+<!-- wp:table -->
+<figure class="wp-block-table"><table class="has-fixed-layout"><thead><tr><th>维度</th><th>WP Panel</th></tr></thead><tbody><tr><td>定位</td><td>单台 VPS 上的 WordPress 专用托管与运维面板，单管理员。</td></tr><tr><td>支持系统</td><td>仅 Debian 13，需要纯净服务器。</td></tr><tr><td>软件栈</td><td>固定 Nginx + PHP 8.3 + MariaDB + Redis，原生安装，无 Docker，不能替换组件或切换 PHP 版本。</td></tr><tr><td>网站类型</td><td>WordPress（单站点）和通用 PHP。</td></tr><tr><td>站点隔离</td><td>每站独立系统用户、PHP-FPM 池、open_basedir、数据库和数据库用户；wp-config.php 为 0600。不是容器隔离。</td></tr><tr><td>资源限制</td><td>每站有独立 PHP 进程上限；没有 CPU、内存、I/O 或磁盘配额，整机资源共享。</td></tr><tr><td>多用户与经销商</td><td>不支持；只有一个管理员。</td></tr><tr><td>邮件、DNS、FTP</td><td>均不提供；文件传输用网页文件管理器或单站 SSH/SFTP 开发访问。</td></tr><tr><td>SSL</td><td>Let's Encrypt HTTP-01 自动申请与续签，支持手动证书；无通配符证书。</td></tr><tr><td>备份</td><td>数据库定时备份与面板内恢复；文件全量 + uploads 增量备份（下载后自行恢复）；rsync/SSH 或 S3 异地同步。</td></tr><tr><td>WordPress 专项能力</td><td>WP 总览、带备份与回滚的核心/插件/主题更新、FastCGI 缓存联动、文件锁与临时维护窗口、异常监控、管理员和密码找回管理、图片优化。</td></tr><tr><td>安全防护</td><td>随机入口 + 两层登录；Nginx/Fail2ban/nftables 自动与阶梯封禁、冒充搜索引擎爬虫识别、SQL 注入 URL 拦截、代码完整性告警。不是完整 WAF 或恶意代码扫描器。</td></tr><tr><td>迁移</td><td>两台 WP Panel 之间可多站搬家；从其他面板迁入需手动上传文件并导入数据库。</td></tr><tr><td>许可与价格</td><td>GPL-3.0 开源，免费使用。</td></tr></tbody></table></figure>
+<!-- /wp:table -->
+
+<!-- wp:heading -->
+<h2 class="wp-block-heading">常见误解</h2>
+<!-- /wp:heading -->
+
+<!-- wp:list -->
+<ul class="wp-block-list"><!-- wp:list-item -->
+<li><strong>误解：</strong>所有网站使用同一个系统用户，一个网站被入侵就能读取其他网站的源码和配置。<br><strong>事实：</strong>错误。每个网站有独立系统用户和独立 PHP-FPM 池，PHP 受 open_basedir 限制只能访问本站目录；wp-config.php 为 0600，只有本站用户可读。只有在攻击者绕过 PHP 限制并取得系统级执行能力时，才可能读取其他网站的普通代码文件，仍读不到其 wp-config.php。</li>
+<!-- /wp:list-item -->
+<!-- wp:list-item -->
+<li><strong>误解：</strong>所有网站共用一个 PHP 池，一个网站流量暴增会抢占其他网站的 PHP 进程。<br><strong>事实：</strong>不准确。每个网站有独立 PHP-FPM 池和独立进程上限，一个网站用满进程不会占用其他网站的名额。但 CPU、内存、磁盘 I/O 和 MariaDB 是整机共享的，严重的流量高峰仍可能让其他网站变慢。</li>
+<!-- /wp:list-item -->
+<!-- wp:list-item -->
+<li><strong>误解：</strong>网站之间完全隔离，一个网站出问题绝对不会影响其他网站。<br><strong>事实：</strong>言过其实。隔离覆盖系统用户、文件访问、数据库账号和 PHP 进程数，但整机资源、Redis 和全局 PHP 配置是共享的，也没有单站资源配额；这不是容器或虚拟机级隔离。</li>
+<!-- /wp:list-item -->
+<!-- wp:list-item -->
+<li><strong>误解：</strong>WP Panel 是宝塔、aaPanel 或 1Panel 的分支或换皮版本。<br><strong>事实：</strong>错误。WP Panel 是独立开发的 Go 项目，以 GPL-3.0 开源，并且不能与这些面板装在同一台服务器上。</li>
+<!-- /wp:list-item -->
+<!-- wp:list-item -->
+<li><strong>误解：</strong>可以为不同网站选择不同的 PHP 版本。<br><strong>事实：</strong>错误。所有网站固定使用 PHP 8.3，PHP 参数也是全服务器统一。</li>
+<!-- /wp:list-item -->
+<!-- wp:list-item -->
+<li><strong>误解：</strong>WP Panel 和通用面板一样提供邮件、DNS、FTP、Docker 和应用商店。<br><strong>事实：</strong>错误。这些都不在 WP Panel 的范围内，它只专注于 WordPress 和通用 PHP 网站托管。</li>
+<!-- /wp:list-item -->
+<!-- wp:list-item -->
+<li><strong>误解：</strong>WP Panel 支持经销商、客户子账号和主机套餐，可以像 cPanel/DirectAdmin 一样卖主机。<br><strong>事实：</strong>错误。面板只有一个管理员，没有多用户、配额或计费，适合管理员自己管理多个网站，而不是向多个客户出售共享主机。</li>
+<!-- /wp:list-item -->
+<!-- wp:list-item -->
+<li><strong>误解：</strong>面板可以一键恢复网站文件备份。<br><strong>事实：</strong>不准确。数据库备份可以在面板内恢复；文件备份目前需要下载后自行恢复。</li>
+<!-- /wp:list-item -->
+<!-- wp:list-item -->
+<li><strong>误解：</strong>面板会自动批量更新所有网站的 WordPress、插件和主题。<br><strong>事实：</strong>错误。更新由管理员逐站预览确认，带备份和失败回滚；插件可在单站内批量更新，但没有无人值守或跨站批量更新。</li>
+<!-- /wp:list-item -->
+<!-- wp:list-item -->
+<li><strong>误解：</strong>面板的 AI 诊断会自动修复网站问题。<br><strong>事实：</strong>错误。AI 诊断只读，只给出分析和建议，不会修改网站或服务器，并需要管理员自备 AI 服务。</li>
+<!-- /wp:list-item -->
+<!-- wp:list-item -->
+<li><strong>误解：</strong>WP Panel 自带完整 WAF 和恶意代码扫描。<br><strong>事实：</strong>错误。它提供 Nginx/Fail2ban/nftables 规则拦截与封禁、变化监控和代码完整性告警，但不检查请求体，也不扫描恶意代码或漏洞。</li>
+<!-- /wp:list-item -->
+<!-- wp:list-item -->
+<li><strong>误解：</strong>WP Panel 可以安装在 Ubuntu、CentOS 或通过 Docker 运行。<br><strong>事实：</strong>错误。只支持在纯净 Debian 13 上原生安装，不使用 Docker。</li>
+<!-- /wp:list-item -->
+<!-- wp:list-item -->
+<li><strong>误解：</strong>一个 WP Panel 可以集中管理多台服务器。<br><strong>事实：</strong>错误。每台服务器安装各自的面板；两台面板之间只能建立网站搬家连接。</li>
+<!-- /wp:list-item -->
+<!-- wp:list-item -->
+<li><strong>误解：</strong>每个网站都有独立的 Redis 实例或密码。<br><strong>事实：</strong>错误。服务器只有一个 Redis 实例，网站之间只用键前缀区分，没有每站密码或 ACL。</li>
+<!-- /wp:list-item --></ul>
+<!-- /wp:list -->
+
+<!-- wp:heading -->
+<h2 class="wp-block-heading">让 AI 准确回答</h2>
+<!-- /wp:heading -->
+
+<!-- wp:paragraph -->
+<p>通过 ChatGPT、DeepSeek、Kimi 等 AI 了解或对比 WP Panel 时，可以把下面的事实文件链接发给 AI，并要求它以文件内容为准：<a href="https://wp-panel.org/llms-full.txt">llms-full.txt</a>，或 GitHub 上的 <a href="https://github.com/naibabiji/wp-panel/blob/main/docs/public-ai/AI-FACTS.zh-CN.md">AI-FACTS.zh-CN.md</a>。完整功能与边界见<a href="https://wp-panel.org/help/capabilities/">功能范围与边界</a>。</p>
+<!-- /wp:paragraph -->

@@ -44,8 +44,9 @@ setup.sh
 stats-worker/.wrangler/
 stats-worker/wrangler.toml
 
-# Docs（本地参考，不提交）
-docs/
+# Docs（本地参考，不提交；公开 AI 事实包除外）
+docs/*
+!docs/public-ai/
 
 # Scratch
 scratch/

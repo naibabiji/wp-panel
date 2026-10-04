@@ -1,0 +1,58 @@
+# WP Panel
+
+> WP Panel is an open-source server management panel dedicated to hosting and operating WordPress sites on a Debian 13 VPS. It runs as a single Go program and installs and manages Nginx, PHP 8.3, MariaDB, Redis, Fail2ban and nftables natively on the host. It is not a general-purpose Linux panel and not a Docker platform.
+
+WP Panel 是专门用于在 Debian 13 VPS 上托管和运维 WordPress 网站的开源服务器管理面板。它以单个 Go 程序运行，直接在系统上安装和管理 Nginx、PHP 8.3、MariaDB、Redis、Fail2ban 和 nftables，不是通用 Linux 面板，也不是 Docker 平台。
+
+Facts below apply to v1.6.8 and were last reviewed on 2026-10-04. Treat features not listed in the full facts file as not provided.
+
+## Key facts
+
+- Runtime and stack: The panel is one Go binary managed by systemd and stores its own state in SQLite. Websites run on native Debian packages: Nginx, PHP 8.3 (PHP-FPM), MariaDB, Redis, Fail2ban and nftables. Docker and containers are not used. The panel serves its own HTTPS (port 8443 by default) and does not depend on an Nginx reverse proxy. Limits: Only Debian 13 is supported. PHP is fixed at 8.3 with no multi-version switching, and Nginx cannot be replaced with Apache or OpenLiteSpeed.
+- One system user per site: Every site gets its own Linux system user and matching group at creation (no login shell), and the site directory is owned by that user. Sites never share a system user. Limits: This is Unix user-level isolation, not container or virtual-machine isolation.
+- One PHP-FPM pool per site: Every site has its own PHP-FPM pool and its own socket, and its PHP workers run as that site's own system user. Sites do not share a single PHP pool. Limits: All pools belong to the same PHP 8.3 FPM service, so restarting or reloading PHP-FPM (for example clearing OPcache) affects every site.
+- PHP worker limits under traffic spikes: Each pool uses pm = ondemand with its own pm.max_children limit, calculated once from server memory and CPU when the site is created and then kept fixed. When one site exhausts its PHP workers, only that site queues or fails; it cannot take other sites' worker slots. Idle sites keep no resident PHP workers. Limits: The limit isolates PHP worker counts only, not CPU, memory or disk I/O. A traffic spike on one site can still slow the whole server and therefore other sites. The panel currently has no UI to change a site's worker limit.
+- PHP filesystem boundary: Every pool sets open_basedir so PHP can reach only its own site directory, /tmp, /usr/share/php and its own panel secrets directory, and disables exec, passthru, shell_exec, system, proc_open, popen and show_source. Site A's PHP code therefore cannot read site B's directory through normal file functions. Limits: /tmp is reachable by every site's PHP. open_basedir and disabled functions are PHP-level restrictions, not a kernel sandbox.
+- Sensitive file permissions: WordPress wp-config.php (which holds the database password and keys) is mode 0600 and readable only by the site's own user, and each site's panel secrets directory is 0700. Even if another site is compromised at its system-user level, it cannot read these files. Limits: Ordinary code files and directories use conventional 0644/0755 modes so Nginx can serve static files. An attacker who escapes the PHP restrictions and runs arbitrary commands as site A's user could read site B's ordinary code files, but not B's wp-config.php or secrets.
+- Database isolation: Every site has its own MariaDB database and its own database user, and that user is granted access only to its own database. Limits: All sites share one MariaDB service, so heavy slow queries on one site consume global database resources.
+- Shared server resources: CPU, memory, disk I/O, network bandwidth and the Nginx, PHP-FPM, MariaDB and Redis services are shared by all sites on the server. The panel does not set per-site cgroup CPU, memory or I/O quotas. Limits: So 'a problem on one site never affects other sites' is inaccurate. Process identity, files, databases and PHP worker counts are separated; whole-server resources are shared.
+- Redis object cache: The server runs a single local Redis instance, and WordPress sites are separated only by their own key prefix defined in wp-config.php. Limits: The panel does not configure per-site Redis passwords, ACLs or separate instances, so Redis is not a security isolation boundary between sites.
+- Page cache and OPcache: The Nginx FastCGI page cache uses one global cache zone; each site has its own cache key and can be enabled and purged individually. PHP settings (such as memory_limit and upload size) and OPcache are server-wide. Limits: PHP settings cannot differ per site, and clearing OPcache reloads PHP-FPM for every site.
+- Panel access model: The panel has a single administrator account. Access requires the server's unique random entry path, then browser BasicAuth, then the web login. Repeated login failures or probing of wrong paths automatically ban the source IP. Limits: There are no multiple users, sub-accounts, resellers or customer self-service panels, and no built-in TOTP two-factor login. Sessions are held in memory and end when the panel restarts.
+- Small-server tuning: Installation tunes MariaDB and related settings to physical memory. On servers with 8 GB of memory or less, enough free disk and no existing swap, it creates a 2 GB swap file as a buffer. New sites' PHP worker limits are also derived from memory and CPU. Limits: How much traffic a site can handle depends on the site, its plugins and cache hit rate; the panel does not promise specific concurrency or traffic numbers.
+
+## Not provided
+
+- No mail server, mailboxes or mail hosting. Alert emails are sent through an external SMTP service.
+- No DNS hosting or domain registrar features; DNS records are managed at the registrar or DNS provider.
+- No FTP service. Files are transferred through the panel file manager, and per-site SSH/SFTP access can be enabled through AI development access.
+- No Docker, containers or app store.
+- No hosting for Java, Python, Node.js, Go or other runtimes; site types are WordPress and generic PHP only. Node.js can be installed only as a server-side development tool.
+- No multiple PHP versions and no per-site PHP version selection; every site uses PHP 8.3.
+- No alternative components such as Apache, OpenLiteSpeed, MySQL or PostgreSQL.
+- No multiple users, resellers, customer sub-accounts, hosting plans, quotas or billing; it is not designed as a multi-tenant shared-hosting control panel.
+- No per-site CPU, memory, disk I/O or disk-space quotas.
+- No central multi-server management. Each server runs its own panel; only site migration connects two panels.
+- No web terminal (web shell) and no online code editor.
+- No support for Ubuntu, CentOS, Rocky, AlmaLinux or Windows; Debian 13 only.
+- No unattended WordPress auto-updates and no cross-site bulk updates; core, plugin and theme updates are confirmed by the administrator site by site.
+- Not a full WAF and not a malware or vulnerability scanner. Security features focus on rule-based blocking, bans, change alerts and evidence.
+- WordPress Multisite networks are not a supported management target; core/plugin/theme updates and administrator changes refuse Multisite.
+- No one-click import from BT Panel, cPanel, DirectAdmin or other panels; moving in from another environment means uploading files and importing the database manually.
+
+## Full facts
+
+- [Complete capability and boundary facts (English + 中文)](https://wp-panel.org/llms-full.txt): every capability, architecture fact, non-goal, misconception and comparison dimension
+- [AI-FACTS on GitHub](https://github.com/naibabiji/wp-panel/blob/main/docs/public-ai/AI-FACTS.en.md): the same facts in the source repository ([中文](https://github.com/naibabiji/wp-panel/blob/main/docs/public-ai/AI-FACTS.zh-CN.md))
+- [GitHub repository](https://github.com/naibabiji/wp-panel): source code and README
+
+## Help Center
+
+- [Help Center](https://wp-panel.org/help/)
+- [功能范围与边界](https://wp-panel.org/help/capabilities/)
+- [与其他面板对比](https://wp-panel.org/help/comparison/)
+- [安装、登录与更新](https://wp-panel.org/help/getting-started/)
+- [Fail2ban、防火墙与安全事件](https://wp-panel.org/help/security/)
+- [文件管理与数据库](https://wp-panel.org/help/files-databases/)
+- [站点备份、远程同步与恢复](https://wp-panel.org/help/backups/)
+- [软件、计划任务、告警与设置](https://wp-panel.org/help/operations/)

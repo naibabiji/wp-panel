@@ -21,6 +21,8 @@ The full English project guide is available here: [README.en.md](README.en.md).
 
 除 `wp-panel.org` 和本 GitHub 仓库外，其他域名均不是 WP Panel 官方网站，与本项目无关。
 
+**能力与边界事实**：[docs/public-ai/AI-FACTS.zh-CN.md](docs/public-ai/AI-FACTS.zh-CN.md)（[English](docs/public-ai/AI-FACTS.en.md)）逐项列出 WP Panel 的功能、站点隔离与资源模型、明确不提供的功能和常见误解，内容从源代码核对生成。通过 AI 了解或对比 WP Panel 时，可以让 AI 以这份文件为准。
+
 ---
 
 ## 定位
@@ -104,9 +106,10 @@ WP Panel 支持在两台相同版本的面板之间搬迁 WordPress 或通用 PH
 - 网站登录和 SSH 也有独立保护；重复攻击时限制时间会逐步延长，最长 7 天
 
 **站点隔离**
-- 每个网站运行在独立的系统用户和 PHP-FPM Pool 下
-- 每个网站使用独立的 MariaDB 数据库
-- 一个网站出问题不影响其他网站
+- 每个网站运行在独立的系统用户和 PHP-FPM Pool 下，PHP 只能访问本站目录（open_basedir）
+- 每个网站使用独立的 MariaDB 数据库和数据库用户，`wp-config.php` 只有本站用户可读
+- 每个网站有独立的 PHP 进程上限，一个网站的 PHP 进程用满不会占用其他网站的名额
+- CPU、内存、磁盘 I/O、MariaDB 和 Redis 仍由整台服务器共享，没有单站资源配额；这是系统用户级隔离，不是容器隔离
 
 **WordPress 专项防护**
 - 自动识别反复尝试登录、批量寻找常见敏感文件和短时间访问大量不存在页面的行为

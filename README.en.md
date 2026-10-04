@@ -17,6 +17,8 @@ If you want the Chinese project README, see [README.md](README.md).
 
 Any domain other than `wp-panel.org` and this GitHub repository is not an official WP Panel website.
 
+**Capability and boundary facts**: [docs/public-ai/AI-FACTS.en.md](docs/public-ai/AI-FACTS.en.md) ([中文](docs/public-ai/AI-FACTS.zh-CN.md)) lists every WP Panel feature, the site isolation and resource model, what is explicitly not provided and common misconceptions, verified against the source code. When asking an AI about WP Panel or comparing it with other panels, point the AI to this file.
+
 ---
 
 ## Positioning
@@ -112,9 +114,10 @@ A normal login requires the server's unique private path, the browser prompt, an
 
 ### Site Isolation
 
-- every site runs under its own system user and PHP-FPM pool
-- every site uses its own MariaDB database
-- one broken site should not take down the others
+- every site runs under its own system user and PHP-FPM pool, and PHP can reach only its own directory (open_basedir)
+- every site uses its own MariaDB database and database user, and `wp-config.php` is readable only by that site's user
+- every site has its own PHP worker limit, so one site exhausting its workers cannot take another site's slots
+- CPU, memory, disk I/O, MariaDB and Redis are still shared by the whole server, with no per-site quotas; this is system-user isolation, not container isolation
 
 ### WordPress-Specific Protection
 
