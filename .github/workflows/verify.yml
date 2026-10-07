@@ -36,3 +36,10 @@ jobs:
 
       - name: Build
         run: go build .
+
+      # Private development repository only; skipped where private-tools/ is absent.
+      - name: Capability catalog and public AI facts
+        if: hashFiles('private-tools/verify-capability-map.py') != ''
+        run: |
+          python3 private-tools/verify-capability-map.py --generate
+          python3 -m unittest private-tools/test_verify_capability_map.py private-tools/test_check_public_ai_live.py
