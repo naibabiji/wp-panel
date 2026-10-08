@@ -59,32 +59,25 @@ func TestCompareVersions(t *testing.T) {
 	}
 }
 
-func TestIsPatchBump(t *testing.T) {
-	tests := []struct {
-		current string
-		target  string
-		want    bool
-	}{
-		{"v1.2.3", "v1.2.4", true},
-		{"1.2.3", "1.2.5", true},
-		{"v1.2.3", "v1.3.0", false},
-		{"v1.2.3", "v2.0.0", false},
-		{"v1.2.3", "v1.2.3", false},
-		{"v1.2.3", "v1.2.4-rc1", false},
-	}
-	for _, tt := range tests {
-		if got := IsPatchBump(tt.current, tt.target); got != tt.want {
-			t.Fatalf("IsPatchBump(%q, %q) = %v, want %v", tt.current, tt.target, got, tt.want)
-		}
-	}
-}
-
 func TestIsStableVersion(t *testing.T) {
 	if !IsStableVersion("v1.2.3") {
 		t.Fatal("stable version rejected")
 	}
 	if IsStableVersion("v1.2.3-rc1") {
 		t.Fatal("prerelease accepted as stable")
+	}
+}
+
+func TestIsEligibleStableUpdateIncludesMinorAndMajorReleases(t *testing.T) {
+	for _, target := range []string{"v1.2.4", "v1.3.0", "v2.0.0"} {
+		if !IsEligibleStableUpdate("v1.2.3", target) {
+			t.Fatalf("newer stable release %q was rejected", target)
+		}
+	}
+	for _, target := range []string{"v1.2.3", "v1.2.2", "v1.3.0-rc1"} {
+		if IsEligibleStableUpdate("v1.2.3", target) {
+			t.Fatalf("ineligible release %q was accepted", target)
+		}
 	}
 }
 
@@ -139,12 +132,44 @@ func TestShouldFetchForAutoUpdate(t *testing.T) {
 		LastCheckAt:       now.Add(-time.Hour),
 		LastStatus:        "waiting",
 		LastStage:         "waiting_release_delay",
+		ReleaseDetectedAt: now.Add(-20 * time.Minute),
 		LastTargetVersion: "v1.2.4",
-		LastAttemptAt:     now.Add(-20 * time.Minute),
 		ReleaseDelay:      15 * time.Minute,
 	}
 	if !shouldFetchForAutoUpdate(releaseReady, now) {
 		t.Fatal("release delay completion should bypass 24 hour fetch interval")
+	}
+	fetchFailed := autoUpdateSettings{
+		LastCheckAt: now.Add(-31 * time.Minute),
+		LastStatus:  "failed",
+		LastStage:   "fetch_release",
+	}
+	if !shouldFetchForAutoUpdate(fetchFailed, now) {
+		t.Fatal("failed release check should retry after 30 minutes")
+	}
+	fetchFailed.LastCheckAt = now.Add(-29 * time.Minute)
+	if shouldFetchForAutoUpdate(fetchFailed, now) {
+		t.Fatal("failed release check retried before 30 minutes")
+	}
+}
+
+func TestReleaseDelayKeepsFirstDetectionAcrossFetchFailure(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	settings := autoUpdateSettings{
+		LastTargetVersion: "v1.3.0",
+		ReleaseDetectedAt: now.Add(-23 * time.Hour),
+		LastAttemptAt:     now.Add(-30 * time.Minute),
+		LastStatus:        "failed",
+		LastStage:         "fetch_release",
+		ReleaseDelay:      24 * time.Hour,
+	}
+	remaining, reset := releaseDelayRemaining(settings, "v1.3.0", now)
+	if reset || remaining != time.Hour {
+		t.Fatalf("remaining=%s reset=%v, want 1h without reset", remaining, reset)
+	}
+	remaining, reset = releaseDelayRemaining(settings, "v1.4.0", now)
+	if !reset || remaining != 24*time.Hour {
+		t.Fatalf("new target remaining=%s reset=%v, want 24h with reset", remaining, reset)
 	}
 }
 

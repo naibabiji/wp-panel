@@ -35,6 +35,7 @@ const (
 	updateTerminalStatusTTL   = 5 * time.Minute
 	autoUpdateCheckInterval   = 10 * time.Minute
 	autoUpdateFetchInterval   = 24 * time.Hour
+	autoUpdateFetchRetry      = 30 * time.Minute
 	autoUpdateFailureCooldown = 24 * time.Hour
 	panelBinaryBackupKeep     = 5
 	panelDBBackupKeep         = 7
@@ -78,11 +79,11 @@ type rollbackPlan struct {
 type autoUpdateSettings struct {
 	Valid                    bool
 	Enabled                  bool
-	Mode                     string
 	Window                   string
 	ReleaseDelay             time.Duration
 	SignatureTimeout         time.Duration
 	LastTargetVersion        string
+	ReleaseDetectedAt        time.Time
 	LastAttemptAt            time.Time
 	LastCheckAt              time.Time
 	LastStatus               string
@@ -390,18 +391,13 @@ func RunUpdateWatchdog(cfg *config.Config, planPath string) {
 	_ = os.Remove(planPath)
 }
 
-func IsPatchBump(current, target string) bool {
-	c, okC := parseStableSemver(current)
-	t, okT := parseStableSemver(target)
-	if !okC || !okT {
-		return false
-	}
-	return c[0] == t[0] && c[1] == t[1] && t[2] > c[2]
-}
-
 func IsStableVersion(version string) bool {
 	_, ok := parseStableSemver(version)
 	return ok
+}
+
+func IsEligibleStableUpdate(current, target string) bool {
+	return IsStableVersion(target) && CompareVersions(target, current) > 0
 }
 
 func proxyURL(proxy, original string) string {
@@ -711,7 +707,9 @@ func recordPanelUpdateStage(trigger, targetVersion, stage, status, message strin
 	}
 	recordOperationLog("panel_"+trigger+"_update", target, status, stage+": "+message)
 	if trigger == "auto" {
-		setSecuritySetting("panel_auto_update_last_target_version", targetVersion)
+		if targetVersion != "" || stage != "fetch_release" {
+			setSecuritySetting("panel_auto_update_last_target_version", targetVersion)
+		}
 		setSecuritySetting("panel_auto_update_last_status", status)
 		setSecuritySetting("panel_auto_update_last_stage", stage)
 		setSecuritySetting("panel_auto_update_last_error", message)
@@ -723,26 +721,33 @@ func runPanelAutoUpdateCheck(currentVersion, configPath string, cfg *config.Conf
 	if currentVersion == "" || currentVersion == "dev" {
 		return
 	}
+	now := time.Now()
 	settings := readAutoUpdateSettings()
-	if !settings.Valid || !settings.Enabled || !withinAutoUpdateWindow(settings.Window, time.Now()) {
+	if !settings.Valid || !settings.Enabled || !withinAutoUpdateWindow(settings.Window, now) {
 		return
 	}
-	if settings.LastStatus == "failed" && settings.LastAttemptAt.After(time.Now().Add(-autoUpdateFailureCooldown)) {
+	if settings.LastStatus == "failed" && settings.LastStage != "fetch_release" && settings.LastAttemptAt.After(now.Add(-autoUpdateFailureCooldown)) {
 		return
 	}
-	if !shouldFetchForAutoUpdate(settings, time.Now()) {
+	if !shouldFetchForAutoUpdate(settings, now) {
 		return
 	}
-	setSecuritySetting("panel_auto_update_last_check_at", time.Now().Format(time.RFC3339))
+	setSecuritySetting("panel_auto_update_last_check_at", now.Format(time.RFC3339))
 	latest, err := FetchLatestPanelRelease(readSecuritySetting("github_proxy"))
-	if err != nil || latest == nil || latest.TagName == "" || CompareVersions(latest.TagName, currentVersion) <= 0 {
+	if err != nil {
+		recordPanelUpdateStage("auto", "", "fetch_release", "failed", "检查新版本失败，将在更新时间窗口内重试: "+err.Error())
+		return
+	}
+	if latest == nil || latest.TagName == "" {
+		recordPanelUpdateStage("auto", "", "fetch_release", "failed", "检查新版本失败，将在更新时间窗口内重试: release 为空")
 		return
 	}
 	if !IsStableVersion(latest.TagName) {
+		recordPanelUpdateStage("auto", latest.TagName, "version_policy", "skipped", "最新版本不是稳定正式版")
 		return
 	}
-	if settings.Mode != "all_stable" && !IsPatchBump(currentVersion, latest.TagName) {
-		recordPanelUpdateStage("auto", latest.TagName, "version_policy", "skipped", "当前策略仅允许 patch 自动更新")
+	if !IsEligibleStableUpdate(currentVersion, latest.TagName) {
+		recordPanelUpdateStage("auto", latest.TagName, "up_to_date", "success", "当前已是最新稳定版")
 		return
 	}
 	if wait, ok := shouldWaitForReleaseDelay(settings, latest.TagName); ok {
@@ -770,8 +775,6 @@ func runPanelAutoUpdateCheck(currentVersion, configPath string, cfg *config.Conf
 func readAutoUpdateSettings() autoUpdateSettings {
 	enabledValue, err := readRequiredSecuritySetting("panel_auto_update_enabled")
 	valid := err == nil && (enabledValue == "true" || enabledValue == "false")
-	mode, err := readRequiredSecuritySetting("panel_auto_update_mode")
-	valid = valid && err == nil && (mode == "patch_only" || mode == "all_stable")
 	window, err := readRequiredSecuritySetting("panel_auto_update_window")
 	valid = valid && err == nil
 	delay, err := readRequiredSettingMinutes("panel_auto_update_release_delay_minutes", 1, 1440)
@@ -781,11 +784,11 @@ func readAutoUpdateSettings() autoUpdateSettings {
 	return autoUpdateSettings{
 		Valid:                    valid && validAutoUpdateWindow(window),
 		Enabled:                  enabledValue == "true",
-		Mode:                     mode,
 		Window:                   window,
 		ReleaseDelay:             delay,
 		SignatureTimeout:         signatureTimeout,
 		LastTargetVersion:        readSecuritySetting("panel_auto_update_last_target_version"),
+		ReleaseDetectedAt:        parseSettingTime("panel_auto_update_release_detected_at"),
 		LastCheckAt:              parseSettingTime("panel_auto_update_last_check_at"),
 		LastAttemptAt:            parseSettingTime("panel_auto_update_last_attempt_at"),
 		LastStatus:               readSecuritySetting("panel_auto_update_last_status"),
@@ -836,6 +839,9 @@ func shouldFetchForAutoUpdate(settings autoUpdateSettings, now time.Time) bool {
 	if isReleaseDelayReady(settings, now) {
 		return true
 	}
+	if settings.LastStatus == "failed" && settings.LastStage == "fetch_release" {
+		return settings.LastCheckAt.IsZero() || now.Sub(settings.LastCheckAt) >= autoUpdateFetchRetry
+	}
 	return settings.LastCheckAt.IsZero() || now.Sub(settings.LastCheckAt) >= autoUpdateFetchInterval
 }
 
@@ -850,8 +856,8 @@ func isReleaseDelayReady(settings autoUpdateSettings, now time.Time) bool {
 	return settings.LastStatus == "waiting" &&
 		settings.LastStage == "waiting_release_delay" &&
 		settings.LastTargetVersion != "" &&
-		!settings.LastAttemptAt.IsZero() &&
-		now.Sub(settings.LastAttemptAt) >= settings.ReleaseDelay
+		!settings.ReleaseDetectedAt.IsZero() &&
+		now.Sub(settings.ReleaseDetectedAt) >= settings.ReleaseDelay
 }
 
 func parseSettingMinutes(key string, fallback int) time.Duration {
@@ -872,13 +878,20 @@ func parseSettingTime(key string) time.Time {
 }
 
 func shouldWaitForReleaseDelay(settings autoUpdateSettings, version string) (time.Duration, bool) {
-	if settings.LastTargetVersion != version || settings.LastAttemptAt.IsZero() {
+	now := time.Now()
+	remaining, reset := releaseDelayRemaining(settings, version, now)
+	if reset {
 		setSecuritySetting("panel_auto_update_last_target_version", version)
-		setSecuritySetting("panel_auto_update_last_attempt_at", time.Now().Format(time.RFC3339))
+		setSecuritySetting("panel_auto_update_release_detected_at", now.Format(time.RFC3339))
+	}
+	return remaining, remaining > 0
+}
+
+func releaseDelayRemaining(settings autoUpdateSettings, version string, now time.Time) (time.Duration, bool) {
+	if settings.LastTargetVersion != version || settings.ReleaseDetectedAt.IsZero() {
 		return settings.ReleaseDelay, true
 	}
-	remaining := settings.ReleaseDelay - time.Since(settings.LastAttemptAt)
-	return remaining, remaining > 0
+	return settings.ReleaseDelay - now.Sub(settings.ReleaseDetectedAt), false
 }
 
 func handleWaitingSignature(settings autoUpdateSettings, version string) {

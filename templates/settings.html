@@ -7,6 +7,14 @@
         <div class="card">
             <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "settings.account_security"}}</h3>
 
+            <div class="mb-4">
+                <label class="label">{{t .Lang "settings.panel_title"}}</label>
+                <div class="flex space-x-2">
+                    <input type="text" x-model="panelTitle" class="input-field flex-1">
+                    <button @click="saveBasic" class="btn-primary text-sm">{{t .Lang "settings.save"}}</button>
+                </div>
+            </div>
+
             <div class="mb-4 p-3 rounded" style="background-color: #0f172a;">
                 <p class="text-xs text-blue-400 font-medium mb-2">{{t .Lang "settings.basic_auth_title"}}</p>
                 <p class="text-xs text-gray-500 mb-3">{{t .Lang "settings.basic_auth_desc"}}</p>
@@ -45,14 +53,6 @@
             <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "settings.server_settings"}}</h3>
 
             <div class="mb-4">
-                <label class="label">{{t .Lang "settings.panel_title"}}</label>
-                <div class="flex space-x-2">
-                    <input type="text" x-model="panelTitle" class="input-field flex-1">
-                    <button @click="saveBasic" class="btn-primary text-sm">{{t .Lang "settings.save"}}</button>
-                </div>
-            </div>
-
-            <div class="mb-4">
                 <label class="label">{{t .Lang "settings.timezone"}}</label>
                 <select x-model="timezone" @change="saveServerSetting('timezone', timezone)" class="input-field">
                     <option value="Asia/Shanghai">Asia/Shanghai (UTC+8)</option>
@@ -85,15 +85,12 @@
                 </div>
             </div>
 
-            <div class="mb-4 p-3 rounded" style="background-color: #2a1114; border: 1px solid #7f1d1d;">
-                <p class="text-sm text-red-300 font-medium mb-1">{{t .Lang "settings.root_password_title"}}</p>
-                <p class="text-xs text-gray-400 mb-3">{{t .Lang "settings.root_password_help"}}</p>
-                <div class="space-y-2">
-                    <input type="password" x-model="rootPassword.currentPanel" class="input-field text-sm" placeholder="{{t .Lang "settings.current_panel_password_placeholder"}}" autocomplete="current-password">
-                    <input type="password" x-model="rootPassword.newPassword" class="input-field text-sm" placeholder="{{t .Lang "settings.new_root_password_placeholder"}}" autocomplete="new-password">
-                    <input type="password" x-model="rootPassword.confirmPassword" class="input-field text-sm" placeholder="{{t .Lang "settings.confirm_root_password_placeholder"}}" autocomplete="new-password">
-                    <button @click="changeRootPassword()" :disabled="rootPassword.saving" class="w-full py-2 px-3 rounded text-sm text-white disabled:opacity-50" style="background-color: #b91c1c;" x-text="rootPassword.saving ? t('settings.changing_root_password') : t('settings.change_root_password')"></button>
+            <div class="mb-4 flex items-center justify-between gap-3 rounded p-3" style="background-color: #0f172a; border: 1px solid #1e293b;">
+                <div>
+                    <p class="text-sm text-gray-300 font-medium mb-1">{{t .Lang "settings.root_password_title"}}</p>
+                    <p class="text-xs text-gray-400">{{t .Lang "settings.root_password_summary"}}</p>
                 </div>
+                <button @click="openRootPasswordModal()" class="btn-secondary shrink-0 text-sm">{{t .Lang "settings.change_root_password"}}</button>
             </div>
 
             <div class="mb-4">
@@ -106,8 +103,42 @@
                 </div>
                 <p x-show="proxyResult" class="text-xs mt-2" :class="proxyOk ? 'text-green-400' : 'text-red-400'" x-text="proxyResult"></p>
             </div>
+        </div>
+    </div>
 
-            <hr class="my-4 border-gray-700">
+    <div x-show="rootPassword.open" x-cloak class="modal-overlay" @click.self="closeRootPasswordModal()" @keydown.escape.window="closeRootPasswordModal()">
+        <div class="modal-content max-w-md" role="dialog" aria-modal="true" aria-labelledby="root-password-modal-title">
+            <div class="flex items-center justify-between mb-4">
+                <h3 id="root-password-modal-title" class="text-lg font-semibold text-white">{{t .Lang "settings.root_password_title"}}</h3>
+                <button @click="closeRootPasswordModal()" :disabled="rootPassword.saving" class="text-gray-400 hover:text-white text-xl disabled:opacity-50" aria-label="{{t .Lang "dashboard.close"}}">&times;</button>
+            </div>
+            <p class="text-sm text-yellow-300 mb-4">{{t .Lang "settings.root_password_help"}}</p>
+            <div class="space-y-3">
+                <input type="password" x-model="rootPassword.currentPanel" class="input-field text-sm" placeholder="{{t .Lang "settings.current_panel_password_placeholder"}}" autocomplete="current-password">
+                <div>
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+                        <label class="text-sm text-gray-300">{{t .Lang "settings.new_root_password_label"}}</label>
+                        <div class="flex flex-wrap gap-2">
+                            <button type="button" @click="generateRootPassword()" class="btn-secondary text-xs">{{t .Lang "settings.generate_root_password"}}</button>
+                            <button type="button" @click="rootPassword.visible = !rootPassword.visible" class="btn-secondary text-xs" x-text="rootPassword.visible ? t('settings.hide_root_password') : t('settings.show_root_password')"></button>
+                            <button type="button" @click="copyRootPassword()" :disabled="!rootPassword.newPassword" class="btn-secondary text-xs disabled:opacity-50">{{t .Lang "settings.copy_root_password"}}</button>
+                        </div>
+                    </div>
+                    <input :type="rootPassword.visible ? 'text' : 'password'" x-model="rootPassword.newPassword" class="input-field text-sm font-mono" placeholder="{{t .Lang "settings.new_root_password_placeholder"}}" autocomplete="new-password">
+                </div>
+                <input :type="rootPassword.visible ? 'text' : 'password'" x-model="rootPassword.confirmPassword" class="input-field text-sm font-mono" placeholder="{{t .Lang "settings.confirm_root_password_placeholder"}}" autocomplete="new-password">
+            </div>
+            <p class="text-xs text-gray-500 mt-3">{{t .Lang "settings.generated_root_password_help"}}</p>
+            <div class="flex justify-end gap-2 mt-5">
+                <button @click="closeRootPasswordModal()" :disabled="rootPassword.saving" class="btn-secondary disabled:opacity-50">{{t .Lang "common.cancel"}}</button>
+                <button @click="changeRootPassword()" :disabled="rootPassword.saving" class="py-2 px-3 rounded text-sm text-white disabled:opacity-50" style="background-color: #b91c1c;" x-text="rootPassword.saving ? t('settings.changing_root_password') : t('settings.change_root_password')"></button>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-6">
+        <div class="card">
+            <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "settings.update_management"}}</h3>
 
             <div x-data="versionCheck()" x-init="scheduleCheck()">
                 <div class="flex items-center justify-between mb-2">
@@ -150,14 +181,9 @@
                         <span x-text="autoUpdate.enabled ? t('settings.enabled') : t('settings.disabled')"></span>
                     </label>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                        <label class="label">{{t .Lang "settings.update_mode"}}</label>
-                        <select x-model="autoUpdate.mode" @change="saveAutoUpdate" class="input-field text-sm">
-                            <option value="patch_only">{{t .Lang "settings.patch_only"}}</option>
-                            <option value="all_stable">{{t .Lang "settings.all_stable"}}</option>
-                        </select>
-                    </div>
+                <p class="text-xs text-blue-300 mb-3">{{t .Lang "settings.auto_update_all_stable_help"}}</p>
+                <p x-show="autoUpdate.mode === 'patch_only_reconfirm'" class="text-xs text-yellow-400 mb-3">{{t .Lang "settings.auto_update_reconfirm_required"}}</p>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                         <label class="label">{{t .Lang "settings.update_window"}}</label>
                         <input type="text" x-model="autoUpdate.window" @change="saveAutoUpdate" class="input-field text-sm" placeholder="03:00-05:00">
@@ -172,9 +198,11 @@
                     </div>
                 </div>
                 <div class="mt-3 text-xs text-gray-500 space-y-1">
+                    <p>{{t .Lang "settings.last_check"}}<span class="text-gray-300" x-text="autoUpdate.lastCheck || t('settings.no_data')"></span></p>
                     <p>{{t .Lang "settings.last_status"}}<span class="text-gray-300" x-text="autoUpdate.lastStatus || t('settings.no_data')"></span> <span x-text="autoUpdate.lastStage ? '(' + autoUpdate.lastStage + ')' : ''"></span></p>
                     <p x-show="autoUpdate.lastTarget">{{t .Lang "settings.target_version"}}<span class="text-gray-300" x-text="autoUpdate.lastTarget"></span></p>
-                    <p x-show="autoUpdate.lastError" class="text-red-400" x-text="autoUpdate.lastError"></p>
+                    <p x-show="autoUpdate.lastError" :class="autoUpdate.lastStatus === 'failed' ? 'text-red-400' : 'text-gray-400'" x-text="autoUpdate.lastError"></p>
+                    <p>{{t .Lang "settings.next_check"}}<span class="text-gray-300" x-text="nextAutoUpdateCheck()"></span> <span x-show="autoUpdate.enabled" class="text-gray-500">{{t .Lang "settings.next_check_window_note"}}</span></p>
                     <p x-show="autoUpdate.lastSuccess">{{t .Lang "settings.last_success"}}<span x-text="autoUpdate.lastSuccess"></span> <span x-text="autoUpdate.lastSuccessVersion"></span></p>
                 </div>
             </div>
@@ -238,9 +266,7 @@
                 </div>
             </div>
         </div>
-    </div>
 
-    <div class="mb-6">
         <div class="card" x-data="wpPackage()" x-init="fetchStatus()">
             <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "settings.wp_package"}}</h3>
             <p class="text-xs text-gray-500 mb-4">{{t .Lang "settings.wp_package_help"}}</p>
@@ -504,19 +530,22 @@ function panelSettings() {
         accountSaved: false,
         autoUpdate: {
             enabled: false,
-            mode: 'patch_only',
+            mode: 'all_stable',
             window: '03:00-05:00',
-            delay: 15,
+            delay: 1440,
             signatureTimeout: 120,
             lastTarget: '',
             lastStatus: '',
             lastStage: '',
             lastError: '',
+            releaseDetected: '',
+            lastCheck: '',
+            lastAttempt: '',
             lastSuccess: '',
             lastSuccessVersion: ''
         },
         pw: { old: '', new1: '', new2: '', basic: '' },
-        rootPassword: { currentPanel: '', newPassword: '', confirmPassword: '', saving: false },
+        rootPassword: { open: false, currentPanel: '', newPassword: '', confirmPassword: '', saving: false, visible: false },
         async fetchSettings() {
             try {
                 const r = await api('/settings');
@@ -534,14 +563,17 @@ function panelSettings() {
                     }
                     const au = r.data.panel_auto_update || {};
                     this.autoUpdate.enabled = au.panel_auto_update_enabled === 'true';
-                    this.autoUpdate.mode = au.panel_auto_update_mode || 'patch_only';
+                    this.autoUpdate.mode = au.panel_auto_update_mode || 'all_stable';
                     this.autoUpdate.window = au.panel_auto_update_window || '03:00-05:00';
-                    this.autoUpdate.delay = Number(au.panel_auto_update_release_delay_minutes || 15);
+                    this.autoUpdate.delay = Number(au.panel_auto_update_release_delay_minutes || 1440);
                     this.autoUpdate.signatureTimeout = Number(au.panel_auto_update_signature_timeout_minutes || 120);
                     this.autoUpdate.lastTarget = au.panel_auto_update_last_target_version || '';
                     this.autoUpdate.lastStatus = au.panel_auto_update_last_status || '';
                     this.autoUpdate.lastStage = au.panel_auto_update_last_stage || '';
                     this.autoUpdate.lastError = au.panel_auto_update_last_error || '';
+                    this.autoUpdate.releaseDetected = au.panel_auto_update_release_detected_at || '';
+                    this.autoUpdate.lastCheck = au.panel_auto_update_last_check_at || '';
+                    this.autoUpdate.lastAttempt = au.panel_auto_update_last_attempt_at || '';
                     this.autoUpdate.lastSuccess = au.panel_auto_update_last_success_at || '';
                     this.autoUpdate.lastSuccessVersion = au.panel_auto_update_last_success_version || '';
                 }
@@ -614,6 +646,47 @@ function panelSettings() {
                 showToast(t('settings.updated'), 'success');
             } catch(e) { showToast(e.message, 'error'); }
         },
+        openRootPasswordModal() {
+            this.rootPassword.open = true;
+        },
+        closeRootPasswordModal() {
+            if (this.rootPassword.saving) return;
+            this.rootPassword = { open: false, currentPanel: '', newPassword: '', confirmPassword: '', saving: false, visible: false };
+        },
+        generateRootPassword() {
+            const groups = [
+                'ABCDEFGHJKLMNPQRSTUVWXYZ',
+                'abcdefghijkmnopqrstuvwxyz',
+                '23456789',
+                '!@#$%^&*_-+='
+            ];
+            const alphabet = groups.join('');
+            const randomIndex = limit => {
+                const ceiling = Math.floor(256 / limit) * limit;
+                const value = new Uint8Array(1);
+                do { crypto.getRandomValues(value); } while (value[0] >= ceiling);
+                return value[0] % limit;
+            };
+            const password = groups.map(group => group[randomIndex(group.length)]);
+            while (password.length < 24) password.push(alphabet[randomIndex(alphabet.length)]);
+            for (let i = password.length - 1; i > 0; i--) {
+                const j = randomIndex(i + 1);
+                [password[i], password[j]] = [password[j], password[i]];
+            }
+            this.rootPassword.newPassword = password.join('');
+            this.rootPassword.confirmPassword = this.rootPassword.newPassword;
+            this.rootPassword.visible = true;
+            showToast(t('settings.root_password_generated'), 'success');
+        },
+        async copyRootPassword() {
+            if (!this.rootPassword.newPassword) return;
+            try {
+                await navigator.clipboard.writeText(this.rootPassword.newPassword);
+                showToast(t('settings.root_password_copied'), 'success');
+            } catch (e) {
+                showToast(t('settings.root_password_copy_failed'), 'error');
+            }
+        },
         async changeRootPassword() {
             if (!this.rootPassword.currentPanel) { showToast(t('settings.current_panel_password_required'), 'error'); return; }
             if (this.rootPassword.newPassword !== this.rootPassword.confirmPassword) { showToast(t('settings.passwords_not_match'), 'error'); return; }
@@ -628,7 +701,7 @@ function panelSettings() {
                     new_password: this.rootPassword.newPassword,
                     confirm_password: this.rootPassword.confirmPassword
                 } });
-                this.rootPassword = { currentPanel: '', newPassword: '', confirmPassword: '', saving: false };
+                this.rootPassword = { open: false, currentPanel: '', newPassword: '', confirmPassword: '', saving: false, visible: false };
                 showToast(r.data?.message || t('settings.root_password_changed'), 'success');
             } catch(e) {
                 this.rootPassword.saving = false;
@@ -639,13 +712,33 @@ function panelSettings() {
             try {
                 await api('/settings', { method: 'PUT', body: {
                     panel_auto_update_enabled: this.autoUpdate.enabled ? 'true' : 'false',
-                    panel_auto_update_mode: this.autoUpdate.mode,
+                    panel_auto_update_mode: 'all_stable',
                     panel_auto_update_window: this.autoUpdate.window,
-                    panel_auto_update_release_delay_minutes: String(this.autoUpdate.delay || 15),
+                    panel_auto_update_release_delay_minutes: String(this.autoUpdate.delay || 1440),
                     panel_auto_update_signature_timeout_minutes: String(this.autoUpdate.signatureTimeout || 120)
                 } });
+                this.autoUpdate.mode = 'all_stable';
                 showToast(t('settings.auto_update_saved'), 'success');
             } catch(e) { showToast(e.message, 'error'); }
+        },
+        nextAutoUpdateCheck() {
+            const fallback = t('settings.no_data');
+            if (!this.autoUpdate.enabled) return t('settings.disabled');
+            let base = this.autoUpdate.lastCheck ? new Date(this.autoUpdate.lastCheck) : null;
+            let delayMinutes = 24 * 60;
+            if (this.autoUpdate.lastStatus === 'failed' && this.autoUpdate.lastStage === 'fetch_release') delayMinutes = 30;
+            if (this.autoUpdate.lastStatus === 'waiting' && this.autoUpdate.lastStage === 'waiting_release_delay') {
+                base = this.autoUpdate.releaseDetected ? new Date(this.autoUpdate.releaseDetected) : base;
+                delayMinutes = Number(this.autoUpdate.delay || 1440);
+            } else if (this.autoUpdate.lastStatus === 'waiting' && this.autoUpdate.lastStage === 'waiting_signature') {
+                base = this.autoUpdate.lastAttempt ? new Date(this.autoUpdate.lastAttempt) : base;
+                delayMinutes = 10;
+            } else if (this.autoUpdate.lastStatus === 'failed' && this.autoUpdate.lastStage !== 'fetch_release') {
+                base = this.autoUpdate.lastAttempt ? new Date(this.autoUpdate.lastAttempt) : base;
+                delayMinutes = 24 * 60;
+            }
+            if (!base || Number.isNaN(base.getTime())) return fallback;
+            return new Date(base.getTime() + delayMinutes * 60000).toLocaleString();
         },
         async testProxy() {
             if (!this.githubProxy) {

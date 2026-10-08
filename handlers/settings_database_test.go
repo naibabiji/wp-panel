@@ -67,6 +67,22 @@ func TestUpdateSettingsRejectsInvalidClockWindow(t *testing.T) {
 	}
 }
 
+func TestUpdateSettingsRejectsLegacyPatchOnlyMode(t *testing.T) {
+	setupBackupOverviewTestDB(t)
+	recorder := updateSystemSetting(t, `{"panel_auto_update_mode":"patch_only"}`)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestUpdateSettingsRequiresStablePolicyWhenEnablingAutoUpdate(t *testing.T) {
+	setupBackupOverviewTestDB(t)
+	recorder := updateSystemSetting(t, `{"panel_auto_update_enabled":"true"}`)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestUpdateSettingsReportsDatabaseWriteFailure(t *testing.T) {
 	setupBackupOverviewTestDB(t)
 	if err := database.GetDB().Close(); err != nil {

@@ -751,6 +751,17 @@ var upgrades = []Upgrade{
 		Description: "记录 CPU IO 等待与虚拟机 steal 指标",
 		Func:        ensureMonitoringCPUBreakdownColumns,
 	},
+	{
+		Version:     "1.0.67",
+		Description: "统一面板自动更新为稳定正式版并要求旧 patch 策略重新确认",
+		SQL: []string{
+			`UPDATE security_settings SET svalue='patch_only_reconfirm' WHERE skey='panel_auto_update_mode' AND svalue='patch_only' AND EXISTS (SELECT 1 FROM security_settings enabled WHERE enabled.skey='panel_auto_update_enabled' AND enabled.svalue='true')`,
+			`UPDATE security_settings SET svalue='false' WHERE skey='panel_auto_update_enabled' AND svalue='true' AND EXISTS (SELECT 1 FROM security_settings mode WHERE mode.skey='panel_auto_update_mode' AND mode.svalue='patch_only_reconfirm')`,
+			`UPDATE security_settings SET svalue='all_stable' WHERE skey='panel_auto_update_mode' AND svalue='patch_only'`,
+			`UPDATE security_settings SET svalue='1440' WHERE skey='panel_auto_update_release_delay_minutes' AND svalue='15'`,
+			`INSERT OR IGNORE INTO security_settings (skey,svalue,description) VALUES ('panel_auto_update_release_detected_at','','面板自动更新当前目标首次检测时间')`,
+		},
+	},
 }
 
 func ensureMonitoringCPUBreakdownColumns() error {

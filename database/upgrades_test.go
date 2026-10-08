@@ -68,6 +68,16 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 	if oomAlertEnabled != "true" {
 		t.Fatalf("alert_oom = %q, want true", oomAlertEnabled)
 	}
+	for key, want := range map[string]string{
+		"panel_auto_update_enabled":               "false",
+		"panel_auto_update_mode":                  "all_stable",
+		"panel_auto_update_release_delay_minutes": "1440",
+	} {
+		var got string
+		if err := DB.QueryRow(`SELECT svalue FROM security_settings WHERE skey=?`, key).Scan(&got); err != nil || got != want {
+			t.Fatalf("fresh %s=%q err=%v, want %q", key, got, err, want)
+		}
+	}
 	if _, err := DB.Exec(`INSERT INTO websites (name,domain,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path) VALUES ('new','new.example','wp_new','/var/www/new','/var/log/new','db_new','user_new','/etc/php/new.conf','/etc/nginx/new.conf')`); err != nil {
 		t.Fatalf("insert fresh website: %v", err)
 	}
@@ -187,6 +197,114 @@ func TestFreshInstallRunsMigrationsAndRecordsLatestVersion(t *testing.T) {
 		}
 		if got != setting.want {
 			t.Fatalf("%s = %q, want %q", setting.key, got, setting.want)
+		}
+	}
+}
+
+func TestUpgradeDisablesEnabledLegacyPatchAutoUpdate(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version TEXT NOT NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`DELETE FROM schema_version`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`INSERT INTO schema_version(version) VALUES ('1.0.66')`); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range map[string]string{
+		"panel_auto_update_enabled":               "true",
+		"panel_auto_update_mode":                  "patch_only",
+		"panel_auto_update_release_delay_minutes": "15",
+	} {
+		if _, err := DB.Exec(`UPDATE security_settings SET svalue=? WHERE skey=?`, value, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"panel_auto_update_enabled":               "false",
+		"panel_auto_update_mode":                  "patch_only_reconfirm",
+		"panel_auto_update_release_delay_minutes": "1440",
+	} {
+		var got string
+		if err := DB.QueryRow(`SELECT svalue FROM security_settings WHERE skey=?`, key).Scan(&got); err != nil || got != want {
+			t.Fatalf("upgraded %s=%q err=%v, want %q", key, got, err, want)
+		}
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("repeated upgrade failed: %v", err)
+	}
+}
+
+func TestUpgradeDoesNotFlagDisabledLegacyPatchAutoUpdateForReconfirmation(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version TEXT NOT NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`DELETE FROM schema_version`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`INSERT INTO schema_version(version) VALUES ('1.0.66')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`UPDATE security_settings SET svalue='false' WHERE skey='panel_auto_update_enabled'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`UPDATE security_settings SET svalue='patch_only' WHERE skey='panel_auto_update_mode'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	var mode string
+	if err := DB.QueryRow(`SELECT svalue FROM security_settings WHERE skey='panel_auto_update_mode'`).Scan(&mode); err != nil || mode != "all_stable" {
+		t.Fatalf("mode=%q err=%v, want all_stable without reconfirmation", mode, err)
+	}
+}
+
+func TestUpgradePreservesEnabledAllStableAndCustomDelay(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version TEXT NOT NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`DELETE FROM schema_version`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB.Exec(`INSERT INTO schema_version(version) VALUES ('1.0.66')`); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range map[string]string{
+		"panel_auto_update_enabled":               "true",
+		"panel_auto_update_mode":                  "all_stable",
+		"panel_auto_update_release_delay_minutes": "360",
+	} {
+		if _, err := DB.Exec(`UPDATE security_settings SET svalue=? WHERE skey=?`, value, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"panel_auto_update_enabled":               "true",
+		"panel_auto_update_mode":                  "all_stable",
+		"panel_auto_update_release_delay_minutes": "360",
+	} {
+		var got string
+		if err := DB.QueryRow(`SELECT svalue FROM security_settings WHERE skey=?`, key).Scan(&got); err != nil || got != want {
+			t.Fatalf("upgraded %s=%q err=%v, want %q", key, got, err, want)
 		}
 	}
 }
@@ -429,7 +547,7 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.66" {
+	if got := LatestVersion(); got != "1.0.67" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
 	for _, column := range []string{"database_backup_mode", "database_backup_source_id", "auto_rollback", "batch_id"} {

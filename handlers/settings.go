@@ -109,7 +109,7 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 	for _, key := range []string{
 		"panel_auto_update_enabled", "panel_auto_update_mode", "panel_auto_update_window",
 		"panel_auto_update_release_delay_minutes", "panel_auto_update_signature_timeout_minutes",
-		"panel_auto_update_last_target_version", "panel_auto_update_last_attempt_at",
+		"panel_auto_update_last_target_version", "panel_auto_update_release_detected_at", "panel_auto_update_last_check_at", "panel_auto_update_last_attempt_at",
 		"panel_auto_update_last_status", "panel_auto_update_last_stage", "panel_auto_update_last_error",
 		"panel_auto_update_last_success_at", "panel_auto_update_last_success_version",
 	} {
@@ -370,10 +370,13 @@ func validateDatabaseSettings(req settingsUpdateRequest) (map[string]string, str
 			return nil, "自动更新开关参数错误"
 		}
 		updates["panel_auto_update_enabled"] = v
+		if v == "true" && (req.PanelAutoUpdateMode == nil || strings.TrimSpace(*req.PanelAutoUpdateMode) != "all_stable") {
+			return nil, "开启自动更新时必须确认跟随全部稳定正式版"
+		}
 	}
 	if req.PanelAutoUpdateMode != nil {
 		v := strings.TrimSpace(*req.PanelAutoUpdateMode)
-		if v != "patch_only" && v != "all_stable" {
+		if v != "all_stable" {
 			return nil, "自动更新模式参数错误"
 		}
 		updates["panel_auto_update_mode"] = v

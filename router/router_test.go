@@ -92,6 +92,127 @@ func TestSettingsShowsBlockedUpdateWhenRemovalNamesAreUnknown(t *testing.T) {
 	}
 }
 
+func TestSettingsRootPasswordUsesModalAndSecureGenerator(t *testing.T) {
+	output := renderPage(t, "settings.html", "settings_content")
+	for _, required := range [][]byte{
+		[]byte(`x-show="rootPassword.open"`),
+		[]byte(`@click="openRootPasswordModal()"`),
+		[]byte(`crypto.getRandomValues(value)`),
+		[]byte(`while (password.length < 24)`),
+		[]byte(`navigator.clipboard.writeText(this.rootPassword.newPassword)`),
+		[]byte(`class="btn-secondary shrink-0 text-sm"`),
+	} {
+		if !bytes.Contains(output, required) {
+			t.Fatalf("root password modal is missing %q", required)
+		}
+	}
+	for _, model := range [][]byte{
+		[]byte(`x-model="rootPassword.currentPanel"`),
+		[]byte(`x-model="rootPassword.newPassword"`),
+		[]byte(`x-model="rootPassword.confirmPassword"`),
+	} {
+		if count := bytes.Count(output, model); count != 1 {
+			t.Fatalf("root password input %q rendered %d times; expected modal only", model, count)
+		}
+	}
+
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available")
+	}
+	scripts := regexp.MustCompile(`(?s)<script>(.*?)</script>`).FindAllSubmatch(output, -1)
+	var pageScript []byte
+	for _, script := range scripts {
+		if bytes.Contains(script[1], []byte("function panelSettings()")) {
+			pageScript = script[1]
+			break
+		}
+	}
+	if len(pageScript) == 0 {
+		t.Fatal("settings page script not found")
+	}
+	harness := []byte(`
+function t(key) { return key; }
+function showToast() {}
+const settings = panelSettings();
+for (let i = 0; i < 100; i++) {
+    settings.generateRootPassword();
+    const password = settings.rootPassword.newPassword;
+    if (password.length !== 24) throw new Error('generated password length is not 24');
+    if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password) || !/[!@#$%^&*_+=-]/.test(password)) {
+        throw new Error('generated password is missing a required character group');
+    }
+    if (/[:\n\r\0]/.test(password)) throw new Error('generated password contains a forbidden character');
+    if (settings.rootPassword.confirmPassword !== password) throw new Error('confirmation password was not synchronized');
+}
+settings.autoUpdate.enabled = true;
+settings.autoUpdate.lastCheck = '2026-10-08T12:00:00Z';
+settings.autoUpdate.lastAttempt = '2026-10-08T12:05:00Z';
+settings.autoUpdate.lastStatus = 'failed';
+settings.autoUpdate.lastStage = 'fetch_release';
+let nextCheck = new Date(settings.nextAutoUpdateCheck());
+if (nextCheck.getTime() !== Date.parse('2026-10-08T12:30:00Z')) {
+    throw new Error('fetch failure did not show a 30-minute retry');
+}
+settings.autoUpdate.lastStage = 'health_check';
+nextCheck = new Date(settings.nextAutoUpdateCheck());
+if (nextCheck.getTime() !== Date.parse('2026-10-09T12:05:00Z')) {
+    throw new Error('installation failure did not show a 24-hour cooldown from the last attempt');
+}
+`)
+	testScript := append(append([]byte{}, pageScript...), harness...)
+	scriptPath := filepath.Join(t.TempDir(), "settings-root-password.js")
+	if err := os.WriteFile(scriptPath, testScript, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, scriptPath).CombinedOutput(); err != nil {
+		t.Fatalf("root password generator behavior failed: %v\n%s", err, output)
+	}
+}
+
+func TestSettingsGroupsRelatedCards(t *testing.T) {
+	source, err := os.ReadFile("../templates/settings.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	panelTitle := bytes.Index(source, []byte(`settings.panel_title`))
+	basicAuth := bytes.Index(source, []byte(`settings.basic_auth_title`))
+	updateManagement := bytes.Index(source, []byte(`settings.update_management`))
+	panelVersion := bytes.Index(source, []byte(`settings.panel_version`))
+	systemUpdates := bytes.Index(source, []byte(`settings.system_updates`))
+	wpPackage := bytes.Index(source, []byte(`settings.wp_package"`))
+	if panelTitle < 0 || basicAuth < 0 || panelTitle > basicAuth {
+		t.Fatal("panel title is not grouped with panel account settings")
+	}
+	if updateManagement < 0 || panelVersion < updateManagement || systemUpdates < panelVersion || wpPackage < systemUpdates {
+		t.Fatal("update management and WordPress package cards are not in the expected second-row order")
+	}
+	if count := bytes.Count(source, []byte(`grid grid-cols-1 md:grid-cols-2 gap-8 mb-6`)); count != 2 {
+		t.Fatalf("settings page has %d primary two-column rows; want 2", count)
+	}
+}
+
+func TestSettingsAutoUpdateUsesSingleStableReleasePolicy(t *testing.T) {
+	source, err := os.ReadFile("../templates/settings.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range [][]byte{
+		[]byte(`panel_auto_update_mode: 'all_stable'`),
+		[]byte(`autoUpdate.mode === 'patch_only_reconfirm'`),
+		[]byte(`settings.auto_update_reconfirm_required`),
+		[]byte(`nextAutoUpdateCheck()`),
+		[]byte(`panel_auto_update_last_check_at`),
+	} {
+		if !bytes.Contains(source, expected) {
+			t.Fatalf("settings auto-update UI is missing %s", expected)
+		}
+	}
+	if bytes.Contains(source, []byte(`<option value="patch_only">`)) || bytes.Contains(source, []byte(`<option value="all_stable">`)) {
+		t.Fatal("settings page still exposes an automatic update mode selector")
+	}
+}
+
 func TestLogAnalysisExplainsServerTrafficMetrics(t *testing.T) {
 	template, err := os.ReadFile("../templates/log_analysis.html")
 	if err != nil {
