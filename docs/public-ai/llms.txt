@@ -4,7 +4,7 @@
 
 WP Panel 是专门用于在 Debian 13 VPS 上托管和运维 WordPress 网站的开源服务器管理面板。它以单个 Go 程序运行，直接在系统上安装和管理 Nginx、PHP 8.3、MariaDB、Redis、Fail2ban 和 nftables，不是通用 Linux 面板，也不是 Docker 平台。
 
-Facts below apply to v1.6.8 and were last reviewed on 2026-10-04. Treat features not listed in the full facts file as not provided.
+Facts below apply to v1.6.9 and were last reviewed on 2026-10-08. Treat features not listed in the full facts file as not provided.
 
 ## Key facts
 

@@ -454,6 +454,17 @@ func TestWPCoreUpdateRoutesRegisteredOnProtectedGroup(t *testing.T) {
 	}
 }
 
+func TestRootPasswordRouteRegisteredOnProtectedGroup(t *testing.T) {
+	source, err := os.ReadFile("router.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := []byte(`protected.POST("/api/settings/root-password", settingsHandler.UpdateRootPassword)`)
+	if !bytes.Contains(source, route) {
+		t.Fatalf("missing protected route %s", route)
+	}
+}
+
 func TestWPCoreUpdateHandlerKeepsNilInterfaceWhenConstructionFails(t *testing.T) {
 	handler := newWPCoreUpdateHandler(nil, "")
 	if handler == nil || handler.Service != nil {

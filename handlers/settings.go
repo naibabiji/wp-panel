@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -26,8 +28,15 @@ import (
 )
 
 type SettingsHandler struct {
-	WPPackageService *executor.WPPackageService
-	ConfigPath       string
+	WPPackageService   *executor.WPPackageService
+	ConfigPath         string
+	ChangeRootPassword func(context.Context, string) error
+}
+
+type rootPasswordChangeRequest struct {
+	CurrentPanelPassword string `json:"current_panel_password"`
+	NewPassword          string `json:"new_password"`
+	ConfirmPassword      string `json:"confirm_password"`
 }
 
 type settingsUpdateRequest struct {
@@ -130,6 +139,69 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 		"server_time":       time.Now().UnixMilli(),
 		"panel_auto_update": autoUpdate,
 	}))
+}
+
+func (h *SettingsHandler) UpdateRootPassword(c *gin.Context) {
+	var req rootPasswordChangeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "settings.root_password_invalid_request")))
+		return
+	}
+	if req.CurrentPanelPassword == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "settings.current_panel_password_required")))
+		return
+	}
+	if req.NewPassword != req.ConfirmPassword {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "settings.passwords_not_match")))
+		return
+	}
+	if err := validateRootPassword(req.NewPassword); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, err.Error())))
+		return
+	}
+
+	var currentHash string
+	if err := database.GetDB().QueryRow("SELECT password_hash FROM admin_users LIMIT 1").Scan(&currentHash); err != nil {
+		log.Printf("读取管理员密码用于 root 密码确认失败: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "settings.root_password_change_failed")))
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(req.CurrentPanelPassword)); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "settings.current_panel_password_incorrect")))
+		return
+	}
+
+	change := h.ChangeRootPassword
+	if change == nil {
+		change = executor.ChangeRootPassword
+	}
+	if err := change(context.WithoutCancel(c.Request.Context()), req.NewPassword); err != nil {
+		if errors.Is(err, executor.ErrRootPasswordChangeTimeout) {
+			log.Printf("修改 root 密码超时")
+		} else {
+			log.Printf("修改 root 密码失败")
+		}
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "settings.root_password_change_failed")))
+		return
+	}
+	if _, err := database.GetDB().Exec(`INSERT INTO operation_logs(operation,target,status,message) VALUES(?,?,?,?)`,
+		"root_password_change", "root", "success", "已通过面板设置修改 Linux root 密码"); err != nil {
+		log.Printf("记录 root 密码修改操作失败: %v", err)
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.TE(c.Request, "settings.root_password_changed")}))
+}
+
+func validateRootPassword(password string) error {
+	if len(password) < 8 {
+		return errors.New("settings.root_password_min_length")
+	}
+	if len(password) > 128 {
+		return errors.New("settings.root_password_max_length")
+	}
+	if strings.ContainsAny(password, ":\x00\r\n") {
+		return errors.New("settings.root_password_invalid_characters")
+	}
+	return nil
 }
 
 func (h *SettingsHandler) UpdateSettings(c *gin.Context) {

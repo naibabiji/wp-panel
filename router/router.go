@@ -158,6 +158,7 @@ var i18nKeys = []string{
 	"settings.connection_mode_auto_help",
 	"settings.confirm_delete_backup",
 	"settings.confirm_delete_local_wp_package",
+	"settings.confirm_root_password_change",
 	"settings.confirm_restore_db_backup",
 	"settings.confirm_system_update",
 	"settings.confirm_update_version",
@@ -166,6 +167,9 @@ var i18nKeys = []string{
 	"settings.connection_ok",
 	"settings.connection_ok_with_latency",
 	"settings.current_password_required",
+	"settings.current_panel_password_required",
+	"settings.change_root_password",
+	"settings.changing_root_password",
 	"settings.delete",
 	"settings.deleted",
 	"settings.deleting",
@@ -195,6 +199,9 @@ var i18nKeys = []string{
 	"settings.proxy_required",
 	"settings.refresh",
 	"settings.restoring",
+	"settings.root_password_changed",
+	"settings.root_password_max_length",
+	"settings.root_password_min_length",
 	"settings.panel_db_restore_status_unknown",
 	"settings.save_account_settings",
 	"settings.save_ai_settings",
@@ -1664,6 +1671,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	logAnalysisHandler := &handlers.LogAnalysisHandler{}
 	protected.GET("/api/settings", settingsHandler.GetSettings)
 	protected.PUT("/api/settings", settingsHandler.UpdateSettings)
+	protected.POST("/api/settings/root-password", settingsHandler.UpdateRootPassword)
 	protected.GET("/api/settings/logs", settingsHandler.GetOperationLogs)
 	protected.GET("/api/settings/wp-package", settingsHandler.GetWPPackage)
 	protected.POST("/api/settings/wp-package/upload", settingsHandler.UploadWPPackage)

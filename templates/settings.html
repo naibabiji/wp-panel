@@ -85,6 +85,17 @@
                 </div>
             </div>
 
+            <div class="mb-4 p-3 rounded" style="background-color: #2a1114; border: 1px solid #7f1d1d;">
+                <p class="text-sm text-red-300 font-medium mb-1">{{t .Lang "settings.root_password_title"}}</p>
+                <p class="text-xs text-gray-400 mb-3">{{t .Lang "settings.root_password_help"}}</p>
+                <div class="space-y-2">
+                    <input type="password" x-model="rootPassword.currentPanel" class="input-field text-sm" placeholder="{{t .Lang "settings.current_panel_password_placeholder"}}" autocomplete="current-password">
+                    <input type="password" x-model="rootPassword.newPassword" class="input-field text-sm" placeholder="{{t .Lang "settings.new_root_password_placeholder"}}" autocomplete="new-password">
+                    <input type="password" x-model="rootPassword.confirmPassword" class="input-field text-sm" placeholder="{{t .Lang "settings.confirm_root_password_placeholder"}}" autocomplete="new-password">
+                    <button @click="changeRootPassword()" :disabled="rootPassword.saving" class="w-full py-2 px-3 rounded text-sm text-white disabled:opacity-50" style="background-color: #b91c1c;" x-text="rootPassword.saving ? t('settings.changing_root_password') : t('settings.change_root_password')"></button>
+                </div>
+            </div>
+
             <div class="mb-4">
                 <label class="label">{{t .Lang "settings.github_proxy"}}</label>
                 <p class="text-xs text-gray-500 mb-2">{{t .Lang "settings.github_proxy_help"}}</p>
@@ -505,6 +516,7 @@ function panelSettings() {
             lastSuccessVersion: ''
         },
         pw: { old: '', new1: '', new2: '', basic: '' },
+        rootPassword: { currentPanel: '', newPassword: '', confirmPassword: '', saving: false },
         async fetchSettings() {
             try {
                 const r = await api('/settings');
@@ -601,6 +613,27 @@ function panelSettings() {
                 await api('/settings', { method: 'PUT', body });
                 showToast(t('settings.updated'), 'success');
             } catch(e) { showToast(e.message, 'error'); }
+        },
+        async changeRootPassword() {
+            if (!this.rootPassword.currentPanel) { showToast(t('settings.current_panel_password_required'), 'error'); return; }
+            if (this.rootPassword.newPassword !== this.rootPassword.confirmPassword) { showToast(t('settings.passwords_not_match'), 'error'); return; }
+            const passwordBytes = new TextEncoder().encode(this.rootPassword.newPassword).length;
+            if (passwordBytes < 8) { showToast(t('settings.root_password_min_length'), 'error'); return; }
+            if (passwordBytes > 128) { showToast(t('settings.root_password_max_length'), 'error'); return; }
+            if (!await confirmModal(t('settings.confirm_root_password_change'))) return;
+            this.rootPassword.saving = true;
+            try {
+                const r = await api('/settings/root-password', { method: 'POST', body: {
+                    current_panel_password: this.rootPassword.currentPanel,
+                    new_password: this.rootPassword.newPassword,
+                    confirm_password: this.rootPassword.confirmPassword
+                } });
+                this.rootPassword = { currentPanel: '', newPassword: '', confirmPassword: '', saving: false };
+                showToast(r.data?.message || t('settings.root_password_changed'), 'success');
+            } catch(e) {
+                this.rootPassword.saving = false;
+                showToast(e.message, 'error');
+            }
         },
         async saveAutoUpdate() {
             try {
