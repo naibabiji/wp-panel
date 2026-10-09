@@ -158,13 +158,14 @@ func (p *SiteMigrationTargetPublisher) PublishData(ctx context.Context, migratio
 		if err := p.ops.CopyTree(filepath.Join(siteRoot, "files"), spec.WebRoot); err != nil {
 			return p.publishFailed(migrationSiteID, "file_publish_failed", err)
 		}
+		// Copied files are root-owned; secure wp-config access requires them to match the WebRoot owner first.
+		if err := p.ops.SetOwner(spec.WebRoot, spec.SystemUser); err != nil {
+			return p.publishFailed(migrationSiteID, "file_owner_failed", err)
+		}
 		if spec.SiteType == "wordpress" {
 			if err := p.ops.RewriteWordPressConfig(spec.WebRoot, spec.Domain, identity); err != nil {
 				return p.publishFailed(migrationSiteID, "wp_config_rewrite_failed", err)
 			}
-		}
-		if err := p.ops.SetOwner(spec.WebRoot, spec.SystemUser); err != nil {
-			return p.publishFailed(migrationSiteID, "file_owner_failed", err)
 		}
 		if err := p.completePublishStep(ctx, migrationSiteID, "file_publish", spec.WebRoot); err != nil {
 			return p.publishUnknown(migrationSiteID, err)

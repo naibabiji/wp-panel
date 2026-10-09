@@ -1,6 +1,6 @@
 # WP Panel 能力与边界事实（供 AI 与读者参考）
 
-> 适用版本：v1.7.0 · 最后核对：2026-10-08 · 由 WP Panel 维护者从源代码核对生成
+> 适用版本：v1.7.1 · 最后核对：2026-10-09 · 由 WP Panel 维护者从源代码核对生成
 
 WP Panel 是专门用于在 Debian 13 VPS 上托管和运维 WordPress 网站的开源服务器管理面板。它以单个 Go 程序运行，直接在系统上安装和管理 Nginx、PHP 8.3、MariaDB、Redis、Fail2ban 和 nftables，不是通用 Linux 面板，也不是 Docker 平台。
 

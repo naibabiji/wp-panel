@@ -90,7 +90,7 @@ func TestSiteMigrationTargetPublisherOrdersDataPublication(t *testing.T) {
 	if err := publisher.PublishData(context.Background(), "migration_0000001"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"import:" + opsDatabaseName(t, resourceService), "copy:" + opsWebRoot(t, resourceService), "wp-config:" + opsDatabaseName(t, resourceService), "owner:" + opsSystemUser(t, resourceService)}
+	want := []string{"import:" + opsDatabaseName(t, resourceService), "copy:" + opsWebRoot(t, resourceService), "owner:" + opsSystemUser(t, resourceService), "wp-config:" + opsDatabaseName(t, resourceService)}
 	if strings.Join(ops.events, "|") != strings.Join(want, "|") {
 		t.Fatalf("events=%v want=%v", ops.events, want)
 	}

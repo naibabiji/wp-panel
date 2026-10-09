@@ -667,7 +667,8 @@ func pinnedMigrationClient(fingerprint string, timeout time.Duration) (*http.Cli
 	if err != nil {
 		return nil, err
 	}
-	return &http.Client{Timeout: timeout, Transport: &http.Transport{TLSClientConfig: tlsConfig}}, nil
+	// Each call builds a private transport, so keep-alive connections could never be reused and would stay idle forever.
+	return &http.Client{Timeout: timeout, Transport: &http.Transport{TLSClientConfig: tlsConfig, DisableKeepAlives: true}}, nil
 }
 
 func pinnedMigrationStreamingClient(fingerprint string) (*http.Client, error) {
@@ -677,6 +678,7 @@ func pinnedMigrationStreamingClient(fingerprint string) (*http.Client, error) {
 	}
 	return &http.Client{Transport: &http.Transport{
 		TLSClientConfig:       tlsConfig,
+		DisableKeepAlives:     true,
 		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
