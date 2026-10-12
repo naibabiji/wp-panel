@@ -1734,6 +1734,134 @@ func TestWebsiteDetailCardOrderAndDatabaseNavigation(t *testing.T) {
 	}
 }
 
+func TestManagedMailSettingsUseCompactModalEntries(t *testing.T) {
+	alertPage := renderPage(t, "alert.html", "alert_content")
+	if !bytes.Contains(alertPage, []byte(`@click="openManagedMailSettings()"`)) || !bytes.Contains(alertPage, []byte(`aria-labelledby="managed-mail-limits-title"`)) {
+		t.Fatal("alert SMTP settings are missing the managed-mail modal entry")
+	}
+	websitePage := renderPage(t, "website_detail.html", "websites_detail_content")
+	if !bytes.Contains(websitePage, []byte(`aria-labelledby="site-managed-mail-title"`)) || !bytes.Contains(websitePage, []byte(`managedMailOpen: false`)) {
+		t.Fatal("website detail is missing the managed-mail modal")
+	}
+}
+
+func TestManagedMailPluginReconcilesConflictBeforeLocalEnablement(t *testing.T) {
+	source, err := os.ReadFile("../wp-panel-optimizer/includes/trait-managed-mail.php")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflict := bytes.Index(source, []byte(`self::managed_mail_report_conflict($conflict);`))
+	localGate := bytes.Index(source, []byte(`if (!$enabled) return;`))
+	if conflict < 0 || localGate < 0 || conflict > localGate {
+		t.Fatal("managed-mail conflict reconciliation must run before the local enabled gate")
+	}
+	if !bytes.Contains(source, []byte(`self::managed_mail_report_conflict('', true)`)) {
+		t.Fatal("managed-mail confirmation does not clear a stale panel conflict first")
+	}
+	for _, code := range []string{"panel_authorization_required", "smtp_plugin_conflict", "managed_mail_unavailable", "request_failed"} {
+		if !bytes.Contains(source, []byte(`'`+code+`'`)) {
+			t.Fatalf("managed-mail settings page does not map confirm error %q", code)
+		}
+	}
+}
+
+func TestManagedMailPluginUsesOptimizerNavigationAndStyles(t *testing.T) {
+	settings, err := os.ReadFile("../wp-panel-optimizer/includes/trait-settings.php")
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedMail, err := os.ReadFile("../wp-panel-optimizer/includes/trait-managed-mail.php")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{
+		`settings_page_wp-panel-managed-mail`,
+		`options-general.php?page=wp-panel-managed-mail`,
+		`assets/managed-mail.js`,
+		`#wpp-tabs .nav-tab[data-tab]`,
+		`method_exists(__CLASS__, 'managed_mail_page')`,
+		`self::managed_mail_should_show()`,
+	} {
+		if !bytes.Contains(settings, []byte(marker)) {
+			t.Fatalf("Optimizer settings integration is missing %q", marker)
+		}
+	}
+	if !bytes.Contains(managedMail, []byte(`if (!self::managed_mail_should_show()) return;`)) {
+		t.Fatal("managed-mail sidebar menu is not gated by panel authorization")
+	}
+	if !bytes.Contains(managedMail, []byte(`static $loaded = false;`)) {
+		t.Fatal("managed-mail status is not cached within the admin request")
+	}
+	for _, marker := range []string{
+		`/api/sites/managed-mail/settings`,
+		`admin_post_wpp_managed_mail_test`,
+		`wp_mail(`,
+		`name="from_name"`,
+		`name="reply_to"`,
+		`name="recipient"`,
+		`instanceof WPP_Managed_Mailer`,
+		`['wp_mail', 'pre_wp_mail', 'phpmailer_init']`,
+		`new WP_Hook()`,
+		`['disabled' => 'disabled']`,
+	} {
+		if !bytes.Contains(managedMail, []byte(marker)) {
+			t.Fatalf("managed-mail sender settings or test-mail UI is missing %q", marker)
+		}
+	}
+	for _, marker := range []string{
+		`wrap wpp-settings wpp-managed-mail`,
+		`wpp-masthead`,
+		`wpp-tabs`,
+		`wpp-section`,
+		`wpp-log wpp-mail-log`,
+		`wpp-mail-preview-dialog`,
+		`data-wpp-mail-preview-close`,
+		`data-wpp-mail-preview-id`,
+		`wpp-mail-details`,
+		`'from_name,reply_to'`,
+		`recipients,body,headers,attachments`,
+		`wpp_optimizer_managed_mail_db_version') !== '2'`,
+		`if ($hasFromName && $hasReplyTo) update_option('wpp_optimizer_managed_mail_db_version', '2')`,
+		`$log['from_name'] = $payload['from_name']`,
+		`$log['reply_to'] = wp_json_encode($payload['reply_to'])`,
+		`!empty($status['lock_from_name'])`,
+		`get_option('wpp_optimizer_managed_mail_db_version') === '2'`,
+		`NULL AS from_name,NULL AS reply_to`,
+		`sandbox="" referrerpolicy="no-referrer"`,
+		`check_admin_referer('wpp_managed_mail_view_' . $id)`,
+		`['viewed_at' => current_time('mysql', true), 'viewed_by' => get_current_user_id()]`,
+	} {
+		if !bytes.Contains(managedMail, []byte(marker)) {
+			t.Fatalf("managed-mail page is missing shared design marker %q", marker)
+		}
+	}
+	settingsMail := bytes.Index(settings, []byte(`options-general.php?page=wp-panel-managed-mail`))
+	settingsAbout := bytes.Index(settings, []byte(`data-tab="about"`))
+	mailPageMail := bytes.Index(managedMail, []byte(`options-general.php?page=wp-panel-managed-mail`))
+	mailPageAbout := bytes.Index(managedMail, []byte(`wpp_tab=about`))
+	if settingsMail < 0 || settingsAbout < 0 || settingsMail > settingsAbout || mailPageMail < 0 || mailPageAbout < 0 || mailPageMail > mailPageAbout {
+		t.Fatal("Managed Email must appear before About & Panel Sync in both navigation bars")
+	}
+}
+
+func TestManagedMailChineseCatalogContainsConfirmationErrors(t *testing.T) {
+	catalog, err := os.ReadFile("../wp-panel-optimizer/languages/wp-panel-optimizer-zh_CN.mo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{
+		"Another SMTP plugin is still active. Remove it before enabling managed email.",
+		"Could not refresh the SMTP plugin conflict status. Please try again.",
+		"WP Panel SMTP is not ready. Ask the server administrator to check the SMTP settings.",
+		"Could not confirm managed email with WP Panel. Please try again.",
+		"无法向 WP Panel 确认托管发信，请重试。",
+	} {
+		if !bytes.Contains(catalog, []byte(text)) {
+			t.Fatalf("managed-mail runtime translation catalog is missing %q", text)
+		}
+	}
+}
+
 func TestSidebarNavigationOrder(t *testing.T) {
 	source, err := os.ReadFile("../templates/base.html")
 	if err != nil {

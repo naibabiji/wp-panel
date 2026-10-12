@@ -3,7 +3,7 @@
 <!-- /wp:paragraph -->
 
 <!-- wp:paragraph -->
-<p>本页内容由 WP Panel 维护者对照源代码逐项核对，适用于 v1.7.1，最后核对于 2026-10-09。本页没有列出的功能，表示 WP Panel 当前不提供。</p>
+<p>本页内容由 WP Panel 维护者对照源代码逐项核对，适用于 v1.8.0，最后核对于 2026-10-12。本页没有列出的功能，表示 WP Panel 当前不提供。</p>
 <!-- /wp:paragraph -->
 
 <!-- wp:heading -->
@@ -160,7 +160,7 @@
 
 <!-- wp:list -->
 <ul class="wp-block-list"><!-- wp:list-item -->
-<li>不提供邮件服务器、邮箱或邮件收发托管；告警邮件需要使用外部 SMTP 服务发送。</li>
+<li>不提供邮件服务器、邮箱或邮件收发托管；告警邮件和经双重授权的 WordPress 低频事务邮件通过管理员配置的外部 SMTP 服务发送。</li>
 <!-- /wp:list-item -->
 <!-- wp:list-item -->
 <li>不提供 DNS 解析托管或域名管理，域名解析需在域名注册商或 DNS 服务商处设置。</li>
@@ -291,6 +291,9 @@
 <!-- wp:list -->
 <ul class="wp-block-list"><!-- wp:list-item -->
 <li><strong>配套插件 WP Panel Optimizer</strong>：面板内置并自动安装、升级的 WordPress 插件，负责缓存清理与预热、维护页面、安全设置和图片优化等与面板的联动。<br>入口：网站详情 → WordPress 优化 → 配套插件；WordPress 后台 → WP Panel Optimizer<br>边界：插件被删除或停用时相关联动失效，可在面板中检测并修复。</li>
+<!-- /wp:list-item -->
+<!-- wp:list-item -->
+<li><strong>WordPress 托管发信</strong>：服务器管理员可按网站授权低频 WordPress 事务邮件使用面板统一配置的外部 SMTP，而无需把 SMTP 凭据下发到网站。网站管理员还需在配套插件中确认，可设置默认发件人名称和 Reply-To、发送真实测试邮件，并查看保存在本站数据库中的详细邮件日志。<br>入口：网站详情 → WordPress 托管发信；WordPress 后台 → WP Panel Optimizer → Managed Email<br>边界：只用于低频事务邮件，不提供营销群发、持久队列、自动重试、退信或最终送达跟踪；SMTP 接受不代表邮件已送达。默认完整正文日志最多保留 250 条和 7 天，可能包含敏感信息。已知第三方 SMTP 插件冲突时会暂停，WordPress Multisite 不支持。</li>
 <!-- /wp:list-item -->
 <!-- wp:list-item -->
 <li><strong>WordPress 管理员与配置修复</strong>：在面板中查看和修改 WordPress 管理员（修改前自动备份数据库），检测表前缀并修复 wp-config.php，修改站点地址，设置是否允许公开找回密码（可只禁止管理员）。<br>入口：数据库管理 → 数据库详情；网站详情 → WordPress 优化 → 密码找回保护<br>边界：管理员修改不支持 Multisite；修复 wp-config.php 不会重命名数据库表。</li>

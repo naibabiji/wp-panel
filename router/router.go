@@ -317,6 +317,38 @@ var i18nKeys = []string{
 	"alert.smtp_copy_failed",
 	"alert.smtp_copy_success",
 	"alert.smtp_config_saved",
+	"alert.managed_mail_settings_saved",
+	"alert.smtp_diagnose",
+	"alert.smtp_diagnosing",
+	"alert.smtp_diagnostic_copy",
+	"alert.smtp_diagnostic_copied",
+	"alert.smtp_diagnostic_help",
+	"alert.smtp_diagnostic_report",
+	"alert.smtp_diagnostic_stage_authentication",
+	"alert.smtp_diagnostic_stage_dns",
+	"alert.smtp_diagnostic_stage_ipv4_tcp",
+	"alert.smtp_diagnostic_stage_ipv6_tcp",
+	"alert.smtp_diagnostic_stage_tcp",
+	"alert.smtp_diagnostic_stage_tls",
+	"alert.smtp_diagnostic_stage_smtp",
+	"alert.smtp_diagnostic_stage_submission",
+	"alert.smtp_diagnostic_stage_https_control",
+	"alert.smtp_diagnostic_stage_alternative_2525",
+	"alert.smtp_diagnostic_success",
+	"alert.smtp_diagnostic_dns_failed",
+	"alert.smtp_diagnostic_tcp_refused",
+	"alert.smtp_diagnostic_tcp_timeout",
+	"alert.smtp_diagnostic_tcp_failed",
+	"alert.smtp_diagnostic_possible_upstream_filter",
+	"alert.smtp_diagnostic_tls_failed",
+	"alert.smtp_diagnostic_starttls_unavailable",
+	"alert.smtp_diagnostic_auth_failed",
+	"alert.smtp_diagnostic_auth_requires_encryption",
+	"alert.smtp_diagnostic_auth_unavailable",
+	"alert.smtp_diagnostic_greeting_timeout",
+	"alert.smtp_diagnostic_submit_failed",
+	"alert.smtp_diagnostic_smtp_failed",
+	"alert.smtp_diagnostic_alt_2525",
 	"alert.smtp_import",
 	"alert.smtp_import_cancelled",
 	"alert.smtp_import_prompt",
@@ -1439,6 +1471,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 
 	cacheHelper := &handlers.CacheHelperHandler{}
 	pluginImageOptimizer := &handlers.ImageOptimizerHandler{}
+	managedMailHandler := &handlers.ManagedMailHandler{}
 
 	pluginGroup := r.Group(prefix)
 	pluginGroup.Use(middleware.RandomPath(suffix))
@@ -1454,6 +1487,11 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	pluginGroup.POST("/api/sites/image-optimizer/start", pluginImageOptimizer.PluginStart)
 	pluginGroup.GET("/api/sites/image-optimizer/status", pluginImageOptimizer.PluginStatus)
 	pluginGroup.POST("/api/sites/image-optimizer/stop", pluginImageOptimizer.PluginStop)
+	pluginGroup.GET("/api/sites/managed-mail/status", managedMailHandler.PluginStatus)
+	pluginGroup.POST("/api/sites/managed-mail/confirm", managedMailHandler.PluginConfirm)
+	pluginGroup.POST("/api/sites/managed-mail/settings", managedMailHandler.PluginSettings)
+	pluginGroup.POST("/api/sites/managed-mail/conflict", managedMailHandler.PluginConflict)
+	pluginGroup.POST("/api/sites/managed-mail/send", managedMailHandler.PluginSend)
 
 	protected := panelGroup.Group("")
 	protected.Use(middleware.SessionRequired())
@@ -1466,6 +1504,8 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.PUT("/api/websites/:id/maintenance", maintenanceHandler.Panel)
 	protected.POST("/api/websites/:id/maintenance/relock", maintenanceHandler.Panel)
 	protected.POST("/api/websites/:id/maintenance/password", maintenanceHandler.Password)
+	protected.GET("/api/websites/:id/managed-mail", managedMailHandler.PanelPolicy)
+	protected.PUT("/api/websites/:id/managed-mail", managedMailHandler.PanelPolicy)
 	anomalyHandler := &handlers.WPAnomalyHandler{Monitor: executor.DefaultWPAnomalyMonitor(cfg)}
 	protected.GET("/api/websites/:id/anomaly-monitor", anomalyHandler.Handle)
 	protected.PUT("/api/websites/:id/anomaly-monitor", anomalyHandler.Handle)
@@ -1633,6 +1673,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/alert/smtp-config/export", alertHandler.ExportSMTPConfig)
 	protected.POST("/api/alert/smtp-config/import", alertHandler.ImportSMTPConfig)
 	protected.POST("/api/alert/test-smtp", alertHandler.TestSMTP)
+	protected.POST("/api/alert/diagnose-smtp", alertHandler.DiagnoseSMTP)
 	protected.POST("/api/alert/test-webhook", alertHandler.TestWebhook)
 	protected.GET("/api/alert/log", alertHandler.GetLog)
 

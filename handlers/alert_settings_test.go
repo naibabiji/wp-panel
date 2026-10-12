@@ -78,3 +78,25 @@ func TestSaveAlertSettingsCommitsWholeRequest(t *testing.T) {
 		t.Fatalf("saved count=%d err=%v", count, err)
 	}
 }
+
+func TestSaveAlertSettingsValidatesAndSavesManagedMailLimits(t *testing.T) {
+	setupBackupOverviewTestDB(t)
+	invalid := saveAlertSettings(t, `{"managed_mail_total_minute_limit":"50","managed_mail_total_hour_limit":"20","managed_mail_total_day_limit":"100"}`)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+	valid := saveAlertSettings(t, `{"managed_mail_limit_preset":"standard","managed_mail_total_minute_limit":"20","managed_mail_total_hour_limit":"100","managed_mail_total_day_limit":"300","managed_mail_system_day_limit":"20"}`)
+	if valid.Code != http.StatusOK {
+		t.Fatalf("valid status=%d body=%s", valid.Code, valid.Body.String())
+	}
+	var preset, day string
+	if err := database.GetDB().QueryRow(`SELECT svalue FROM security_settings WHERE skey='managed_mail_limit_preset'`).Scan(&preset); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.GetDB().QueryRow(`SELECT svalue FROM security_settings WHERE skey='managed_mail_total_day_limit'`).Scan(&day); err != nil {
+		t.Fatal(err)
+	}
+	if preset != "standard" || day != "300" {
+		t.Fatalf("preset=%q day=%q", preset, day)
+	}
+}

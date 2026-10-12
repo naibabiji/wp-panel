@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -787,6 +789,10 @@ func dumpDatabaseToGzip(dbName, dbPass, filePath string) error {
 	if !isValidMySQLIdentifier(dbName) {
 		return fmt.Errorf("数据库名异常，已拒绝执行")
 	}
+	ignoredTable, err := managedMailDumpIgnoreTable(dbName)
+	if err != nil {
+		return fmt.Errorf("确定邮件日志排除范围失败: %w", err)
+	}
 
 	if err := os.MkdirAll(filepath.Dir(filePath), 0700); err != nil {
 		return fmt.Errorf("创建备份目录失败: %w", err)
@@ -807,7 +813,12 @@ func dumpDatabaseToGzip(dbName, dbPass, filePath string) error {
 		}
 	}()
 
-	cmd := exec.Command("mysqldump", "-u", "root", dbName)
+	args := []string{"-u", "root"}
+	if ignoredTable != "" {
+		args = append(args, "--ignore-table="+dbName+"."+ignoredTable)
+	}
+	args = append(args, "--", dbName)
+	cmd := exec.Command("mysqldump", args...)
 	cmd.Env = append(os.Environ(), "MYSQL_PWD="+dbPass)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -849,6 +860,52 @@ func dumpDatabaseToGzip(dbName, dbPass, filePath string) error {
 
 	keepFile = true
 	return nil
+}
+
+// managedMailDumpIgnoreTable resolves the real WordPress prefix from wp-config
+// rather than assuming wp_. A managed WordPress export fails closed when its
+// prefix cannot be resolved so full email bodies do not silently enter panel
+// backups, update snapshots, clones, or migrations.
+func managedMailDumpIgnoreTable(dbName string) (string, error) {
+	db := database.GetDB()
+	if db == nil {
+		return "", nil
+	}
+	var siteID int64
+	var siteType, webRoot string
+	err := db.QueryRow(`SELECT id,site_type,web_root FROM websites WHERE db_name=? ORDER BY id LIMIT 1`, dbName).Scan(&siteID, &siteType, &webRoot)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if siteType != "wordpress" {
+		return "", nil
+	}
+	prefix, err := ReadWPTablePrefix(webRoot)
+	if err != nil || !IsValidWPTablePrefix(prefix) {
+		// Sites that never received a managed-mail policy cannot have sent a
+		// managed message, so there is no body-bearing log to protect. Once a
+		// policy row has existed (including after revocation), fail closed.
+		var policySiteID int64
+		policyErr := db.QueryRow(`SELECT site_id FROM managed_mail_sites WHERE site_id=?`, siteID).Scan(&policySiteID)
+		if errors.Is(policyErr, sql.ErrNoRows) {
+			return "", nil
+		}
+		if policyErr != nil {
+			return "", policyErr
+		}
+		if err == nil {
+			err = errors.New("invalid WordPress table prefix")
+		}
+		return "", err
+	}
+	table := prefix + "wpp_managed_mail_log"
+	if !isValidMySQLIdentifier(table) {
+		return "", errors.New("invalid managed mail log table")
+	}
+	return table, nil
 }
 
 type oldDBBackup struct {

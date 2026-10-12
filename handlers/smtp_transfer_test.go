@@ -8,7 +8,7 @@ import (
 func TestSMTPTransferRoundTrip(t *testing.T) {
 	want := smtpTransferConfig{
 		Host: "smtp.example.com", Port: "587", Encryption: "starttls",
-		User: "alerts@example.com", Pass: "secret-token", AdminEmail: "admin@example.com",
+		User: "api-user", Pass: "secret-token", FromEmail: "alerts@example.com", AdminEmail: "admin@example.com",
 	}
 	code, err := encodeSMTPTransfer(want)
 	if err != nil {
@@ -56,6 +56,7 @@ func TestValidateSMTPTransferRejectsInvalidFields(t *testing.T) {
 		{Host: "smtp.example.com", Port: "70000", Encryption: "starttls"},
 		{Host: "smtp.example.com", Port: "587", Encryption: "invalid"},
 		{Host: "smtp.example.com", Port: "587", Encryption: "starttls", AdminEmail: "not-an-email"},
+		{Host: "smtp.example.com", Port: "587", Encryption: "starttls", FromEmail: "Sender <sender@example.com>"},
 	}
 	for _, cfg := range tests {
 		if err := validateSMTPTransfer(cfg); err == nil {

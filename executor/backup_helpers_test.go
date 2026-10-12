@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/naibabiji/wp-panel/database"
 )
 
 // countingWriter records every underlying Write call it receives, so tests can
@@ -15,6 +17,47 @@ import (
 type countingWriter struct {
 	buf   bytes.Buffer
 	calls int
+}
+
+func TestManagedMailDumpIgnoreTableUsesActualWordPressPrefixAndFailsClosed(t *testing.T) {
+	previous := database.DB
+	if err := database.Open(filepath.Join(t.TempDir(), "panel.db")); err != nil {
+		t.Fatal(err)
+	}
+	db := database.GetDB()
+	t.Cleanup(func() {
+		_ = db.Close()
+		database.DB = previous
+	})
+	if _, err := db.Exec(`CREATE TABLE websites(id INTEGER PRIMARY KEY,db_name TEXT,site_type TEXT,web_root TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE managed_mail_sites(site_id INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "wp-config.php"), []byte("<?php\n$table_prefix = 'wp_custom_';\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO websites(id,db_name,site_type,web_root) VALUES(1,'wordpress_db','wordpress',?)`, root); err != nil {
+		t.Fatal(err)
+	}
+	table, err := managedMailDumpIgnoreTable("wordpress_db")
+	if err != nil || table != "wp_custom_wpp_managed_mail_log" {
+		t.Fatalf("table=%q err=%v", table, err)
+	}
+	if _, err := db.Exec(`UPDATE websites SET web_root=? WHERE id=1`, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if table, err := managedMailDumpIgnoreTable("wordpress_db"); err != nil || table != "" {
+		t.Fatalf("unused managed mail site should not block export: table=%q err=%v", table, err)
+	}
+	if _, err := db.Exec(`INSERT INTO managed_mail_sites(site_id) VALUES(1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := managedMailDumpIgnoreTable("wordpress_db"); err == nil {
+		t.Fatal("managed WordPress export did not fail closed when prefix was unavailable")
+	}
 }
 
 func (c *countingWriter) Write(p []byte) (int, error) {

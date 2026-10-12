@@ -180,7 +180,11 @@ func defaultSiteMigrationDatabaseDumper(ctx context.Context, dbName, target stri
 			_ = os.Remove(tmp)
 		}
 	}()
-	args := siteMigrationDumpArgs(cfg, dbName)
+	ignoredTable, err := managedMailDumpIgnoreTable(dbName)
+	if err != nil {
+		return err
+	}
+	args := siteMigrationDumpArgs(cfg, dbName, ignoredTable)
 	cmd := exec.CommandContext(ctx, "mariadb-dump", args...)
 	cmd.Env = append(os.Environ(), "MYSQL_PWD="+cfg.RootPassword)
 	var stderr bytes.Buffer
@@ -219,12 +223,15 @@ func defaultSiteMigrationDatabaseDumper(ctx context.Context, dbName, target stri
 	return nil
 }
 
-func siteMigrationDumpArgs(cfg config.MariaDBConfig, dbName string) []string {
+func siteMigrationDumpArgs(cfg config.MariaDBConfig, dbName, ignoredTable string) []string {
 	args := []string{"--user=" + cfg.RootUser, "--single-transaction", "--quick", "--routines", "--events", "--triggers", "--hex-blob", "--default-character-set=utf8mb4"}
 	if cfg.Socket != "" {
 		args = append(args, "--socket="+cfg.Socket)
 	} else {
 		args = append(args, "--host="+cfg.Host, "--port="+strconv.Itoa(cfg.Port))
+	}
+	if ignoredTable != "" {
+		args = append(args, "--ignore-table="+dbName+"."+ignoredTable)
 	}
 	args = append(args, "--", dbName)
 	return args

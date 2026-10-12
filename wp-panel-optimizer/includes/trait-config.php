@@ -172,7 +172,7 @@ trait WPP_Optimizer_Config_Trait {
         return self::api_request($method, $path, $body);
     }
 
-    private static function api_request($method, $path, $body = null) {
+    private static function api_request($method, $path, $body = null, $timeout = 10) {
         $baseUrl = self::get_panel_url();
         $apiKey  = self::get_api_key();
         if (!$baseUrl || !$apiKey) {
@@ -185,7 +185,7 @@ trait WPP_Optimizer_Config_Trait {
                 'X-WP-Panel-Key' => $apiKey,
                 'Content-Type'   => 'application/json',
             ],
-            'timeout'   => 10,
+            'timeout'   => max(1, min(30, intval($timeout))),
             'sslverify' => false,
         ];
 

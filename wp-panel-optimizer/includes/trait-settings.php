@@ -96,7 +96,7 @@ trait WPP_Optimizer_Settings_Trait {
     }
 
     public static function settings_assets($hook) {
-        if ($hook !== 'settings_page_wp-panel-optimizer') {
+        if (!in_array($hook, ['settings_page_wp-panel-optimizer', 'settings_page_wp-panel-managed-mail'], true)) {
             return;
         }
         wp_enqueue_style(
@@ -105,6 +105,15 @@ trait WPP_Optimizer_Settings_Trait {
             ['dashicons'],
             self::VERSION
         );
+        if ($hook === 'settings_page_wp-panel-managed-mail') {
+            wp_enqueue_script(
+                'wpp-managed-mail',
+                plugin_dir_url(WPP_OPTIMIZER_PLUGIN_FILE) . 'assets/managed-mail.js',
+                [],
+                self::VERSION,
+                true
+            );
+        }
     }
 
     private static function companion_update_info($refresh = false) {
@@ -393,6 +402,9 @@ trait WPP_Optimizer_Settings_Trait {
                 <a href="#" class="nav-tab nav-tab-active" data-tab="cache"><span class="dashicons dashicons-performance" aria-hidden="true"></span><?php echo esc_html__('Cache & Performance', 'wp-panel-optimizer'); ?></a>
                 <a href="#" class="nav-tab" data-tab="image"><span class="dashicons dashicons-format-image" aria-hidden="true"></span><?php echo esc_html__('Image Optimization', 'wp-panel-optimizer'); ?></a>
                 <a href="#" class="nav-tab" data-tab="security"><span class="dashicons dashicons-shield" aria-hidden="true"></span><?php echo esc_html__('Security & Maintenance', 'wp-panel-optimizer'); ?></a>
+                <?php if (method_exists(__CLASS__, 'managed_mail_page') && current_user_can(self::MANAGED_MAIL_CAPABILITY) && self::managed_mail_should_show()): ?>
+                    <a href="<?php echo esc_url(admin_url('options-general.php?page=wp-panel-managed-mail')); ?>" class="nav-tab"><span class="dashicons dashicons-email-alt" aria-hidden="true"></span><?php echo esc_html__('Managed Email', 'wp-panel-optimizer'); ?></a>
+                <?php endif; ?>
                 <a href="#" class="nav-tab" data-tab="about"><span class="dashicons dashicons-admin-links" aria-hidden="true"></span><?php echo esc_html__('About & Panel Sync', 'wp-panel-optimizer'); ?></a>
             </nav>
 
@@ -1030,7 +1042,7 @@ trait WPP_Optimizer_Settings_Trait {
             });
 
             (function() {
-                var tabs = document.querySelectorAll('#wpp-tabs .nav-tab');
+                var tabs = document.querySelectorAll('#wpp-tabs .nav-tab[data-tab]');
                 var panels = document.querySelectorAll('.wpp-tab-panel');
                 function activate(name) {
                     tabs.forEach(function(t) { t.classList.toggle('nav-tab-active', t.dataset.tab === name); });
@@ -1041,7 +1053,10 @@ trait WPP_Optimizer_Settings_Trait {
                     t.addEventListener('click', function(e) { e.preventDefault(); activate(t.dataset.tab); });
                 });
                 var saved = null;
-                try { saved = sessionStorage.getItem('wpp_active_tab'); } catch (e) {}
+                try { saved = new URL(window.location.href).searchParams.get('wpp_tab'); } catch (e) {}
+                if (!saved) {
+                    try { saved = sessionStorage.getItem('wpp_active_tab'); } catch (e) {}
+                }
                 if (saved && document.querySelector('.wpp-tab-panel[data-tab-panel="' + saved + '"]')) {
                     activate(saved);
                 }

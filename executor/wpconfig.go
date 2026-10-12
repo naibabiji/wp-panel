@@ -225,8 +225,8 @@ func SetWPCronDisabled(webRoot string, disabled bool) error {
 
 func extractWPTablePrefix(content string) (string, bool) {
 	for _, pattern := range []string{
-		`(?m)\$table_prefix\s*=\s*'([^']*)'\s*;`,
-		`(?m)\$table_prefix\s*=\s*"([^"]*)"\s*;`,
+		`(?m)^\s*\$table_prefix\s*=\s*'([^']*)'\s*;`,
+		`(?m)^\s*\$table_prefix\s*=\s*"([^"]*)"\s*;`,
 	} {
 		re := regexp.MustCompile(pattern)
 		matches := re.FindStringSubmatch(content)

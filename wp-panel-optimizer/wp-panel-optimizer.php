@@ -3,7 +3,7 @@
  * Plugin Name: WP Panel Optimizer
  * Plugin URI:  https://wp-panel.org/
  * Description: Companion plugin for the WP Panel hosting panel: manages FastCGI cache, preload, debug mode, post revisions, memory limits and other optimizations. Clears the cache automatically when posts are published or updated.
- * Version:     1.1.28
+ * Version:     1.1.38
  * Author:      WP Panel
  * Author URI:  https://wp-panel.org/
  * License:     GPL-2.0+
@@ -20,6 +20,9 @@ if (!defined('ABSPATH')) exit;
 
 register_uninstall_hook(__FILE__, 'wpp_optimizer_uninstall');
 function wpp_optimizer_uninstall() {
+	global $wpdb;
+	$administrator = get_role('administrator');
+	if ($administrator) $administrator->remove_cap('wpp_view_managed_mail_body');
     delete_option('wpp_optimizer_fcache_enabled');
     delete_option('wpp_optimizer_fcache_ttl');
     delete_option('wpp_optimizer_no_updates');
@@ -44,6 +47,12 @@ function wpp_optimizer_uninstall() {
     delete_option('wpp_optimizer_image_jpeg_quality');
     delete_option('wpp_optimizer_image_webp_quality');
     delete_option('wpp_optimizer_image_skipped_count');
+	delete_option('wpp_optimizer_managed_mail_enabled');
+	delete_option('wpp_optimizer_managed_mail_logging');
+	delete_option('wpp_optimizer_managed_mail_retention_days');
+	delete_option('wpp_optimizer_managed_mail_retention_count');
+	delete_option('wpp_optimizer_managed_mail_db_version');
+	$wpdb->query('DROP TABLE IF EXISTS ' . $wpdb->prefix . 'wpp_managed_mail_log');
 }
 
 
@@ -58,6 +67,12 @@ require_once __DIR__ . '/includes/trait-settings.php';
 require_once __DIR__ . '/includes/trait-image-optimizer.php';
 require_once __DIR__ . '/includes/trait-maintenance.php';
 require_once __DIR__ . '/includes/trait-anomaly-monitor.php';
+global $wp_version;
+if (version_compare((string) $wp_version, '6.8', '>=')) {
+	require_once __DIR__ . '/includes/trait-managed-mail.php';
+} else {
+	require_once __DIR__ . '/includes/trait-managed-mail-compat.php';
+}
 
 class WP_Panel_Optimizer {
 
@@ -67,8 +82,9 @@ class WP_Panel_Optimizer {
     use WPP_Optimizer_Image_Trait;
     use WPP_Optimizer_Maintenance_Trait;
     use WPP_Optimizer_Anomaly_Monitor_Trait;
+	use WPP_Optimizer_Managed_Mail_Trait;
 
-    const VERSION = '1.1.28';
+    const VERSION = '1.1.38';
 
     const OPTION_FCACHE_ENABLED = 'wpp_optimizer_fcache_enabled';
     const OPTION_FCACHE_TTL     = 'wpp_optimizer_fcache_ttl';
@@ -95,8 +111,12 @@ class WP_Panel_Optimizer {
     const PRELOAD_TICK_THROTTLE  = 50;
 }
 
+register_activation_hook(__FILE__, ['WP_Panel_Optimizer', 'managed_mail_activate']);
+
+add_action('plugins_loaded', ['WP_Panel_Optimizer', 'managed_mail_bootstrap'], 0);
 add_action('plugins_loaded', ['WP_Panel_Optimizer', 'bootstrap'], 1);
 add_action('init', ['WP_Panel_Optimizer', 'init']);
+add_action('init', ['WP_Panel_Optimizer', 'managed_mail_init']);
 add_action('init', ['WP_Panel_Optimizer', 'maintenance_hooks']);
 
 // 自托管分发，语言包只随插件自带；init 阶段 locale 已就绪（含用户个人语言设置）。

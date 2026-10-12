@@ -762,6 +762,11 @@ var upgrades = []Upgrade{
 			`INSERT OR IGNORE INTO security_settings (skey,svalue,description) VALUES ('panel_auto_update_release_detected_at','','面板自动更新当前目标首次检测时间')`,
 		},
 	},
+	{
+		Version:     "1.0.68",
+		Description: "新增 WordPress 托管发信策略、额度与幂等元数据",
+		SQL:         managedMailSchemaStatements,
+	},
 }
 
 func ensureMonitoringCPUBreakdownColumns() error {

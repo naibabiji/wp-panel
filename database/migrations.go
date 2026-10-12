@@ -686,7 +686,7 @@ var migrations = append([]string{
 		('wp_sqli_autoban_enabled',       'true',  'WordPress SQL 注入重复来源自动临时封禁'),
 		('wp_sqli_ban_threshold',         '5',     'SQL 注入自动封禁阈值'),
 		('wp_sqli_ban_window_seconds',    '600',   'SQL 注入自动封禁统计窗口（秒）')`,
-}, append(wpInventorySchemaStatements, append(wpUpdateSchemaStatements, append(imageOptimizerSchemaStatements, siteMigrationSchemaStatements...)...)...)...)
+}, append(wpInventorySchemaStatements, append(wpUpdateSchemaStatements, append(imageOptimizerSchemaStatements, append(siteMigrationSchemaStatements, managedMailSchemaStatements...)...)...)...)...)
 
 // wpInventorySchemaStatements 同时供全新安装和 1.0.31 增量升级使用，避免两条路径的
 // 表结构、约束或索引随维护产生漂移。

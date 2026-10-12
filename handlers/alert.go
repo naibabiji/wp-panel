@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -20,7 +21,19 @@ type AlertHandler struct{}
 
 func (h *AlertHandler) GetSettings(c *gin.Context) {
 	db := database.GetDB()
-	rows, err := db.Query("SELECT id, skey, svalue, description, updated_at FROM security_settings WHERE skey LIKE 'alert_%' OR skey LIKE 'smtp_%' OR skey = 'admin_email' OR skey LIKE 'webhook_%'")
+	rows, err := db.Query(`SELECT id, skey, svalue, description, updated_at
+		FROM security_settings
+		WHERE skey LIKE 'alert_%'
+		   OR skey LIKE 'smtp_%'
+		   OR skey = 'admin_email'
+		   OR skey LIKE 'webhook_%'
+		   OR skey IN (
+			'managed_mail_limit_preset',
+			'managed_mail_total_minute_limit',
+			'managed_mail_total_hour_limit',
+			'managed_mail_total_day_limit',
+			'managed_mail_system_day_limit'
+		   )`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询失败"))
 		return
@@ -56,6 +69,10 @@ func (h *AlertHandler) SaveSettings(c *gin.Context) {
 		}
 		updates[key] = strVal
 	}
+	if err := validateManagedMailLimitUpdates(database.GetDB(), updates); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+		return
+	}
 	if err := saveSecuritySettingsTransaction(database.GetDB(), updates); err != nil {
 		log.Printf("保存告警设置失败: %v", err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("告警设置保存失败"))
@@ -78,6 +95,34 @@ func normalizeAlertSetting(key string, val interface{}) (string, bool, error) {
 	case "smtp_user", "smtp_pass":
 		v, err := normalizePlainString(val, 300, key)
 		return v, true, err
+	case "smtp_from_email":
+		v, err := normalizePlainString(val, 300, key)
+		if err != nil {
+			return "", false, err
+		}
+		if v != "" {
+			parsed, parseErr := mail.ParseAddress(v)
+			if parseErr != nil || parsed.Address != v {
+				return "", false, fmt.Errorf("SMTP 发件邮箱格式不正确")
+			}
+		}
+		return v, true, nil
+	case "managed_mail_limit_preset":
+		v, err := normalizePlainString(val, 20, key)
+		if err != nil || (v != "conservative" && v != "standard" && v != "custom") {
+			return "", false, fmt.Errorf("网站邮件额度预设不正确")
+		}
+		return v, true, nil
+	case "managed_mail_total_minute_limit", "managed_mail_total_hour_limit", "managed_mail_total_day_limit", "managed_mail_system_day_limit":
+		v, err := normalizePlainString(val, 10, key)
+		if err != nil {
+			return "", false, err
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 1000000 {
+			return "", false, fmt.Errorf("邮件额度必须为正整数")
+		}
+		return strconv.Itoa(n), true, nil
 	case "smtp_port":
 		v, err := normalizePlainString(val, 10, key)
 		if err != nil {
@@ -161,6 +206,27 @@ func normalizeAlertSetting(key string, val interface{}) (string, bool, error) {
 	}
 }
 
+func validateManagedMailLimitUpdates(db *sql.DB, updates map[string]string) error {
+	keys := []string{"managed_mail_total_minute_limit", "managed_mail_total_hour_limit", "managed_mail_total_day_limit"}
+	values := []int{10, 30, 100}
+	for i, key := range keys {
+		if value, ok := updates[key]; ok {
+			values[i], _ = strconv.Atoi(value)
+			continue
+		}
+		var stored string
+		if db != nil && db.QueryRow(`SELECT svalue FROM security_settings WHERE skey=?`, key).Scan(&stored) == nil {
+			if parsed, err := strconv.Atoi(stored); err == nil && parsed > 0 {
+				values[i] = parsed
+			}
+		}
+	}
+	if values[0] > values[1] || values[1] > values[2] {
+		return fmt.Errorf("总额度必须满足每分钟 ≤ 每小时 ≤ 每天")
+	}
+	return nil
+}
+
 func normalizePlainString(val interface{}, maxLen int, field string) (string, error) {
 	v, ok := val.(string)
 	if !ok {
@@ -194,6 +260,15 @@ func (h *AlertHandler) TestSMTP(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "测试邮件已发送至 " + req.Email}))
+}
+
+func (h *AlertHandler) DiagnoseSMTP(c *gin.Context) {
+	result, err := executor.DiagnoseSMTP(c.Request.Context(), "")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(result))
 }
 
 func (h *AlertHandler) TestWebhook(c *gin.Context) {

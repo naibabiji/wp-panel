@@ -24,7 +24,7 @@
                     </select>
                 </div>
                 <div class="mb-3">
-                    <label class="text-sm text-gray-300 mb-1 block">{{t .Lang "alert.sender_email"}}</label>
+                    <label class="text-sm text-gray-300 mb-1 block">{{t .Lang "alert.smtp_username"}}</label>
                     <input type="text" x-model="cfg.smtp_user" class="input-field text-sm">
                 </div>
                 <div class="mb-3">
@@ -32,16 +32,39 @@
                     <input type="password" x-model="cfg.smtp_pass" class="input-field text-sm">
                 </div>
                 <div class="mb-3">
+                    <label class="text-sm text-gray-300 mb-1 block">{{t .Lang "alert.sender_email"}}</label>
+                    <input type="email" x-model="cfg.smtp_from_email" class="input-field text-sm" placeholder="noreply@example.com">
+                    <p class="text-xs text-gray-500 mt-1">{{t .Lang "alert.sender_email_help"}}</p>
+                </div>
+                <div class="mb-3">
                     <label class="text-sm text-gray-300 mb-1 block">{{t .Lang "alert.admin_email"}}</label>
                     <input type="text" x-model="cfg.admin_email" class="input-field text-sm" placeholder="admin@example.com">
+                </div>
+                <div class="mb-3">
+                    <button @click="openManagedMailSettings()" class="btn-secondary text-sm">{{t .Lang "alert.managed_mail_settings"}}</button>
                 </div>
                 <p class="text-xs text-amber-400 mb-3">{{t .Lang "alert.smtp_transfer_warning"}}</p>
                 <div class="flex flex-wrap gap-3">
                     <button @click="save" :disabled="saving" class="btn-primary text-sm" x-text="saving ? t('alert.saving') : t('common.save')"></button>
                     <button @click="test" :disabled="testing" class="btn-secondary text-sm" x-text="testing ? t('alert.sending') : t('alert.test_send')"></button>
+					<button @click="diagnose" :disabled="diagnosing" class="btn-secondary text-sm" x-text="diagnosing ? t('alert.smtp_diagnosing') : t('alert.smtp_diagnose')"></button>
                     <button @click="copyConfig" :disabled="transferring" class="btn-secondary text-sm" x-text="t('alert.smtp_copy')"></button>
                     <button @click="openImportModal" :disabled="transferring" class="btn-secondary text-sm" x-text="t('alert.smtp_import')"></button>
                 </div>
+				<p class="text-xs text-gray-500 mt-3">{{t .Lang "alert.smtp_diagnostic_help"}}</p>
+				<div x-cloak x-show="diagnostic" class="mt-4 rounded border p-3" :class="diagnostic?.success ? 'border-green-700 bg-green-950/30' : 'border-amber-700 bg-amber-950/20'">
+					<p class="text-sm font-semibold" :class="diagnostic?.success ? 'text-green-300' : 'text-amber-300'" x-text="diagnosticConclusion()"></p>
+					<p x-show="diagnostic?.alternative_2525" class="text-xs text-blue-300 mt-2" x-text="t('alert.smtp_diagnostic_alt_2525')"></p>
+					<div class="mt-3 space-y-2">
+						<template x-for="(stage, index) in (diagnostic?.stages || [])" :key="stage.name + index">
+							<div class="text-xs flex items-start gap-2">
+								<span :class="stage.status === 'passed' ? 'text-green-400' : 'text-red-400'" x-text="stage.status === 'passed' ? '✓' : '✕'"></span>
+								<div><span class="text-gray-300" x-text="stageLabel(stage.name)"></span><span x-show="stage.detail" class="text-gray-500 ml-2 break-all" x-text="stage.detail"></span></div>
+							</div>
+						</template>
+					</div>
+					<button @click="copyDiagnostic" class="btn-secondary text-xs mt-3" x-text="t('alert.smtp_diagnostic_copy')"></button>
+				</div>
 
                 <div x-cloak x-show="importOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" @click.self="closeImportModal()" @keydown.escape.window="closeImportModal()">
                     <div class="card w-full max-w-xl" role="dialog" aria-modal="true" aria-labelledby="smtp-import-title">
@@ -52,6 +75,28 @@
                         <div class="flex justify-end gap-3 mt-5">
                             <button @click="closeImportModal()" :disabled="transferring" class="btn-secondary text-sm">{{t .Lang "common.cancel"}}</button>
                             <button @click="importConfig" :disabled="transferring || !importCode.trim()" class="btn-primary text-sm" x-text="t('alert.smtp_import')"></button>
+                        </div>
+                    </div>
+                </div>
+
+                <div x-cloak x-show="managedMailOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" @click.self="closeManagedMailSettings()" @keydown.escape.window="closeManagedMailSettings()">
+                    <div class="card w-full max-w-xl" role="dialog" aria-modal="true" aria-labelledby="managed-mail-limits-title">
+                        <h3 id="managed-mail-limits-title" class="text-lg font-semibold text-white mb-4">{{t .Lang "alert.managed_mail_limits"}}</h3>
+                        <select x-model="cfg.managed_mail_limit_preset" @change="applyLimitPreset()" class="input-field text-sm mb-3">
+                            <option value="conservative">{{t .Lang "alert.managed_mail_conservative"}}</option>
+                            <option value="standard">{{t .Lang "alert.managed_mail_standard"}}</option>
+                            <option value="custom">{{t .Lang "alert.managed_mail_custom"}}</option>
+                        </select>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <label class="text-xs text-gray-400">{{t .Lang "alert.managed_mail_per_minute"}}<input type="number" min="1" x-model="cfg.managed_mail_total_minute_limit" @input="cfg.managed_mail_limit_preset='custom'" class="input-field text-sm mt-1"></label>
+                            <label class="text-xs text-gray-400">{{t .Lang "alert.managed_mail_per_hour"}}<input type="number" min="1" x-model="cfg.managed_mail_total_hour_limit" @input="cfg.managed_mail_limit_preset='custom'" class="input-field text-sm mt-1"></label>
+                            <label class="text-xs text-gray-400">{{t .Lang "alert.managed_mail_per_day"}}<input type="number" min="1" x-model="cfg.managed_mail_total_day_limit" @input="cfg.managed_mail_limit_preset='custom'" class="input-field text-sm mt-1"></label>
+                        </div>
+                        <label class="text-xs text-gray-400 block mt-3">{{t .Lang "alert.managed_mail_system_day"}}<input type="number" min="1" x-model="cfg.managed_mail_system_day_limit" class="input-field text-sm mt-1"></label>
+                        <p class="text-xs text-amber-300 mt-3">{{t .Lang "alert.managed_mail_shared_warning"}}</p>
+                        <div class="flex justify-end gap-3 mt-5">
+                            <button @click="closeManagedMailSettings()" class="btn-secondary text-sm">{{t .Lang "common.close"}}</button>
+                            <button @click="saveManagedMailSettings" :disabled="saving" class="btn-primary text-sm" x-text="saving ? t('common.saving') : t('common.save')"></button>
                         </div>
                     </div>
                 </div>
@@ -197,11 +242,15 @@ function alertSettings() {
 
 function smtpConfig() {
     return {
-        cfg: { smtp_host: '', smtp_port: '587', smtp_encryption: 'starttls', smtp_user: '', smtp_pass: '', admin_email: '' },
+        cfg: { smtp_host: '', smtp_port: '587', smtp_encryption: 'starttls', smtp_user: '', smtp_pass: '', smtp_from_email: '', admin_email: '', managed_mail_limit_preset: 'conservative', managed_mail_total_minute_limit: '10', managed_mail_total_hour_limit: '30', managed_mail_total_day_limit: '100', managed_mail_system_day_limit: '20' },
         saving: false,
         testing: false,
+		diagnosing: false,
+		diagnostic: null,
         transferring: false,
         importOpen: false,
+        managedMailOpen: false,
+        managedMailSnapshot: null,
         importCode: '',
         async fetch() {
             try {
@@ -214,7 +263,13 @@ function smtpConfig() {
                         smtp_encryption: d.smtp_encryption || 'starttls',
                         smtp_user: d.smtp_user || '',
                         smtp_pass: d.smtp_pass || '',
-                        admin_email: d.admin_email || ''
+                        smtp_from_email: d.smtp_from_email || '',
+                        admin_email: d.admin_email || '',
+                        managed_mail_limit_preset: d.managed_mail_limit_preset || 'conservative',
+                        managed_mail_total_minute_limit: d.managed_mail_total_minute_limit || '10',
+                        managed_mail_total_hour_limit: d.managed_mail_total_hour_limit || '30',
+                        managed_mail_total_day_limit: d.managed_mail_total_day_limit || '100',
+                        managed_mail_system_day_limit: d.managed_mail_system_day_limit || '20'
                     };
                 }
             } catch(e) {}
@@ -228,10 +283,51 @@ function smtpConfig() {
                     smtp_encryption: this.cfg.smtp_encryption || 'starttls',
                     smtp_user: this.cfg.smtp_user || '',
                     smtp_pass: this.cfg.smtp_pass || '',
-                    admin_email: this.cfg.admin_email || ''
+                    smtp_from_email: this.cfg.smtp_from_email || '',
+                    admin_email: this.cfg.admin_email || '',
                 };
                 await api('/alert/settings', { method: 'PUT', body });
                 showToast(t('alert.smtp_config_saved'), 'success');
+            } catch(e) { showToast(e.message, 'error'); }
+            this.saving = false;
+        },
+        applyLimitPreset() {
+            if (this.cfg.managed_mail_limit_preset === 'conservative') {
+                Object.assign(this.cfg, { managed_mail_total_minute_limit: '10', managed_mail_total_hour_limit: '30', managed_mail_total_day_limit: '100' });
+            } else if (this.cfg.managed_mail_limit_preset === 'standard') {
+                Object.assign(this.cfg, { managed_mail_total_minute_limit: '20', managed_mail_total_hour_limit: '100', managed_mail_total_day_limit: '300' });
+            }
+        },
+        openManagedMailSettings() {
+            this.managedMailSnapshot = {
+                managed_mail_limit_preset: this.cfg.managed_mail_limit_preset,
+                managed_mail_total_minute_limit: this.cfg.managed_mail_total_minute_limit,
+                managed_mail_total_hour_limit: this.cfg.managed_mail_total_hour_limit,
+                managed_mail_total_day_limit: this.cfg.managed_mail_total_day_limit,
+                managed_mail_system_day_limit: this.cfg.managed_mail_system_day_limit
+            };
+            this.managedMailOpen = true;
+        },
+        closeManagedMailSettings() {
+            if (this.saving) return;
+            if (this.managedMailSnapshot) Object.assign(this.cfg, this.managedMailSnapshot);
+            this.managedMailSnapshot = null;
+            this.managedMailOpen = false;
+        },
+        async saveManagedMailSettings() {
+            this.saving = true;
+            try {
+                const body = {
+                    managed_mail_limit_preset: this.cfg.managed_mail_limit_preset || 'conservative',
+                    managed_mail_total_minute_limit: String(this.cfg.managed_mail_total_minute_limit || '10'),
+                    managed_mail_total_hour_limit: String(this.cfg.managed_mail_total_hour_limit || '30'),
+                    managed_mail_total_day_limit: String(this.cfg.managed_mail_total_day_limit || '100'),
+                    managed_mail_system_day_limit: String(this.cfg.managed_mail_system_day_limit || '20')
+                };
+                await api('/alert/settings', { method: 'PUT', body });
+                this.managedMailSnapshot = null;
+                this.managedMailOpen = false;
+                showToast(t('alert.managed_mail_settings_saved'), 'success');
             } catch(e) { showToast(e.message, 'error'); }
             this.saving = false;
         },
@@ -243,6 +339,56 @@ function smtpConfig() {
             } catch(e) { showToast(e.message || t('alert.send_failed'), 'error'); }
             this.testing = false;
         },
+		async diagnose() {
+			this.diagnosing = true;
+			this.diagnostic = null;
+			try {
+				const r = await api('/alert/diagnose-smtp', { method: 'POST', body: {} });
+				this.diagnostic = r.data || null;
+			} catch(e) { showToast(e.message || t('alert.send_failed'), 'error'); }
+			this.diagnosing = false;
+		},
+		diagnosticConclusion() {
+			if (!this.diagnostic) return '';
+			const key = 'alert.smtp_diagnostic_' + (this.diagnostic.conclusion_code || 'smtp_failed');
+			return t(key);
+		},
+		stageLabel(name) {
+			const labels = {
+				dns: t('alert.smtp_diagnostic_stage_dns'),
+				ipv4_tcp: t('alert.smtp_diagnostic_stage_ipv4_tcp'),
+				ipv6_tcp: t('alert.smtp_diagnostic_stage_ipv6_tcp'),
+				tcp: t('alert.smtp_diagnostic_stage_tcp'),
+				tls: t('alert.smtp_diagnostic_stage_tls'),
+				smtp: t('alert.smtp_diagnostic_stage_smtp'),
+				authentication: t('alert.smtp_diagnostic_stage_authentication'),
+				submission: t('alert.smtp_diagnostic_stage_submission'),
+				https_control: t('alert.smtp_diagnostic_stage_https_control'),
+				alternative_2525: t('alert.smtp_diagnostic_stage_alternative_2525')
+			};
+			return labels[name] || name;
+		},
+		diagnosticReport() {
+			if (!this.diagnostic) return '';
+			const d = this.diagnostic;
+			const lines = [
+				t('alert.smtp_diagnostic_report'),
+				'Host: ' + d.host,
+				'Port: ' + d.port,
+				'Encryption: ' + d.encryption,
+				'IPv4: ' + ((d.ipv4 || []).join(', ') || '--'),
+				'IPv6: ' + ((d.ipv6 || []).join(', ') || '--'),
+				'Conclusion: ' + this.diagnosticConclusion()
+			];
+			for (const stage of (d.stages || [])) lines.push((stage.status === 'passed' ? 'PASS ' : 'FAIL ') + this.stageLabel(stage.name) + (stage.detail ? ': ' + stage.detail : ''));
+			return lines.join('\n');
+		},
+		async copyDiagnostic() {
+			try {
+				await navigator.clipboard.writeText(this.diagnosticReport());
+				showToast(t('alert.smtp_diagnostic_copied'), 'success');
+			} catch(e) { showToast(t('alert.smtp_copy_failed'), 'error'); }
+		},
         async copyConfig() {
             this.transferring = true;
             try {
@@ -286,7 +432,7 @@ function smtpConfig() {
             try {
                 const r = await api('/alert/smtp-config/import', { method: 'POST', body: { code } });
                 const d = r.data || {};
-                const hasExisting = ['smtp_host', 'smtp_user', 'smtp_pass', 'admin_email'].some(k => String(this.cfg[k] || '').trim() !== '');
+                const hasExisting = ['smtp_host', 'smtp_user', 'smtp_pass', 'smtp_from_email', 'admin_email'].some(k => String(this.cfg[k] || '').trim() !== '');
                 if (hasExisting && !await confirmModal(t('alert.smtp_overwrite_confirm'))) {
                     showToast(t('alert.smtp_import_cancelled'), 'info');
                     this.importOpen = false;
@@ -294,11 +440,13 @@ function smtpConfig() {
                     return;
                 }
                 this.cfg = {
+                    ...this.cfg,
                     smtp_host: d.smtp_host || '',
                     smtp_port: d.smtp_port || '587',
                     smtp_encryption: d.smtp_encryption || 'starttls',
                     smtp_user: d.smtp_user || '',
                     smtp_pass: d.smtp_pass || '',
+                    smtp_from_email: d.smtp_from_email || '',
                     admin_email: d.admin_email || ''
                 };
                 this.importOpen = false;

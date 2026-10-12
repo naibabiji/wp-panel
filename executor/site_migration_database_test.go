@@ -106,9 +106,9 @@ func TestSiteMigrationDatabaseExportFailureIsNotReadable(t *testing.T) {
 }
 
 func TestSiteMigrationDumpArgsUseConsistentSnapshotAndArgumentBoundary(t *testing.T) {
-	args := siteMigrationDumpArgs(config.MariaDBConfig{Host: "127.0.0.1", Port: 3306, RootUser: "root"}, "safe_db")
+	args := siteMigrationDumpArgs(config.MariaDBConfig{Host: "127.0.0.1", Port: 3306, RootUser: "root"}, "safe_db", "wp_wpp_managed_mail_log")
 	joined := strings.Join(args, " ")
-	for _, required := range []string{"--single-transaction", "--quick", "--routines", "--events", "--triggers", "--hex-blob", "-- safe_db"} {
+	for _, required := range []string{"--single-transaction", "--quick", "--routines", "--events", "--triggers", "--hex-blob", "--ignore-table=safe_db.wp_wpp_managed_mail_log", "-- safe_db"} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("missing %q in %q", required, joined)
 		}

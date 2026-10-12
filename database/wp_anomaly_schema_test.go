@@ -49,7 +49,7 @@ DELETE FROM schema_version; INSERT INTO schema_version(version) VALUES('1.0.59')
 		t.Fatal(err)
 	}
 	check()
-	if LatestVersion() != "1.0.67" {
+	if LatestVersion() != "1.0.68" {
 		t.Fatal(LatestVersion())
 	}
 }

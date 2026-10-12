@@ -1,6 +1,6 @@
 msgid ""
 msgstr ""
-"Project-Id-Version: WP Panel Optimizer 1.1.28\n"
+"Project-Id-Version: WP Panel Optimizer 1.1.38\n"
 "Report-Msgid-Bugs-To: https://wp-panel.org/\n"
 "Last-Translator: WP Panel\n"
 "Language-Team: Chinese (China)\n"
@@ -8,7 +8,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "POT-Creation-Date: 2026-09-12 00:00+0000\n"
-"PO-Revision-Date: 2026-09-12T15:58:41+00:00\n"
+"PO-Revision-Date: 2026-10-12T08:12:47+00:00\n"
 "Language: zh_CN\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 "X-Domain: wp-panel-optimizer\n"
@@ -57,7 +57,7 @@ msgid "Failed to start cache preload. Please confirm the FastCGI cache is enable
 msgstr "缓存预加载启动失败，请确认 FastCGI 缓存已开启。"
 
 #: includes/trait-cache.php:42
-#: includes/trait-settings.php:930
+#: includes/trait-settings.php:942
 msgid "Clear Nginx cache"
 msgstr "清除 Nginx 缓存"
 
@@ -82,7 +82,7 @@ msgid "Preload complete"
 msgstr "预加载完成"
 
 #: includes/trait-config.php:156
-#: wp-panel-optimizer.php:125
+#: wp-panel-optimizer.php:145
 msgid "API returned an error"
 msgstr "API 返回错误"
 
@@ -93,8 +93,8 @@ msgstr "无法读取 WP Panel 配置。网站域名或运行配置可能已变�
 #: includes/trait-image-optimizer.php:76
 #: includes/trait-image-optimizer.php:88
 #: includes/trait-image-optimizer.php:100
-#: includes/trait-settings.php:136
-#: wp-panel-optimizer.php:110
+#: includes/trait-settings.php:145
+#: wp-panel-optimizer.php:130
 msgid "Insufficient permissions"
 msgstr "权限不足"
 
@@ -139,6 +139,8 @@ msgid "Relock now"
 msgstr "立即重新锁定"
 
 #: includes/trait-maintenance.php:28
+#: includes/trait-managed-mail.php:617
+#: includes/trait-managed-mail.php:641
 msgid "Close"
 msgstr "关闭"
 
@@ -207,7 +209,7 @@ msgid "Invalid request"
 msgstr "请求无效"
 
 #: includes/trait-maintenance.php:45
-#: includes/trait-settings.php:337
+#: includes/trait-settings.php:346
 msgid "File protection / maintenance"
 msgstr "文件保护 / 临时维护"
 
@@ -215,1037 +217,1439 @@ msgstr "文件保护 / 临时维护"
 msgid "File protection is managed by WP Panel. Temporarily unlock it with the maintenance password when installing, updating, or changing plugins and themes."
 msgstr "文件保护由 WP Panel 统一管理。需要安装、更新或修改插件和主题时，可使用维护密码临时解锁。"
 
+#: includes/trait-managed-mail.php:315
+#: includes/trait-managed-mail.php:516
+#: includes/trait-managed-mail.php:533
+#: includes/trait-settings.php:406
+msgid "Managed Email"
+msgstr "托管邮件"
+
+#: includes/trait-managed-mail.php:407
+msgid "WP Panel managed email test"
+msgstr "WP Panel 托管邮件测试"
+
+#: includes/trait-managed-mail.php:408
+msgid "This test email was sent through WP Panel managed SMTP."
+msgstr "这封测试邮件已通过 WP Panel 托管 SMTP 发送。"
+
+#: includes/trait-managed-mail.php:434
+#: includes/trait-managed-mail.php:451
+msgid "Unavailable"
+msgstr "不可用"
+
+#: includes/trait-managed-mail.php:435
+msgid "WP Panel status is unavailable."
+msgstr "无法获取 WP Panel 状态。"
+
+#: includes/trait-managed-mail.php:439
+#: includes/trait-managed-mail.php:707
+msgid "Paused"
+msgstr "已暂停"
+
+#: includes/trait-managed-mail.php:440
+msgid "Managed email is paused because another SMTP plugin is active. Remove the conflict and confirm managed email again."
+msgstr "检测到其他 SMTP 插件，托管邮件已暂停。请移除冲突后重新确认启用。"
+
+#: includes/trait-managed-mail.php:443
+msgid "Waiting for authorization"
+msgstr "等待授权"
+
+#: includes/trait-managed-mail.php:444
+#: includes/trait-managed-mail.php:464
+msgid "The server administrator has not authorized managed email for this site."
+msgstr "服务器管理员尚未授权此网站使用托管邮件。"
+
+#: includes/trait-managed-mail.php:447
+msgid "Ready to confirm"
+msgstr "可以确认"
+
+#: includes/trait-managed-mail.php:448
+msgid "Server authorization is ready. Confirm below to use WP Panel managed SMTP."
+msgstr "服务器授权已就绪，请在下方确认使用 WP Panel 托管 SMTP。"
+
+#: includes/trait-managed-mail.php:452
+msgid "Managed email is temporarily unavailable or paused. Messages will fail instead of falling back to PHP mail."
+msgstr "托管邮件暂时不可用或已暂停。邮件会明确失败，不会回退到 PHP mail。"
+
+#: includes/trait-managed-mail.php:455
+msgid "Active"
+msgstr "已启用"
+
+#: includes/trait-managed-mail.php:456
+msgid "WP Panel managed SMTP is active."
+msgstr "WP Panel 托管 SMTP 已启用。"
+
+#: includes/trait-managed-mail.php:462
+#: includes/trait-managed-mail.php:465
+msgid "Another SMTP plugin is still active. Remove it before enabling managed email."
+msgstr "其他 SMTP 插件仍处于启用状态。请先移除该插件，再启用托管发信。"
+
+#: includes/trait-managed-mail.php:463
+msgid "Could not refresh the SMTP plugin conflict status. Please try again."
+msgstr "无法刷新 SMTP 插件冲突状态，请重试。"
+
+#: includes/trait-managed-mail.php:466
+msgid "WP Panel SMTP is not ready. Ask the server administrator to check the SMTP settings."
+msgstr "WP Panel SMTP 尚未就绪，请联系服务器管理员检查 SMTP 设置。"
+
+#: includes/trait-managed-mail.php:467
+msgid "The server administrator has locked the default sender name."
+msgstr "服务器管理员已锁定默认发件人名称。"
+
+#: includes/trait-managed-mail.php:468
+msgid "The sender settings are invalid. Check the sender name and Reply-To address."
+msgstr "发件人设置无效，请检查发件人名称和 Reply-To 地址。"
+
+#: includes/trait-managed-mail.php:469
+msgid "Could not save the sender settings to WP Panel. Please try again."
+msgstr "无法将发件人设置保存到 WP Panel，请重试。"
+
+#: includes/trait-managed-mail.php:470
+msgid "Could not confirm managed email with WP Panel. Please try again."
+msgstr "无法向 WP Panel 确认托管发信，请重试。"
+
+#: includes/trait-managed-mail.php:479
+msgid "The test email was accepted by the SMTP service."
+msgstr "SMTP 服务已接受这封测试邮件。"
+
+#: includes/trait-managed-mail.php:480
+msgid "Enter a valid test recipient email address."
+msgstr "请输入有效的测试收件邮箱。"
+
+#: includes/trait-managed-mail.php:481
+msgid "Managed email must be active before sending a test email."
+msgstr "托管发信启用后才能发送测试邮件。"
+
+#: includes/trait-managed-mail.php:482
+msgid "The test email was blocked by the managed email quota."
+msgstr "测试邮件因达到托管发信额度而被阻止。"
+
+#: includes/trait-managed-mail.php:483
+msgid "Managed email is paused, so the test email was not sent."
+msgstr "托管发信当前已暂停，测试邮件未发送。"
+
+#: includes/trait-managed-mail.php:484
+msgid "Another SMTP plugin is active, so the test email was not sent."
+msgstr "检测到其他 SMTP 插件处于启用状态，测试邮件未发送。"
+
+#: includes/trait-managed-mail.php:485
+msgid "WP Panel could not be reached, so the test email was not sent."
+msgstr "无法连接 WP Panel，测试邮件未发送。"
+
+#: includes/trait-managed-mail.php:486
+msgid "The test email could not be sent. Check the status and recent email log below."
+msgstr "测试邮件发送失败，请检查当前状态和下方最近邮件日志。"
+
+#: includes/trait-managed-mail.php:499
+msgid "Managed SMTP delivery and site-local email records."
+msgstr "托管 SMTP 发信与站点本地邮件记录。"
+
+#: includes/trait-managed-mail.php:504
+#: includes/trait-settings.php:336
+msgid "Managed site"
+msgstr "受管站点"
+
+#: includes/trait-managed-mail.php:508
+#: includes/trait-settings.php:340
+msgid "Component version"
+msgstr "组件版本"
+
+#: includes/trait-managed-mail.php:514
+msgid "Managed email status"
+msgstr "托管发信状态"
+
+#: includes/trait-managed-mail.php:520
+#: includes/trait-managed-mail.php:563
+msgid "Email logging"
+msgstr "邮件日志"
+
+#: includes/trait-managed-mail.php:521
+#: includes/trait-settings.php:364
+#: includes/trait-settings.php:371
+#: includes/trait-settings.php:758
+msgid "Enabled"
+msgstr "已开启"
+
+#: includes/trait-managed-mail.php:521
+#: includes/trait-settings.php:371
+#: includes/trait-settings.php:758
+#: includes/trait-settings.php:774
+msgid "Disabled"
+msgstr "已禁用"
+
+#: includes/trait-managed-mail.php:524
+msgid "Stored records"
+msgstr "已存记录"
+
+#: includes/trait-managed-mail.php:529
+#: includes/trait-settings.php:401
+msgid "WP Panel Optimizer settings"
+msgstr "WP Panel Optimizer 设置"
+
+#: includes/trait-managed-mail.php:530
+#: includes/trait-settings.php:402
+msgid "Cache & Performance"
+msgstr "缓存与性能"
+
+#: includes/trait-managed-mail.php:531
+#: includes/trait-settings.php:403
+msgid "Image Optimization"
+msgstr "图片优化"
+
+#: includes/trait-managed-mail.php:532
+#: includes/trait-settings.php:404
+msgid "Security & Maintenance"
+msgstr "安全与维护"
+
+#: includes/trait-managed-mail.php:534
+#: includes/trait-settings.php:408
+msgid "About & Panel Sync"
+msgstr "关于与面板同步"
+
+#: includes/trait-managed-mail.php:543
+msgid "Managed email settings"
+msgstr "托管发信设置"
+
+#: includes/trait-managed-mail.php:544
+msgid "Choose whether this site uses the SMTP service authorized by WP Panel and how long local troubleshooting records are kept."
+msgstr "选择此站点是否使用 WP Panel 授权的 SMTP 服务，以及本地排查记录的保留期限。"
+
+#: includes/trait-managed-mail.php:551
+msgid "Managed SMTP"
+msgstr "托管 SMTP"
+
+#: includes/trait-managed-mail.php:551
+msgid "Requires authorization in WP Panel and confirmation by this site administrator."
+msgstr "需要先由 WP Panel 授权，再由本站管理员确认。"
+
+#: includes/trait-managed-mail.php:552
+msgid "Use WP Panel managed SMTP"
+msgstr "使用 WP Panel 托管 SMTP"
+
+#: includes/trait-managed-mail.php:555
+msgid "Default sender name"
+msgstr "默认发件人名称"
+
+#: includes/trait-managed-mail.php:555
+msgid "Used when a WordPress email does not provide its own sender name."
+msgstr "WordPress 邮件未提供自己的发件人名称时使用。"
+
+#: includes/trait-managed-mail.php:556
+msgid "Locked by the server administrator."
+msgstr "已由服务器管理员锁定。"
+
+#: includes/trait-managed-mail.php:559
+msgid "Default Reply-To"
+msgstr "默认 Reply-To"
+
+#: includes/trait-managed-mail.php:559
+msgid "Used when an individual email does not provide a Reply-To address."
+msgstr "单封邮件未提供 Reply-To 地址时使用。"
+
+#: includes/trait-managed-mail.php:563
+msgid "Stores complete email content in this WordPress database for troubleshooting."
+msgstr "在本站 WordPress 数据库中保存完整邮件内容，用于问题排查。"
+
+#: includes/trait-managed-mail.php:564
+msgid "Keep complete email logs"
+msgstr "保留完整邮件日志"
+
+#: includes/trait-managed-mail.php:567
+msgid "Log retention"
+msgstr "日志保留"
+
+#: includes/trait-managed-mail.php:567
+msgid "Older records are removed automatically when either limit is exceeded."
+msgstr "超过任一限制时，较早的记录会自动清理。"
+
+#: includes/trait-managed-mail.php:568
+msgid "Retention days"
+msgstr "保留天数"
+
+#: includes/trait-managed-mail.php:568
+msgid "Maximum entries"
+msgstr "最多记录数"
+
+#: includes/trait-managed-mail.php:570
+msgid "Save Changes"
+msgstr "保存更改"
+
+#: includes/trait-managed-mail.php:577
+msgid "Send a test email"
+msgstr "发送测试邮件"
+
+#: includes/trait-managed-mail.php:578
+msgid "The test uses the real managed SMTP path, counts toward the site quota and appears in the email log."
+msgstr "测试会使用真实托管 SMTP 链路，计入网站额度并出现在邮件日志中。"
+
+#: includes/trait-managed-mail.php:585
+msgid "Test recipient"
+msgstr "测试收件人"
+
+#: includes/trait-managed-mail.php:585
+msgid "Defaults to the WordPress administration email address."
+msgstr "默认使用 WordPress 管理员邮箱。"
+
+#: includes/trait-managed-mail.php:589
+msgid "Send test email"
+msgstr "发送测试邮件"
+
+#: includes/trait-managed-mail.php:594
+msgid "Privacy warning:"
+msgstr "隐私提醒："
+
+#: includes/trait-managed-mail.php:594
+msgid "Email logs may contain password reset links, verification codes and personal information."
+msgstr "邮件日志可能包含密码重置链接、验证码和个人信息。"
+
+#: includes/trait-managed-mail.php:617
+msgid "This content may contain active password-reset links, verification codes, or personal information."
+msgstr "此内容可能包含仍然有效的密码重置链接、验证码或个人信息。"
+
+#: includes/trait-managed-mail.php:619
+msgid "Logged at"
+msgstr "记录时间"
+
+#: includes/trait-managed-mail.php:620
+#: includes/trait-managed-mail.php:644
+msgid "Status"
+msgstr "状态"
+
+#: includes/trait-managed-mail.php:621
+msgid "Sender"
+msgstr "发件人"
+
+#: includes/trait-managed-mail.php:621
+msgid "No display name"
+msgstr "无显示名称"
+
+#: includes/trait-managed-mail.php:621
+msgid "Not recorded"
+msgstr "未记录"
+
+#: includes/trait-managed-mail.php:622
+msgid "To"
+msgstr "收件人"
+
+#: includes/trait-managed-mail.php:623
+msgid "CC"
+msgstr "抄送"
+
+#: includes/trait-managed-mail.php:624
+msgid "BCC"
+msgstr "密送"
+
+#: includes/trait-managed-mail.php:625
+msgid "Reply-To"
+msgstr "回复地址"
+
+#: includes/trait-managed-mail.php:626
+msgid "Message-ID"
+msgstr "Message-ID"
+
+#: includes/trait-managed-mail.php:627
+msgid "Error code"
+msgstr "错误代码"
+
+#: includes/trait-managed-mail.php:628
+msgid "Duration"
+msgstr "发送耗时"
+
+#. translators: %d: SMTP delivery duration in milliseconds.
+#: includes/trait-managed-mail.php:630
+#, php-format
+msgid "%d ms"
+msgstr "%d 毫秒"
+
+#: includes/trait-managed-mail.php:632
+msgid "Message size"
+msgstr "邮件大小"
+
+#: includes/trait-managed-mail.php:633
+msgid "Attachments"
+msgstr "附件"
+
+#: includes/trait-managed-mail.php:634
+msgid "Custom headers"
+msgstr "自定义邮件头"
+
+#: includes/trait-managed-mail.php:635
+msgid "The sender email address is controlled by WP Panel and is not included in the site status API or local log."
+msgstr "发件邮箱由 WP Panel 控制，不包含在网站状态接口或本站日志中。"
+
+#: includes/trait-managed-mail.php:638
+msgid "Isolated HTML preview"
+msgstr "隔离的 HTML 预览"
+
+#: includes/trait-managed-mail.php:640
+msgid "Complete escaped source"
+msgstr "完整转义原文"
+
+#: includes/trait-managed-mail.php:644
+msgid "Recent email logs"
+msgstr "最近邮件日志"
+
+#: includes/trait-managed-mail.php:644
+msgid "The most recent 100 delivery records stored by this site."
+msgstr "显示此站点保存的最近 100 条发信记录。"
+
+#: includes/trait-managed-mail.php:644
+#: includes/trait-settings.php:968
+msgid "Time"
+msgstr "时间"
+
+#: includes/trait-managed-mail.php:644
+msgid "Subject"
+msgstr "主题"
+
+#: includes/trait-managed-mail.php:644
+msgid "Recipients"
+msgstr "收件人"
+
+#: includes/trait-managed-mail.php:644
+msgid "Body"
+msgstr "正文"
+
+#: includes/trait-managed-mail.php:648
+msgid "View"
+msgstr "查看"
+
+#: includes/trait-managed-mail.php:650
+msgid "No email logs yet."
+msgstr "暂无邮件日志。"
+
+#: includes/trait-managed-mail.php:677
+#: includes/trait-managed-mail.php:686
+msgid "None"
+msgstr "无"
+
+#: includes/trait-managed-mail.php:682
+msgid "Unnamed attachment"
+msgstr "未命名附件"
+
+#: includes/trait-managed-mail.php:702
+msgid "Accepted by SMTP"
+msgstr "SMTP 已接受"
+
+#: includes/trait-managed-mail.php:703
+msgid "Rejected"
+msgstr "已拒绝"
+
+#: includes/trait-managed-mail.php:704
+msgid "Temporary failure"
+msgstr "临时失败"
+
+#: includes/trait-managed-mail.php:705
+msgid "Delivery status unknown"
+msgstr "投递状态未知"
+
+#: includes/trait-managed-mail.php:706
+msgid "Quota exceeded"
+msgstr "超出额度"
+
+#: includes/trait-managed-mail.php:708
+msgid "SMTP plugin conflict"
+msgstr "SMTP 插件冲突"
+
+#: includes/trait-managed-mail.php:709
+msgid "Unauthorized"
+msgstr "未授权"
+
+#: includes/trait-managed-mail.php:710
+msgid "Site confirmation required"
+msgstr "需要网站确认"
+
+#: includes/trait-managed-mail.php:711
+msgid "WP Panel unavailable"
+msgstr "WP Panel 不可用"
+
 #: includes/trait-settings.php:90
 msgid "Settings"
 msgstr "设置"
 
-#: includes/trait-settings.php:128
+#: includes/trait-settings.php:137
 msgid "A new WP Panel Optimizer version is available."
 msgstr "WP Panel Optimizer 有新版本可用。"
 
-#: includes/trait-settings.php:129
+#: includes/trait-settings.php:138
 #, php-format
 msgid "Installed: %1$s; available from WP Panel: %2$s."
 msgstr "当前版本：%1$s；WP Panel 提供的版本：%2$s。"
 
-#: includes/trait-settings.php:130
+#: includes/trait-settings.php:139
 msgid "Open WP Panel Optimizer to update"
 msgstr "打开 WP Panel Optimizer 进行更新"
 
-#: includes/trait-settings.php:142
+#: includes/trait-settings.php:151
 msgid "Update failed"
 msgstr "更新失败"
 
-#: includes/trait-settings.php:232
+#: includes/trait-settings.php:241
 msgid "Available settings were saved. Settings that modify wp-config.php remain unchanged while file protection is enabled."
 msgstr "可用设置已保存。文件保护开启期间，需要修改 wp-config.php 的设置保持不变。"
 
-#: includes/trait-settings.php:233
+#: includes/trait-settings.php:242
 msgid "Settings saved and synced to the panel."
 msgstr "设置已保存，已同步到面板。"
 
-#: includes/trait-settings.php:236
-#: includes/trait-settings.php:990
+#: includes/trait-settings.php:245
+#: includes/trait-settings.php:1002
 msgid "Unknown error"
 msgstr "未知错误"
 
-#: includes/trait-settings.php:237
+#: includes/trait-settings.php:246
 msgid "Note:"
 msgstr "注意："
 
-#: includes/trait-settings.php:237
+#: includes/trait-settings.php:246
 msgid "Settings were saved locally but failed to sync to the panel. Error message:"
 msgstr "设置已保存在本地，但同步到面板失败。错误信息："
 
-#: includes/trait-settings.php:237
+#: includes/trait-settings.php:246
 msgid "The next time you open this page, state will be pulled from the panel and may overwrite these changes. Please check whether \"Verify panel connection\" in the plugin settings works."
 msgstr "下次进入本页面时将从面板拉取状态，可能覆盖本次修改。请检查插件设置中的「验证连接」是否正常。"
 
-#: includes/trait-settings.php:240
+#: includes/trait-settings.php:249
 msgid "WebP mode is enabled."
 msgstr "WebP 模式已开启。"
 
-#: includes/trait-settings.php:240
+#: includes/trait-settings.php:249
 msgid "Newly uploaded JPG/PNG images are converted automatically to smaller WebP files; the originals are no longer kept. The vast majority of sites can switch without any impact; if some email notifications, share cards, or older plugins turn out to need the original format later, the affected WebP images can be converted back to JPG/PNG at any time."
 msgstr "新上传的 JPG/PNG 图片会自动转换为体积更小的 WebP 格式，不再保留原图。绝大多数网站切换后不会有任何影响；如果之后发现某些邮件通知、分享卡片或老插件用到了原图格式，随时可以把对应的 WebP 图片转换回 JPG/PNG 使用。"
 
-#: includes/trait-settings.php:272
-#: includes/trait-settings.php:355
+#: includes/trait-settings.php:281
+#: includes/trait-settings.php:364
 msgid "Not enabled"
 msgstr "未开启"
 
-#: includes/trait-settings.php:273
+#: includes/trait-settings.php:282
 msgid "Waiting for first check"
 msgstr "等待首次检查"
 
-#: includes/trait-settings.php:274
+#: includes/trait-settings.php:283
 msgid "Monitoring active"
 msgstr "监控正常"
 
-#: includes/trait-settings.php:275
+#: includes/trait-settings.php:284
 msgid "Check failed"
 msgstr "检查异常"
 
-#: includes/trait-settings.php:278
+#: includes/trait-settings.php:287
 msgid "All users may reset passwords"
 msgstr "允许所有用户找回"
 
-#: includes/trait-settings.php:279
+#: includes/trait-settings.php:288
 msgid "Administrators cannot reset passwords"
 msgstr "禁止管理员找回"
 
-#: includes/trait-settings.php:280
+#: includes/trait-settings.php:289
 msgid "Password reset disabled for all users"
 msgstr "禁止所有用户找回"
 
-#: includes/trait-settings.php:284
+#: includes/trait-settings.php:293
 msgid "Unlimited"
 msgstr "未限制"
 
-#: includes/trait-settings.php:296
+#: includes/trait-settings.php:305
 msgid "Environment not ready"
 msgstr "环境未就绪"
 
-#: includes/trait-settings.php:297
-#: includes/trait-settings.php:548
+#: includes/trait-settings.php:306
+#: includes/trait-settings.php:560
 msgid "WebP conversion"
 msgstr "WebP 转换"
 
-#: includes/trait-settings.php:297
-#: includes/trait-settings.php:541
+#: includes/trait-settings.php:306
+#: includes/trait-settings.php:553
 msgid "Compression"
 msgstr "压缩优化"
 
-#: includes/trait-settings.php:297
-#: includes/trait-settings.php:534
+#: includes/trait-settings.php:306
+#: includes/trait-settings.php:546
 msgid "Off"
 msgstr "已关闭"
 
-#: includes/trait-settings.php:305
+#: includes/trait-settings.php:314
 #, php-format
 msgid "Preload is running; %d URLs remain in the queue."
 msgstr "预加载任务正在运行，剩余队列 %d 个地址。"
 
-#: includes/trait-settings.php:307
+#: includes/trait-settings.php:316
 #, php-format
 msgid "Preload is queued; %d URLs are waiting to be processed."
 msgstr "预加载任务已排队，等待处理 %d 个地址。"
 
-#: includes/trait-settings.php:309
+#: includes/trait-settings.php:318
 msgid "Preload is idle and no URLs are pending."
 msgstr "当前预加载任务空闲，无待处理队列。"
 
-#: includes/trait-settings.php:322
+#: includes/trait-settings.php:331
 msgid "Caching, image, and security policies managed centrally by the server panel."
 msgstr "由服务器端面板统一管理的缓存、图片与安全策略。"
 
-#: includes/trait-settings.php:327
-msgid "Managed site"
-msgstr "受管站点"
-
-#: includes/trait-settings.php:331
-msgid "Component version"
-msgstr "组件版本"
-
-#: includes/trait-settings.php:343
+#: includes/trait-settings.php:352
 msgid "Component status overview"
 msgstr "组件状态概览"
 
-#: includes/trait-settings.php:345
+#: includes/trait-settings.php:354
 msgid "Panel connection"
 msgstr "面板连接"
 
-#: includes/trait-settings.php:348
+#: includes/trait-settings.php:357
 msgid "Not configured"
 msgstr "配置缺失"
 
-#: includes/trait-settings.php:348
+#: includes/trait-settings.php:357
 msgid "Connected"
 msgstr "已连接"
 
-#: includes/trait-settings.php:352
+#: includes/trait-settings.php:361
 msgid "File protection"
 msgstr "文件保护"
 
-#: includes/trait-settings.php:355
-#: includes/trait-settings.php:362
-#: includes/trait-settings.php:746
-msgid "Enabled"
-msgstr "已开启"
-
-#: includes/trait-settings.php:359
-#: includes/trait-settings.php:415
-#: includes/trait-settings.php:423
+#: includes/trait-settings.php:368
+#: includes/trait-settings.php:427
+#: includes/trait-settings.php:435
 msgid "FastCGI cache"
 msgstr "FastCGI 缓存"
 
-#: includes/trait-settings.php:362
-#: includes/trait-settings.php:746
-#: includes/trait-settings.php:762
-msgid "Disabled"
-msgstr "已禁用"
-
-#: includes/trait-settings.php:366
+#: includes/trait-settings.php:375
 msgid "Image handling"
 msgstr "图片处理"
 
-#: includes/trait-settings.php:373
+#: includes/trait-settings.php:382
 msgid "Component updates"
 msgstr "组件更新"
 
-#: includes/trait-settings.php:376
+#: includes/trait-settings.php:385
 #, php-format
 msgid "Version %s available"
 msgstr "发现版本 %s"
 
-#: includes/trait-settings.php:376
+#: includes/trait-settings.php:385
 msgid "Up to date"
 msgstr "已是最新版本"
 
-#: includes/trait-settings.php:384
+#: includes/trait-settings.php:393
 msgid "An update is available for this managed plugin."
 msgstr "这个托管插件有新版本可用。"
 
-#: includes/trait-settings.php:385
+#: includes/trait-settings.php:394
 #, php-format
 msgid "WP Panel can update this plugin from version %1$s to %2$s. The update will not change whether the plugin is active."
 msgstr "WP Panel 可以将插件从 %1$s 更新到 %2$s，更新不会改变插件当前的启用或停用状态。"
 
-#: includes/trait-settings.php:387
+#: includes/trait-settings.php:396
 msgid "Update now"
 msgstr "立即更新"
 
-#: includes/trait-settings.php:392
-msgid "WP Panel Optimizer settings"
-msgstr "WP Panel Optimizer 设置"
-
-#: includes/trait-settings.php:393
-msgid "Cache & Performance"
-msgstr "缓存与性能"
-
-#: includes/trait-settings.php:394
-msgid "Image Optimization"
-msgstr "图片优化"
-
-#: includes/trait-settings.php:395
-msgid "Security & Maintenance"
-msgstr "安全与维护"
-
-#: includes/trait-settings.php:396
-msgid "About & Panel Sync"
-msgstr "关于与面板同步"
-
-#: includes/trait-settings.php:403
+#: includes/trait-settings.php:415
 msgid "Configuration file missing"
 msgstr "配置文件缺失"
 
-#: includes/trait-settings.php:403
+#: includes/trait-settings.php:415
 msgid "Open the site details page for this website in the WP Panel and click the \"Install companion plugin\" button on the WordPress optimization card to complete initialization."
 msgstr "请在 WP Panel 面板中进入该网站详情页，点击 WordPress 优化卡片的「安装配套插件」按钮完成初始化。"
 
-#: includes/trait-settings.php:416
+#: includes/trait-settings.php:428
 msgid "Core cache switch"
 msgstr "核心缓存开关"
 
-#: includes/trait-settings.php:418
+#: includes/trait-settings.php:430
 msgid "Helps visitors open pages faster and reduces repeated server work for the same content."
 msgstr "让访客更快打开页面，同时减少服务器重复处理相同内容。"
 
-#: includes/trait-settings.php:424
+#: includes/trait-settings.php:436
 msgid "Ideal for blogs and business sites that mostly serve public content."
 msgstr "适合博客、企业官网等以公开内容为主的网站。"
 
-#: includes/trait-settings.php:430
+#: includes/trait-settings.php:442
 msgid "Enable FastCGI cache"
 msgstr "开启 FastCGI 缓存"
 
-#: includes/trait-settings.php:434
+#: includes/trait-settings.php:446
 msgid "The plugin clears the site cache automatically when content or comments change."
 msgstr "内容或评论发生变化时，插件会自动清除站点缓存。"
 
-#: includes/trait-settings.php:437
+#: includes/trait-settings.php:449
 msgid "Details"
 msgstr "查看说明"
 
-#: includes/trait-settings.php:439
+#: includes/trait-settings.php:451
 msgid "Logged-in users never get cached pages. Common dynamic requests such as shopping carts are also excluded from the cache by server rules."
 msgstr "登录后台的用户不会读取页面缓存。购物车等常见动态请求也会按服务器规则跳过缓存。"
 
-#: includes/trait-settings.php:440
+#: includes/trait-settings.php:452
 msgid "If the front end does not update immediately after saving content, use \"Clear Nginx cache\" below. If a CDN is also in use, its cache must be cleared at the CDN provider as well."
 msgstr "保存内容后，如果前台没有立即更新，可以使用页面下方的“清除 Nginx 缓存”。如果网站还使用了 CDN，也需要到 CDN 服务商处清除缓存。"
 
-#: includes/trait-settings.php:450
-#: includes/trait-settings.php:456
+#: includes/trait-settings.php:462
+#: includes/trait-settings.php:468
 msgid "Cache lifetime"
 msgstr "缓存有效期"
 
-#: includes/trait-settings.php:451
+#: includes/trait-settings.php:463
 msgid "How long a cached copy is kept before it is regenerated automatically."
 msgstr "单份缓存保留多久后自动重新生成。"
 
-#: includes/trait-settings.php:457
+#: includes/trait-settings.php:469
 msgid "Regenerated automatically when it expires; no manual cleanup is required."
 msgstr "到期后自动重建，无需手动清理。"
 
-#: includes/trait-settings.php:461
+#: includes/trait-settings.php:473
 #, php-format
 msgid "%1$s300%2$s seconds equal 5 minutes. For most sites, %1$s300–3600%2$s seconds works well."
 msgstr "%1$s300%2$s 秒等于 5 分钟。一般网站可使用 %1$s300–3600%2$s 秒。"
 
-#: includes/trait-settings.php:462
+#: includes/trait-settings.php:474
 msgid "Longer lifetimes reduce server load; the cache can still be cleared automatically or manually after content updates."
 msgstr "时间越长，服务器压力越小；内容更新后仍可自动或手动清除缓存。"
 
-#: includes/trait-settings.php:470
+#: includes/trait-settings.php:482
 msgid "Cache preload"
 msgstr "缓存预加载"
 
-#: includes/trait-settings.php:471
+#: includes/trait-settings.php:483
 msgid "After the cache is cleared, the plugin visits commonly used pages so they are already cached for the next visitor."
 msgstr "清除缓存后，提前访问常用页面，让第一位访客也能快速打开。"
 
-#: includes/trait-settings.php:476
+#: includes/trait-settings.php:488
 msgid "Preload automatically after cache clear"
 msgstr "清除缓存后自动预加载"
 
-#: includes/trait-settings.php:477
+#: includes/trait-settings.php:489
 msgid "Processed slowly in the background, never hitting many pages at once."
 msgstr "以较慢速度在后台处理，不会一次访问大量页面。"
 
-#: includes/trait-settings.php:483
+#: includes/trait-settings.php:495
 msgid "Enable automatic preload"
 msgstr "开启自动预加载"
 
-#: includes/trait-settings.php:487
+#: includes/trait-settings.php:499
 #, php-format
 msgid "Preloading only takes effect after the %1$sFastCGI cache%2$s above is enabled."
 msgstr "需要先开启上方的 %1$sFastCGI 缓存%2$s，预加载才会生效。"
 
-#: includes/trait-settings.php:490
+#: includes/trait-settings.php:502
 msgid "What it does"
 msgstr "作用"
 
-#: includes/trait-settings.php:490
+#: includes/trait-settings.php:502
 msgid "Visits public pages automatically to build their cache."
 msgstr "自动访问公开页面并生成缓存。"
 
-#: includes/trait-settings.php:491
-#: includes/trait-settings.php:581
+#: includes/trait-settings.php:503
+#: includes/trait-settings.php:593
 msgid "Scope"
 msgstr "范围"
 
-#: includes/trait-settings.php:491
+#: includes/trait-settings.php:503
 msgid "Prioritizes the home page and recently updated public content; it does not crawl the whole site."
 msgstr "优先处理首页和最近更新的公开内容，不会遍历整个网站。"
 
-#: includes/trait-settings.php:492
+#: includes/trait-settings.php:504
 msgid "Other pages"
 msgstr "其他页面"
 
-#: includes/trait-settings.php:492
+#: includes/trait-settings.php:504
 msgid "These pages are cached the first time someone visits them."
 msgstr "会在访客第一次打开时正常生成缓存。"
 
-#: includes/trait-settings.php:498
+#: includes/trait-settings.php:510
 msgid "Max URLs per preload run"
 msgstr "单次最多预加载 URL"
 
-#: includes/trait-settings.php:499
+#: includes/trait-settings.php:511
 msgid "The maximum number of URLs processed in a single preload run."
 msgstr "一轮预加载最多处理多少个地址。"
 
-#: includes/trait-settings.php:503
+#: includes/trait-settings.php:515
 #, php-format
 msgid "Range %1$s10–500%2$s; %1$s100%2$s is a common choice. The home page comes first, followed by recently updated public posts, pages, and term archives."
 msgstr "范围 %1$s10–500%2$s；常用 %1$s100%2$s。首页优先，其次为最近更新的公开文章、页面和分类归档。"
 
-#: includes/trait-settings.php:514
+#: includes/trait-settings.php:526
 msgid "Image processing is unavailable: the server is missing the exif extension."
 msgstr "服务器缺少 exif 扩展，暂不支持图片处理。"
 
-#: includes/trait-settings.php:514
+#: includes/trait-settings.php:526
 #, php-format
 msgid "This feature relies on the PHP %1$sexif%2$s extension to correct photo orientation. Once the panel has installed it, refresh this page to start using it."
 msgstr "该功能依赖 PHP %1$sexif%2$s 扩展做拍照方向修正，面板补装完成后刷新本页即可使用。"
 
-#: includes/trait-settings.php:520
+#: includes/trait-settings.php:532
 msgid "Image handling for new uploads"
 msgstr "新上传图片处理"
 
-#: includes/trait-settings.php:521
+#: includes/trait-settings.php:533
 msgid "Chooses how newly uploaded images are processed; published content is not affected."
 msgstr "决定新增图片上传时的处理方式，不影响已发布内容。"
 
-#: includes/trait-settings.php:526
+#: includes/trait-settings.php:538
 msgid "Processing mode"
 msgstr "处理模式"
 
-#: includes/trait-settings.php:527
+#: includes/trait-settings.php:539
 msgid "Compress or convert on upload to reduce file size."
 msgstr "上传时自动压缩或转换格式，减小体积。"
 
-#: includes/trait-settings.php:535
+#: includes/trait-settings.php:547
 msgid "Keep the default WordPress behavior: no conversion or compression on upload."
 msgstr "保持 WordPress 默认行为，上传时不做任何转换或压缩。"
 
-#: includes/trait-settings.php:542
+#: includes/trait-settings.php:554
 msgid "JPEG files are compressed at the selected quality, while PNG files are optimized losslessly. File formats and URLs remain unchanged."
 msgstr "JPEG 按所选质量压缩，PNG 进行无损压缩；图片格式和访问地址保持不变。"
 
-#: includes/trait-settings.php:549
+#: includes/trait-settings.php:561
 msgid "Convert to smaller WebP files and remove the original. Current versions of Chrome, Edge, Firefox, Safari, and other major browsers all display WebP."
 msgstr "转换为体积更小的 WebP 并删除原图。2026 年的 Chrome、Edge、Firefox 和 Safari 等主流浏览器均可正常显示 WebP。"
 
-#: includes/trait-settings.php:555
+#: includes/trait-settings.php:567
 msgid "JPEG quality"
 msgstr "JPEG 质量"
 
-#: includes/trait-settings.php:559
+#: includes/trait-settings.php:571
 msgid "WebP quality"
 msgstr "WebP 质量"
 
-#: includes/trait-settings.php:564
+#: includes/trait-settings.php:576
 #, php-format
 msgid "Modern browsers display WebP reliably. WebP mode does %1$snot keep the original%2$s, so test older plugins, email templates, social sharing, and external services that may require JPEG or PNG files."
 msgstr "现代浏览器都能可靠显示 WebP。WebP 模式%1$s不保留原图%2$s，因此需要测试可能依赖 JPEG 或 PNG 文件的旧插件、邮件模板、社交分享和外部服务。"
 
-#: includes/trait-settings.php:567
+#: includes/trait-settings.php:579
 #, php-format
 msgid "%d images could not be converted (unsupported file format, or the converted file would have been larger, etc.); the originals were kept automatically and uploads are unaffected."
 msgstr "有 %d 张图片未能转换成功（文件格式不受支持、转换后体积反而更大等原因），已自动保留原图，不影响正常上传。"
 
-#: includes/trait-settings.php:576
+#: includes/trait-settings.php:588
 msgid "Optimize existing Media Library images"
 msgstr "历史图库批量优化"
 
-#: includes/trait-settings.php:577
+#: includes/trait-settings.php:589
 msgid "Re-encode existing media library images in place to save space."
 msgstr "对媒体库里已有的历史图片做原地重编码，减小占用。"
 
-#: includes/trait-settings.php:581
+#: includes/trait-settings.php:593
 msgid "Only existing JPEG and PNG images in the Media Library are processed."
 msgstr "仅处理媒体库里已有的历史 JPEG / PNG。"
 
-#: includes/trait-settings.php:582
+#: includes/trait-settings.php:594
 msgid "Method"
 msgstr "方式"
 
-#: includes/trait-settings.php:582
+#: includes/trait-settings.php:594
 msgid "Lossless in-place re-encoding: file names stay the same, no WebP copies are created, and image references in published content are untouched."
 msgstr "原地无损重编码，不改文件名、不生成 WebP 副本、不影响已发布内容里的图片引用。"
 
-#: includes/trait-settings.php:583
+#: includes/trait-settings.php:595
 msgid "Execution"
 msgstr "执行"
 
-#: includes/trait-settings.php:583
+#: includes/trait-settings.php:595
 msgid "The task runs on WP Panel in the background; you can close this page once it starts."
 msgstr "任务由 WP Panel 在后台处理，开始后可以关闭本页面。"
 
-#: includes/trait-settings.php:587
+#: includes/trait-settings.php:599
 msgid "Job status"
 msgstr "任务状态"
 
-#: includes/trait-settings.php:588
-#: includes/trait-settings.php:895
-#: includes/trait-settings.php:999
+#: includes/trait-settings.php:600
+#: includes/trait-settings.php:907
+#: includes/trait-settings.php:1011
 msgid "Idle"
 msgstr "空闲"
 
-#: includes/trait-settings.php:591
+#: includes/trait-settings.php:603
 msgid "Total saved"
 msgstr "累计节省"
 
-#: includes/trait-settings.php:599
+#: includes/trait-settings.php:611
 msgid "Start batch optimization"
 msgstr "开始批量优化"
 
-#: includes/trait-settings.php:600
+#: includes/trait-settings.php:612
 msgid "Stop"
 msgstr "停止"
 
-#: includes/trait-settings.php:601
+#: includes/trait-settings.php:613
 msgid "Speed is controlled by the panel; large libraries can take a while."
 msgstr "处理速度由面板控制，图库较大时任务会持续一段时间。"
 
-#: includes/trait-settings.php:609
+#: includes/trait-settings.php:621
 msgid "File protection is enabled. Settings that modify wp-config.php are read-only; other settings and actions remain available."
 msgstr "文件保护已开启。需要修改 wp-config.php 的设置为只读，其他设置和操作仍可正常使用。"
 
-#: includes/trait-settings.php:613
+#: includes/trait-settings.php:625
 msgid "WordPress hardening"
 msgstr "WordPress 加固"
 
-#: includes/trait-settings.php:614
+#: includes/trait-settings.php:626
 msgid "Reduce unnecessary WordPress access points while keeping security settings synchronized with WP Panel."
 msgstr "减少不必要的 WordPress 访问入口，并与 WP Panel 保持安全设置同步。"
 
-#: includes/trait-settings.php:619
+#: includes/trait-settings.php:631
 msgid "Disable update checks"
 msgstr "禁止检测更新"
 
-#: includes/trait-settings.php:620
+#: includes/trait-settings.php:632
 msgid "Hides update notices in the WordPress dashboard. Designed for business sites that receive infrequent maintenance."
 msgstr "隐藏后台更新提醒，适合建成后较少维护的企业网站。"
 
-#: includes/trait-settings.php:626
+#: includes/trait-settings.php:638
 msgid "Block update checks for core, plugins, and themes"
 msgstr "屏蔽核心、插件与主题的更新检测"
 
-#: includes/trait-settings.php:629
-#: includes/trait-settings.php:731
+#: includes/trait-settings.php:641
+#: includes/trait-settings.php:743
 msgid "When enabled"
 msgstr "开启后"
 
-#: includes/trait-settings.php:629
+#: includes/trait-settings.php:641
 msgid "WordPress no longer checks for or displays update notices for core, plugins, and themes."
 msgstr "WordPress 不再检查或显示核心、插件和主题的更新提醒。"
 
-#: includes/trait-settings.php:630
+#: includes/trait-settings.php:642
 msgid "Security risk"
 msgstr "安全风险"
 
-#: includes/trait-settings.php:630
+#: includes/trait-settings.php:642
 msgid "Skipping updates for a long time leaves known vulnerabilities unpatched. Do not treat \"no notices\" as \"no updates needed\"."
 msgstr "长期不更新可能遗留已公开的安全漏洞，请不要把“没有提醒”理解为“无需更新”。"
 
-#: includes/trait-settings.php:631
-#: includes/trait-settings.php:689
-#: includes/trait-settings.php:750
-#: includes/trait-settings.php:766
+#: includes/trait-settings.php:643
+#: includes/trait-settings.php:701
+#: includes/trait-settings.php:762
+#: includes/trait-settings.php:778
 msgid "Recommendation"
 msgstr "建议"
 
-#: includes/trait-settings.php:631
+#: includes/trait-settings.php:643
 msgid "Turn this setting off periodically to check for updates, or manage updates from \"WP Overview\" in WP Panel. Re-enable the site file lock when maintenance is complete."
 msgstr "定期临时关闭此开关检查更新，或通过 WP Panel 的“WP 总览”管理更新；完成后再开启网站文件锁定。"
 
-#: includes/trait-settings.php:637
+#: includes/trait-settings.php:649
 msgid "Disable file editing"
 msgstr "禁止文件编辑"
 
-#: includes/trait-settings.php:638
+#: includes/trait-settings.php:650
 msgid "Removes the dashboard code editors, reducing the chance of injected code."
 msgstr "关闭后台的代码编辑入口，减少被写入的可能。"
 
-#: includes/trait-settings.php:644
+#: includes/trait-settings.php:656
 msgid "Prevent editing theme and plugin files in the dashboard"
 msgstr "禁止在后台编辑主题和插件文件"
 
-#: includes/trait-settings.php:646
+#: includes/trait-settings.php:658
 msgid "Recommended. It only disables the built-in dashboard code editors; post editing and media uploads are not affected."
 msgstr "建议开启。它只关闭 WordPress 后台自带的代码编辑器，不影响文章编辑和媒体上传。"
 
-#: includes/trait-settings.php:651
+#: includes/trait-settings.php:663
 msgid "Enable debug mode"
 msgstr "启用调试模式"
 
-#: includes/trait-settings.php:652
+#: includes/trait-settings.php:664
 msgid "Logs PHP errors to a file for troubleshooting."
 msgstr "记录 PHP 错误到日志，用于排查故障。"
 
-#: includes/trait-settings.php:658
+#: includes/trait-settings.php:670
 msgid "Enable the debug log"
 msgstr "开启调试日志"
 
-#: includes/trait-settings.php:661
+#: includes/trait-settings.php:673
 msgid "Use"
 msgstr "用途"
 
-#: includes/trait-settings.php:661
+#: includes/trait-settings.php:673
 msgid "Diagnose white screens, 500 errors, or plugin faults."
 msgstr "排查白屏、500 错误或插件故障。"
 
-#: includes/trait-settings.php:662
+#: includes/trait-settings.php:674
 msgid "Note"
 msgstr "注意"
 
-#: includes/trait-settings.php:662
+#: includes/trait-settings.php:674
 msgid "Enable only temporarily while troubleshooting; turn it off afterwards."
 msgstr "只在排查问题时临时开启，完成后请关闭。"
 
-#: includes/trait-settings.php:665
-#: includes/trait-settings.php:703
+#: includes/trait-settings.php:677
+#: includes/trait-settings.php:715
 msgid "More details"
 msgstr "更多说明"
 
-#: includes/trait-settings.php:667
+#: includes/trait-settings.php:679
 #, php-format
 msgid "Errors are written to %1$s and are not shown to visitors by default. To display errors on the page temporarily, configure it on the site details page in WP Panel."
 msgstr "错误会写入 %1$s，默认不会显示给访客。需要临时在页面显示错误时，请到 WP Panel 网站详情页设置。"
 
-#: includes/trait-settings.php:677
+#: includes/trait-settings.php:689
 msgid "Resources & database"
 msgstr "资源与数据库"
 
-#: includes/trait-settings.php:682
+#: includes/trait-settings.php:694
 msgid "Post revisions"
 msgstr "文章修订版本数"
 
-#: includes/trait-settings.php:683
+#: includes/trait-settings.php:695
 msgid "Limit how many historical revisions each post keeps."
 msgstr "限制每篇文章保留的历史版本数量。"
 
-#: includes/trait-settings.php:686
+#: includes/trait-settings.php:698
 msgid "Default"
 msgstr "默认"
 
-#: includes/trait-settings.php:688
+#: includes/trait-settings.php:700
 msgid "Purpose"
 msgstr "作用"
 
-#: includes/trait-settings.php:688
+#: includes/trait-settings.php:700
 msgid "Keeps past versions of a post so accidental edits can be restored."
 msgstr "保留文章过去的版本，误改内容时可以恢复。"
 
-#: includes/trait-settings.php:689
+#: includes/trait-settings.php:701
 #, php-format
 msgid "A value of %1$s3–5%2$s works for most sites; leave empty for no limit."
 msgstr "一般设置为 %1$s3–5%2$s；留空表示不限制数量。"
 
-#: includes/trait-settings.php:690
+#: includes/trait-settings.php:702
 msgid "Entering 0"
 msgstr "填 0"
 
-#: includes/trait-settings.php:690
+#: includes/trait-settings.php:702
 msgid "Disables revisions entirely; accidental edits can no longer be restored from revision history."
 msgstr "完全关闭历史版本，误改后将无法从修订记录恢复。"
 
-#: includes/trait-settings.php:696
+#: includes/trait-settings.php:708
 msgid "WordPress memory limit"
 msgstr "WordPress 内存限制"
 
-#: includes/trait-settings.php:697
+#: includes/trait-settings.php:709
 msgid "Adjust only when memory exhaustion errors appear."
 msgstr "只在出现内存不足错误时调整。"
 
-#: includes/trait-settings.php:700
+#: includes/trait-settings.php:712
 msgid "Default 40M"
 msgstr "默认 40M"
 
-#: includes/trait-settings.php:701
+#: includes/trait-settings.php:713
 #, php-format
 msgid "Current PHP memory limit on this server: %1$s. If you are unsure, leave this blank. If more memory is needed, try %2$s or %3$s."
 msgstr "当前服务器 PHP 内存上限：%1$s。不确定时请留空；需要调整时可填写 %2$s 或 %3$s。"
 
-#: includes/trait-settings.php:705
+#: includes/trait-settings.php:717
 msgid "Increase this if you see \"Allowed memory size exhausted\" errors or memory-related white screens in the dashboard."
 msgstr "遇到“Allowed memory size exhausted”或后台因内存不足白屏时，可适当调高。"
 
-#: includes/trait-settings.php:706
+#: includes/trait-settings.php:718
 msgid "The value here cannot exceed the PHP memory limit shown above, which comes from the effective configuration in \"Software Management\" in WP Panel."
 msgstr "这里的数值不能超过上方显示的 PHP 内存上限；该上限来自 WP Panel“软件管理”的实际生效配置。"
 
-#: includes/trait-settings.php:716
+#: includes/trait-settings.php:728
 msgid "Security features managed by WP Panel"
 msgstr "由 WP Panel 托管的安全功能"
 
-#: includes/trait-settings.php:717
+#: includes/trait-settings.php:729
 msgid "This plugin displays these settings as read-only. They can be changed only in WP Panel, so WordPress administrators cannot weaken server security policies."
 msgstr "插件以只读方式显示这些设置；只能在 WP Panel 中修改，避免 WordPress 管理员降低服务器安全策略。"
 
-#: includes/trait-settings.php:722
+#: includes/trait-settings.php:734
 msgid "File protection & temporary maintenance"
 msgstr "文件保护与临时维护"
 
-#: includes/trait-settings.php:723
+#: includes/trait-settings.php:735
 msgid "Helps prevent accidental or malicious changes to plugins, themes, and other site code."
 msgstr "帮助防止插件、主题和其他网站代码被意外或恶意修改。"
 
-#: includes/trait-settings.php:727
+#: includes/trait-settings.php:739
 msgid "File protection enabled"
 msgstr "文件保护已开启"
 
-#: includes/trait-settings.php:727
+#: includes/trait-settings.php:739
 msgid "File protection not enabled"
 msgstr "文件保护未开启"
 
-#: includes/trait-settings.php:728
+#: includes/trait-settings.php:740
 msgid "Configured in WP Panel → Site details → File protection & temporary maintenance"
 msgstr "在 WP Panel → 网站详情 → 文件保护与临时维护 中配置"
 
-#: includes/trait-settings.php:731
+#: includes/trait-settings.php:743
 msgid "Writing posts, editing pages, and uploading images are unaffected; installing, updating, or modifying program files is restricted."
 msgstr "写文章、编辑页面和上传图片不受影响；安装、更新或修改程序文件会受到限制。"
 
-#: includes/trait-settings.php:732
+#: includes/trait-settings.php:744
 msgid "During maintenance"
 msgstr "需要维护"
 
-#: includes/trait-settings.php:732
+#: includes/trait-settings.php:744
 msgid "Use the maintenance password configured in the panel to unlock temporarily, then relock the site as soon as maintenance is complete."
 msgstr "可使用面板设置的维护密码临时解锁，完成后应立即重新锁定。"
 
-#: includes/trait-settings.php:735
+#: includes/trait-settings.php:747
 msgid "View temporary maintenance"
 msgstr "查看临时维护"
 
-#: includes/trait-settings.php:741
+#: includes/trait-settings.php:753
 msgid "XML-RPC interface"
 msgstr "XML-RPC 接口"
 
-#: includes/trait-settings.php:742
+#: includes/trait-settings.php:754
 msgid "A legacy remote connection API; most ordinary sites do not need it."
 msgstr "旧式远程连接接口，大多数普通网站不需要开启。"
 
-#: includes/trait-settings.php:747
-#: includes/trait-settings.php:763
+#: includes/trait-settings.php:759
+#: includes/trait-settings.php:775
 msgid "Changed in WP Panel → Site details → WordPress optimization"
 msgstr "在 WP Panel → 网站详情 → WordPress 优化 中修改"
 
-#: includes/trait-settings.php:750
+#: includes/trait-settings.php:762
 msgid "Keep it off unless you use Jetpack, an older mobile app, or remote publishing tools."
 msgstr "没有使用 Jetpack、旧版手机 App 或远程发布工具时保持关闭。"
 
-#: includes/trait-settings.php:751
+#: includes/trait-settings.php:763
 msgid "When to enable"
 msgstr "开启条件"
 
-#: includes/trait-settings.php:751
+#: includes/trait-settings.php:763
 msgid "Enable only when a tool you rely on clearly cannot connect."
 msgstr "只有明确遇到相关工具无法连接时才需要开启。"
 
-#: includes/trait-settings.php:757
+#: includes/trait-settings.php:769
 msgid "WordPress application passwords"
 msgstr "WordPress 应用程序密码"
 
-#: includes/trait-settings.php:758
+#: includes/trait-settings.php:770
 msgid "Let mobile apps, auto-publishing tools, and third-party services connect to your site."
 msgstr "供手机 App、自动发布工具和第三方服务连接网站。"
 
-#: includes/trait-settings.php:762
+#: includes/trait-settings.php:774
 msgid "Allowed"
 msgstr "允许使用"
 
-#: includes/trait-settings.php:766
+#: includes/trait-settings.php:778
 msgid "Keep disabled on ordinary sites; enable when an external tool needs to connect."
 msgstr "普通网站保持禁用，需要连接外部工具时再开启。"
 
-#: includes/trait-settings.php:767
+#: includes/trait-settings.php:779
 msgid "Unaffected"
 msgstr "不受影响"
 
-#: includes/trait-settings.php:767
+#: includes/trait-settings.php:779
 msgid "Disabling does not affect dashboard login, writing posts, or uploading images."
 msgstr "禁用不会影响 WordPress 后台登录、写文章或上传图片。"
 
-#: includes/trait-settings.php:768
+#: includes/trait-settings.php:780
 msgid "Existing passwords"
 msgstr "已有密码"
 
-#: includes/trait-settings.php:768
+#: includes/trait-settings.php:780
 msgid "Disabling does not delete existing credentials; they keep working once re-enabled."
 msgstr "禁用不会删除已有凭据；重新允许后仍可继续使用。"
 
-#: includes/trait-settings.php:774
+#: includes/trait-settings.php:786
 msgid "WordPress anomaly monitoring"
 msgstr "WordPress 异常监控"
 
-#: includes/trait-settings.php:775
+#: includes/trait-settings.php:787
 msgid "Periodically checks for changes to administrators, content, security settings, and unusual persisted database objects."
 msgstr "定期检查管理员、内容、安全设置及异常持久化对象的变化。"
 
-#: includes/trait-settings.php:780
+#: includes/trait-settings.php:792
 msgid "Configured and reviewed in WP Panel → Site details → WordPress anomaly monitoring"
 msgstr "在 WP Panel → 网站详情 → WordPress 异常监控 中配置和查看记录"
 
-#: includes/trait-settings.php:782
+#: includes/trait-settings.php:794
 msgid "Anomalies are recorded and notified by the panel; files, users, or content are never deleted automatically."
 msgstr "发现异常时由面板记录并通知，不会自动删除文件、用户或内容。"
 
-#: includes/trait-settings.php:787
+#: includes/trait-settings.php:799
 msgid "Password reset policy"
 msgstr "密码找回策略"
 
-#: includes/trait-settings.php:788
+#: includes/trait-settings.php:800
 msgid "Controls which users may reset their login password via \"Lost your password?\"."
 msgstr "控制哪些用户可以通过“忘记密码”重设登录密码。"
 
-#: includes/trait-settings.php:793
+#: includes/trait-settings.php:805
 msgid "Changed in WP Panel → Site details → Password reset protection"
 msgstr "在 WP Panel → 网站详情 → 密码找回保护 中修改"
 
-#: includes/trait-settings.php:795
+#: includes/trait-settings.php:807
 msgid "Restricting resets reduces the risk of malicious admin password resets; a forgotten password then requires another administrator or the panel owner to recover."
 msgstr "限制密码找回可减少管理员账号被恶意重置的风险，但忘记密码时需要由其他管理员或面板所有者协助恢复。"
 
-#: includes/trait-settings.php:805
+#: includes/trait-settings.php:817
 msgid "About & panel sync"
 msgstr "关于与面板同步"
 
-#: includes/trait-settings.php:808
+#: includes/trait-settings.php:820
 msgid "WP Panel Optimizer is the companion plugin installed automatically by WP Panel. It connects caching, image handling, and common WordPress settings to the panel for centralized management."
 msgstr "WP Panel Optimizer 是 WP Panel 自动安装的配套插件。它把缓存、图片和常用 WordPress 设置连接到面板，方便集中管理。"
 
-#: includes/trait-settings.php:813
+#: includes/trait-settings.php:825
 msgid "Current connection"
 msgstr "当前连接"
 
-#: includes/trait-settings.php:818
+#: includes/trait-settings.php:830
 msgid "Site"
 msgstr "站点"
 
-#: includes/trait-settings.php:822
+#: includes/trait-settings.php:834
 msgid "Plugin version"
 msgstr "插件版本"
 
-#: includes/trait-settings.php:827
+#: includes/trait-settings.php:839
 msgid "Not set"
 msgstr "未配置"
 
-#: includes/trait-settings.php:830
+#: includes/trait-settings.php:842
 msgid "Connection status"
 msgstr "连接状态"
 
-#: includes/trait-settings.php:831
+#: includes/trait-settings.php:843
 msgid "Awaiting configuration"
 msgstr "等待配置"
 
-#: includes/trait-settings.php:831
+#: includes/trait-settings.php:843
 msgid "Configured"
 msgstr "已配置"
 
-#: includes/trait-settings.php:834
+#: includes/trait-settings.php:846
 msgid "Verify panel connection"
 msgstr "验证面板连接"
 
-#: includes/trait-settings.php:841
+#: includes/trait-settings.php:853
 msgid "Credentials & updates"
 msgstr "凭据与更新"
 
-#: includes/trait-settings.php:844
+#: includes/trait-settings.php:856
 msgid "The API key is the dedicated credential this plugin uses to connect to WP Panel; it is generated and stored by the panel automatically. Only the first 8 characters are shown here; the full key cannot be viewed or changed."
 msgstr "API Key 是插件连接 WP Panel 的专用凭据，由面板自动生成和保管。本页只显示前 8 位，无法查看或修改完整密钥。"
 
-#: includes/trait-settings.php:845
+#: includes/trait-settings.php:857
 msgid "The plugin is installed and updated automatically by WP Panel; there is no need to download it separately from the WordPress dashboard."
 msgstr "插件由 WP Panel 自动安装和更新，无需在 WordPress 后台单独下载。"
 
-#: includes/trait-settings.php:846
+#: includes/trait-settings.php:858
 msgid "\"Verify panel connection\" checks that the plugin can read and save settings properly; it is not a security scan of the site."
 msgstr "“验证面板连接”用于检查插件能否正常读取和保存设置，不是网站安全扫描。"
 
-#: includes/trait-settings.php:852
+#: includes/trait-settings.php:864
 msgid "Help & support"
 msgstr "帮助与支持"
 
-#: includes/trait-settings.php:855
+#: includes/trait-settings.php:867
 msgid "Read the WP Panel documentation or report reproducible issues and error messages."
 msgstr "查看 WP Panel 的产品说明，或提交能够重复出现的问题和错误信息。"
 
-#: includes/trait-settings.php:857
+#: includes/trait-settings.php:869
 msgid "Visit the WP Panel website"
 msgstr "访问 WP Panel 官网"
 
-#: includes/trait-settings.php:858
+#: includes/trait-settings.php:870
 msgid "Report a bug"
 msgstr "反馈 Bug"
 
-#: includes/trait-settings.php:868
+#: includes/trait-settings.php:880
 msgid "Save settings"
 msgstr "保存设置"
 
-#: includes/trait-settings.php:870
+#: includes/trait-settings.php:882
 msgid "Available settings can still be saved. Read-only settings remain unchanged until file protection is temporarily unlocked."
 msgstr "可用设置仍可正常保存；临时解除文件保护前，只读设置会保持不变。"
 
-#: includes/trait-settings.php:872
+#: includes/trait-settings.php:884
 msgid "Settings sync to WP Panel after saving; cache-related changes may take a few seconds to take effect."
 msgstr "保存后设置会同步到 WP Panel；缓存相关修改可能需要几秒钟生效。"
 
-#: includes/trait-settings.php:884
+#: includes/trait-settings.php:896
 msgid "Cache actions & preload status"
 msgstr "缓存操作与预加载状态"
 
-#: includes/trait-settings.php:885
+#: includes/trait-settings.php:897
 msgid "Cache maintenance actions are separate from saving settings and take effect immediately."
 msgstr "缓存维护动作独立于设置保存，提交后立即生效。"
 
-#: includes/trait-settings.php:894
+#: includes/trait-settings.php:906
 msgid "Current status"
 msgstr "当前状态"
 
-#: includes/trait-settings.php:895
-#: includes/trait-settings.php:995
+#: includes/trait-settings.php:907
+#: includes/trait-settings.php:1007
 msgid "Running"
 msgstr "运行中"
 
-#: includes/trait-settings.php:898
-#: includes/trait-settings.php:994
+#: includes/trait-settings.php:910
+#: includes/trait-settings.php:1006
 msgid "Queued"
 msgstr "排队中"
 
-#: includes/trait-settings.php:902
+#: includes/trait-settings.php:914
 msgid "Succeeded"
 msgstr "成功"
 
-#: includes/trait-settings.php:906
-#: includes/trait-settings.php:969
-#: includes/trait-settings.php:997
+#: includes/trait-settings.php:918
+#: includes/trait-settings.php:981
+#: includes/trait-settings.php:1009
 msgid "Failed"
 msgstr "失败"
 
-#: includes/trait-settings.php:911
+#: includes/trait-settings.php:923
 #, php-format
 msgid "Last message: %s"
 msgstr "最近消息：%s"
 
-#: includes/trait-settings.php:915
+#: includes/trait-settings.php:927
 msgid "Started:"
 msgstr "开始："
 
-#: includes/trait-settings.php:918
+#: includes/trait-settings.php:930
 msgid "Last run:"
 msgstr "上次执行："
 
-#: includes/trait-settings.php:921
+#: includes/trait-settings.php:933
 msgid "Finished:"
 msgstr "结束："
 
-#: includes/trait-settings.php:932
+#: includes/trait-settings.php:944
 msgid "Use when content does not refresh promptly; if a CDN is in use, its cache must be cleared too."
 msgstr "内容没有及时更新时使用；若启用了 CDN，还需清除 CDN 缓存。"
 
-#: includes/trait-settings.php:938
+#: includes/trait-settings.php:950
 msgid "Preload now"
 msgstr "立即预加载"
 
-#: includes/trait-settings.php:940
-#: includes/trait-settings.php:984
+#: includes/trait-settings.php:952
+#: includes/trait-settings.php:996
 msgid "After saving settings, published pages will be preloaded according to the rules."
 msgstr "保存设置后，将根据规则预加载已发布页面。"
 
-#: includes/trait-settings.php:940
-#: includes/trait-settings.php:985
+#: includes/trait-settings.php:952
+#: includes/trait-settings.php:997
 msgid "Preload unavailable: enable the FastCGI cache first and save."
 msgstr "预加载不可用：请先开启 FastCGI 缓存并保存。"
 
-#: includes/trait-settings.php:946
+#: includes/trait-settings.php:958
 msgid "Stop preload"
 msgstr "停止预加载"
 
-#: includes/trait-settings.php:948
+#: includes/trait-settings.php:960
 msgid "You can stop a running task at any time. Pages that were already cached will remain cached."
 msgstr "任务运行时可随时停止，已经生成的缓存会继续保留。"
 
-#: includes/trait-settings.php:953
+#: includes/trait-settings.php:965
 msgid "Recent cache clears"
 msgstr "最近清除记录"
 
-#: includes/trait-settings.php:956
-msgid "Time"
-msgstr "时间"
-
-#: includes/trait-settings.php:956
+#: includes/trait-settings.php:968
 msgid "Trigger"
 msgstr "方式"
 
-#: includes/trait-settings.php:956
+#: includes/trait-settings.php:968
 msgid "Result"
 msgstr "结果"
 
-#: includes/trait-settings.php:963
+#: includes/trait-settings.php:975
 msgid "Manual clear"
 msgstr "手动清除"
 
-#: includes/trait-settings.php:964
+#: includes/trait-settings.php:976
 msgid "Automatic (post published)"
 msgstr "自动清除（发布文章）"
 
-#: includes/trait-settings.php:965
+#: includes/trait-settings.php:977
 msgid "Automatic (comment activity)"
 msgstr "自动清除（评论变更）"
 
-#: includes/trait-settings.php:967
+#: includes/trait-settings.php:979
 msgid "Automatic"
 msgstr "自动清除"
 
-#: includes/trait-settings.php:969
+#: includes/trait-settings.php:981
 msgid "Success"
 msgstr "成功"
 
-#: includes/trait-settings.php:986
+#: includes/trait-settings.php:998
 msgid "Verifying…"
 msgstr "验证中…"
 
-#: includes/trait-settings.php:987
+#: includes/trait-settings.php:999
 msgid "Connection verified. The WP Panel API authenticated the request and responded successfully."
 msgstr "连接正常 — 面板 API 认证通过并已响应"
 
-#: includes/trait-settings.php:988
+#: includes/trait-settings.php:1000
 #, php-format
 msgid "Connection failed: %s"
 msgstr "连接失败：%s"
 
-#: includes/trait-settings.php:989
+#: includes/trait-settings.php:1001
 #, php-format
 msgid "Network error: could not reach the panel (%s)"
 msgstr "网络错误：无法连接到面板（%s）"
 
-#: includes/trait-settings.php:991
+#: includes/trait-settings.php:1003
 msgid "Updating…"
 msgstr "正在更新…"
 
-#: includes/trait-settings.php:992
+#: includes/trait-settings.php:1004
 msgid "Update completed. Reloading…"
 msgstr "更新完成，正在刷新页面…"
 
-#: includes/trait-settings.php:993
+#: includes/trait-settings.php:1005
 #, php-format
 msgid "Update failed: %s"
 msgstr "更新失败：%s"
 
-#: includes/trait-settings.php:996
+#: includes/trait-settings.php:1008
 msgid "Completed"
 msgstr "已完成"
 
-#: includes/trait-settings.php:998
+#: includes/trait-settings.php:1010
 msgid "Stopped"
 msgstr "已停止"
 
-#: includes/trait-settings.php:1000
+#: includes/trait-settings.php:1012
 #, php-format
 msgid "%s MB saved in total (all batch jobs)"
 msgstr "累计已节省 %s MB（历次批量优化总计）"
 
-#: includes/trait-settings.php:1001
+#: includes/trait-settings.php:1013
 #, php-format
 msgid "Progress: %s / %s"
 msgstr "进度：%s / %s"
 
-#: includes/trait-settings.php:1002
+#: includes/trait-settings.php:1014
 #, php-format
 msgid " (%s failed)"
 msgstr "（失败 %s）"
 
-#: includes/trait-settings.php:1003
+#: includes/trait-settings.php:1015
 #, php-format
 msgid "; %s files were already processed earlier and were skipped this run"
 msgstr "，另有 %s 张此前已处理过，本次自动跳过"
 
-#: includes/trait-settings.php:1004
+#: includes/trait-settings.php:1016
 #, php-format
 msgid "; %s MB saved this run"
 msgstr "，本次节省 %s MB"
 
-#: includes/trait-settings.php:1005
+#: includes/trait-settings.php:1017
 #, php-format
 msgid "Start failed: %s"
 msgstr "启动失败：%s"
 
-#: includes/trait-settings.php:1248
+#: includes/trait-settings.php:1263
 msgid "WP Panel file lock is enabled."
 msgstr "WP Panel 文件锁定已开启。"
 
-#: includes/trait-settings.php:1248
+#: includes/trait-settings.php:1263
 msgid "Publishing posts, editing pages, and uploading media are unaffected. Protected plugin, theme, code, and site configuration files cannot be changed directly. If an installation, update, or setup task needs to write to these files, use File protection / maintenance in the upper-right corner to unlock the site temporarily with the maintenance password. If temporary maintenance is unavailable, ask the server administrator to handle the task in WP Panel. WP Panel Optimizer is managed by the panel and can still receive its own updates."
 msgstr "发布文章、编辑页面和上传媒体不受影响。受保护的插件、主题、代码和站点配置文件不能直接修改。如果安装、更新或配置操作需要写入这些文件，请点击右上角的“文件保护 / 临时维护”，使用维护密码短时解锁。若临时维护不可用，请联系服务器管理员在 WP Panel 中处理。WP Panel Optimizer 由面板托管，文件保护开启时仍可接收自身更新。"
 
-#: wp-panel-optimizer.php:116
+#: wp-panel-optimizer.php:136
 msgid "No response; please check the panel address"
 msgstr "无响应，请检查面板地址"
 
-#: wp-panel-optimizer.php:123
+#: wp-panel-optimizer.php:143
 msgid "Connection successful"
 msgstr "连接成功"

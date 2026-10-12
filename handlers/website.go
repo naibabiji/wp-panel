@@ -2230,7 +2230,21 @@ func (h *WebsiteHandler) InstallPlugin(c *gin.Context) {
 	}
 
 	apiKey := executor.NewAPIKey()
-	if _, err := database.GetDB().Exec("UPDATE websites SET plugin_api_key = ? WHERE id = ?", apiKey, id); err != nil {
+	tx, err := database.GetDB().Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存插件密钥失败"))
+		return
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("UPDATE websites SET plugin_api_key = ? WHERE id = ?", apiKey, id); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存插件密钥失败"))
+		return
+	}
+	if _, err := tx.Exec("UPDATE managed_mail_sites SET site_confirmed=0,updated_at=CURRENT_TIMESTAMP WHERE site_id=?", id); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("重置托管发信确认失败"))
+		return
+	}
+	if err := tx.Commit(); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("保存插件密钥失败"))
 		return
 	}

@@ -189,6 +189,7 @@
 .wpp-settings .wpp-flag--info { background: var(--wpp-accent); }
 
 .wpp-settings .is-ok { color: var(--wpp-ok); }
+.wpp-settings .is-info { color: var(--wpp-accent); }
 .wpp-settings .is-warn { color: var(--wpp-warn); }
 .wpp-settings .is-risk { color: var(--wpp-risk); }
 .wpp-settings .is-idle { color: var(--wpp-muted); }
@@ -943,6 +944,221 @@
     font-family: var(--wpp-mono);
     font-size: 12px;
     white-space: nowrap;
+}
+
+/* ---------- 托管邮件子页面 ---------- */
+
+.wpp-settings .wpp-mail-retention {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px 22px;
+}
+
+.wpp-settings .wpp-mail-retention label {
+    color: var(--wpp-muted);
+    display: grid;
+    font-size: 12px;
+    gap: 6px;
+}
+
+.wpp-settings .wpp-mail-retention input[type="number"] {
+    min-width: 150px;
+}
+
+.wpp-settings .wpp-mail-actions {
+    border-top: 1px solid var(--wpp-line-soft);
+    padding-top: 18px;
+}
+
+.wpp-settings .wpp-mail-log {
+    margin-top: 16px;
+}
+
+.wpp-settings .wpp-mail-preview {
+    background: var(--wpp-surface);
+    border: 1px solid var(--wpp-line);
+    box-shadow: 0 24px 70px rgba(13, 22, 34, .28);
+    color: var(--wpp-text);
+    max-height: min(86vh, 900px);
+    max-width: 980px;
+    padding: 0;
+    width: calc(100% - 40px);
+}
+
+.wpp-settings .wpp-mail-preview[open] {
+    display: flex;
+    flex-direction: column;
+}
+
+.wpp-settings .wpp-mail-preview::backdrop {
+    background: rgba(13, 22, 34, .68);
+}
+
+.wpp-settings .wpp-mail-preview__head {
+    align-items: flex-start;
+    border-bottom: 1px solid var(--wpp-line);
+    display: flex;
+    gap: 20px;
+    justify-content: space-between;
+    padding: 20px 24px;
+}
+
+.wpp-settings .wpp-mail-preview__title {
+    align-items: center;
+    display: flex;
+    font-size: 18px;
+    gap: 8px;
+    line-height: 1.4;
+    margin: 0;
+}
+
+.wpp-settings .wpp-mail-preview__warning {
+    color: var(--wpp-muted);
+    margin: 7px 0 0;
+}
+
+.wpp-settings .wpp-mail-preview__close {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    color: var(--wpp-muted);
+    cursor: pointer;
+    display: inline-flex;
+    justify-content: center;
+    min-height: 36px;
+    min-width: 36px;
+    padding: 0;
+}
+
+.wpp-settings .wpp-mail-preview__close:hover,
+.wpp-settings .wpp-mail-preview__close:focus-visible {
+    color: var(--wpp-text);
+}
+
+.wpp-settings .wpp-mail-preview__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: 22px 24px;
+}
+
+.wpp-settings .wpp-mail-preview__body > h3:first-child {
+    margin-top: 0;
+}
+
+.wpp-settings .wpp-mail-details {
+    border: 1px solid var(--wpp-line);
+    display: grid;
+    grid-template-columns: minmax(130px, 180px) minmax(0, 1fr);
+    margin: 0 0 22px;
+}
+
+.wpp-settings .wpp-mail-details__row {
+    display: contents;
+}
+
+.wpp-settings .wpp-mail-details dt,
+.wpp-settings .wpp-mail-details dd {
+    border-bottom: 1px solid var(--wpp-line-soft);
+    margin: 0;
+    padding: 10px 12px;
+}
+
+.wpp-settings .wpp-mail-details dt {
+    background: var(--wpp-surface-alt);
+    color: var(--wpp-muted);
+    font-weight: 600;
+}
+
+.wpp-settings .wpp-mail-details dd {
+    overflow-wrap: anywhere;
+}
+
+.wpp-settings .wpp-mail-details__row:last-child dt,
+.wpp-settings .wpp-mail-details__row:last-child dd {
+    border-bottom: 0;
+}
+
+.wpp-settings .wpp-mail-details__value--code {
+    font-family: var(--wpp-mono);
+    white-space: pre-wrap;
+}
+
+.wpp-settings .wpp-mail-details__value--status {
+    font-weight: 600;
+}
+
+.wpp-settings .wpp-mail-details__sender-note {
+    color: var(--wpp-muted);
+    font-size: 12px;
+    margin: -12px 0 22px;
+}
+
+.wpp-settings .wpp-mail-preview__foot {
+    border-top: 1px solid var(--wpp-line);
+    padding: 14px 24px;
+    text-align: right;
+}
+
+.wpp-settings .wpp-mail-preview__frame {
+    background: #fff;
+    border: 1px solid var(--wpp-line);
+    min-height: 320px;
+    width: 100%;
+}
+
+.wpp-settings .wpp-mail-preview__source {
+    background: var(--wpp-surface-alt);
+    border: 1px solid var(--wpp-line);
+    font-family: var(--wpp-mono);
+    max-height: 520px;
+    overflow: auto;
+    padding: 12px;
+    white-space: pre-wrap;
+}
+
+.wpp-settings .wpp-mail-log {
+    overflow-x: auto;
+}
+
+.wpp-settings .wpp-mail-log code {
+    white-space: normal;
+    word-break: break-word;
+}
+
+@media (max-width: 782px) {
+    .wpp-settings .wpp-mail-preview {
+        max-height: calc(100vh - 20px);
+        width: calc(100% - 20px);
+    }
+
+    .wpp-settings .wpp-mail-preview__head,
+    .wpp-settings .wpp-mail-preview__body,
+    .wpp-settings .wpp-mail-preview__foot {
+        padding-left: 16px;
+        padding-right: 16px;
+    }
+
+    .wpp-settings .wpp-mail-preview__body {
+        min-height: 0;
+    }
+
+    .wpp-settings .wpp-mail-details {
+        display: block;
+    }
+
+    .wpp-settings .wpp-mail-details__row {
+        display: block;
+    }
+
+    .wpp-settings .wpp-mail-details dt {
+        border-bottom: 0;
+        padding-bottom: 3px;
+    }
+
+    .wpp-settings .wpp-mail-details dd {
+        padding-top: 3px;
+    }
 }
 
 /* ---------- 字段头与一句话摘要 ---------- */

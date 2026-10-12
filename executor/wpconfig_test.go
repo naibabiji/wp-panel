@@ -71,6 +71,13 @@ func TestExtractWPTablePrefix(t *testing.T) {
 	}
 }
 
+func TestExtractWPTablePrefixIgnoresCommentedDefinition(t *testing.T) {
+	prefix, ok := extractWPTablePrefix("<?php\n// $table_prefix = 'wp_old_';\n$table_prefix = 'wp_current_';\n")
+	if !ok || prefix != "wp_current_" {
+		t.Fatalf("prefix=%q ok=%v", prefix, ok)
+	}
+}
+
 func TestExtractWPTablePrefixWithoutTrailingUnderscore(t *testing.T) {
 	prefix, ok := extractWPTablePrefix("<?php\n$table_prefix = 'wp_sadfasdfasf';\n")
 	if !ok {

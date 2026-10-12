@@ -3,7 +3,7 @@ Contributors: naibabiji
 Requires at least: 5.0
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 1.1.28
+Stable tag: 1.1.38
 License: GPL-2.0+
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -40,6 +40,36 @@ WP Panel Optimizer 是 [WP Panel](https://wp-panel.org/) 的配套插件，通�
 插件安装后，面板会在 Web 目录外的 /var/wp-panel/site-secrets/<domain>/wp-panel-config.json 写入配置文件（含面板地址和 API Key），并由站点 PHP-FPM pool 向插件提供当前文件路径，无需手动填写凭证，也不依赖 WordPress 站点 URL 推断配置位置。
 
 == Changelog ==
+
+= 1.1.38 =
+* Expand the managed-email detail modal with sender, recipients, date, delivery diagnostics, attachments and custom headers.
+
+= 1.1.37 =
+* Show audited managed-email body previews in an accessible in-page modal instead of an inline page section.
+
+= 1.1.36 =
+* Let authorized site administrators manage the default sender name and Reply-To, respect panel sender-name locks, and send a real managed SMTP test email.
+
+= 1.1.35 =
+* Hide Managed Email navigation unless WP Panel has authorized managed SMTP for the site.
+
+= 1.1.34 =
+* Integrate Managed Email into the Optimizer navigation and visual design while preserving its separate route and permissions.
+
+= 1.1.33 =
+* Clear stale managed-mail conflict state after a known SMTP plugin is removed, while still requiring explicit site confirmation.
+
+= 1.1.32 =
+* Preserve both HTML Body and plain-text AltBody after PHPMailer promotes a message to multipart/alternative.
+
+= 1.1.31 =
+* Keep WordPress versions without WP_PHPMailer loadable, rebuild a missing managed-mail log table after restore, and fail closed while an opted-in site is paused.
+
+= 1.1.30 =
+* Preserve an empty managed-mail custom-header collection as a JSON object so headerless WordPress messages pass strict panel validation.
+
+= 1.1.29 =
+* Add optional WP Panel managed SMTP transport with double opt-in, conservative quotas, conflict detection, and site-local full-content email logs.
 
 = 1.1.28 =
 * 简化维护密码交互，移除键盘与粘贴事件识别；继续由面板服务端强制执行 30 分钟验证边界

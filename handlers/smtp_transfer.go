@@ -35,6 +35,7 @@ type smtpTransferConfig struct {
 	Encryption string `json:"smtp_encryption"`
 	User       string `json:"smtp_user"`
 	Pass       string `json:"smtp_pass"`
+	FromEmail  string `json:"smtp_from_email"`
 	AdminEmail string `json:"admin_email"`
 }
 
@@ -47,7 +48,7 @@ func (h *AlertHandler) ExportSMTPConfig(c *gin.Context) {
 
 	code, err := encodeSMTPTransfer(smtpTransferConfig{
 		Host: cfg.Host, Port: cfg.Port, Encryption: cfg.Encryption,
-		User: cfg.User, Pass: cfg.Pass, AdminEmail: cfg.AdminEmail,
+		User: cfg.User, Pass: cfg.Pass, FromEmail: cfg.FromEmail, AdminEmail: cfg.AdminEmail,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "alert.smtp_transfer_export_failed")))
@@ -129,7 +130,7 @@ func decodeSMTPTransfer(code string) (smtpTransferConfig, error) {
 func validateSMTPTransfer(cfg smtpTransferConfig) error {
 	values := map[string]string{
 		"smtp_host": cfg.Host, "smtp_port": cfg.Port, "smtp_encryption": cfg.Encryption,
-		"smtp_user": cfg.User, "smtp_pass": cfg.Pass, "admin_email": cfg.AdminEmail,
+		"smtp_user": cfg.User, "smtp_pass": cfg.Pass, "smtp_from_email": cfg.FromEmail, "admin_email": cfg.AdminEmail,
 	}
 	if strings.TrimSpace(cfg.Host) == "" {
 		return errors.New("SMTP host is empty")
