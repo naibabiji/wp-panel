@@ -231,8 +231,18 @@
                     <p class="text-xs text-gray-500 mt-2">{{t .Lang "settings.system_update_help"}}</p>
                 </div>
                 <div class="flex items-center space-x-3">
-                    <button @click="check()" :disabled="checking || updating" class="btn-secondary text-xs" x-text="checking ? t('settings.checking') : t('settings.refresh')"></button>
-                    <button @click="doUpdate()" x-show="count > 0" :disabled="updating" class="btn-primary text-xs" x-text="updating ? t('settings.updating') : t('settings.one_click_update')"></button>
+                    <button @click="refresh()" :disabled="checking || updating" class="btn-secondary text-xs" x-text="checking ? t('settings.checking') : t('settings.refresh')"></button>
+                    <button @click="doUpdate()" x-show="count > 0" :disabled="checking || updating" class="btn-primary text-xs" x-text="updating ? t('settings.updating') : t('settings.one_click_update')"></button>
+                </div>
+                <p class="text-xs text-gray-500 mt-2">{{t .Lang "settings.system_update_refresh_help"}}</p>
+                <div class="mt-4 rounded border border-gray-700 p-3 space-y-2">
+                    <label class="flex items-start gap-2 text-sm text-gray-300">
+                        <input type="checkbox" x-model="autoInstall" @change="saveAutoInstall()" class="mt-1">
+                        <span>{{t .Lang "settings.system_update_auto_install"}}</span>
+                    </label>
+                    <p class="text-xs text-gray-500">{{t .Lang "settings.system_update_auto_install_help"}}</p>
+                    <p class="text-xs text-gray-500">{{t .Lang "settings.system_update_auto_last"}}<span class="text-gray-300" x-text="autoLastCheck || t('settings.no_data')"></span> · <span x-text="autoStatusText"></span><span x-show="autoLastCount"> (<span x-text="autoLastCount"></span>)</span></p>
+                    <p x-show="autoLastError" class="text-xs text-red-400" x-text="autoLastError"></p>
                 </div>
                 <p x-show="count > 0" class="text-xs text-yellow-500 mt-2">{{t .Lang "settings.system_update_warning"}}</p>
                 <p x-show="msg" class="text-sm mt-2" :class="ok ? 'text-green-400' : 'text-red-400'" x-text="msg"></p>
@@ -1033,10 +1043,47 @@ function systemUpdate() {
         ok: false,
         removalOpen: false,
         removalPackages: [],
+        autoInstall: false,
+        autoLastCheck: '',
+        autoLastStatus: '',
+        autoStatusText: t('settings.no_data'),
+        autoLastCount: '',
+        autoLastError: '',
         pollTimer: null,
         init() {
             this.resume();
+            this.loadAutoSettings();
             this.scheduleCheck();
+        },
+        async loadAutoSettings() {
+            try {
+                const r = await api('/settings');
+                const s = r.data.system_package_auto_update || {};
+                this.autoInstall = s.enabled === 'true';
+                this.autoLastCheck = s.last_check_at || '';
+                this.autoLastStatus = s.last_status || '';
+                const statusLabels = {
+                    running: t('settings.system_update_auto_status_running'),
+                    failed: t('settings.system_update_auto_status_failed'),
+                    up_to_date: t('settings.system_update_auto_status_up_to_date'),
+                    updates_available: t('settings.system_update_auto_status_updates_available'),
+                    update_not_started: t('settings.system_update_auto_status_update_not_started'),
+                    update_started: t('settings.system_update_auto_status_update_started')
+                };
+                this.autoStatusText = statusLabels[this.autoLastStatus] || t('settings.no_data');
+                this.autoLastCount = s.last_count || '';
+                this.autoLastError = s.last_error || '';
+            } catch(e) { console.error('system package auto-update settings error:', e); }
+        },
+        async saveAutoInstall() {
+            const desired = this.autoInstall;
+            try {
+                await api('/settings', { method: 'PUT', body: { system_package_auto_update_enabled: desired ? 'true' : 'false' } });
+                showToast(t('settings.system_update_auto_saved'), 'success');
+            } catch(e) {
+                this.autoInstall = !desired;
+                showToast(e.message, 'error');
+            }
         },
         scheduleCheck() {
             deferTask(() => this.check(), 1600);
@@ -1052,6 +1099,25 @@ function systemUpdate() {
                 }
             } catch(e) { showToast(e.message, 'error'); }
             this.checking = false;
+        },
+        async refresh() {
+            this.checking = true;
+            this.checked = false;
+            this.packages = [];
+            this.count = 0;
+            this.msg = '';
+            this.ok = false;
+            try {
+                const r = await api('/system/updates/refresh', { method: 'POST', timeout: 150000 });
+                this.packages = r.data.packages || [];
+                this.count = r.data.count || 0;
+                this.checked = true;
+            } catch(e) {
+                this.msg = e.message;
+                showToast(e.message, 'error');
+            } finally {
+                this.checking = false;
+            }
         },
         async resume() {
             this.pollTimer = null;

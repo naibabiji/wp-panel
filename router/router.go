@@ -232,6 +232,13 @@ var i18nKeys = []string{
 	"settings.system_update_status_interrupted",
 	"settings.system_update_status_preflight",
 	"settings.system_update_status_queued",
+	"settings.system_update_auto_saved",
+	"settings.system_update_auto_status_running",
+	"settings.system_update_auto_status_failed",
+	"settings.system_update_auto_status_up_to_date",
+	"settings.system_update_auto_status_updates_available",
+	"settings.system_update_auto_status_update_not_started",
+	"settings.system_update_auto_status_update_started",
 	"settings.system_update_status_refresh",
 	"settings.system_update_status_start_failed",
 	"settings.system_update_status_success",
@@ -1839,6 +1846,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/update/do", updateHandler.Update)
 	sysUpdateHandler := &handlers.SystemUpdateHandler{Config: cfg}
 	protected.GET("/api/system/updates", sysUpdateHandler.Check)
+	protected.POST("/api/system/updates/refresh", sysUpdateHandler.Refresh)
 	protected.GET("/api/system/updates/status", sysUpdateHandler.Status)
 	protected.POST("/api/system/updates/do", sysUpdateHandler.Update)
 

@@ -343,6 +343,7 @@ func main() {
 	executor.StartTelemetry(Version)
 	executor.StartPanelAutoUpdateScheduler(Version, *configPath, cfg)
 	executor.StartWPPackageAutoUpdateScheduler(cfg)
+	executor.StartSystemPackageAutoUpdateScheduler(cfg)
 	log.Println("WordPress config baseline ensured")
 	log.Println("进程守护已启动")
 	log.Println("告警监控已启动")

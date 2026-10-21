@@ -71,6 +71,38 @@ func TestRunSystemPackageUpdatePlanCompletesAllChecks(t *testing.T) {
 	}
 }
 
+func TestRefreshSystemPackageIndexesOnlyRunsAptGetUpdate(t *testing.T) {
+	oldCommand := systemPackageUpdateCommand
+	t.Cleanup(func() { systemPackageUpdateCommand = oldCommand })
+	called := false
+	systemPackageUpdateCommand = func(ctx context.Context, name string, args ...string) error {
+		called = true
+		if name != "apt-get" || !reflect.DeepEqual(args, []string{"update"}) {
+			t.Fatalf("unexpected refresh command: %s %v", name, args)
+		}
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("package index refresh should have a deadline")
+		}
+		return nil
+	}
+	if err := RefreshSystemPackageIndexes(); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("expected apt-get update to run")
+	}
+}
+
+func TestRefreshSystemPackageIndexesReturnsCommandFailure(t *testing.T) {
+	oldCommand := systemPackageUpdateCommand
+	t.Cleanup(func() { systemPackageUpdateCommand = oldCommand })
+	wantErr := errors.New("source refresh failed")
+	systemPackageUpdateCommand = func(context.Context, string, ...string) error { return wantErr }
+	if err := RefreshSystemPackageIndexes(); !errors.Is(err, wantErr) {
+		t.Fatalf("expected source refresh error %v, got %v", wantErr, err)
+	}
+}
+
 func TestRunSystemPackageUpdatePlanStopsBeforeUpgradeWhenPreflightFails(t *testing.T) {
 	tempDir := t.TempDir()
 	planPath := filepath.Join(tempDir, "plan.json")

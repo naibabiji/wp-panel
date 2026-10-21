@@ -17,7 +17,8 @@ func TestUpdateSettingsSavesDatabaseOptionsTogether(t *testing.T) {
 		"panel_auto_update_window":"02:00-04:00",
 		"panel_auto_update_release_delay_minutes":"30",
 		"panel_auto_update_signature_timeout_minutes":"90",
-		"wp_package_auto_check_enabled":"false"
+		"wp_package_auto_check_enabled":"false",
+		"system_package_auto_update_enabled":"true"
 	}`)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
@@ -31,12 +32,25 @@ func TestUpdateSettingsSavesDatabaseOptionsTogether(t *testing.T) {
 		"panel_auto_update_release_delay_minutes":     "30",
 		"panel_auto_update_signature_timeout_minutes": "90",
 		"wp_package_auto_check_enabled":               "false",
+		"system_package_auto_update_enabled":          "true",
 	}
 	for key, expected := range want {
 		var actual string
 		if err := database.GetDB().QueryRow(`SELECT svalue FROM security_settings WHERE skey=?`, key).Scan(&actual); err != nil || actual != expected {
 			t.Fatalf("setting %s=%q err=%v, want %q", key, actual, err, expected)
 		}
+	}
+}
+
+func TestUpdateSettingsRejectsInvalidSystemPackageAutoUpdateValue(t *testing.T) {
+	setupBackupOverviewTestDB(t)
+	recorder := updateSystemSetting(t, `{"system_package_auto_update_enabled":"yes"}`)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var count int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM security_settings WHERE skey='system_package_auto_update_enabled'`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("setting count=%d err=%v, want no saved setting", count, err)
 	}
 }
 

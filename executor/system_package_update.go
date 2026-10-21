@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,9 @@ import (
 
 const systemPackageUpdateStatusFile = "system-package-update-status.json"
 const systemPackageKernelCommandTimeout = 5 * time.Second
+const systemPackageIndexRefreshTimeout = 2 * time.Minute
+const systemPackageAutoCheckInterval = 24 * time.Hour
+const systemPackageAutoCheckStartDelay = 2 * time.Minute
 
 type SystemPackageUpdateStatus struct {
 	ID              string   `json:"id"`
@@ -53,7 +57,108 @@ var (
 	}
 	systemPackageUpdateLockPath = "/run/lock/wp-panel-system-update.lock"
 	systemPackageUpdateStartMu  sync.Mutex
+	systemPackageAutoCheckOnce  sync.Once
+	startSystemPackageUpdate    = StartSystemPackageUpdate
 )
+
+// StartSystemPackageAutoUpdateScheduler refreshes APT indexes once per day,
+// independently of dashboard visits. Package installation is opt-in and uses
+// the same detached, guarded full-upgrade worker as the manual action.
+func StartSystemPackageAutoUpdateScheduler(cfg *config.Config) {
+	systemPackageAutoCheckOnce.Do(func() {
+		go func() {
+			time.Sleep(systemPackageAutoCheckStartDelay)
+			runSystemPackageAutoCheck(cfg)
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for range ticker.C {
+				runSystemPackageAutoCheck(cfg)
+			}
+		}()
+	})
+}
+
+func runSystemPackageAutoCheck(cfg *config.Config) {
+	if cfg == nil || !systemPackageAutoCheckDue(time.Now()) {
+		return
+	}
+	if status := ReconcileSystemPackageUpdateStatus(cfg); status.Status == "running" {
+		return
+	}
+	started := time.Now().UTC()
+	setSecuritySetting("system_package_auto_check_at", started.Format(time.RFC3339))
+	setSecuritySetting("system_package_auto_check_status", "running")
+	setSecuritySetting("system_package_auto_check_error", "")
+	if err := RefreshSystemPackageIndexes(); err != nil {
+		log.Printf("系统软件包每日刷新软件源失败: %v", err)
+		recordSystemPackageAutoCheck("failed", 0, "刷新软件源失败，请检查服务器网络和软件源配置")
+		return
+	}
+	ClearSystemUpdateAlertCache()
+	output, err := systemPackageUpdateCommandOutput("apt", "list", "--upgradable")
+	if err != nil {
+		log.Printf("系统软件包每日读取更新列表失败: %v", err)
+		recordSystemPackageAutoCheck("failed", 0, "读取更新列表失败，请检查服务器软件包状态")
+		return
+	}
+	count := countAPTUpgradablePackages(output)
+	setSecuritySetting("system_package_auto_check_count", strconv.Itoa(count))
+	if count == 0 {
+		recordSystemPackageAutoCheck("up_to_date", 0, "")
+		return
+	}
+	if readSecuritySetting("system_package_auto_update_enabled") != "true" {
+		recordSystemPackageAutoCheck("updates_available", count, "")
+		return
+	}
+	if _, err := startSystemPackageUpdate(cfg); err != nil {
+		log.Printf("系统软件包每日自动更新任务启动失败: %v", err)
+		recordSystemPackageAutoCheck("update_not_started", count, "更新任务未能启动，请在系统更新卡片查看任务状态或手动重试")
+		return
+	}
+	recordSystemPackageAutoCheck("update_started", count, "")
+}
+
+func systemPackageAutoCheckDue(now time.Time) bool {
+	last, err := time.Parse(time.RFC3339, readSecuritySetting("system_package_auto_check_at"))
+	return err != nil || now.Sub(last) >= systemPackageAutoCheckInterval
+}
+
+func recordSystemPackageAutoCheck(status string, count int, message string) {
+	setSecuritySetting("system_package_auto_check_status", status)
+	setSecuritySetting("system_package_auto_check_count", strconv.Itoa(count))
+	setSecuritySetting("system_package_auto_check_error", message)
+	if message != "" {
+		log.Printf("系统软件包每日检查失败或未启动更新: %s", message)
+	}
+}
+
+func countAPTUpgradablePackages(output string) int {
+	count := 0
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "Listing...") && strings.Contains(line, "/") {
+			count++
+		}
+	}
+	return count
+}
+
+// systemPackageUpdateCommandOutput captures standard output only so apt
+// warnings on stderr never leak into the upgradable-package count.
+var systemPackageUpdateCommandOutput = func(name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return "", err
+	}
+	return string(out), nil
+}
 
 func SystemPackageUpdateStatusPath(cfg *config.Config) string {
 	return filepath.Join(cfg.Panel.DataDir, systemPackageUpdateStatusFile)
@@ -146,6 +251,13 @@ func StartSystemPackageUpdate(cfg *config.Config) (SystemPackageUpdateStatus, er
 		return SystemPackageUpdateStatus{}, fmt.Errorf("启动系统更新失败: %s", strings.TrimSpace(string(out)))
 	}
 	return status, nil
+}
+
+// RefreshSystemPackageIndexes updates APT metadata only; it never installs packages.
+func RefreshSystemPackageIndexes() error {
+	ctx, cancel := context.WithTimeout(context.Background(), systemPackageIndexRefreshTimeout)
+	defer cancel()
+	return systemPackageUpdateCommand(ctx, "apt-get", "update")
 }
 
 func RunSystemPackageUpdatePlan(planPath string) error {

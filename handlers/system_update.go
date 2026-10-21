@@ -31,6 +31,9 @@ var sysPkgCache struct {
 	pkgs     []systemPackage
 }
 
+var refreshSystemPackageSources = executor.RefreshSystemPackageIndexes
+var listUpgradableSystemPackages = getUpgradablePackages
+
 func (h *SystemUpdateHandler) Check(c *gin.Context) {
 	sysPkgCache.mu.Lock()
 	if c.Query("fresh") != "1" && time.Now().Before(sysPkgCache.expireAt) {
@@ -44,17 +47,46 @@ func (h *SystemUpdateHandler) Check(c *gin.Context) {
 	}
 	sysPkgCache.mu.Unlock()
 
-	pkgs := getUpgradablePackages()
+	pkgs, err := listUpgradableSystemPackages()
+	if err != nil {
+		c.JSON(http.StatusBadGateway, models.ErrorResponse(i18n.TE(c.Request, "settings.system_update_check_failed")))
+		return
+	}
 
-	sysPkgCache.mu.Lock()
-	sysPkgCache.expireAt = time.Now().Add(5 * time.Minute)
-	sysPkgCache.pkgs = pkgs
-	sysPkgCache.mu.Unlock()
+	cacheSystemPackages(pkgs)
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"packages": pkgs,
 		"count":    len(pkgs),
 	}))
+}
+
+func (h *SystemUpdateHandler) Refresh(c *gin.Context) {
+	if status := executor.ReconcileSystemPackageUpdateStatus(h.Config); status.Status == "running" {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "settings.system_update_already_running")))
+		return
+	}
+	if err := refreshSystemPackageSources(); err != nil {
+		c.JSON(http.StatusBadGateway, models.ErrorResponse(i18n.TE(c.Request, "settings.system_update_check_failed")))
+		return
+	}
+	pkgs, err := listUpgradableSystemPackages()
+	if err != nil {
+		c.JSON(http.StatusBadGateway, models.ErrorResponse(i18n.TE(c.Request, "settings.system_update_check_failed")))
+		return
+	}
+	cacheSystemPackages(pkgs)
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"packages": pkgs,
+		"count":    len(pkgs),
+	}))
+}
+
+func cacheSystemPackages(pkgs []systemPackage) {
+	sysPkgCache.mu.Lock()
+	sysPkgCache.expireAt = time.Now().Add(5 * time.Minute)
+	sysPkgCache.pkgs = pkgs
+	sysPkgCache.mu.Unlock()
 }
 
 func (h *SystemUpdateHandler) Update(c *gin.Context) {
@@ -100,10 +132,10 @@ func systemUpdateStatusResponse(c *gin.Context, status executor.SystemPackageUpd
 	}
 }
 
-func getUpgradablePackages() []systemPackage {
-	out, err := exec.Command("bash", "-c", "apt list --upgradable 2>/dev/null").Output()
+func getUpgradablePackages() ([]systemPackage, error) {
+	out, err := exec.Command("apt", "list", "--upgradable").Output()
 	if err != nil {
-		return []systemPackage{}
+		return nil, err
 	}
 
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
@@ -132,5 +164,5 @@ func getUpgradablePackages() []systemPackage {
 	if pkgs == nil {
 		pkgs = []systemPackage{}
 	}
-	return pkgs
+	return pkgs, nil
 }

@@ -40,22 +40,23 @@ type rootPasswordChangeRequest struct {
 }
 
 type settingsUpdateRequest struct {
-	PanelTitle                *string `json:"panel_title"`
-	Username                  *string `json:"username"`
-	BasicAuthUser             *string `json:"basic_auth_user"`
-	OldPassword               *string `json:"old_password"`
-	NewPassword               *string `json:"new_password"`
-	BasicAuthPw               *string `json:"basic_auth_password"`
-	Timezone                  *string `json:"timezone"`
-	Hostname                  *string `json:"hostname"`
-	NtpSync                   *bool   `json:"ntp_sync"`
-	GithubProxy               *string `json:"github_proxy"`
-	PanelAutoUpdateEnabled    *string `json:"panel_auto_update_enabled"`
-	PanelAutoUpdateMode       *string `json:"panel_auto_update_mode"`
-	PanelAutoUpdateWindow     *string `json:"panel_auto_update_window"`
-	PanelAutoUpdateDelay      *string `json:"panel_auto_update_release_delay_minutes"`
-	PanelAutoUpdateSigTimeout *string `json:"panel_auto_update_signature_timeout_minutes"`
-	WPPackageAutoCheckEnabled *string `json:"wp_package_auto_check_enabled"`
+	PanelTitle                     *string `json:"panel_title"`
+	Username                       *string `json:"username"`
+	BasicAuthUser                  *string `json:"basic_auth_user"`
+	OldPassword                    *string `json:"old_password"`
+	NewPassword                    *string `json:"new_password"`
+	BasicAuthPw                    *string `json:"basic_auth_password"`
+	Timezone                       *string `json:"timezone"`
+	Hostname                       *string `json:"hostname"`
+	NtpSync                        *bool   `json:"ntp_sync"`
+	GithubProxy                    *string `json:"github_proxy"`
+	PanelAutoUpdateEnabled         *string `json:"panel_auto_update_enabled"`
+	PanelAutoUpdateMode            *string `json:"panel_auto_update_mode"`
+	PanelAutoUpdateWindow          *string `json:"panel_auto_update_window"`
+	PanelAutoUpdateDelay           *string `json:"panel_auto_update_release_delay_minutes"`
+	PanelAutoUpdateSigTimeout      *string `json:"panel_auto_update_signature_timeout_minutes"`
+	WPPackageAutoCheckEnabled      *string `json:"wp_package_auto_check_enabled"`
+	SystemPackageAutoUpdateEnabled *string `json:"system_package_auto_update_enabled"`
 }
 
 const defaultPanelConfigPath = "/www/server/panel/config.json"
@@ -138,7 +139,20 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 		"ntp_server":        ntpServer,
 		"server_time":       time.Now().UnixMilli(),
 		"panel_auto_update": autoUpdate,
+		"system_package_auto_update": map[string]string{
+			"enabled":       readSecuritySettingForSettings("system_package_auto_update_enabled"),
+			"last_check_at": readSecuritySettingForSettings("system_package_auto_check_at"),
+			"last_status":   readSecuritySettingForSettings("system_package_auto_check_status"),
+			"last_count":    readSecuritySettingForSettings("system_package_auto_check_count"),
+			"last_error":    readSecuritySettingForSettings("system_package_auto_check_error"),
+		},
 	}))
+}
+
+func readSecuritySettingForSettings(key string) string {
+	var value string
+	_ = database.GetDB().QueryRow("SELECT svalue FROM security_settings WHERE skey = ?", key).Scan(&value)
+	return value
 }
 
 func (h *SettingsHandler) UpdateRootPassword(c *gin.Context) {
@@ -419,6 +433,13 @@ func validateDatabaseSettings(req settingsUpdateRequest) (map[string]string, str
 			return nil, "自动检测开关参数错误"
 		}
 		updates["wp_package_auto_check_enabled"] = v
+	}
+	if req.SystemPackageAutoUpdateEnabled != nil {
+		v := strings.TrimSpace(*req.SystemPackageAutoUpdateEnabled)
+		if v != "true" && v != "false" {
+			return nil, "系统自动更新开关参数错误"
+		}
+		updates["system_package_auto_update_enabled"] = v
 	}
 	return updates, ""
 }
