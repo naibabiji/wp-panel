@@ -110,6 +110,79 @@ func (h *SoftwareHandler) InstallDevelopmentTool(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.T(lang, "software.development_tool_installed")}))
 }
 
+func (h *SoftwareHandler) GetPHPCustomConfig(c *gin.Context) {
+	content, err := executor.ReadPHPCustomConfig()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(softwareLang(c), "software.read_config_failed")))
+		return
+	}
+	inspection, err := executor.InspectPHPCustomConfig(content)
+	if err != nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"path": executor.PHPCustomConfigPath(), "content": content, "inspection_error": err.Error()}))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(inspection))
+}
+
+func (h *SoftwareHandler) SavePHPCustomConfig(c *gin.Context) {
+	lang := softwareLang(c)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512*1024)
+	var req struct {
+		Content           string `json:"content"`
+		ConfirmLoaderRisk bool   `json:"confirm_loader_risk"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "common.invalid_params")))
+		return
+	}
+	inspection, err := executor.SavePHPCustomConfig(c.Request.Context(), req.Content, req.ConfirmLoaderRisk)
+	if errors.Is(err, executor.ErrPHPHighRiskConfirmationRequired) {
+		inspection.Content = ""
+		c.JSON(http.StatusConflict, gin.H{"success": false, "message": i18n.T(lang, "software.php_custom_config_risk_confirmation_required"), "conflicts": inspection})
+		return
+	}
+	if err != nil {
+		executor.RecordOperationLog("php_custom_config", "PHP-FPM 8.3", "failed", err.Error())
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.php_custom_config_save_failed", i18n.P{"error": err.Error()})))
+		return
+	}
+	message := i18n.T(lang, "software.php_custom_config_saved")
+	if req.ConfirmLoaderRisk {
+		message += " " + i18n.T(lang, "software.php_custom_config_risk_confirmed")
+	}
+	executor.RecordOperationLog("php_custom_config", "PHP-FPM 8.3", "success", "saved; high_risk_confirmed="+strconv.FormatBool(req.ConfirmLoaderRisk))
+	inspection.Content = ""
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": message, "inspection": inspection}))
+}
+
+func (h *SoftwareHandler) ListPHPExtensions(c *gin.Context) {
+	ctx := c.Request.Context()
+	modules, err := executor.PHPFPMLoadedModules(ctx)
+	if err != nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"available": executor.PHPExtensionStatuses(ctx), "installed_modules": []string{}, "error": err.Error()}))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"available": executor.PHPExtensionStatuses(ctx), "installed_modules": modules}))
+}
+
+func (h *SoftwareHandler) InstallPHPExtension(c *gin.Context) {
+	lang := softwareLang(c)
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || !executor.IsSupportedPHPExtension(req.ID) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.T(lang, "common.invalid_params")))
+		return
+	}
+	if err := executor.InstallPHPExtension(c.Request.Context(), req.ID); err != nil {
+		executor.RecordOperationLog("php_extension_install", req.ID, "failed", err.Error())
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.T(lang, "software.php_extension_install_failed", i18n.P{"error": err.Error()})))
+		return
+	}
+	executor.RecordOperationLog("php_extension_install", req.ID, "success", "installed and verified package")
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.T(lang, "software.php_extension_installed")}))
+}
+
 var configDefaults = map[string]string{
 	"memory_limit":            "256M",
 	"upload_max_filesize":     "64M",

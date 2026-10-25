@@ -24,6 +24,12 @@ func recordOperationLog(operation, target, status, message string) {
 	pruneOperationLogs(db)
 }
 
+// RecordOperationLog exposes the existing bounded operation-log mechanism to
+// handlers that complete a server-side operation in the executor package.
+func RecordOperationLog(operation, target, status, message string) {
+	recordOperationLog(operation, target, status, message)
+}
+
 func EnsureOperationLogRetention() {
 	db := database.GetDB()
 	if db == nil {

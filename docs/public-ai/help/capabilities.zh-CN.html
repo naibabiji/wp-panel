@@ -3,7 +3,7 @@
 <!-- /wp:paragraph -->
 
 <!-- wp:paragraph -->
-<p>本页内容由 WP Panel 维护者对照源代码逐项核对，适用于 v1.9.0，最后核对于 2026-10-22。本页没有列出的功能，表示 WP Panel 当前不提供。</p>
+<p>本页内容由 WP Panel 维护者对照源代码逐项核对，适用于 v1.10.0，最后核对于 2026-10-25。本页没有列出的功能，表示 WP Panel 当前不提供。</p>
 <!-- /wp:paragraph -->
 
 <!-- wp:heading -->
@@ -271,7 +271,7 @@
 <li><strong>自定义 Nginx 规则</strong>：为每个网站添加 server 级和 location 级自定义规则；保存时做语法检查，重载失败会恢复旧规则。<br>入口：网站详情 → Nginx 自定义配置<br>边界：只检查语法，不判断规则是否安全；不能修改面板生成的主配置或全局 nginx.conf。</li>
 <!-- /wp:list-item -->
 <!-- wp:list-item -->
-<li><strong>PHP 运行配置</strong>：每个网站自动获得独立 PHP-FPM 池；在软件管理中修改全局 PHP 参数（如内存上限、上传大小、执行时间），失败时自动恢复；提供 OPcache 推荐值和清理。<br>入口：软件管理 → PHP 配置 / OPcache<br>边界：PHP 参数对全部网站统一生效，不能按网站单独设置；只有 PHP 8.3；单站 PHP 进程上限目前没有调整界面；清理 OPcache 会重载全部网站的 PHP-FPM。</li>
+<li><strong>PHP 运行配置</strong>：每个网站自动获得独立 PHP-FPM 池；在软件管理中修改全局 PHP 参数（如内存上限、上传大小、执行时间），失败时自动恢复；提供 OPcache 推荐值和清理；提供 PHP-FPM 自定义 INI、固定清单扩展状态/安装，以及当前 PHP-FPM 已加载的全部扩展列表。<br>入口：软件管理 → PHP 配置 / OPcache<br>边界：PHP 参数对全部网站统一生效，不能按网站单独设置；只有 PHP 8.3；自定义 INI 不同步到 CLI，且不覆盖站点 Pool 强制管理的参数；WebRoot 或站点用户可写的 Loader 需要管理员明确确认但这不是安全隔离；自定义文件不在面板 SQLite 备份范围内；扩展是服务器级共享能力，第一版不提供删除扩展；单站 PHP 进程上限目前没有调整界面；清理 OPcache 会重载全部网站的 PHP-FPM。</li>
 <!-- /wp:list-item -->
 <!-- wp:list-item -->
 <li><strong>FastCGI 页面缓存</strong>：每个网站可单独开关 Nginx FastCGI 整页缓存、设置缓存时间并一键清理。WordPress 网站自动跳过登录用户、后台和购物车等动态请求，配套插件在内容更新时自动清理缓存并可预热。<br>入口：网站详情 → WordPress 优化 / 清除缓存；WordPress 后台管理栏 → 清除缓存<br>边界：没有缓存命中率统计；Redis 对象缓存没有单站开关界面；开启缓存不等于页面一定会被命中。</li>

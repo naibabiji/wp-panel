@@ -139,6 +139,7 @@ function api(path, options = {}) {
                 const err = new Error(data.message || 'Request failed (' + resp.status + ')');
                 err.status = resp.status;
                 if (data.conflicts) err.conflicts = data.conflicts;
+                if (data.data) err.data = data.data;
                 throw err;
             }
             if (!data.success) {
@@ -155,6 +156,7 @@ function api(path, options = {}) {
             const message = friendlyAPIError(err);
             const displayErr = message === err.message ? err : new Error(message);
             if (err.conflicts) displayErr.conflicts = err.conflicts;
+            if (err.data) displayErr.data = err.data;
             if (Number.isInteger(err.status)) displayErr.status = err.status;
             if (message !== t('auth.session_expired') && !displayErr.conflicts && !silent && !suppressToast) {
                 console.error('Fetch failed:', err.message, 'URL:', url);

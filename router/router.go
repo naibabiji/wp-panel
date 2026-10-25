@@ -1021,6 +1021,17 @@ var i18nKeys = []string{
 	"software.innodb_buffer_pool_size_hint",
 	"software.innodb_buffer_pool_size_label",
 	"software.installed",
+	"software.php_custom_config_pool_override",
+	"software.php_custom_config_save",
+	"software.php_custom_config_saved",
+	"software.php_extension_install_confirm",
+	"software.php_extension_installed",
+	"software.php_extension_loaded",
+	"software.php_extension_not_loaded",
+	"software.php_extension_package_missing",
+	"software.php_installed_extensions_count",
+	"software.php_installed_extensions_title",
+	"software.php_available_extensions_title",
 	"software.development_tool_install_confirm",
 	"software.development_tool_installed",
 	"software.install",
@@ -1831,6 +1842,10 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 		c.HTML(http.StatusOK, "software.html", pageData(suffix, "software", "software_content", c))
 	})
 	protected.GET("/api/software", softwareHandler.List)
+	protected.GET("/api/software/php/custom-config", softwareHandler.GetPHPCustomConfig)
+	protected.PUT("/api/software/php/custom-config", softwareHandler.SavePHPCustomConfig)
+	protected.GET("/api/software/php/extensions", softwareHandler.ListPHPExtensions)
+	protected.POST("/api/software/php/extensions/install", softwareHandler.InstallPHPExtension)
 	protected.GET("/api/software/development-tools", softwareHandler.DevelopmentTools)
 	protected.POST("/api/software/development-tools/install", softwareHandler.InstallDevelopmentTool)
 	protected.GET("/api/software/recommend", softwareHandler.Recommend)

@@ -130,48 +130,132 @@
         </div>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <template x-for="sw in software" :key="sw.name">
-            <div class="card">
-                <div class="flex items-center justify-between mb-3">
-                    <div class="flex items-center space-x-3">
-                        <h3 class="text-lg font-semibold text-white" x-text="sw.name"></h3>
-                        <span class="text-sm text-blue-400" x-text="sw.version"></span>
-                    </div>
-                    <span class="text-xs text-gray-400" x-text="sw.status"></span>
-                </div>
-
-                <div class="space-y-3">
-                    <template x-for="cfg in sw.configs" :key="cfg.key">
-                        <div>
-                            <div class="flex items-center justify-between mb-1">
-                                <label class="text-xs text-gray-400" x-text="cfg.label"></label>
-                                <span class="text-xs text-gray-600" x-text="'当前: ' + cfg.value"></span>
-                            </div>
-                            <input type="text" x-model="cfg._value" class="input-field w-full text-sm py-1.5">
-                            <p class="text-xs text-gray-500 mt-0.5" x-text="cfg.hint"></p>
+    <div class="card mb-6">
+        <template x-for="sw in software" :key="'php-' + sw.name">
+            <template x-if="sw.name === 'PHP'">
+                <div>
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center space-x-3">
+                            <h3 class="text-lg font-semibold text-white" x-text="sw.name"></h3>
+                            <span class="text-sm text-blue-400" x-text="sw.version"></span>
                         </div>
-                    </template>
+                        <span class="text-xs text-gray-400" x-text="sw.status"></span>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <template x-for="cfg in sw.configs" :key="cfg.key">
+                            <div>
+                                <div class="flex items-center justify-between mb-1">
+                                    <label class="text-xs text-gray-400" x-text="cfg.label"></label>
+                                    <span class="text-xs text-gray-600" x-text="'当前: ' + cfg.value"></span>
+                                </div>
+                                <input type="text" x-model="cfg._value" class="input-field w-full text-sm py-1.5">
+                                <p class="text-xs text-gray-500 mt-0.5" x-text="cfg.hint"></p>
+                            </div>
+                        </template>
+                    </div>
+                    <div class="flex flex-wrap gap-2 mt-5">
+                        <button @click="saveConfig(sw)" :disabled="sw._saving" class="btn-primary text-sm">
+                            <span x-show="!sw._saving">{{t .Lang "software.save_reload"}}</span>
+                            <span x-show="sw._saving">{{t .Lang "software.save_rebuild_fpm"}}</span>
+                        </button>
+                        <button @click="recommend(sw)" :disabled="sw._recommending" class="btn-secondary text-sm">
+                            <span x-show="!sw._recommending">{{t .Lang "software.recommend"}}</span>
+                            <span x-show="sw._recommending">{{t .Lang "software.recommending"}}</span>
+                        </button>
+                        <button @click="clearOpcache()" :disabled="clearingOpcache" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">
+                            <span x-show="!clearingOpcache">{{t .Lang "software.opcache_clear"}}</span>
+                            <span x-show="clearingOpcache">{{t .Lang "software.opcache_clearing"}}</span>
+                        </button>
+                        <button @click="viewLog(sw.name)" class="btn-secondary text-sm">{{t .Lang "software.view_logs"}}</button>
+                    </div>
+                    <div class="mt-5 pt-5 border-t border-gray-700 space-y-4">
+                        <div>
+                            <h4 class="font-semibold text-white">{{t .Lang "software.php_custom_config_title"}}</h4>
+                            <p class="text-xs text-gray-500 mt-1">{{t .Lang "software.php_custom_config_help"}}</p>
+                            <div x-show="customPHP.inspection_error" class="rounded border border-red-800 bg-red-950/30 p-3 text-xs text-red-300 mt-3" x-text="customPHP.inspection_error"></div>
+                            <textarea x-model="customPHP.content" rows="9" class="input-field w-full text-xs font-mono mt-3" spellcheck="false"></textarea>
+                        </div>
+                        <template x-for="risk in customPHP.high_risk_paths" :key="risk.directive + risk.path">
+                            <div class="rounded border border-red-800 bg-red-950/30 p-3 text-xs text-red-300">
+                                <div class="font-medium">{{t .Lang "software.php_custom_config_risk_warning"}}</div>
+                                <div class="mt-1 font-mono break-all" x-text="risk.directive + '=' + risk.path"></div>
+                                <div class="mt-1" x-text="(risk.reasons || []).join('; ')"></div>
+                            </div>
+                        </template>
+                        <div x-show="customPHP.pool_overridden_keys.length" class="rounded border border-yellow-800 bg-yellow-950/30 p-3 text-xs text-yellow-300" x-text="t('software.php_custom_config_pool_override', { keys: customPHP.pool_overridden_keys.join(', ') })"></div>
+                        <div class="flex justify-end">
+                            <button @click="saveCustomPHP()" :disabled="customPHP.saving" class="btn-primary text-sm" x-text="customPHP.saving ? t('software.installing') : t('software.php_custom_config_save')"></button>
+                        </div>
+                    </div>
                 </div>
-
-                <div class="flex space-x-2 mt-4">
-                    <button @click="saveConfig(sw)" :disabled="sw._saving" class="btn-primary text-sm">
-                        <span x-show="!sw._saving">{{t .Lang "software.save_reload"}}</span>
-                        <span x-show="sw._saving && sw.name === 'PHP'">{{t .Lang "software.save_rebuild_fpm"}}</span>
-                        <span x-show="sw._saving && sw.name !== 'PHP'">{{t .Lang "software.save_reloading"}}</span>
-                    </button>
-                    <button x-show="['PHP', 'MariaDB', 'Redis'].includes(sw.name)" @click="recommend(sw)" :disabled="sw._recommending" class="btn-secondary text-sm">
-                        <span x-show="!sw._recommending">{{t .Lang "software.recommend"}}</span>
-                        <span x-show="sw._recommending">{{t .Lang "software.recommending"}}</span>
-                    </button>
-                    <button x-show="sw.name === 'PHP'" @click="clearOpcache()" :disabled="clearingOpcache" class="text-sm py-1.5 px-3 rounded" style="background-color: #7f1d1d; color: #fca5a5;">
-                        <span x-show="!clearingOpcache">{{t .Lang "software.opcache_clear"}}</span>
-                        <span x-show="clearingOpcache">{{t .Lang "software.opcache_clearing"}}</span>
-                    </button>
-                    <button @click="viewLog(sw.name)" class="btn-secondary text-sm">{{t .Lang "software.view_logs"}}</button>
-                </div>
-            </div>
+            </template>
         </template>
+    </div>
+
+    <div class="card mb-6">
+        <div class="flex items-center justify-between mb-3">
+            <div>
+                <h3 class="text-lg font-semibold text-white">{{t .Lang "software.php_extensions_title"}}</h3>
+                <p class="text-xs text-gray-500 mt-1">{{t .Lang "software.php_extensions_help"}}</p>
+            </div>
+            <span class="text-xs text-gray-400" x-text="t('software.php_installed_extensions_count', { count: phpInstalledExtensions.length })"></span>
+        </div>
+        <div class="mb-5">
+            <h4 class="text-sm font-semibold text-white mb-2">{{t .Lang "software.php_installed_extensions_title"}}</h4>
+            <div class="flex flex-wrap gap-2">
+                <template x-for="module in phpInstalledExtensions" :key="module">
+                    <span class="px-2 py-1 rounded bg-gray-700 text-gray-300 text-xs font-mono" x-text="module"></span>
+                </template>
+                <span x-show="!phpInstalledExtensions.length" class="text-xs text-gray-500">—</span>
+            </div>
+        </div>
+        <div class="border-t border-gray-700 pt-4">
+            <h4 class="text-sm font-semibold text-white mb-2">{{t .Lang "software.php_available_extensions_title"}}</h4>
+            <div class="overflow-x-auto">
+                <table class="w-full text-xs">
+                    <thead class="text-gray-500 border-b border-gray-700"><tr><th class="py-2 text-left">名称</th><th class="py-2 text-left">状态</th><th class="py-2 text-right">操作</th></tr></thead>
+                    <tbody class="divide-y divide-gray-800">
+                        <template x-for="ext in phpExtensions" :key="ext.id">
+                            <tr>
+                                <td class="py-2 pr-3"><div class="text-white" x-text="ext.id"></div><div class="text-gray-600" x-text="ext.package"></div></td>
+                                <td class="py-2 pr-3"><span :class="ext.loaded ? 'text-green-400' : 'text-gray-500'" x-text="ext.loaded ? t('software.php_extension_loaded') : (ext.package_installed ? t('software.php_extension_not_loaded') : t('software.php_extension_package_missing'))"></span></td>
+                                <td class="py-2 text-right"><button x-show="!ext.package_installed" @click="installPHPExtension(ext)" :disabled="ext._installing" class="btn-primary text-xs" x-text="ext._installing ? t('software.installing') : t('software.install')"></button><span x-show="ext.package_installed" class="text-gray-600">—</span></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-6">
+        <h3 class="text-lg font-semibold text-white mb-4">Nginx / MariaDB / Redis</h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <template x-for="sw in software" :key="'shared-' + sw.name">
+                <template x-if="['Nginx', 'MariaDB', 'Redis'].includes(sw.name)">
+                    <div class="rounded border border-gray-700 p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <div><h4 class="font-semibold text-white" x-text="sw.name"></h4><span class="text-xs text-blue-400" x-text="sw.version"></span></div>
+                            <span class="text-xs text-gray-400" x-text="sw.status"></span>
+                        </div>
+                        <div class="space-y-3">
+                            <template x-for="cfg in sw.configs" :key="cfg.key">
+                                <div>
+                                    <div class="flex items-center justify-between mb-1"><label class="text-xs text-gray-400" x-text="cfg.label"></label><span class="text-xs text-gray-600" x-text="'当前: ' + cfg.value"></span></div>
+                                    <input type="text" x-model="cfg._value" class="input-field w-full text-sm py-1.5">
+                                    <p class="text-xs text-gray-500 mt-0.5" x-text="cfg.hint"></p>
+                                </div>
+                            </template>
+                        </div>
+                        <div class="flex flex-wrap gap-2 mt-4">
+                            <button @click="saveConfig(sw)" :disabled="sw._saving" class="btn-primary text-xs">{{t .Lang "software.save_reload"}}</button>
+                            <button x-show="['MariaDB', 'Redis'].includes(sw.name)" @click="recommend(sw)" :disabled="sw._recommending" class="btn-secondary text-xs">{{t .Lang "software.recommend"}}</button>
+                            <button @click="viewLog(sw.name)" class="btn-secondary text-xs">{{t .Lang "software.view_logs"}}</button>
+                        </div>
+                    </div>
+                </template>
+            </template>
+        </div>
     </div>
 
     <div x-show="logModal.open" class="modal-overlay" @click.self="logModal.open = false">
@@ -224,6 +308,9 @@ function softwareManager() {
         developmentTools: [],
         showHelp: false,
         clearingOpcache: false,
+        customPHP: { path: '', content: '', high_risk_paths: [], pool_overridden_keys: [], inspection_error: '', saving: false },
+        phpExtensions: [],
+        phpInstalledExtensions: [],
         logModal: { open: false, title: '', content: '' },
         async fetchList() {
             try {
@@ -237,7 +324,49 @@ function softwareManager() {
                     });
                 }
             } catch(e) {}
+            await this.fetchPHPRuntimeExtras();
             await this.fetchDevelopmentTools();
+        },
+        async fetchPHPRuntimeExtras() {
+            try {
+                const [config, extensions] = await Promise.all([
+                    api('/software/php/custom-config'),
+                    api('/software/php/extensions')
+                ]);
+                if (config.success) this.customPHP = { ...this.customPHP, ...(config.data || {}), saving: false };
+                if (extensions.success) {
+                    this.phpExtensions = (extensions.data?.available || []).map(ext => ({ ...ext, _installing: false }));
+                    this.phpInstalledExtensions = extensions.data?.installed_modules || [];
+                }
+            } catch(e) {}
+        },
+        async saveCustomPHP(confirmRisk = false) {
+            this.customPHP.saving = true;
+            try {
+                const r = await api('/software/php/custom-config', { method: 'PUT', body: { content: this.customPHP.content, confirm_loader_risk: confirmRisk }, timeout: 90000 });
+                if (r.success) {
+                    const inspection = r.data?.inspection || {};
+                    this.customPHP = { ...this.customPHP, high_risk_paths: inspection.high_risk_paths || [], pool_overridden_keys: inspection.pool_overridden_keys || [], inspection_error: '', saving: false };
+                    showToast(r.data?.message || t('software.php_custom_config_saved'), 'success');
+                }
+            } catch(e) {
+                if (e.status === 409 && e.conflicts) {
+                    this.customPHP = { ...this.customPHP, high_risk_paths: e.conflicts.high_risk_paths || [], pool_overridden_keys: e.conflicts.pool_overridden_keys || [], saving: false };
+                    const paths = (e.conflicts.high_risk_paths || []).map(risk => risk.directive + '=' + risk.path + ' (' + (risk.reasons || []).join('; ') + ')').join('\n');
+                    if (await confirmModal('{{t .Lang "software.php_custom_config_risk_warning"}}\n' + paths)) return this.saveCustomPHP(true);
+                }
+                showToast(e.message, 'error'); this.customPHP.saving = false;
+            }
+        },
+        async installPHPExtension(ext) {
+            if (!await confirmModal(t('software.php_extension_install_confirm', { package: ext.package }))) return;
+            ext._installing = true;
+            try {
+                const r = await api('/software/php/extensions/install', { method: 'POST', body: { id: ext.id }, timeout: 660000 });
+                showToast(r.data?.message || t('software.php_extension_installed'), 'success');
+                await this.fetchPHPRuntimeExtras();
+            } catch(e) { showToast(e.message, 'error'); }
+            finally { ext._installing = false; }
         },
         async fetchDevelopmentTools() {
             try {
