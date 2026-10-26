@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/models"
 )
@@ -49,6 +50,9 @@ func TestMaintenanceRestartProcessHelper(t *testing.T) {
 	if dbPath == "" {
 		t.Skip("helper runs only in the restart subprocess")
 	}
+	oldConfig := config.AppConfig
+	config.AppConfig = &config.Config{Panel: config.PanelConfig{DataDir: filepath.Dir(dbPath)}}
+	defer func() { config.AppConfig = oldConfig }()
 	if err := database.Open(dbPath); err != nil {
 		t.Fatal(err)
 	}

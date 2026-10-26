@@ -51,6 +51,40 @@ func TestSiteMigrationMachineRoutePassesRealScanDefenseStack(t *testing.T) {
 	}
 }
 
+func TestHealthzCapabilitySyncResponseStaysWithinWatchdogLimit(t *testing.T) {
+	if err := database.Open(filepath.Join(t.TempDir(), "panel.db")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := database.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.GetDB().Exec("CREATE TABLE schema_version (version TEXT NOT NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.GetDB().Exec("INSERT INTO schema_version(version) VALUES ('test-version')"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.Panel.RandomSuffix = "test-panel-prefix"
+	cfg.Panel.TLSCertPath = filepath.Join(t.TempDir(), "unused.crt")
+	engine := router.SetupRouter(cfg, TemplatesFS, StaticFS, "test-version", "")
+
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	request.RemoteAddr = "127.0.0.1:12345"
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Body.Len() >= 4096 {
+		t.Fatalf("healthz response length=%d, want <4096", recorder.Body.Len())
+	}
+	if !strings.Contains(recorder.Body.String(), `"capability_sync"`) {
+		t.Fatal("healthz response missing capability_sync")
+	}
+}
+
 func (f *fakeCoreUpdateWorkerLifecycle) Start() error { return f.startErr }
 func (f *fakeCoreUpdateWorkerLifecycle) Stop(ctx context.Context) error {
 	if f.stop != nil {

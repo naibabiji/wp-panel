@@ -20,6 +20,7 @@ import (
 
 	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
+	"github.com/naibabiji/wp-panel/models"
 )
 
 func executeCreateBackup(task *Task) TaskResult {
@@ -28,48 +29,81 @@ func executeCreateBackup(task *Task) TaskResult {
 		return TaskResult{Success: false, Message: "任务参数类型错误"}
 	}
 
-	site := payload.Site
-	cfg := config.AppConfig
+	result, err := createDatabaseBackupCore(payload.Site, payload.Auto)
+	if err != nil {
+		return TaskResult{Success: false, Message: err.Error()}
+	}
+	return TaskResult{Success: true, Message: "备份完成: " + result.Filename}
+}
 
+type databaseBackupCoreResult struct {
+	RecordID        int64
+	Filename        string
+	FileSize        int64
+	CreatedAt       time.Time
+	TransportStatus string
+}
+
+var readMariaDBPasswordFunc = readMariaDBPassword
+
+// createDatabaseBackupCore deliberately does not acquire a site lock. The
+// WordPress administrator preflight already owns one before it enqueues this
+// legacy task; callers that need gates and inter-process exclusion must use
+// the managed service in site_database_backup_control.go.
+func createDatabaseBackupCore(site *models.Website, auto bool) (databaseBackupCoreResult, error) {
+	if site == nil {
+		return databaseBackupCoreResult{}, errors.New("网站不存在")
+	}
+	cfg := config.AppConfig
+	if cfg == nil || strings.TrimSpace(cfg.Panel.BackupDir) == "" {
+		return databaseBackupCoreResult{}, errors.New("备份目录未配置")
+	}
 	backupDir := filepath.Join(cfg.Panel.BackupDir, site.Domain, "db")
-	os.MkdirAll(backupDir, 0700)
+	if err := os.MkdirAll(backupDir, 0700); err != nil {
+		return databaseBackupCoreResult{}, fmt.Errorf("创建备份目录失败: %w", err)
+	}
 
 	ts := time.Now().Format("20060102_150405")
 	filename := fmt.Sprintf("%s_%s.sql.gz", site.Domain, ts)
 	filePath := filepath.Join(backupDir, filename)
-
-	dbPass := readMariaDBPassword()
+	dbPass := readMariaDBPasswordFunc()
 	if dbPass == "" {
-		return TaskResult{Success: false, Message: "无法读取 MariaDB root 密码"}
+		return databaseBackupCoreResult{}, errors.New("无法读取 MariaDB root 密码")
 	}
-
 	if err := dumpDatabaseToGzip(site.DBName, dbPass, filePath); err != nil {
-		return TaskResult{Success: false, Message: "备份失败: " + err.Error()}
+		return databaseBackupCoreResult{}, fmt.Errorf("备份失败: %w", err)
 	}
-
-	info, _ := os.Stat(filePath)
-	size := int64(0)
-	if info != nil {
-		size = info.Size()
+	info, err := os.Stat(filePath)
+	if err != nil || !info.Mode().IsRegular() {
+		return databaseBackupCoreResult{}, fmt.Errorf("备份文件复查失败: %v", err)
 	}
-
-	db := database.GetDB()
+	size := info.Size()
 	autoVal := 0
-	if payload.Auto {
+	if auto {
 		autoVal = 1
 	}
-	if _, err := db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, auto) VALUES (?, ?, ?, ?, ?)`,
-		site.ID, filename, size, site.DBName, autoVal); err != nil {
-		log.Printf("备份记录写入 db_backups 失败 [%s]: %v", site.Domain, err)
-		os.Remove(filePath)
-		return TaskResult{Success: false, Message: "备份记录保存失败: " + err.Error()}
+	db := database.GetDB()
+	if db == nil {
+		_ = os.Remove(filePath)
+		return databaseBackupCoreResult{}, errors.New("备份记录保存失败: 数据库不可用")
 	}
-
+	insert, err := db.Exec(`INSERT INTO db_backups (site_id, filename, file_size, db_name, auto) VALUES (?, ?, ?, ?, ?)`, site.ID, filename, size, site.DBName, autoVal)
+	if err != nil {
+		log.Printf("备份记录写入 db_backups 失败 [%s]: %v", site.Domain, err)
+		_ = os.Remove(filePath)
+		return databaseBackupCoreResult{}, fmt.Errorf("备份记录保存失败: %w", err)
+	}
+	recordID, err := insert.LastInsertId()
+	if err != nil {
+		return databaseBackupCoreResult{}, fmt.Errorf("读取备份记录 ID 失败: %w", err)
+	}
 	SyncBackupToRemote(filePath, BackupSourceDB, site.ID, filename)
-
+	transportStatus := ""
+	if err := db.QueryRow(`SELECT transport_status FROM db_backups WHERE id=?`, recordID).Scan(&transportStatus); err != nil {
+		transportStatus = "unknown"
+	}
 	cleanupOldBackups(site.ID, site.Domain, getKeepCount(site.ID))
-
-	return TaskResult{Success: true, Message: "备份完成: " + filename}
+	return databaseBackupCoreResult{RecordID: recordID, Filename: filename, FileSize: size, CreatedAt: time.Now(), TransportStatus: transportStatus}, nil
 }
 
 func executeRestoreBackup(task *Task) TaskResult {

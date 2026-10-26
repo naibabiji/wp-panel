@@ -8,11 +8,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
 )
 
 func newSiteMigrationStoreTest(t *testing.T) (*siteMigrationStore, int) {
 	t.Helper()
+	oldConfig := config.AppConfig
+	config.AppConfig = &config.Config{Panel: config.PanelConfig{DataDir: t.TempDir()}}
+	t.Cleanup(func() { config.AppConfig = oldConfig })
 	database.Close()
 	if err := database.Open(filepath.Join(t.TempDir(), "panel.db")); err != nil {
 		t.Fatal(err)

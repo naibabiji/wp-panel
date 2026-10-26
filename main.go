@@ -58,11 +58,40 @@ func main() {
 	runScheduledCron := flag.Int("run-scheduled-cron", 0, "内部使用：执行 WP Panel 受管计划任务")
 	runAutoBackup := flag.Bool("run-auto-backup", false, "手动触发自动备份（测试用）")
 	showInfo := flag.Bool("info", false, "查看面板信息")
+	showCapabilities := flag.Bool("capabilities", false, "输出当前面板能力 manifest")
+	capabilitiesJSON := flag.Bool("json", false, "以 JSON 输出能力 manifest")
+	showStatus := flag.Bool("status", false, "只读输出当前面板状态")
+	showSitesList := flag.Bool("sites-list", false, "只读输出网站列表")
+	siteShowDomain := flag.String("site-show", "", "只读输出指定域名的网站状态")
+	sslStatusDomain := flag.String("ssl-status", "", "只读输出指定域名的 SSL 状态")
+	backupListDomain := flag.String("backup-list", "", "只读输出指定域名的备份列表")
+	sitePauseDomain := flag.String("site-pause", "", "暂停指定网站（服务器级 AI CLI）")
+	siteResumeDomain := flag.String("site-resume", "", "启用指定网站（服务器级 AI CLI）")
+	siteCacheClearDomain := flag.String("site-cache-clear", "", "清理指定网站 FastCGI 页面缓存（服务器级 AI CLI）")
+	siteDatabaseBackupDomain := flag.String("site-database-backup", "", "创建指定网站数据库备份（服务器级 AI CLI）")
+	siteCreateDomain := flag.String("site-create", "", "创建基础 WordPress 网站（服务器级 AI CLI）")
+	siteCreateAliases := flag.String("site-aliases", "", "基础建站的附加域名，逗号分隔")
+	siteStateDryRun := flag.Bool("dry-run", false, "生成网站暂停/启用计划，不执行变更")
+	siteCacheClearDryRun := siteStateDryRun
+	siteStatePlanDigest := flag.String("plan-digest", "", "执行已确认的网站暂停/启用计划")
 	repairConfigCheck := flag.Bool("repair-config-check", false, "内部使用：只读校验 repair 配置")
 	updateWatchdog := flag.String("update-watchdog", "", "内部使用：面板更新健康检查守护")
 	panelDBRestorePlan := flag.String("panel-db-restore-plan", "", "内部使用：执行面板数据库恢复计划")
 	systemPackageUpdatePlan := flag.String("system-package-update-plan", "", "内部使用：执行系统软件包更新计划")
 	flag.Parse()
+	if isBareJSONInvocation(os.Args[1:]) {
+		fmt.Fprintln(os.Stderr, "--json 不能单独使用；请指定 --capabilities 或一个明确的查询/操作命令")
+		os.Exit(2)
+	}
+	flagWasSet := func(name string) bool {
+		found := false
+		flag.Visit(func(item *flag.Flag) {
+			if item.Name == name {
+				found = true
+			}
+		})
+		return found
+	}
 	if *systemPackageUpdatePlan != "" {
 		if err := executor.RunSystemPackageUpdatePlan(*systemPackageUpdatePlan); err != nil {
 			log.Printf("系统软件包更新失败: %v", err)
@@ -88,6 +117,64 @@ func main() {
 			fmt.Fprintln(os.Stderr, "repair_config_output_failed")
 			os.Exit(1)
 		}
+		return
+	}
+	if *showCapabilities {
+		data, err := executor.BuildPanelCapabilitiesJSON(Version)
+		if err != nil {
+			if *capabilitiesJSON {
+				_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+					"ok":         false,
+					"error_code": "manifest_invalid",
+					"error":      err.Error(),
+				})
+			} else {
+				fmt.Fprintf(os.Stderr, "能力 manifest 无效: %v\n", err)
+			}
+			os.Exit(1)
+		}
+		if *capabilitiesJSON {
+			fmt.Println(string(data))
+			return
+		}
+		var summary struct {
+			PanelVersion    string            `json:"panel_version"`
+			ManifestVersion int               `json:"manifest_version"`
+			ManifestSHA256  string            `json:"manifest_sha256"`
+			CapabilitySync  string            `json:"capability_sync"`
+			Capabilities    []json.RawMessage `json:"capabilities"`
+		}
+		if err := json.Unmarshal(data, &summary); err != nil {
+			fmt.Fprintf(os.Stderr, "能力 manifest 输出失败: %v\n", err)
+			os.Exit(1)
+		}
+		counts := map[string]int{"read_only": 0, "ai_write": 0, "human_panel": 0}
+		machineEntryCount := 0
+		machineEntryCounts := map[string]int{"read_only": 0, "ai_write": 0}
+		for _, raw := range summary.Capabilities {
+			var capability struct {
+				Audiences struct {
+					Server struct {
+						Interaction string `json:"interaction"`
+					} `json:"server"`
+				} `json:"audiences"`
+				MachineEntries []struct {
+					Mode string `json:"mode"`
+				} `json:"machine_entries"`
+			}
+			if json.Unmarshal(raw, &capability) == nil {
+				if _, ok := counts[capability.Audiences.Server.Interaction]; ok {
+					counts[capability.Audiences.Server.Interaction]++
+				}
+				machineEntryCount += len(capability.MachineEntries)
+				for _, entry := range capability.MachineEntries {
+					if _, ok := machineEntryCounts[entry.Mode]; ok {
+						machineEntryCounts[entry.Mode]++
+					}
+				}
+			}
+		}
+		fmt.Printf("WP Panel capabilities\n版本: %s\nManifest: %d\n同步: %s\n指纹: %s\n能力数量: %d\n交互类型: read_only=%d, ai_write=%d, human_panel=%d\n机器入口数量: %d（read_only=%d, ai_write=%d）\n说明: 交互类型统计能力条目；机器入口统计可执行命令，一个能力可包含多个入口。\nJSON: wpp capabilities --json\n", summary.PanelVersion, summary.ManifestVersion, summary.CapabilitySync, summary.ManifestSHA256, len(summary.Capabilities), counts["read_only"], counts["ai_write"], counts["human_panel"], machineEntryCount, machineEntryCounts["read_only"], machineEntryCounts["ai_write"])
 		return
 	}
 
@@ -129,6 +216,169 @@ func main() {
 		log.Fatalf("打开数据库失败: %v", err)
 	}
 	defer database.Close()
+	cacheCommandRequested := flagWasSet("site-cache-clear")
+	databaseBackupCommandRequested := flagWasSet("site-database-backup")
+	siteCreateCommandRequested := flagWasSet("site-create")
+	siteCreateAliasesRequested := flagWasSet("site-aliases")
+	stateCommandRequested := flagWasSet("site-pause") || flagWasSet("site-resume")
+	readOnlyCommandRequested := *showStatus || *showSitesList || flagWasSet("site-show") || flagWasSet("ssl-status") || flagWasSet("backup-list")
+	if (cacheCommandRequested || databaseBackupCommandRequested || siteCreateCommandRequested) && (stateCommandRequested || readOnlyCommandRequested || (cacheCommandRequested && databaseBackupCommandRequested) || (siteCreateCommandRequested && (cacheCommandRequested || databaseBackupCommandRequested))) {
+		writeSiteStateCLIError("plan_invalid", "不能同时指定多个网站操作或查询命令")
+		os.Exit(2)
+	}
+	if siteCreateAliasesRequested && !siteCreateCommandRequested {
+		writeSiteStateCLIError("plan_invalid", "--site-aliases 只能与 --site-create 一起使用")
+		os.Exit(2)
+	}
+	if stateCommandRequested && readOnlyCommandRequested {
+		writeSiteStateCLIError("plan_invalid", "不能同时指定网站写操作和只读查询命令")
+		os.Exit(2)
+	}
+	if siteCreateCommandRequested {
+		if *siteCreateDomain == "" || (!*siteStateDryRun && *siteStatePlanDigest == "") || (*siteStateDryRun && *siteStatePlanDigest != "") || (!*siteStateDryRun && siteCreateAliasesRequested) {
+			writeSiteStateCLIError("plan_invalid", "--dry-run 与 --plan-digest 必须二选一，且必须提供 --site-create <domain>")
+			os.Exit(2)
+		}
+		var result executor.SiteProvisioningResponse
+		var createErr error
+		if *siteStateDryRun {
+			aliases := make([]string, 0)
+			for _, alias := range strings.Split(*siteCreateAliases, ",") {
+				if strings.TrimSpace(alias) != "" {
+					aliases = append(aliases, alias)
+				}
+			}
+			result, createErr = executor.PrepareSiteProvisioningPlan(context.Background(), *siteCreateDomain, aliases, Version)
+		} else {
+			result, createErr = executor.ExecuteSiteProvisioningPlan(context.Background(), *siteStatePlanDigest, Version)
+		}
+		if createErr != nil {
+			writeSiteStateCLIError(executor.SiteProvisioningErrorCode(createErr), executor.SiteProvisioningPublicErrorMessage(createErr))
+			os.Exit(1)
+		}
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			writeSiteStateCLIError("readonly_output_failed", "操作结果输出失败")
+			os.Exit(1)
+		}
+		fmt.Println(string(data))
+		return
+	}
+	if databaseBackupCommandRequested {
+		if *siteDatabaseBackupDomain == "" || (!*siteCacheClearDryRun && *siteStatePlanDigest == "") || (*siteCacheClearDryRun && *siteStatePlanDigest != "") {
+			writeSiteStateCLIError("plan_invalid", "--dry-run 与 --plan-digest 必须二选一，且必须提供 --site-database-backup <domain>")
+			os.Exit(2)
+		}
+		var result executor.DatabaseBackupResponse
+		var backupErr error
+		if *siteCacheClearDryRun {
+			result, backupErr = executor.PrepareDatabaseBackupPlan(context.Background(), *siteDatabaseBackupDomain, Version)
+		} else {
+			result, backupErr = executor.ExecuteDatabaseBackupPlan(context.Background(), *siteStatePlanDigest, Version)
+		}
+		if backupErr != nil {
+			writeSiteStateCLIError(executor.DatabaseBackupErrorCode(backupErr), executor.DatabaseBackupPublicErrorMessage(backupErr))
+			os.Exit(1)
+		}
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			writeSiteStateCLIError("readonly_output_failed", "操作结果输出失败")
+			os.Exit(1)
+		}
+		fmt.Println(string(data))
+		return
+	}
+	if *siteCacheClearDomain != "" || flagWasSet("site-cache-clear") {
+		if !*siteCacheClearDryRun && *siteStatePlanDigest == "" || *siteCacheClearDryRun && *siteStatePlanDigest != "" || *siteCacheClearDomain == "" {
+			writeSiteStateCLIError("plan_invalid", "--dry-run 与 --plan-digest 必须二选一，且必须提供 --site-cache-clear <domain>")
+			os.Exit(2)
+		}
+		var result executor.SiteCacheClearResponse
+		var cacheErr error
+		if *siteCacheClearDryRun {
+			result, cacheErr = executor.PrepareSiteCacheClearPlan(context.Background(), *siteCacheClearDomain, Version)
+		} else {
+			result, cacheErr = executor.ExecuteSiteCacheClearPlan(context.Background(), *siteStatePlanDigest, Version)
+		}
+		if cacheErr != nil {
+			writeSiteStateCLIError(executor.SiteCacheClearErrorCode(cacheErr), cacheErr.Error())
+			os.Exit(1)
+		}
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			writeSiteStateCLIError("readonly_output_failed", "操作结果输出失败")
+			os.Exit(1)
+		}
+		fmt.Println(string(data))
+		return
+	}
+	if *sitePauseDomain != "" || *siteResumeDomain != "" || flagWasSet("site-pause") || flagWasSet("site-resume") || *siteStateDryRun || *siteStatePlanDigest != "" {
+		if !stateCommandRequested {
+			writeSiteStateCLIError("plan_invalid", "必须指定 --site-pause 或 --site-resume")
+			os.Exit(2)
+		}
+		if (flagWasSet("site-pause") == flagWasSet("site-resume")) || (*sitePauseDomain != "" && *siteResumeDomain != "") || (!*siteStateDryRun && *siteStatePlanDigest == "") || (*siteStateDryRun && *siteStatePlanDigest != "") {
+			writeSiteStateCLIError("plan_invalid", "--dry-run 与 --plan-digest 必须二选一")
+			os.Exit(2)
+		}
+		action, domain := "pause", *sitePauseDomain
+		if *siteResumeDomain != "" || flagWasSet("site-resume") {
+			action, domain = "resume", *siteResumeDomain
+		}
+		var result executor.SiteStatePlanResponse
+		var stateErr error
+		if *siteStateDryRun {
+			result, stateErr = executor.PrepareSiteStatePlan(context.Background(), action, domain, Version)
+		} else {
+			result, stateErr = executor.ExecuteSiteStatePlan(context.Background(), *siteStatePlanDigest, Version, action)
+		}
+		if stateErr != nil {
+			writeSiteStateCLIError(executor.SiteStateControlErrorCode(stateErr), stateErr.Error())
+			os.Exit(1)
+		}
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			writeSiteStateCLIError("readonly_output_failed", "操作结果输出失败")
+			os.Exit(1)
+		}
+		fmt.Println(string(data))
+		return
+	}
+	if *showStatus || *showSitesList || flagWasSet("site-show") || flagWasSet("ssl-status") || flagWasSet("backup-list") {
+		var result any
+		var readOnlyErr error
+		switch {
+		case *showStatus:
+			result, readOnlyErr = executor.GetReadOnlyPanelStatus(Version)
+		case *showSitesList:
+			result, readOnlyErr = executor.GetReadOnlySiteList(Version)
+		case flagWasSet("site-show"):
+			result, readOnlyErr = executor.ReadOnlySiteShow(Version, *siteShowDomain)
+		case flagWasSet("ssl-status"):
+			result, readOnlyErr = executor.ReadOnlySSLStatusByDomain(Version, *sslStatusDomain)
+		case flagWasSet("backup-list"):
+			result, readOnlyErr = executor.ReadOnlyBackupListByDomain(Version, *backupListDomain)
+		}
+		if readOnlyErr != nil {
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+				"ok":         false,
+				"error_code": executor.ReadOnlyCLIErrorCode(readOnlyErr),
+				"error":      executor.ReadOnlyCLIErrorMessage(readOnlyErr),
+			})
+			os.Exit(1)
+		}
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+				"ok":         false,
+				"error_code": "readonly_output_failed",
+				"error":      "只读状态输出失败",
+			})
+			os.Exit(1)
+		}
+		fmt.Println(string(data))
+		return
+	}
 
 	// 受管 Cron 的高频短路径：这里只能依赖既有稳定表结构，不能读取需要本次
 	// 主服务启动后才完成迁移的新列或新表，也不能触发迁移、插件部署或调度器。
@@ -183,6 +433,9 @@ func main() {
 		executor.ResetStuckImageOptimizationJobs()
 		executor.FinalizePendingPanelUpdate(cfg, Version)
 		executor.SetAIDevelopmentPanelVersion(Version)
+		if err := executor.RefreshPanelCapabilityDocuments(Version); err != nil {
+			log.Printf("服务器级 AI 能力文档刷新失败（面板继续运行，状态为 stale/failed）: %v", err)
+		}
 		if err := aiDevelopmentService.RefreshEnabledHandoffs(context.Background()); err != nil {
 			log.Printf("AI 开发服务器交接文档刷新失败: %v", err)
 		}
@@ -427,6 +680,19 @@ type startupFlags struct {
 	runAutoBackup    bool
 }
 
+func isBareJSONInvocation(args []string) bool {
+	jsonOnly := false
+	for _, arg := range args {
+		switch arg {
+		case "-json", "--json", "-json=true", "--json=true":
+			jsonOnly = true
+		default:
+			return false
+		}
+	}
+	return jsonOnly
+}
+
 func isMainServiceMode(flags startupFlags) bool {
 	return !flags.resetAdmin &&
 		!flags.resetPassword &&
@@ -653,4 +919,12 @@ func getSysTimezone() string {
 		return "UTC"
 	}
 	return tz
+}
+
+func writeSiteStateCLIError(code, message string) {
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"ok":         false,
+		"error_code": code,
+		"error":      message,
+	})
 }

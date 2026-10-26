@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/naibabiji/wp-panel/config"
 	_ "modernc.org/sqlite"
 )
 
@@ -69,6 +70,9 @@ func (f *fakeAIDevelopmentSystem) RemoveHome(string) error { return f.record("re
 
 func openAIDevelopmentTestDB(t *testing.T) *sql.DB {
 	t.Helper()
+	oldConfig := config.AppConfig
+	config.AppConfig = &config.Config{Panel: config.PanelConfig{DataDir: t.TempDir()}}
+	t.Cleanup(func() { config.AppConfig = oldConfig })
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -351,7 +355,7 @@ func TestAIDevelopmentCapabilitiesDescribePanelWorkflowsAndLimits(t *testing.T) 
 	capabilities := buildAIDevelopmentCapabilities(time.Date(2026, 9, 15, 1, 2, 3, 0, time.UTC))
 	for _, required := range []string{
 		"capability directory, not a live status report",
-		"Capabilities schema version: 1",
+		"Capabilities schema version: 2",
 		"Generated at: 2026-09-15T01:02:03Z",
 		"test build and cannot be compared",
 		"Nginx Custom Configuration",

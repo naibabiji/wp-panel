@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/naibabiji/wp-panel/database"
+	"github.com/naibabiji/wp-panel/executor"
 )
 
 func TestUpdateCacheSettingsReportsNginxPublishFailure(t *testing.T) {
@@ -39,14 +41,14 @@ func TestUpdateCacheSettingsReportsNginxPublishFailure(t *testing.T) {
 
 func TestClearByDomainReportsCacheClearFailure(t *testing.T) {
 	setupCacheHelperTestDB(t)
-	oldClear := clearSiteCache
-	clearSiteCache = func(siteID int) error {
+	oldClear := clearSiteCacheExternal
+	clearSiteCacheExternal = func(ctx context.Context, siteID int, blockMigration bool) (executor.SiteCacheClearResponse, error) {
 		if siteID != 1 {
 			t.Fatalf("siteID=%d", siteID)
 		}
-		return errors.New("nginx reload failed")
+		return executor.SiteCacheClearResponse{}, errors.New("nginx reload failed")
 	}
-	t.Cleanup(func() { clearSiteCache = oldClear })
+	t.Cleanup(func() { clearSiteCacheExternal = oldClear })
 
 	router := gin.New()
 	router.POST("/api/cache/clear", (&CacheHelperHandler{}).ClearByDomain)

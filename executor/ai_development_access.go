@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -20,7 +21,7 @@ import (
 
 const aiDevelopmentHomeRoot = "/var/lib/wp-panel/ai-homes"
 
-const aiDevelopmentCapabilitiesSchemaVersion = 1
+const aiDevelopmentCapabilitiesSchemaVersion = 2
 
 var aiDevelopmentPanelVersion = "unknown"
 
@@ -671,6 +672,8 @@ func buildAIDevelopmentHandoff(site AIDevelopmentSite, fingerprint string, gener
 
 Panel version: %s
 Capabilities schema version: %d
+Manifest version: %d
+Manifest SHA256: %s
 Generated at: %s
 Site: %s
 WebRoot: %s
@@ -699,7 +702,7 @@ Before recommending or performing a server-level, backup, SSL, security, perform
 AI development access cannot coexist with a WordPress maintenance window or site migration. The user must close AI development access in WP Panel before either workflow; closing access terminates this SSH session.
 
 Use the exact WP Panel entry documented in the capability file. Do not improvise equivalent server configuration, ad-hoc system cron jobs, raw service commands, or edits to panel-managed files. If no matching capability is documented, say so and ask the user to check WP Panel instead of inventing a menu, API or path.
-`, aiDevelopmentPanelVersion, aiDevelopmentCapabilitiesSchemaVersion, generatedAt.Format(time.RFC3339), site.Domain, site.WebRoot, site.SystemUser, site.PHPPoolPath, site.NginxConfPath, site.LogDir, fingerprint, site.WebRoot)
+`, aiDevelopmentPanelVersion, aiDevelopmentCapabilitiesSchemaVersion, manifestVersionFromEmbeddedPayload(), aiPanelManifestPayloadSHA256, generatedAt.Format(time.RFC3339), site.Domain, site.WebRoot, site.SystemUser, site.PHPPoolPath, site.NginxConfPath, site.LogDir, fingerprint, site.WebRoot)
 }
 
 type aiDevelopmentCapability struct {
@@ -716,6 +719,8 @@ func buildAIDevelopmentCapabilities(generatedAt time.Time) string {
 
 Panel version: %s
 Capabilities schema version: %d
+Manifest version: %d
+Manifest SHA256: %s
 Generated at: %s
 
 The schema version changes when the document structure or field meaning changes. A panel version of "dev" identifies a test build and cannot be compared as a release version.
@@ -726,9 +731,26 @@ This is a capability directory, not a live status report. A listed capability ma
 
 WP Panel is not aaPanel/BT Panel, 1Panel, cPanel, Plesk, or a generic hand-built LEMP stack. Use only the entries below. Server-level configuration is panel-owned and may be regenerated.
 
-`, aiDevelopmentPanelVersion, aiDevelopmentCapabilitiesSchemaVersion, generatedAt.Format(time.RFC3339))
-	for _, capability := range aiDevelopmentCapabilities {
-		fmt.Fprintf(&b, "## %s — %s\n\n- Panel entry: %s\n- Supported capability: %s\n- Boundary: %s\n\n", capability.ID, capability.Need, capability.Entry, capability.Capability, capability.Boundary)
+	`, aiDevelopmentPanelVersion, aiDevelopmentCapabilitiesSchemaVersion, manifestVersionFromEmbeddedPayload(), aiPanelManifestPayloadSHA256, generatedAt.Format(time.RFC3339))
+	var payload panelManifestPayload
+	if err := json.Unmarshal([]byte(aiPanelManifestPayloadJSON), &payload); err == nil {
+		for _, raw := range payload.Capabilities {
+			var capability struct {
+				ID        string `json:"id"`
+				Audiences struct {
+					Site struct {
+						Title      string `json:"title"`
+						Entry      string `json:"entry"`
+						Capability string `json:"capability"`
+						Boundary   string `json:"boundary"`
+					} `json:"site"`
+				} `json:"audiences"`
+			}
+			if json.Unmarshal(raw, &capability) != nil || capability.Audiences.Site.Title == "" {
+				continue
+			}
+			fmt.Fprintf(&b, "## %s — %s\n\n- Panel entry: %s\n- Supported capability: %s\n- Boundary: %s\n\n", capability.ID, capability.Audiences.Site.Title, capability.Audiences.Site.Entry, capability.Audiences.Site.Capability, capability.Audiences.Site.Boundary)
+		}
 	}
 	b.WriteString(`## When no matching capability is documented
 

@@ -30,6 +30,28 @@ func TestIsMainServiceMode(t *testing.T) {
 	}
 }
 
+func TestIsBareJSONInvocation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "long flag", args: []string{"--json"}, want: true},
+		{name: "short flag", args: []string{"-json"}, want: true},
+		{name: "explicit true", args: []string{"--json=true"}, want: true},
+		{name: "capabilities command", args: []string{"--capabilities", "--json"}, want: false},
+		{name: "other command", args: []string{"--status", "--json"}, want: false},
+		{name: "empty", args: nil, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isBareJSONInvocation(tt.args); got != tt.want {
+				t.Fatalf("isBareJSONInvocation(%v)=%v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMainServiceOnlyStartupStepsAreGuarded(t *testing.T) {
 	file, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
 	if err != nil {

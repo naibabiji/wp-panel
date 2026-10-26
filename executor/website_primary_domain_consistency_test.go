@@ -25,7 +25,7 @@ func setupPrimaryDomainTest(t *testing.T) (*models.Website, string) {
 	oldUpdateURLs := updatePrimaryDomainWPSiteURLs
 	oldReadURLs := readPrimaryDomainWPSiteURLs
 	config.AppConfig = &config.Config{
-		Panel: config.PanelConfig{BackupDir: filepath.Join(root, "backups")},
+		Panel: config.PanelConfig{DataDir: filepath.Join(root, "data"), BackupDir: filepath.Join(root, "backups")},
 		Paths: config.PathsConfig{
 			WWWRoot: filepath.Join(root, "www"), WWWLogs: filepath.Join(root, "logs"),
 			Certificates: filepath.Join(root, "certs"), NginxSitesAvailable: filepath.Join(root, "available"),

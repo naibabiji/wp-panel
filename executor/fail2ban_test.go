@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/naibabiji/wp-panel/config"
 	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/models"
 )
@@ -1770,6 +1771,9 @@ func TestNormalizeCDNRealIPHeaderAndRanges(t *testing.T) {
 
 func openTestDB(t *testing.T) {
 	t.Helper()
+	oldConfig := config.AppConfig
+	config.AppConfig = &config.Config{Panel: config.PanelConfig{DataDir: t.TempDir()}}
+	t.Cleanup(func() { config.AppConfig = oldConfig })
 
 	if database.DB != nil {
 		_ = database.Close()

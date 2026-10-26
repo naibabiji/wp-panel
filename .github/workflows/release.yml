@@ -25,6 +25,11 @@ jobs:
         with:
           node-version: 24
 
+      - name: Validate capability manifest
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          python3 private-tools/verify-capability-map.py --panel-version "${VERSION}" --generate
+
       - name: Prepare static assets
         run: |
           mkdir -p static/css static/js bin

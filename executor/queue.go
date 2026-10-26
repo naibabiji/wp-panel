@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
@@ -157,6 +158,17 @@ func (q *TaskQueue) worker() {
 				result = executeManualBan(task)
 			case TaskCreateBackup:
 				result = executeCreateBackup(task)
+			case TaskCreateDatabaseBackup:
+				if p, ok := task.Payload.(*CreateBackupPayload); ok && p.Site != nil {
+					managed, managedErr := executeManagedDatabaseBackup(context.Background(), p.Site.ID)
+					if managedErr != nil {
+						result = TaskResult{Success: false, Message: DatabaseBackupPublicErrorMessage(managedErr), Diagnostic: managedErr.Error(), ErrorCode: DatabaseBackupErrorCode(managedErr)}
+					} else {
+						result = TaskResult{Success: true, Message: "备份完成: " + managed.Filename}
+					}
+				} else {
+					result = TaskResult{Success: false, Message: "任务参数类型错误", ErrorCode: "site_not_found"}
+				}
 			case TaskRestoreBackup:
 				result = executeRestoreBackup(task)
 			case TaskSetFileLock:
@@ -271,6 +283,10 @@ func logOp(task *Task, result TaskResult) {
 		if p, ok := task.Payload.(*CreateBackupPayload); ok && p.Site != nil {
 			target = p.Site.Domain
 		}
+	case TaskCreateDatabaseBackup:
+		if p, ok := task.Payload.(*CreateBackupPayload); ok && p.Site != nil {
+			target = p.Site.Domain
+		}
 	case TaskRestoreBackup:
 		if p, ok := task.Payload.(*RestoreBackupPayload); ok && p.Site != nil {
 			target = p.Site.Domain
@@ -281,7 +297,11 @@ func logOp(task *Task, result TaskResult) {
 		}
 	}
 
-	recordOperationLog(string(task.Type), target, status, result.Message)
+	message := result.Message
+	if result.Diagnostic != "" {
+		message = result.Diagnostic
+	}
+	recordOperationLog(string(task.Type), target, status, message)
 }
 
 func buildSiteName(domain string) string {

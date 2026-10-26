@@ -8,29 +8,30 @@ import (
 type TaskType string
 
 const (
-	TaskCreateSite       TaskType = "create_site"
-	TaskDeleteSite       TaskType = "delete_site"
-	TaskPauseSite        TaskType = "pause_site"
-	TaskEnableSite       TaskType = "enable_site"
-	TaskUpgradeTemplate  TaskType = "upgrade_template"
-	TaskRefreshWhitelist TaskType = "refresh_whitelist"
-	TaskBanIP            TaskType = "ban_ip"
-	TaskUnbanIP          TaskType = "unban_ip"
-	TaskEnableSSL        TaskType = "enable_ssl"
-	TaskRemoveSSL        TaskType = "remove_ssl"
-	TaskChangeDBPassword TaskType = "change_db_password"
-	TaskUpdateDomains    TaskType = "update_domains"
-	TaskSaveNginxCustom  TaskType = "save_nginx_custom"
-	TaskSetAccessLogMode TaskType = "set_access_log_mode"
-	TaskSetCDNRealIP     TaskType = "set_cdn_realip"
-	TaskSetDocumentRoot  TaskType = "set_document_root"
-	TaskRenewSSL         TaskType = "renew_ssl"
-	TaskRenderCron       TaskType = "render_cron"
-	TaskRunCron          TaskType = "run_cron"
-	TaskManualBan        TaskType = "manual_ban"
-	TaskCreateBackup     TaskType = "create_backup"
-	TaskRestoreBackup    TaskType = "restore_backup"
-	TaskSetFileLock      TaskType = "set_file_lock"
+	TaskCreateSite           TaskType = "create_site"
+	TaskDeleteSite           TaskType = "delete_site"
+	TaskPauseSite            TaskType = "pause_site"
+	TaskEnableSite           TaskType = "enable_site"
+	TaskUpgradeTemplate      TaskType = "upgrade_template"
+	TaskRefreshWhitelist     TaskType = "refresh_whitelist"
+	TaskBanIP                TaskType = "ban_ip"
+	TaskUnbanIP              TaskType = "unban_ip"
+	TaskEnableSSL            TaskType = "enable_ssl"
+	TaskRemoveSSL            TaskType = "remove_ssl"
+	TaskChangeDBPassword     TaskType = "change_db_password"
+	TaskUpdateDomains        TaskType = "update_domains"
+	TaskSaveNginxCustom      TaskType = "save_nginx_custom"
+	TaskSetAccessLogMode     TaskType = "set_access_log_mode"
+	TaskSetCDNRealIP         TaskType = "set_cdn_realip"
+	TaskSetDocumentRoot      TaskType = "set_document_root"
+	TaskRenewSSL             TaskType = "renew_ssl"
+	TaskRenderCron           TaskType = "render_cron"
+	TaskRunCron              TaskType = "run_cron"
+	TaskManualBan            TaskType = "manual_ban"
+	TaskCreateBackup         TaskType = "create_backup"
+	TaskCreateDatabaseBackup TaskType = "create_database_backup"
+	TaskRestoreBackup        TaskType = "restore_backup"
+	TaskSetFileLock          TaskType = "set_file_lock"
 )
 
 type TaskStatus string
@@ -57,6 +58,13 @@ type TaskResult struct {
 	Success bool
 	Message string
 	Data    interface{}
+	// ErrorCode is populated by capabilities with a stable machine-readable
+	// failure contract. Existing tasks may leave it empty.
+	ErrorCode string
+	// Diagnostic is kept for the private operation log and is never sent to
+	// the HTTP/CLI response. Sensitive executor details must not be placed in
+	// Message for capability-facing tasks.
+	Diagnostic string
 }
 
 type CreateSitePayload struct {

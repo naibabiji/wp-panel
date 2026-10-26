@@ -1367,7 +1367,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 				return
 			}
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true, "version": version})
+		c.JSON(http.StatusOK, gin.H{"ok": true, "version": version, "capability_sync": executor.PanelCapabilitySyncStatus(version)})
 	})
 
 	db := database.GetDB()

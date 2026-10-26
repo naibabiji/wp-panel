@@ -133,10 +133,81 @@ case "${1:-}" in
     info)
         $BIN --info
         ;;
+    capabilities)
+        shift
+        $BIN --capabilities "$@"
+        ;;
+    status)
+        if [ "${2:-}" = "--json" ]; then
+            $BIN --status --json
+        else
+            echo "WP Panel 诊断检查"
+            echo "=================="
+            echo ""
+            diag
+        fi
+        ;;
+    sites)
+        if [ "${2:-}" = "list" ] && [ "${3:-}" = "--json" ]; then
+            $BIN --sites-list --json
+        else
+            red "用法: wpp sites list --json"
+            exit 2
+        fi
+        ;;
+    site)
+        if [ "${2:-}" = "create" ] && [ "${3:-}" = "--domain" ] && [ -n "${4:-}" ] && [ "${5:-}" = "--dry-run" ] && [ "${6:-}" = "--json" ]; then
+            $BIN --site-create "$4" --dry-run --json
+        elif [ "${2:-}" = "create" ] && [ "${3:-}" = "--domain" ] && [ -n "${4:-}" ] && [ "${5:-}" = "--aliases" ] && [ -n "${6:-}" ] && [ "${7:-}" = "--dry-run" ] && [ "${8:-}" = "--json" ]; then
+            $BIN --site-create "$4" --site-aliases "$6" --dry-run --json
+        elif [ "${2:-}" = "create" ] && [ "${3:-}" = "--domain" ] && [ -n "${4:-}" ] && [ "${5:-}" = "--plan-digest" ] && [ -n "${6:-}" ] && [ "${7:-}" = "--json" ]; then
+            $BIN --site-create "$4" --plan-digest "$6" --json
+        elif [ "${2:-}" = "create" ] && [ "${3:-}" = "--domain" ] && [ -n "${4:-}" ] && [ "${5:-}" = "--aliases" ] && [ -n "${6:-}" ] && [ "${7:-}" = "--plan-digest" ] && [ -n "${8:-}" ] && [ "${9:-}" = "--json" ]; then
+            red "执行计划时不需要重复提供 --aliases"
+            exit 2
+        elif [ "${2:-}" = "backup" ] && [ "${3:-}" = "database" ] && [ "${4:-}" = "--domain" ] && [ -n "${5:-}" ] && [ "${6:-}" = "--dry-run" ] && [ "${7:-}" = "--json" ]; then
+            $BIN --site-database-backup "$5" --dry-run --json
+        elif [ "${2:-}" = "backup" ] && [ "${3:-}" = "database" ] && [ "${4:-}" = "--domain" ] && [ -n "${5:-}" ] && [ "${6:-}" = "--plan-digest" ] && [ -n "${7:-}" ] && [ "${8:-}" = "--json" ]; then
+            $BIN --site-database-backup "$5" --plan-digest "$7" --json
+        elif [ "${2:-}" = "cache" ] && [ "${3:-}" = "clear" ] && [ "${4:-}" = "--domain" ] && [ -n "${5:-}" ] && [ "${6:-}" = "--dry-run" ] && [ "${7:-}" = "--json" ]; then
+            $BIN --site-cache-clear "$5" --dry-run --json
+        elif [ "${2:-}" = "cache" ] && [ "${3:-}" = "clear" ] && [ "${4:-}" = "--domain" ] && [ -n "${5:-}" ] && [ "${6:-}" = "--plan-digest" ] && [ -n "${7:-}" ] && [ "${8:-}" = "--json" ]; then
+            $BIN --site-cache-clear "$5" --plan-digest "$7" --json
+        elif [ "${2:-}" = "pause" ] && [ "${3:-}" = "--domain" ] && [ -n "${4:-}" ] && [ "${5:-}" = "--dry-run" ] && [ "${6:-}" = "--json" ]; then
+            $BIN --site-pause "$4" --dry-run --json
+        elif [ "${2:-}" = "pause" ] && [ "${3:-}" = "--domain" ] && [ -n "${4:-}" ] && [ "${5:-}" = "--plan-digest" ] && [ -n "${6:-}" ] && [ "${7:-}" = "--json" ]; then
+            $BIN --site-pause "$4" --plan-digest "$6" --json
+        elif [ "${2:-}" = "resume" ] && [ "${3:-}" = "--domain" ] && [ -n "${4:-}" ] && [ "${5:-}" = "--dry-run" ] && [ "${6:-}" = "--json" ]; then
+            $BIN --site-resume "$4" --dry-run --json
+        elif [ "${2:-}" = "resume" ] && [ "${3:-}" = "--domain" ] && [ -n "${4:-}" ] && [ "${5:-}" = "--plan-digest" ] && [ -n "${6:-}" ] && [ "${7:-}" = "--json" ]; then
+            $BIN --site-resume "$4" --plan-digest "$6" --json
+        elif [ "${2:-}" = "show" ] && [ "${3:-}" = "--domain" ] && [ -n "${4:-}" ] && [ "${5:-}" = "--json" ]; then
+            $BIN --site-show "$4" --json
+        else
+            red "用法: wpp site create|backup database|cache clear|pause|resume --domain <domain> --dry-run|--plan-digest <digest> --json"
+            exit 2
+        fi
+        ;;
+    ssl)
+        if [ "${2:-}" = "status" ] && [ "${3:-}" = "--domain" ] && [ -n "${4:-}" ] && [ "${5:-}" = "--json" ]; then
+            $BIN --ssl-status "$4" --json
+        else
+            red "用法: wpp ssl status --domain <domain> --json"
+            exit 2
+        fi
+        ;;
+    backup)
+        if [ "${2:-}" = "list" ] && [ "${3:-}" = "--domain" ] && [ -n "${4:-}" ] && [ "${5:-}" = "--json" ]; then
+            $BIN --backup-list "$4" --json
+        else
+            red "用法: wpp backup list --domain <domain> --json"
+            exit 2
+        fi
+        ;;
     unban)
         $BIN --unban-all
         ;;
-    status|check)
+    check)
         echo "WP Panel 诊断检查"
         echo "=================="
         echo ""
@@ -167,9 +238,21 @@ case "${1:-}" in
         echo "用法: wpp <命令>"
         echo "  wpp restart     重启面板"
         echo "  wpp status      完整诊断检查"
+        echo "  wpp status --json 只读状态 JSON"
+        echo "  wpp sites list --json 列出网站"
+        echo "  wpp site show --domain <domain> --json 查看网站状态"
+        echo "  wpp site cache clear --domain <domain> --dry-run --json 生成缓存清理计划"
+        echo "  wpp site cache clear --domain <domain> --plan-digest <digest> --json 执行已确认缓存清理计划"
+        echo "  wpp site backup database --domain <domain> --dry-run --json 生成数据库备份计划"
+        echo "  wpp site backup database --domain <domain> --plan-digest <digest> --json 执行已确认数据库备份计划"
+        echo "  wpp site pause|resume --domain <domain> --dry-run --json 生成操作计划"
+        echo "  wpp site pause|resume --domain <domain> --plan-digest <digest> --json 执行已确认计划"
+        echo "  wpp ssl status --domain <domain> --json 查看 SSL 状态"
+        echo "  wpp backup list --domain <domain> --json 查看备份列表"
         echo "  wpp log [N]     查看最近 N 条日志（默认30）"
         echo "  wpp password    一键重置管理员账号密码"
         echo "  wpp unban       一键清空所有IP封禁"
+        echo "  wpp capabilities [--json]  查看当前版本能力 manifest"
         ;;
 esac
 `

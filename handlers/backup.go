@@ -96,11 +96,15 @@ func (h *BackupHandler) Create(c *gin.Context) {
 		return
 	}
 	payload := &executor.CreateBackupPayload{Site: site, Auto: false}
-	task := executor.GlobalQueue.Enqueue(executor.TaskCreateBackup, payload)
+	task := executor.GlobalQueue.Enqueue(executor.TaskCreateDatabaseBackup, payload)
 	result := <-task.ResultCh
 	if result.Success {
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": result.Message}))
 	} else {
+		if result.ErrorCode != "" {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponseWithCode(result.ErrorCode, result.Message))
+			return
+		}
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(result.Message))
 	}
 }

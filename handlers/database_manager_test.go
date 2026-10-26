@@ -112,7 +112,7 @@ func setupDatabaseManagerTestDB(t *testing.T) {
 	if err := database.RunMigrations(); err != nil {
 		t.Fatalf("migrate db: %v", err)
 	}
-	config.AppConfig = &config.Config{}
+	config.AppConfig = &config.Config{Panel: config.PanelConfig{DataDir: t.TempDir()}}
 	t.Cleanup(func() {
 		_ = database.Close()
 		database.DB = oldDB

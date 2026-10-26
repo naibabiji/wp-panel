@@ -1,9 +1,10 @@
 package models
 
 type ApiResponse struct {
-	Success bool        `json:"success"`
-	Message string      `json:"message,omitempty"`
-	Data    interface{} `json:"data,omitempty"`
+	Success   bool        `json:"success"`
+	Message   string      `json:"message,omitempty"`
+	Data      interface{} `json:"data,omitempty"`
+	ErrorCode string      `json:"error_code,omitempty"`
 }
 
 type PaginatedResult struct {
@@ -19,4 +20,8 @@ func SuccessResponse(data interface{}) ApiResponse {
 
 func ErrorResponse(msg string) ApiResponse {
 	return ApiResponse{Success: false, Message: msg}
+}
+
+func ErrorResponseWithCode(code, msg string) ApiResponse {
+	return ApiResponse{Success: false, Message: msg, ErrorCode: code}
 }

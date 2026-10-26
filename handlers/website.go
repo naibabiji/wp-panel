@@ -47,6 +47,7 @@ var (
 	updateSiteFastCGICache            = executor.UpdateSiteFastCGICache
 	publishSiteNginxWithCacheRollback = executor.PublishSiteNginxWithCacheRollback
 	clearSiteCache                    = executor.ClearSiteCache
+	clearSiteCacheExternal            = executor.ClearSiteCacheExternal
 )
 
 func wpOptimizationSiteLock(id int) *sync.Mutex {
@@ -535,8 +536,15 @@ func (h *WebsiteHandler) Create(c *gin.Context) {
 	if result.Success {
 		c.JSON(http.StatusOK, models.SuccessResponse(result.Data))
 	} else {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(result.Message))
+		c.JSON(http.StatusInternalServerError, websiteCreateTaskErrorResponse(result))
 	}
+}
+
+func websiteCreateTaskErrorResponse(result executor.TaskResult) models.ApiResponse {
+	if result.ErrorCode != "" {
+		return models.ErrorResponseWithCode(result.ErrorCode, result.Message)
+	}
+	return models.ErrorResponse(result.Message)
 }
 
 func (h *WebsiteHandler) SetDocumentRoot(c *gin.Context) {
@@ -730,7 +738,11 @@ func (h *WebsiteHandler) ToggleStatus(c *gin.Context) {
 	if result.Success {
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": result.Message}))
 	} else {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(result.Message))
+		if result.ErrorCode != "" {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponseWithCode(result.ErrorCode, result.Message))
+		} else {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(result.Message))
+		}
 	}
 }
 
@@ -2779,12 +2791,13 @@ func (h *WebsiteHandler) ClearCache(c *gin.Context) {
 		return
 	}
 
-	if err := clearSiteCache(id); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("缓存未清除: "+err.Error()))
+	result, err := clearSiteCacheExternal(c.Request.Context(), id, false)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponseWithCode(executor.SiteCacheClearErrorCode(err), "缓存未清除: "+err.Error()))
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "缓存已清除，旧缓存将在60分钟内自动回收"}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "缓存已清除，旧缓存将在60分钟内自动回收", "scope": result.Scope, "not_cleared": result.NotCleared}))
 }
 
 func (h *WebsiteHandler) ReinstallWordPress(c *gin.Context) {
@@ -3007,11 +3020,12 @@ func (h *CacheHelperHandler) ClearByDomain(c *gin.Context) {
 		return
 	}
 
-	if err := clearSiteCache(siteID); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("缓存未清除: "+err.Error()))
+	result, err := clearSiteCacheExternal(c.Request.Context(), siteID, false)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponseWithCode(executor.SiteCacheClearErrorCode(err), "缓存未清除: "+err.Error()))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "缓存已清除"}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": "缓存已清除", "scope": result.Scope, "not_cleared": result.NotCleared}))
 }
 
 func (h *CacheHelperHandler) FindByDomain(c *gin.Context) {

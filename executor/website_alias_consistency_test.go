@@ -18,7 +18,7 @@ func setupWebsiteAliasTest(t *testing.T) *models.Website {
 	oldCfg := config.AppConfig
 	oldChange, oldApply := changeWebsiteAliases, applyAliasNginx
 	config.AppConfig = &config.Config{
-		Panel: config.PanelConfig{BackupDir: filepath.Join(root, "backups")},
+		Panel: config.PanelConfig{DataDir: filepath.Join(root, "data"), BackupDir: filepath.Join(root, "backups")},
 		Paths: config.PathsConfig{
 			NginxSitesAvailable: filepath.Join(root, "available"),
 			NginxSitesEnabled:   filepath.Join(root, "enabled"),

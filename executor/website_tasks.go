@@ -23,6 +23,29 @@ type rollbackStep struct {
 	fn   func() error
 }
 
+type createSiteRollbackFailure struct {
+	Step  string
+	Error string
+}
+
+func formatCreateSiteRollbackFailures(failures []createSiteRollbackFailure) string {
+	parts := make([]string, 0, len(failures))
+	for _, failure := range failures {
+		parts = append(parts, failure.Step+": "+failure.Error)
+	}
+	return strings.Join(parts, "；")
+}
+
+func runCreateSiteRollbacks(steps []rollbackStep) []createSiteRollbackFailure {
+	failures := make([]createSiteRollbackFailure, 0)
+	for i := len(steps) - 1; i >= 0; i-- {
+		if err := steps[i].fn(); err != nil {
+			failures = append(failures, createSiteRollbackFailure{Step: steps[i].desc, Error: err.Error()})
+		}
+	}
+	return failures
+}
+
 func runRollbackSteps(steps []rollbackStep) []string {
 	var failures []string
 	for i := len(steps) - 1; i >= 0; i-- {
@@ -174,19 +197,44 @@ func ensureCreateSiteResourcesAvailable(systemUser, webRoot, logDir, dbName, dbU
 }
 
 func executeCreateSite(task *Task) TaskResult {
+	lock, err := acquireSiteCreationLock()
+	if err != nil {
+		return TaskResult{Success: false, Message: "当前已有网站创建任务正在执行，请稍后重试", ErrorCode: "site_create_busy", Diagnostic: err.Error()}
+	}
+	defer lock.Close()
+	if payload, ok := task.Payload.(*CreateSitePayload); ok {
+		if err := checkCreateSiteDomainAndMigration(context.Background(), strings.ToLower(strings.TrimSpace(payload.Domain)), payload.Aliases); err != nil {
+			return TaskResult{Success: false, Message: SiteProvisioningPublicErrorMessage(err), ErrorCode: SiteProvisioningErrorCode(err), Diagnostic: err.Error()}
+		}
+	}
+	return executeCreateSiteUnlocked(task)
+}
+
+func executeCreateSiteUnlocked(task *Task) TaskResult {
 	payload, ok := task.Payload.(*CreateSitePayload)
 	if !ok {
 		return TaskResult{Success: false, Message: "任务参数类型错误"}
 	}
 
 	var rollbacks []rollbackStep
-	rollback := func() {
-		for i := len(rollbacks) - 1; i >= 0; i-- {
-			step := rollbacks[i]
-			if err := step.fn(); err != nil {
-				fmt.Fprintf(os.Stderr, "回滚失败 [%s]: %v\n", step.desc, err)
-			}
+	var rollbackFailures []createSiteRollbackFailure
+	rollback := func() []createSiteRollbackFailure {
+		rollbackFailures = runCreateSiteRollbacks(rollbacks)
+		return rollbackFailures
+	}
+	createSiteFailure := func(message string) TaskResult {
+		if len(rollbackFailures) == 0 {
+			return TaskResult{Success: false, Message: message}
 		}
+		diagnostic := formatCreateSiteRollbackFailures(rollbackFailures)
+		return TaskResult{Success: false, Message: message + "，且状态恢复不完整，请人工检查", ErrorCode: "rollback_required", Diagnostic: diagnostic}
+	}
+	createSiteFailureWithCode := func(message, code string) TaskResult {
+		result := createSiteFailure(message)
+		if result.ErrorCode == "" {
+			result.ErrorCode = code
+		}
+		return result
 	}
 
 	cfg := config.AppConfig
@@ -247,7 +295,7 @@ func executeCreateSite(task *Task) TaskResult {
 		if _, err := executeCommand("mkdir", "-p", dir); err != nil {
 			rollback()
 			log.Printf("创建目录失败: %v", err)
-			return TaskResult{Success: false, Message: "创建目录失败"}
+			return createSiteFailure("创建目录失败")
 		}
 	}
 	ensureSiteLogFiles(logDir)
@@ -263,7 +311,7 @@ func executeCreateSite(task *Task) TaskResult {
 	if err != nil {
 		rollback()
 		log.Printf("准备Web入口目录失败: %v", err)
-		return taskFailure("准备Web入口目录失败", err)
+		return createSiteFailure("准备Web入口目录失败")
 	}
 
 	// Step 3: Deploy site files
@@ -272,7 +320,7 @@ func executeCreateSite(task *Task) TaskResult {
 		if err := deployWordPress(context.Background(), cfg, webRoot, tmpDir); err != nil {
 			rollback()
 			log.Printf("WordPress 部署失败: %v", err)
-			return TaskResult{Success: false, Message: "WordPress 部署失败"}
+			return createSiteFailureWithCode("WordPress 部署失败", "wordpress_package_unavailable")
 		}
 	}
 
@@ -280,14 +328,14 @@ func executeCreateSite(task *Task) TaskResult {
 	if _, err := executeCommand("chown", "-R", siteOwner(systemUser), webRoot); err != nil {
 		rollback()
 		log.Printf("设置目录权限失败: %v", err)
-		return TaskResult{Success: false, Message: "设置目录权限失败"}
+		return createSiteFailure("设置目录权限失败")
 	}
 
 	// Step 5: Create database
 	if err := createMariaDBDatabase(dbName, dbUser, dbPassword, cfg); err != nil {
 		rollback()
 		log.Printf("创建数据库失败: %v", err)
-		return TaskResult{Success: false, Message: "创建数据库失败"}
+		return createSiteFailure("创建数据库失败")
 	}
 	rollbacks = append(rollbacks, rollbackStep{"删除数据库 " + dbName, func() error {
 		return dropMariaDBDatabase(dbName, dbUser, cfg)
@@ -298,13 +346,13 @@ func executeCreateSite(task *Task) TaskResult {
 		if err := generateWPConfig(webRoot, domain, dbName, dbUser, dbPassword); err != nil {
 			rollback()
 			log.Printf("生成 wp-config.php 失败: %v", err)
-			return TaskResult{Success: false, Message: "生成 wp-config.php 失败"}
+			return createSiteFailure("生成 wp-config.php 失败")
 		}
 	}
 	if err := HardenSiteSensitivePermissions(domain, webRoot, systemUser); err != nil {
 		rollback()
 		log.Printf("设置站点安全权限失败: %v", err)
-		return TaskResult{Success: false, Message: "设置站点安全权限失败"}
+		return createSiteFailure("设置站点安全权限失败")
 	}
 
 	// Step 7: Generate Nginx + PHP-FPM configs
@@ -329,12 +377,12 @@ func executeCreateSite(task *Task) TaskResult {
 	if err != nil {
 		rollback()
 		log.Printf("渲染 PHP-FPM 配置失败: %v", err)
-		return taskFailure("渲染 PHP-FPM 配置失败", err)
+		return createSiteFailure("渲染 PHP-FPM 配置失败")
 	}
 	if err := engine.ApplyPHPFPMPool(phpConfig, phpPoolPath, logDir, phpSockPath); err != nil {
 		rollback()
 		log.Printf("应用 PHP-FPM 配置失败: %v", err)
-		return taskFailure("应用 PHP-FPM 配置失败", err)
+		return createSiteFailure("应用 PHP-FPM 配置失败")
 	}
 	rollbacks = append(rollbacks, rollbackStep{"删除PHP-FPM配置 " + phpPoolPath, func() error {
 		os.Remove(phpPoolPath)
@@ -360,13 +408,13 @@ func executeCreateSite(task *Task) TaskResult {
 	if err != nil {
 		rollback()
 		log.Printf("渲染 Nginx 配置失败: %v", err)
-		return taskFailure("渲染 Nginx 配置失败", err)
+		return createSiteFailure("渲染 Nginx 配置失败")
 	}
 
 	if err := engine.ApplyNginxConfig(nginxConfig, nginxConfPath, nginxEnabledPath); err != nil {
 		rollback()
 		log.Printf("应用 Nginx 配置失败: %v", err)
-		return taskFailure("应用 Nginx 配置失败", err)
+		return createSiteFailure("应用 Nginx 配置失败")
 	}
 	rollbacks = append(rollbacks, rollbackStep{"删除Nginx配置 " + nginxConfPath, func() error {
 		os.Remove(nginxEnabledPath)
@@ -388,7 +436,7 @@ func executeCreateSite(task *Task) TaskResult {
 		if sslErr := os.MkdirAll(certDir, 0700); sslErr != nil {
 			rollback()
 			log.Printf("创建SSL证书目录失败: %v", sslErr)
-			return TaskResult{Success: false, Message: "创建SSL证书目录失败"}
+			return createSiteFailure("创建SSL证书目录失败")
 		}
 		expiry, sslErr := obtainLegoCert(domain, strings.Join(payload.Aliases, "\n"), documentRoot, certDir)
 		if sslErr != nil {
@@ -423,7 +471,7 @@ func executeCreateSite(task *Task) TaskResult {
 				if restoreErr := engine.ApplyNginxConfig(nginxConfig, nginxConfPath, nginxEnabledPath); restoreErr != nil {
 					rollback()
 					log.Printf("恢复 HTTP 配置失败: %v", restoreErr)
-					return taskFailure("应用 HTTPS 配置失败，且恢复 HTTP 配置失败", restoreErr)
+					return createSiteFailure("应用 HTTPS 配置失败，且恢复 HTTP 配置失败")
 				}
 				sslWarning = "应用 HTTPS 配置失败：" + sslErr.Error()
 			} else {
@@ -466,7 +514,7 @@ func executeCreateSite(task *Task) TaskResult {
 	if err != nil {
 		rollback()
 		log.Printf("写入数据库失败: %v", err)
-		return TaskResult{Success: false, Message: "写入数据库失败"}
+		return createSiteFailure("写入数据库失败")
 	}
 	siteID, _ := insertResult.LastInsertId()
 	if err := WriteSiteLogrotateConfig(domain, logDir, defaultSiteLogRetentionDays); err != nil {
@@ -740,7 +788,107 @@ func executePauseSite(task *Task) TaskResult {
 	if !ok {
 		return TaskResult{Success: false, Message: "任务参数类型错误"}
 	}
-	site := payload.Site
+	return ExecuteSiteStateChange(context.Background(), payload.Site, "pause", false)
+}
+
+// ExecuteSiteStateChange is the shared execution core for the HTTP task
+// queue and the server-level CLI. The queue keeps its existing asynchronous
+// transport, while callers outside the queue can invoke this function
+// synchronously without duplicating gates or rollback behavior.
+func ExecuteSiteStateChange(ctx context.Context, requested *models.Website, action string, allowMigrated bool) TaskResult {
+	if requested == nil {
+		return siteStateTaskFailure("site_not_found", "网站不存在")
+	}
+	site, err := loadSiteStateTarget(ctx, requested.ID)
+	if err != nil {
+		return siteStateTaskFailure("site_not_found", "网站不存在")
+	}
+	if site.Domain != requested.Domain {
+		return siteStateTaskFailure("plan_stale", "网站状态已变化，请重新确认")
+	}
+	if err := checkSiteMigrationGate(ctx, site); err != nil {
+		return siteStateTaskFailure(SiteStateControlErrorCode(err), err.Error())
+	}
+	switch action {
+	case "pause":
+		if site.Status != models.StatusActive {
+			return siteStateTaskFailure("invalid_state", "当前网站状态不能执行暂停")
+		}
+	case "resume":
+		if site.Status != models.StatusPaused && !(allowMigrated && site.Status == models.StatusMigrated) {
+			return siteStateTaskFailure("invalid_state", "当前网站状态不能执行启用")
+		}
+	default:
+		return siteStateTaskFailure("invalid_state", "无效的网站状态操作")
+	}
+	if err := checkSiteAccessGates(ctx, site); err != nil {
+		return siteStateTaskFailure(SiteStateControlErrorCode(err), err.Error())
+	}
+	if !TryAcquireSiteOpLock(site.ID, "site_state_"+action) {
+		return siteStateTaskFailure("site_lock_busy", "网站正在执行其它操作，请稍后重试")
+	}
+	defer ReleaseSiteOpLock(site.ID)
+	result := executeSiteStateWithVerification(ctx, site, action)
+	if !result.Success && result.ErrorCode == "" {
+		result.ErrorCode = siteStateFailureCode(result.Message)
+	}
+	return result
+}
+
+func siteStateTaskFailure(code, message string) TaskResult {
+	return TaskResult{Success: false, Message: message, ErrorCode: code}
+}
+
+func siteStateFailureCode(message string) string {
+	if strings.Contains(message, "人工检查") {
+		return "rollback_required"
+	}
+	return "operation_failed"
+}
+
+func executeSiteStateWithVerification(ctx context.Context, site *models.Website, action string) TaskResult {
+	result := executeSiteStateUnlocked(site, action)
+	if !result.Success {
+		return result
+	}
+	current, err := loadSiteStateTarget(ctx, site.ID)
+	if err != nil {
+		return TaskResult{Success: false, Message: "网站状态复查失败，请人工检查"}
+	}
+	expected := models.StatusPaused
+	if action == "resume" {
+		expected = models.StatusActive
+	}
+	if current.Status != expected {
+		return TaskResult{Success: false, Message: "网站状态复查未达到预期，请人工检查"}
+	}
+	return result
+}
+
+func loadSiteStateTarget(ctx context.Context, siteID int) (*models.Website, error) {
+	db := database.GetDB()
+	if db == nil {
+		return nil, errors.New("database unavailable")
+	}
+	var site models.Website
+	var status string
+	var expires sql.NullTime
+	err := db.QueryRowContext(ctx, `SELECT id,domain,status,nginx_conf_path,ssl_enabled,ssl_expires_at
+		FROM websites WHERE id=?`, siteID).Scan(&site.ID, &site.Domain, &status, &site.NginxConfPath, &site.SSLEnabled, &expires)
+	if err != nil {
+		return nil, err
+	}
+	site.Status = models.WebsiteStatus(status)
+	if expires.Valid {
+		site.SSLExpiresAt = &expires.Time
+	}
+	return &site, nil
+}
+
+func executePauseSiteUnlocked(site *models.Website) TaskResult {
+	if site == nil {
+		return TaskResult{Success: false, Message: "网站不存在"}
+	}
 	if locked, err := SiteMigrationLocked(context.Background(), site.ID, site.Domain); err != nil {
 		return TaskResult{Success: false, Message: "检查站点迁移锁失败"}
 	} else if locked {
@@ -806,7 +954,13 @@ func executeEnableSite(task *Task) TaskResult {
 	if !ok {
 		return TaskResult{Success: false, Message: "任务参数类型错误"}
 	}
-	site := payload.Site
+	return ExecuteSiteStateChange(context.Background(), payload.Site, "resume", true)
+}
+
+func executeEnableSiteUnlocked(site *models.Website) TaskResult {
+	if site == nil {
+		return TaskResult{Success: false, Message: "网站不存在"}
+	}
 	if locked, err := SiteMigrationLocked(context.Background(), site.ID, site.Domain); err != nil {
 		return TaskResult{Success: false, Message: "检查站点迁移锁失败"}
 	} else if locked {

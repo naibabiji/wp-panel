@@ -553,6 +553,7 @@ do_uninstall() {
     rm -f "$BIN_PATH"
     rm -f /usr/local/bin/wpp
     grep -qx '# WP Panel CLI — wp' /usr/local/bin/wp 2>/dev/null && rm -f /usr/local/bin/wp
+    rm -rf /etc/wp-panel
     rm -rf "$INSTALL_DIR"
     echo -e "  ${GREEN}✓${NC} 面板文件已删除"
 

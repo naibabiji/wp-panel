@@ -239,7 +239,7 @@ func TestEnableSiteRestoresMigratedMaintenanceLink(t *testing.T) {
 	installStubNginx(t)
 	db := database.GetDB()
 	root := t.TempDir()
-	cfg := &config.Config{Paths: config.PathsConfig{
+	cfg := &config.Config{Panel: config.PanelConfig{DataDir: filepath.Join(root, "data")}, Paths: config.PathsConfig{
 		NginxSitesAvailable: filepath.Join(root, "available"),
 		NginxSitesEnabled:   filepath.Join(root, "enabled"),
 	}}
@@ -292,7 +292,7 @@ func TestDeleteSiteWithEnabledFileBackupCronDoesNotDeadlockQueue(t *testing.T) {
 	db := database.GetDB()
 	root := t.TempDir()
 	cfg := &config.Config{
-		Panel: config.PanelConfig{BackupDir: filepath.Join(root, "backups")},
+		Panel: config.PanelConfig{DataDir: filepath.Join(root, "data"), BackupDir: filepath.Join(root, "backups")},
 		MariaDB: config.MariaDBConfig{
 			RootUser:     "root",
 			RootPassword: "test",

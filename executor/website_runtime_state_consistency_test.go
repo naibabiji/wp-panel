@@ -17,7 +17,7 @@ func setupWebsiteRuntimeStateTest(t *testing.T, status models.WebsiteStatus, wit
 	t.Helper()
 	openTestDB(t)
 	root := t.TempDir()
-	cfg := &config.Config{Paths: config.PathsConfig{
+	cfg := &config.Config{Panel: config.PanelConfig{DataDir: filepath.Join(root, "data")}, Paths: config.PathsConfig{
 		NginxSitesAvailable: filepath.Join(root, "available"),
 		NginxSitesEnabled:   filepath.Join(root, "enabled"),
 	}}

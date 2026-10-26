@@ -12,7 +12,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/naibabiji/wp-panel/database"
+	"github.com/naibabiji/wp-panel/executor"
 )
+
+func TestWebsiteCreateTaskErrorResponsePreservesErrorCode(t *testing.T) {
+	response := websiteCreateTaskErrorResponse(executor.TaskResult{Message: "网站创建失败，资源恢复不完整，请人工检查", ErrorCode: "rollback_required"})
+	if response.Success || response.ErrorCode != "rollback_required" || response.Message == "" {
+		t.Fatalf("response=%+v", response)
+	}
+}
 
 func TestNormalizeWPSiteURL(t *testing.T) {
 	got, err := normalizeWPSiteURL(" https://example.com/wp ")

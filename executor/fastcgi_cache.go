@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"embed"
 	"encoding/hex"
 	"errors"
@@ -546,26 +547,45 @@ func PublishSiteNginxWithCacheRollback(siteID, oldEnabled, oldTTL int) error {
 	return publishSiteNginxWithCacheRollback(siteID, oldEnabled, oldTTL)
 }
 
-func ClearSiteCache(siteID int) error {
+type SiteCacheClearError struct {
+	Code    string
+	Message string
+}
+
+func (e *SiteCacheClearError) Error() string { return e.Message }
+
+// clearSiteCacheCore performs the cache-key rotation and Nginx publish without
+// taking a site lock. Callers that already own a site lock (for example a
+// WordPress update workflow) must use this core directly to avoid re-entry.
+func clearSiteCacheCore(siteID int) (string, error) {
 	db := database.GetDB()
 	var oldKey string
 	if err := db.QueryRow(`SELECT fastcgi_cache_key FROM websites WHERE id=?`, siteID).Scan(&oldKey); err != nil {
-		return fmt.Errorf("读取缓存标识失败: %w", err)
+		code := "operation_failed"
+		if errors.Is(err, sql.ErrNoRows) {
+			code = "site_not_found"
+		}
+		return "", &SiteCacheClearError{Code: code, Message: fmt.Sprintf("读取缓存标识失败: %v", err)}
 	}
 	key := NewCacheKey()
 	if _, err := db.Exec("UPDATE websites SET fastcgi_cache_key = ? WHERE id = ?", key, siteID); err != nil {
-		return fmt.Errorf("更新缓存标识失败: %w", err)
+		return "", &SiteCacheClearError{Code: "operation_failed", Message: fmt.Sprintf("更新缓存标识失败: %v", err)}
 	}
 	if err := regenerateSiteNginxForCache(siteID); err != nil {
 		if _, rollbackErr := db.Exec(`UPDATE websites SET fastcgi_cache_key=? WHERE id=?`, oldKey, siteID); rollbackErr != nil {
-			return fmt.Errorf("清除缓存应用失败: %v；恢复缓存标识失败: %w", err, rollbackErr)
+			return "", &SiteCacheClearError{Code: "rollback_required", Message: fmt.Sprintf("清除缓存应用失败: %v；恢复缓存标识失败: %v", err, rollbackErr)}
 		}
 		if rollbackErr := regenerateSiteNginxForCache(siteID); rollbackErr != nil {
-			return fmt.Errorf("清除缓存应用失败: %v；恢复旧 Nginx 配置失败: %w", err, rollbackErr)
+			return "", &SiteCacheClearError{Code: "rollback_required", Message: fmt.Sprintf("清除缓存应用失败: %v；恢复旧 Nginx 配置失败: %v", err, rollbackErr)}
 		}
-		return fmt.Errorf("清除缓存失败，原缓存标识已恢复: %w", err)
+		return "", &SiteCacheClearError{Code: "operation_failed", Message: fmt.Sprintf("清除缓存失败，原缓存标识已恢复: %v", err)}
 	}
-	return nil
+	return key, nil
+}
+
+func ClearSiteCache(siteID int) error {
+	_, err := clearSiteCacheCore(siteID)
+	return err
 }
 
 func ClearWPSiteRuntimeCaches(siteID int, domain, webRoot string) {
