@@ -207,9 +207,8 @@ func smtpFromEmail(cfg *SMTPConfig) string {
 	if validManagedMailAddress(cfg.FromEmail) {
 		return strings.TrimSpace(cfg.FromEmail)
 	}
-	// Preserve upgraded panel-alert behavior until the administrator saves the
-	// new independent From Email field. Managed website mail still requires the
-	// explicit field and never uses this compatibility fallback.
+	// A valid SMTP username is a safe default for the independent From Email
+	// field. An explicitly configured From Email always takes precedence.
 	if validManagedMailAddress(cfg.User) {
 		return strings.TrimSpace(cfg.User)
 	}

@@ -263,7 +263,7 @@ function smtpConfig() {
                         smtp_encryption: d.smtp_encryption || 'starttls',
                         smtp_user: d.smtp_user || '',
                         smtp_pass: d.smtp_pass || '',
-                        smtp_from_email: d.smtp_from_email || '',
+						smtp_from_email: d.smtp_from_email || this.defaultFromEmail(d.smtp_user),
                         admin_email: d.admin_email || '',
                         managed_mail_limit_preset: d.managed_mail_limit_preset || 'conservative',
                         managed_mail_total_minute_limit: d.managed_mail_total_minute_limit || '10',
@@ -274,6 +274,10 @@ function smtpConfig() {
                 }
             } catch(e) {}
         },
+		defaultFromEmail(user) {
+			const value = String(user || '').trim();
+			return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? value : '';
+		},
         async save() {
             this.saving = true;
             try {
@@ -283,7 +287,7 @@ function smtpConfig() {
                     smtp_encryption: this.cfg.smtp_encryption || 'starttls',
                     smtp_user: this.cfg.smtp_user || '',
                     smtp_pass: this.cfg.smtp_pass || '',
-                    smtp_from_email: this.cfg.smtp_from_email || '',
+					smtp_from_email: this.cfg.smtp_from_email || this.defaultFromEmail(this.cfg.smtp_user),
                     admin_email: this.cfg.admin_email || '',
                 };
                 await api('/alert/settings', { method: 'PUT', body });
@@ -446,7 +450,7 @@ function smtpConfig() {
                     smtp_encryption: d.smtp_encryption || 'starttls',
                     smtp_user: d.smtp_user || '',
                     smtp_pass: d.smtp_pass || '',
-                    smtp_from_email: d.smtp_from_email || '',
+					smtp_from_email: d.smtp_from_email || this.defaultFromEmail(d.smtp_user),
                     admin_email: d.admin_email || ''
                 };
                 this.importOpen = false;

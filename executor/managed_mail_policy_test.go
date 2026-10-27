@@ -132,6 +132,43 @@ func TestManagedMailConfirmDistinguishesSMTPNotReady(t *testing.T) {
 	}
 }
 
+func TestManagedMailDefaultsEmptyFromEmailToSMTPUser(t *testing.T) {
+	service, siteID := setupManagedMailPolicyTest(t)
+	ctx := context.Background()
+	if _, err := service.SaveSitePolicy(ctx, ManagedMailSitePolicy{
+		SiteID: siteID, Authorized: true, MinuteLimit: 3, HourLimit: 15, DayLimit: 50,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.db.Exec(`UPDATE security_settings SET svalue='' WHERE skey='smtp_from_email'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.db.Exec(`UPDATE security_settings SET svalue='sender@example.test' WHERE skey='smtp_user'`); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := service.GetSitePolicy(ctx, siteID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policy.SMTPReady || policy.FromEmail != "sender@example.test" {
+		t.Fatalf("empty From Email did not default to SMTP username: %+v", policy)
+	}
+	if _, err := service.ConfirmSite(ctx, siteID, true); err != nil {
+		t.Fatalf("confirmation should accept the valid SMTP username default: %v", err)
+	}
+}
+
+func TestManagedMailPrefersExplicitFromEmail(t *testing.T) {
+	service, siteID := setupManagedMailPolicyTest(t)
+	policy, err := service.GetSitePolicy(context.Background(), siteID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.FromEmail != "noreply@example.test" {
+		t.Fatalf("explicit From Email was not preserved: site=%d policy=%+v", siteID, policy)
+	}
+}
+
 func TestManagedMailSiteSenderUpdateHonorsAuthorizationAndFromNameLock(t *testing.T) {
 	service, siteID := setupManagedMailPolicyTest(t)
 	ctx := context.Background()

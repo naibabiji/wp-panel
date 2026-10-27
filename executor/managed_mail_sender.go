@@ -125,7 +125,8 @@ func (s *ManagedMailSender) Send(ctx context.Context, siteID int64, input Manage
 }
 
 func buildManagedMailEnvelope(policy ManagedMailSitePolicy, cfg *SMTPConfig, input ManagedMailMessage, now time.Time) (managedMailEnvelope, int, error) {
-	if cfg == nil || !validManagedMailAddress(cfg.FromEmail) || len([]rune(input.Subject)) > 998 || strings.ContainsAny(input.Subject, "\r\n") || (input.TextBody == "" && input.HTMLBody == "") {
+	fromEmail := smtpFromEmail(cfg)
+	if cfg == nil || fromEmail == "" || len([]rune(input.Subject)) > 998 || strings.ContainsAny(input.Subject, "\r\n") || (input.TextBody == "" && input.HTMLBody == "") {
 		return managedMailEnvelope{}, 0, ErrManagedMailValidation
 	}
 	fromName := strings.TrimSpace(input.FromName)
@@ -167,14 +168,14 @@ func buildManagedMailEnvelope(policy ManagedMailSitePolicy, cfg *SMTPConfig, inp
 	if err != nil {
 		return managedMailEnvelope{}, 0, ErrManagedMailValidation
 	}
-	messageID, err := newManagedMailMessageID(cfg.FromEmail)
+	messageID, err := newManagedMailMessageID(fromEmail)
 	if err != nil {
 		return managedMailEnvelope{}, 0, err
 	}
 	var out bytes.Buffer
 	writeManagedMailHeader(&out, "Date", now.Format(time.RFC1123Z))
 	writeManagedMailHeader(&out, "Message-ID", messageID)
-	writeManagedMailHeader(&out, "From", (&mail.Address{Name: fromName, Address: cfg.FromEmail}).String())
+	writeManagedMailHeader(&out, "From", (&mail.Address{Name: fromName, Address: fromEmail}).String())
 	writeManagedMailHeader(&out, "To", strings.Join(to, ", "))
 	if len(cc) > 0 {
 		writeManagedMailHeader(&out, "Cc", strings.Join(cc, ", "))
@@ -190,7 +191,7 @@ func buildManagedMailEnvelope(policy ManagedMailSitePolicy, cfg *SMTPConfig, inp
 	if err := writeManagedMailBody(&out, input); err != nil {
 		return managedMailEnvelope{}, 0, err
 	}
-	return managedMailEnvelope{from: cfg.FromEmail, recipients: recipients, message: out.Bytes(), messageID: messageID}, len(recipients), nil
+	return managedMailEnvelope{from: fromEmail, recipients: recipients, message: out.Bytes(), messageID: messageID}, len(recipients), nil
 }
 
 func parseManagedMailAddresses(values []string) ([]string, []string, error) {

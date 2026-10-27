@@ -95,6 +95,19 @@ func TestManagedMailEnvelopeRejectsHeaderOverridesAndBadAttachments(t *testing.T
 	}
 }
 
+func TestManagedMailEnvelopeDefaultsFromEmailToSMTPUser(t *testing.T) {
+	policy := ManagedMailSitePolicy{FromName: "Site"}
+	cfg := &SMTPConfig{User: "sender@example.test"}
+	input := ManagedMailMessage{RequestID: "default-from-request", To: []string{"user@example.test"}, Subject: "Test", TextBody: "Body"}
+	envelope, _, err := buildManagedMailEnvelope(policy, cfg, input, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.from != "sender@example.test" || !strings.Contains(string(envelope.message), "<sender@example.test>") {
+		t.Fatalf("SMTP username default was not used in managed envelope: from=%q", envelope.from)
+	}
+}
+
 func TestManagedMailSMTPErrorRecognizesServerWideTemporaryRefusal(t *testing.T) {
 	result := classifyManagedMailSMTPError(&textproto.Error{Code: 421, Msg: "service temporarily unavailable"}, false)
 	if result.status != "temporary_failure" || result.errorCode != "provider_rate_limited" {

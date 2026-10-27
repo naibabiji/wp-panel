@@ -132,8 +132,8 @@ func (s *ManagedMailPolicyService) GetSitePolicy(ctx context.Context, siteID int
 	}
 	cfg := getSMTPConfig(s.db)
 	if cfg != nil {
-		policy.FromEmail = strings.TrimSpace(cfg.FromEmail)
-		policy.SMTPReady = strings.TrimSpace(cfg.Host) != "" && strings.TrimSpace(cfg.User) != "" && cfg.Pass != "" && validManagedMailAddress(policy.FromEmail)
+		policy.FromEmail = smtpFromEmail(cfg)
+		policy.SMTPReady = strings.TrimSpace(cfg.Host) != "" && strings.TrimSpace(cfg.User) != "" && cfg.Pass != "" && policy.FromEmail != ""
 	}
 	now := s.now()
 	policy.Active = policy.Authorized && policy.SiteConfirmed && policy.SMTPReady && policy.SiteStatus == "active" && policy.ConflictPlugin == "" && (policy.PausedUntil == nil || !policy.PausedUntil.After(now))
@@ -376,7 +376,7 @@ func (s *ManagedMailPolicyService) Reserve(ctx context.Context, siteID int64, re
 		return ManagedMailReservation{}, ErrManagedMailPaused
 	}
 	cfg := getSMTPConfig(s.db)
-	if cfg == nil || strings.TrimSpace(cfg.Host) == "" || strings.TrimSpace(cfg.User) == "" || cfg.Pass == "" || !validManagedMailAddress(cfg.FromEmail) {
+	if cfg == nil || strings.TrimSpace(cfg.Host) == "" || strings.TrimSpace(cfg.User) == "" || cfg.Pass == "" || smtpFromEmail(cfg) == "" {
 		return ManagedMailReservation{}, ErrManagedMailUnavailable
 	}
 

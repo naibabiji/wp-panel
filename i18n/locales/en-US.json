@@ -620,7 +620,7 @@
     "none": "None",
     "smtp_username": "SMTP Username",
     "sender_email": "Sender Email",
-    "sender_email_help": "Used for the From header and envelope sender. It may differ from the SMTP username.",
+    "sender_email_help": "Used for the From header and envelope sender. It may differ from the SMTP username; when empty, a valid email username is used automatically.",
     "managed_mail_limits": "Managed website email limits",
     "managed_mail_settings": "Managed website email settings",
     "managed_mail_settings_saved": "Managed website email settings saved",

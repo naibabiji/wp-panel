@@ -620,7 +620,7 @@
     "none": "无",
     "smtp_username": "SMTP 用户名",
     "sender_email": "发件邮箱",
-    "sender_email_help": "用于 From 和 envelope-from，可与 SMTP 用户名不同。",
+    "sender_email_help": "用于 From 和 envelope-from，可与 SMTP 用户名不同；留空时若用户名是邮箱将自动使用用户名。",
     "managed_mail_limits": "网站托管发信总额度",
     "managed_mail_settings": "网站托管发信设置",
     "managed_mail_settings_saved": "网站托管发信设置已保存",
