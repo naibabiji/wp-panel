@@ -108,11 +108,19 @@ func (w *SiteMigrationWorker) Stop(ctx context.Context) error {
 
 func (w *SiteMigrationWorker) run(ctx context.Context) {
 	defer close(w.done)
+	var lastRecovery time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
+		}
+		now := w.now().UTC()
+		if lastRecovery.IsZero() || now.Sub(lastRecovery) >= 10*time.Second {
+			lastRecovery = now
+			if _, err := w.store.recoverExpired(context.Background(), now); err != nil {
+				log.Printf("网站搬家过期租约恢复失败: %v", err)
+			}
 		}
 		// A claim is a short SQLite transaction. Do not cancel it midway during
 		// shutdown: database/sql may report context cancellation before its

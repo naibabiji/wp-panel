@@ -136,6 +136,55 @@ func TestSiteMigrationStoreReleaseClaimPreservesProcessorState(t *testing.T) {
 	}
 }
 
+func TestWithSiteMigrationBusyRetryRetriesOnlySQLiteBusy(t *testing.T) {
+	oldDelays := siteMigrationBusyRetryDelays
+	siteMigrationBusyRetryDelays = []time.Duration{0, 0}
+	t.Cleanup(func() { siteMigrationBusyRetryDelays = oldDelays })
+
+	attempts := 0
+	err := withSiteMigrationBusyRetry(context.Background(), func() error {
+		attempts++
+		if attempts < 3 {
+			return errors.New("database is locked (5) (SQLITE_BUSY)")
+		}
+		return nil
+	})
+	if err != nil || attempts != 3 {
+		t.Fatalf("retry result err=%v attempts=%d, want nil and 3", err, attempts)
+	}
+
+	attempts = 0
+	want := errors.New("database is locked")
+	err = withSiteMigrationBusyRetry(context.Background(), func() error {
+		attempts++
+		return want
+	})
+	if !errors.Is(err, want) || attempts != len(siteMigrationBusyRetryDelays)+1 {
+		t.Fatalf("busy exhaustion err=%v attempts=%d", err, attempts)
+	}
+}
+
+func TestWithSiteMigrationBusyRetryStopsWhenContextIsCanceled(t *testing.T) {
+	oldDelays := siteMigrationBusyRetryDelays
+	siteMigrationBusyRetryDelays = []time.Duration{time.Hour}
+	t.Cleanup(func() { siteMigrationBusyRetryDelays = oldDelays })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	attempts := 0
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- withSiteMigrationBusyRetry(ctx, func() error {
+			attempts++
+			return errors.New("database is locked (5) (SQLITE_BUSY)")
+		})
+	}()
+	cancel()
+	err := <-errCh
+	if !errors.Is(err, context.Canceled) || attempts != 1 {
+		t.Fatalf("canceled retry err=%v attempts=%d", err, attempts)
+	}
+}
+
 func TestSiteMigrationStoreRecoversExpiredTargetAwaitingAutomaticActivation(t *testing.T) {
 	store, _ := newSiteMigrationStoreTest(t)
 	ctx := context.Background()

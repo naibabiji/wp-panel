@@ -156,6 +156,19 @@ function siteMigrationPairing() {
 			if (task.direction === 'source') return t('site_migration.progress_preparing_source');
 			return t('site_migration.progress_processing');
 		},
+		operationErrorMessage(err) {
+			const messages = {
+				peer_in_use: t('site_migration.peer_in_use'),
+				peer_not_paired: t('site_migration.peer_not_paired'),
+				peer_auth_failed: t('site_migration.peer_auth_failed'),
+				peer_protocol_mismatch: t('site_migration.peer_protocol_mismatch'),
+				peer_unreachable: t('site_migration.peer_unreachable'),
+				peer_database_busy: t('site_migration.peer_database_busy'),
+				peer_http_error: t('site_migration.peer_http_error'),
+				peer_invalid_response: t('site_migration.peer_invalid_response')
+			};
+			return err && messages[err.errorCode] ? messages[err.errorCode] : t('site_migration.operation_failed');
+		},
 		selectionKey() { return this.selectedPeer + ':' + [...this.selectedSiteIDs].sort((a, b) => a - b).join(','); },
 		readyToStart() { return this.selectedSiteIDs.length > 0 && this.preflightResult && this.preflightResult.success === true && Array.isArray(this.preflightResult.conflicts) && this.preflightResult.conflicts.length === 0 && this.estimateResult && this.preflightKey === this.selectionKey(); },
 		formatBytes(value) { const units = ['B','KiB','MiB','GiB','TiB']; let size = Number(value || 0), i = 0; while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; } return size.toFixed(i ? 1 : 0) + ' ' + units[i]; },
@@ -164,12 +177,16 @@ function siteMigrationPairing() {
 			return t('site_migration.estimate_summary', {files: this.formatBytes(this.estimateResult.total_file_bytes), database: this.formatBytes(this.estimateResult.total_database_bytes), required: this.formatBytes(this.estimateResult.total_reservation_bytes)});
 		},
         async generatePackage() {
+            if (this.busy) return;
             this.busy = true; this.message = '';
+            await this.loadPeers();
+            const existing = this.peers.find(peer => peer.status === 'paired' || peer.status === 'pending');
+            if (existing && !await confirmModal(t('site_migration.replace_connection_confirm'))) { this.busy = false; return; }
             try {
                 const r = await api('/site-migration/pairing-package', {method: 'POST', body: {base_url: window.location.origin}});
                 this.packageText = JSON.stringify(r.package, null, 2);
                 this.failed = false; this.message = t('site_migration.package_generated'); await this.loadPeers();
-            } catch (_) { this.failed = true; this.message = t('site_migration.operation_failed'); }
+            } catch (err) { this.failed = true; this.message = this.operationErrorMessage(err); }
             finally { this.busy = false; }
         },
         async connectPeer() {
@@ -177,17 +194,20 @@ function siteMigrationPairing() {
 			let pkg = null;
             try {
 				pkg = JSON.parse(this.packageText);
+				await this.loadPeers();
+				const existing = this.peers.find(peer => (peer.status === 'paired' || peer.status === 'pending') && peer.id !== pkg.peer_id);
+				if (existing && !await confirmModal(t('site_migration.replace_connection_confirm'))) { this.busy = false; return; }
                 await api('/site-migration/peers/connect', {method: 'POST', body: {package: pkg, source_base_url: window.location.origin}});
 				await this.loadPeers();
 				if (!this.peers.some(peer => this.peerMatchesPackage(peer, pkg))) throw new Error('paired peer is unavailable');
 				this.selectedPeer = pkg.peer_id; this.showPairing = false; this.preflightResult = null; this.estimateResult = null; this.preflightKey = '';
 				this.failed = false; this.message = t('site_migration.connected');
-			} catch (_) {
+            } catch (err) {
 				if (pkg) await this.loadPeers();
 				if (pkg && this.peers.some(peer => this.peerMatchesPackage(peer, pkg))) {
 					this.selectedPeer = pkg.peer_id; this.showPairing = false; this.preflightResult = null; this.estimateResult = null; this.preflightKey = '';
 					this.failed = false; this.message = t('site_migration.connected');
-				} else { this.failed = true; this.message = t('site_migration.operation_failed'); }
+                } else { this.failed = true; this.message = this.operationErrorMessage(err); }
 			}
             finally { this.busy = false; }
         },
@@ -203,7 +223,7 @@ function siteMigrationPairing() {
 				const [preflight, estimate] = await Promise.all([api('/site-migration/peers/' + encodeURIComponent(this.selectedPeer) + '/preflight', {method: 'POST', body: {peer_id: this.selectedPeer, domains}}), api('/site-migration/estimate', {method: 'POST', body: {site_ids: this.selectedSiteIDs}})]);
 				this.preflightResult = preflight; this.estimateResult = estimate.estimate; this.preflightKey = key;
                 this.failed = false; this.message = t('site_migration.preflight_complete');
-            } catch (_) { this.failed = true; this.message = t('site_migration.operation_failed'); }
+			} catch (err) { this.failed = true; this.message = this.operationErrorMessage(err); }
 			finally { this.busy = false; }
 		},
 		async startMigration() {
@@ -213,7 +233,7 @@ function siteMigrationPairing() {
 				if (!this.startBatchID) { const bytes = new Uint8Array(12); crypto.getRandomValues(bytes); this.startBatchID = 'batch_' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(''); }
 				await api('/site-migration/start', {method: 'POST', body: {peer_id: this.selectedPeer, batch_id: this.startBatchID, site_ids: this.selectedSiteIDs}});
 				this.startBatchID = ''; this.preflightResult = null; this.estimateResult = null; this.preflightKey = ''; this.failed = false; this.message = t('site_migration.started'); await this.loadPeers();
-			} catch (_) { this.failed = true; this.message = t('site_migration.operation_failed'); }
+			} catch (err) { this.failed = true; this.message = this.operationErrorMessage(err); }
 			finally { this.busy = false; }
 		},
 		async taskAction(path, body, successKey) {

@@ -186,7 +186,7 @@ func (h *SiteMigrationHandler) Start(c *gin.Context) {
 	}
 	result, err := h.Workflow.Start(c.Request.Context(), req.PeerID, req.BatchID, actor, req.SiteIDs)
 	if err != nil {
-		siteMigrationError(c, http.StatusBadRequest, "common.operation_failed")
+		siteMigrationBrowserOperationError(c, http.StatusBadRequest, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "batch": result})
@@ -286,7 +286,7 @@ func (h *SiteMigrationHandler) MachineCreateTargetBatch(c *gin.Context) {
 	}
 	result, err := h.Planner.CreateTargetBatchWithID(c.Request.Context(), req.PeerID, req.BatchID, req.RequestedBy, req.Sites)
 	if err != nil {
-		siteMigrationError(c, http.StatusBadRequest, "common.operation_failed")
+		siteMigrationOperationError(c, http.StatusBadRequest, err)
 		return
 	}
 	c.Header("Cache-Control", "no-store")
@@ -492,7 +492,7 @@ func (h *SiteMigrationHandler) RemotePreflight(c *gin.Context) {
 	}
 	response, err := h.Service.RemotePreflight(c.Request.Context(), c.Param("id"), domains)
 	if err != nil {
-		siteMigrationError(c, http.StatusBadRequest, "common.operation_failed")
+		siteMigrationBrowserOperationError(c, http.StatusBadRequest, err)
 		return
 	}
 	c.JSON(http.StatusOK, response)
@@ -514,6 +514,10 @@ func (h *SiteMigrationHandler) GeneratePackage(c *gin.Context) {
 	}
 	pkg, err := h.Service.GeneratePackage(c.Request.Context(), req.BaseURL)
 	if err != nil {
+		if executor.SiteMigrationErrorCode(err) != "" {
+			siteMigrationBrowserOperationError(c, http.StatusBadRequest, err)
+			return
+		}
 		siteMigrationError(c, http.StatusBadRequest, "common.invalid_params")
 		return
 	}
@@ -526,6 +530,10 @@ func (h *SiteMigrationHandler) Connect(c *gin.Context) {
 		return
 	}
 	if err := h.Service.Connect(c.Request.Context(), req.Package, req.SourceBaseURL); err != nil {
+		if executor.SiteMigrationErrorCode(err) != "" {
+			siteMigrationBrowserOperationError(c, http.StatusBadRequest, err)
+			return
+		}
 		status := http.StatusBadRequest
 		if errors.Is(err, executor.ErrSiteMigrationPairConflict) {
 			status = http.StatusConflict
@@ -633,6 +641,33 @@ func decodeSiteMigrationJSONLimit(c *gin.Context, target any, limit int64) bool 
 
 func siteMigrationError(c *gin.Context, status int, key string) {
 	c.JSON(status, models.ErrorResponse(i18n.TE(c.Request, key)))
+}
+
+func siteMigrationOperationError(c *gin.Context, fallbackStatus int, err error) {
+	code := executor.SiteMigrationErrorCode(err)
+	if code == "" {
+		siteMigrationError(c, fallbackStatus, "common.operation_failed")
+		return
+	}
+	status := fallbackStatus
+	switch code {
+	case "peer_auth_failed":
+		status = http.StatusUnauthorized
+	case "peer_database_busy", "peer_unreachable":
+		status = http.StatusServiceUnavailable
+	case "peer_not_paired", "peer_protocol_mismatch":
+		status = http.StatusConflict
+	}
+	c.JSON(status, models.ErrorResponseWithCode(code, i18n.TE(c.Request, "site_migration."+code)))
+}
+
+func siteMigrationBrowserOperationError(c *gin.Context, fallbackStatus int, err error) {
+	code := executor.SiteMigrationErrorCode(err)
+	if code == "" {
+		siteMigrationError(c, fallbackStatus, "common.operation_failed")
+		return
+	}
+	c.JSON(http.StatusConflict, models.ErrorResponseWithCode(code, i18n.TE(c.Request, "site_migration."+code)))
 }
 
 func bearerFromMigrationRequest(c *gin.Context) string {

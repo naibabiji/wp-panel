@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -32,9 +33,88 @@ const (
 )
 
 var (
-	ErrSiteMigrationPairRejected = errors.New("site migration pairing rejected")
-	ErrSiteMigrationPairConflict = errors.New("site migration peer already exists")
+	ErrSiteMigrationPairRejected  = errors.New("site migration pairing rejected")
+	ErrSiteMigrationPairConflict  = errors.New("site migration peer already exists")
+	ErrSiteMigrationPeerNotPaired = errors.New("site migration peer is not paired")
+	ErrSiteMigrationPeerInUse     = errors.New("site migration peer is in use")
 )
+
+var siteMigrationPairingGenerateMu sync.Mutex
+
+type SiteMigrationPeerHTTPError struct {
+	Status int
+	Code   string
+}
+
+type SiteMigrationLocalError struct{ Err error }
+
+func (e *SiteMigrationLocalError) Error() string {
+	return fmt.Sprintf("local site migration error: %v", e.Err)
+}
+func (e *SiteMigrationLocalError) Unwrap() error { return e.Err }
+
+func validSiteMigrationPeerErrorCode(code string) bool {
+	switch code {
+	case "peer_not_paired", "peer_auth_failed", "peer_protocol_mismatch", "peer_unreachable", "peer_database_busy", "peer_http_error", "peer_invalid_response", "peer_in_use":
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *SiteMigrationPeerHTTPError) Error() string {
+	if e.Code != "" {
+		return fmt.Sprintf("site migration peer returned HTTP %d (%s)", e.Status, e.Code)
+	}
+	return fmt.Sprintf("site migration peer returned HTTP %d", e.Status)
+}
+
+func SiteMigrationErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, ErrSiteMigrationPeerNotPaired) {
+		return "peer_not_paired"
+	}
+	if errors.Is(err, ErrSiteMigrationPeerInUse) {
+		return "peer_in_use"
+	}
+	var localErr *SiteMigrationLocalError
+	if errors.As(err, &localErr) {
+		return ""
+	}
+	var peerHTTP *SiteMigrationPeerHTTPError
+	if errors.As(err, &peerHTTP) {
+		if validSiteMigrationPeerErrorCode(peerHTTP.Code) {
+			return peerHTTP.Code
+		}
+		switch peerHTTP.Status {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return "peer_auth_failed"
+		case http.StatusServiceUnavailable:
+			return "peer_database_busy"
+		default:
+			return "peer_http_error"
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return "peer_unreachable"
+	}
+	if isSiteMigrationSQLiteBusy(err) {
+		return "peer_database_busy"
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return "peer_unreachable"
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "protocol") {
+		return "peer_protocol_mismatch"
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "response") {
+		return "peer_invalid_response"
+	}
+	return ""
+}
 
 type SiteMigrationPairingPackage struct {
 	PeerID            string    `json:"peer_id"`
@@ -147,6 +227,42 @@ func (s *SiteMigrationPairingService) GeneratePackage(ctx context.Context, baseU
 	if err != nil {
 		return nil, err
 	}
+	siteMigrationPairingGenerateMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			siteMigrationPairingGenerateMu.Unlock()
+		}
+	}()
+
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM site_migration_peers
+		WHERE status IN ('pending','paired') AND (base_url=? OR local_certificate_sha256=?)`, baseURL, fingerprint)
+	if err != nil {
+		return nil, &SiteMigrationLocalError{Err: fmt.Errorf("find existing site migration peer: %w", err)}
+	}
+	var existingPeerIDs []string
+	for rows.Next() {
+		var peerID string
+		if err := rows.Scan(&peerID); err != nil {
+			_ = rows.Close()
+			return nil, &SiteMigrationLocalError{Err: fmt.Errorf("read existing site migration peer: %w", err)}
+		}
+		existingPeerIDs = append(existingPeerIDs, peerID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, &SiteMigrationLocalError{Err: fmt.Errorf("iterate existing site migration peers: %w", err)}
+	}
+	_ = rows.Close()
+	for _, peerID := range existingPeerIDs {
+		var activeBatches int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_migration_batches WHERE peer_id=? AND status='active'`, peerID).Scan(&activeBatches); err != nil {
+			return nil, &SiteMigrationLocalError{Err: fmt.Errorf("check site migration peer usage: %w", err)}
+		}
+		if activeBatches > 0 {
+			return nil, ErrSiteMigrationPeerInUse
+		}
+	}
 	id, err := randomMigrationID("peer_", 18)
 	if err != nil {
 		return nil, err
@@ -157,11 +273,21 @@ func (s *SiteMigrationPairingService) GeneratePackage(ctx context.Context, baseU
 	}
 	now := s.now().UTC()
 	expires := now.Add(siteMigrationPairTTL)
+	for _, peerID := range existingPeerIDs {
+		if err := s.RevokePeer(ctx, peerID); err != nil {
+			return nil, fmt.Errorf("replace existing site migration peer: %w", err)
+		}
+	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO site_migration_peers
 		(id,base_url,certificate_sha256,local_certificate_sha256,pair_token_hash,pair_token_expires_at,protocol_version,status,created_at,updated_at)
 		VALUES (?,?,?,?,?,?,?,'pending',?,?)`, id, baseURL, fingerprint, fingerprint, hashMigrationSecret(token), expires, siteMigrationProtocolVersion, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("create site migration pairing: %w", err)
+	}
+	siteMigrationPairingGenerateMu.Unlock()
+	locked = false
+	for _, peerID := range existingPeerIDs {
+		_ = s.RemoteRevokePeer(ctx, peerID)
 	}
 	return &SiteMigrationPairingPackage{PeerID: id, BaseURL: baseURL, CertificateSHA256: fingerprint, Token: token,
 		ProtocolVersion: siteMigrationProtocolVersion, PanelVersion: s.version, ExpiresAt: expires}, nil
@@ -169,8 +295,10 @@ func (s *SiteMigrationPairingService) GeneratePackage(ctx context.Context, baseU
 
 func (s *SiteMigrationPairingService) Connect(ctx context.Context, pkg SiteMigrationPairingPackage, sourceBaseURL string) error {
 	now := s.now().UTC()
-	if !validSiteMigrationID(pkg.PeerID) || pkg.ProtocolVersion != siteMigrationProtocolVersion || pkg.PanelVersion != s.version ||
-		!pkg.ExpiresAt.After(now) || len(pkg.Token) < 40 || !validMigrationFingerprint(pkg.CertificateSHA256) {
+	if pkg.ProtocolVersion != siteMigrationProtocolVersion || pkg.PanelVersion != s.version {
+		return fmt.Errorf("site migration peer protocol mismatch: package=%q/%d local=%q/%d", pkg.PanelVersion, pkg.ProtocolVersion, s.version, siteMigrationProtocolVersion)
+	}
+	if !validSiteMigrationID(pkg.PeerID) || !pkg.ExpiresAt.After(now) || len(pkg.Token) < 40 || !validMigrationFingerprint(pkg.CertificateSHA256) {
 		return ErrSiteMigrationPairRejected
 	}
 	targetURL, err := normalizeMigrationBaseURL(pkg.BaseURL)
@@ -183,6 +311,9 @@ func (s *SiteMigrationPairingService) Connect(ctx context.Context, pkg SiteMigra
 	}
 	localFingerprint, err := migrationCertificateFingerprint(s.certPath)
 	if err != nil {
+		return err
+	}
+	if _, err := s.replaceExistingLocalPeers(ctx, localFingerprint, pkg.PeerID); err != nil {
 		return err
 	}
 
@@ -207,6 +338,55 @@ func (s *SiteMigrationPairingService) Connect(ctx context.Context, pkg SiteMigra
 		return ErrSiteMigrationPairConflict
 	}
 	return nil
+}
+
+func (s *SiteMigrationPairingService) replaceExistingLocalPeers(ctx context.Context, localFingerprint, excludePeerID string) ([]string, error) {
+	siteMigrationPairingGenerateMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			siteMigrationPairingGenerateMu.Unlock()
+		}
+	}()
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM site_migration_peers
+		WHERE status IN ('pending','paired') AND local_certificate_sha256=? AND id<>?`, localFingerprint, excludePeerID)
+	if err != nil {
+		return nil, &SiteMigrationLocalError{Err: fmt.Errorf("find existing local site migration peers: %w", err)}
+	}
+	var peerIDs []string
+	for rows.Next() {
+		var peerID string
+		if err := rows.Scan(&peerID); err != nil {
+			_ = rows.Close()
+			return nil, &SiteMigrationLocalError{Err: fmt.Errorf("read existing local site migration peer: %w", err)}
+		}
+		peerIDs = append(peerIDs, peerID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, &SiteMigrationLocalError{Err: fmt.Errorf("iterate existing local site migration peers: %w", err)}
+	}
+	_ = rows.Close()
+	for _, peerID := range peerIDs {
+		var activeBatches int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_migration_batches WHERE peer_id=? AND status='active'`, peerID).Scan(&activeBatches); err != nil {
+			return nil, &SiteMigrationLocalError{Err: fmt.Errorf("check existing local peer usage: %w", err)}
+		}
+		if activeBatches > 0 {
+			return nil, ErrSiteMigrationPeerInUse
+		}
+	}
+	for _, peerID := range peerIDs {
+		if err := s.RevokePeer(ctx, peerID); err != nil {
+			return nil, fmt.Errorf("replace existing local site migration peer: %w", err)
+		}
+	}
+	siteMigrationPairingGenerateMu.Unlock()
+	locked = false
+	for _, peerID := range peerIDs {
+		_ = s.RemoteRevokePeer(ctx, peerID)
+	}
+	return peerIDs, nil
 }
 
 func (s *SiteMigrationPairingService) prepareLocalPeer(ctx context.Context, pkg SiteMigrationPairingPackage, targetURL, localFingerprint string, now time.Time) (string, error) {
@@ -335,16 +515,21 @@ func (s *SiteMigrationPairingService) RemotePreflight(ctx context.Context, peerI
 	var baseURL, fingerprint, outbound, status string
 	var protocol int
 	if err := s.db.QueryRowContext(ctx, `SELECT base_url,certificate_sha256,outbound_credential,status,protocol_version
-		FROM site_migration_peers WHERE id=?`, peerID).Scan(&baseURL, &fingerprint, &outbound, &status, &protocol); err != nil || status != "paired" || protocol != siteMigrationProtocolVersion {
-		return nil, ErrSiteMigrationPairRejected
+		FROM site_migration_peers WHERE id=?`, peerID).Scan(&baseURL, &fingerprint, &outbound, &status, &protocol); err != nil {
+		return nil, &SiteMigrationLocalError{Err: fmt.Errorf("load site migration peer: %w", err)}
+	} else if status != "paired" {
+		return nil, ErrSiteMigrationPeerNotPaired
+	}
+	if protocol != siteMigrationProtocolVersion {
+		return nil, fmt.Errorf("site migration peer protocol mismatch: got %d want %d", protocol, siteMigrationProtocolVersion)
 	}
 	request := SiteMigrationPreflightRequest{PeerID: peerID, Domains: domains}
 	var response SiteMigrationPreflightResponse
 	if err := postPinnedJSON(ctx, baseURL+"/api/site-migration/v1/preflight", fingerprint, outbound, request, &response, s.httpTimeout); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("site migration preflight: %w", err)
 	}
 	if !response.Success || response.PanelVersion != s.version {
-		return nil, ErrSiteMigrationPairRejected
+		return nil, fmt.Errorf("site migration peer protocol mismatch: remote panel version %q local %q", response.PanelVersion, s.version)
 	}
 	return &response, nil
 }
@@ -352,8 +537,16 @@ func (s *SiteMigrationPairingService) RemotePreflight(ctx context.Context, peerI
 func (s *SiteMigrationPairingService) RemoteCreateTargetBatch(ctx context.Context, peerID, batchID, requestedBy string, sites []SiteMigrationBatchSitePlan) (*SiteMigrationBatchPlanResult, error) {
 	var baseURL, fingerprint, outbound, status string
 	var protocol int
-	if !validSiteMigrationID(peerID) || !validSiteMigrationID(batchID) || len(sites) == 0 || len(sites) > 500 || s.db.QueryRowContext(ctx, `SELECT base_url,certificate_sha256,outbound_credential,status,protocol_version FROM site_migration_peers WHERE id=?`, peerID).Scan(&baseURL, &fingerprint, &outbound, &status, &protocol) != nil || status != "paired" || protocol != siteMigrationProtocolVersion {
+	if !validSiteMigrationID(peerID) || !validSiteMigrationID(batchID) || len(sites) == 0 || len(sites) > 500 {
 		return nil, ErrSiteMigrationPairRejected
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT base_url,certificate_sha256,outbound_credential,status,protocol_version FROM site_migration_peers WHERE id=?`, peerID).Scan(&baseURL, &fingerprint, &outbound, &status, &protocol); err != nil {
+		return nil, &SiteMigrationLocalError{Err: fmt.Errorf("load site migration peer: %w", err)}
+	} else if status != "paired" {
+		return nil, ErrSiteMigrationPeerNotPaired
+	}
+	if protocol != siteMigrationProtocolVersion {
+		return nil, fmt.Errorf("site migration peer protocol mismatch: got %d want %d", protocol, siteMigrationProtocolVersion)
 	}
 	request := struct {
 		PeerID      string                       `json:"peer_id"`
@@ -365,8 +558,11 @@ func (s *SiteMigrationPairingService) RemoteCreateTargetBatch(ctx context.Contex
 		Success bool                          `json:"success"`
 		Batch   *SiteMigrationBatchPlanResult `json:"batch"`
 	}
-	if err := postPinnedJSON(ctx, baseURL+"/api/site-migration/v1/target/batches", fingerprint, outbound, request, &response, s.httpTimeout); err != nil || !response.Success || response.Batch == nil {
-		return nil, ErrSiteMigrationPairRejected
+	if err := postPinnedJSON(ctx, baseURL+"/api/site-migration/v1/target/batches", fingerprint, outbound, request, &response, s.httpTimeout); err != nil {
+		return nil, fmt.Errorf("create remote migration batch: %w", err)
+	}
+	if !response.Success || response.Batch == nil {
+		return nil, errors.New("peer migration batch response was invalid")
 	}
 	return response.Batch, nil
 }
@@ -737,8 +933,15 @@ func postPinnedJSONLimit(ctx context.Context, endpoint, fingerprint, bearer stri
 	defer resp.Body.Close()
 	limited := io.LimitReader(resp.Body, responseLimit+1)
 	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, limited)
-		return fmt.Errorf("peer returned HTTP %d", resp.StatusCode)
+		data, _ := io.ReadAll(limited)
+		var peerResponse struct {
+			ErrorCode string `json:"error_code"`
+		}
+		_ = json.Unmarshal(data, &peerResponse)
+		if !validSiteMigrationPeerErrorCode(peerResponse.ErrorCode) {
+			peerResponse.ErrorCode = ""
+		}
+		return &SiteMigrationPeerHTTPError{Status: resp.StatusCode, Code: peerResponse.ErrorCode}
 	}
 	if response == nil {
 		_, err = io.Copy(io.Discard, limited)

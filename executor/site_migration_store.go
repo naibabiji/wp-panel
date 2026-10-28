@@ -19,6 +19,37 @@ var (
 	errSiteMigrationNotClaimed = errors.New("site migration task not claimed")
 )
 
+var siteMigrationBusyRetryDelays = []time.Duration{100 * time.Millisecond, 300 * time.Millisecond, 900 * time.Millisecond}
+
+func isSiteMigrationSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "sqlite_busy") || strings.Contains(message, "database is locked")
+}
+
+func withSiteMigrationBusyRetry(ctx context.Context, operation func() error) error {
+	for attempt := 0; ; attempt++ {
+		err := operation()
+		if !isSiteMigrationSQLiteBusy(err) || attempt >= len(siteMigrationBusyRetryDelays) {
+			return err
+		}
+		timer := time.NewTimer(siteMigrationBusyRetryDelays[attempt])
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return ctx.Err()
+		}
+	}
+}
+
 type siteMigrationSite struct {
 	ID             string
 	BatchID        string
@@ -169,18 +200,20 @@ func (s *siteMigrationStore) returnUnstartedClaim(ctx context.Context, id, owner
 	if !validSiteMigrationID(id) || !validSiteMigrationID(owner) || now.IsZero() {
 		return errors.New("invalid site migration unstarted claim")
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE site_migration_sites
-		SET status='queued',lease_owner='',lease_expires_at=NULL,
-			attempt_count=CASE WHEN attempt_count > 0 THEN attempt_count-1 ELSE 0 END,updated_at=?
-		WHERE id=? AND status='running' AND lease_owner=?`, now.UTC(), id, owner)
-	if err != nil {
-		return err
-	}
-	changed, err := result.RowsAffected()
-	if err != nil || changed != 1 {
-		return errSiteMigrationNotClaimed
-	}
-	return nil
+	return withSiteMigrationBusyRetry(ctx, func() error {
+		result, err := s.db.ExecContext(ctx, `UPDATE site_migration_sites
+			SET status='queued',lease_owner='',lease_expires_at=NULL,
+				attempt_count=CASE WHEN attempt_count > 0 THEN attempt_count-1 ELSE 0 END,updated_at=?
+			WHERE id=? AND status='running' AND lease_owner=?`, now.UTC(), id, owner)
+		if err != nil {
+			return err
+		}
+		changed, err := result.RowsAffected()
+		if err != nil || changed != 1 {
+			return errSiteMigrationNotClaimed
+		}
+		return nil
+	})
 }
 
 func (s *siteMigrationStore) finish(ctx context.Context, id, owner, status, errorCode string, now time.Time) error {
@@ -205,37 +238,39 @@ func (s *siteMigrationStore) releaseClaim(ctx context.Context, id, owner string,
 	if !validSiteMigrationID(id) || !validSiteMigrationID(owner) || now.IsZero() {
 		return errors.New("invalid site migration claim release")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var status, stage, direction string
-	if err := tx.QueryRowContext(ctx, `SELECT ms.status,ms.stage,mb.direction FROM site_migration_sites ms
-		JOIN site_migration_batches mb ON mb.id=ms.batch_id WHERE ms.id=? AND ms.lease_owner=?`, id, owner).Scan(&status, &stage, &direction); err != nil {
-		return errSiteMigrationNotClaimed
-	}
-	if status == "running" {
-		if processErr == nil {
-			return errors.New("site migration processor left task running")
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE site_migration_sites SET status='failed_retryable',error_code='worker_stage_failed',updated_at=? WHERE id=? AND status='running' AND lease_owner=?`, now.UTC(), id, owner); err != nil {
+	return withSiteMigrationBusyRetry(ctx, func() error {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
 			return err
 		}
-	} else if status == "awaiting_cutover" && stage == "awaiting_cutover" && direction == "target" && processErr != nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE site_migration_sites SET status='failed_retryable',error_code='worker_stage_failed',updated_at=?
-			WHERE id=? AND status='awaiting_cutover' AND stage='awaiting_cutover' AND lease_owner=?`, now.UTC(), id, owner); err != nil {
+		defer tx.Rollback()
+		var status, stage, direction string
+		if err := tx.QueryRowContext(ctx, `SELECT ms.status,ms.stage,mb.direction FROM site_migration_sites ms
+			JOIN site_migration_batches mb ON mb.id=ms.batch_id WHERE ms.id=? AND ms.lease_owner=?`, id, owner).Scan(&status, &stage, &direction); err != nil {
+			return errSiteMigrationNotClaimed
+		}
+		if status == "running" {
+			if processErr == nil {
+				return errors.New("site migration processor left task running")
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE site_migration_sites SET status='failed_retryable',error_code='worker_stage_failed',updated_at=? WHERE id=? AND status='running' AND lease_owner=?`, now.UTC(), id, owner); err != nil {
+				return err
+			}
+		} else if status == "awaiting_cutover" && stage == "awaiting_cutover" && direction == "target" && processErr != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE site_migration_sites SET status='failed_retryable',error_code='worker_stage_failed',updated_at=?
+				WHERE id=? AND status='awaiting_cutover' AND stage='awaiting_cutover' AND lease_owner=?`, now.UTC(), id, owner); err != nil {
+				return err
+			}
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE site_migration_sites SET lease_owner='',lease_expires_at=NULL,updated_at=? WHERE id=? AND lease_owner=?`, now.UTC(), id, owner)
+		if err != nil {
 			return err
 		}
-	}
-	result, err := tx.ExecContext(ctx, `UPDATE site_migration_sites SET lease_owner='',lease_expires_at=NULL,updated_at=? WHERE id=? AND lease_owner=?`, now.UTC(), id, owner)
-	if err != nil {
-		return err
-	}
-	if changed, _ := result.RowsAffected(); changed != 1 {
-		return errSiteMigrationNotClaimed
-	}
-	return tx.Commit()
+		if changed, _ := result.RowsAffected(); changed != 1 {
+			return errSiteMigrationNotClaimed
+		}
+		return tx.Commit()
+	})
 }
 
 func (s *siteMigrationStore) recoverExpired(ctx context.Context, now time.Time) (int64, error) {

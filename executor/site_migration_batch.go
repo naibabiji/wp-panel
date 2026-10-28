@@ -54,6 +54,8 @@ func (p *SiteMigrationBatchPlanner) CreateTargetBatch(ctx context.Context, peerI
 }
 
 func (p *SiteMigrationBatchPlanner) CreateTargetBatchWithID(ctx context.Context, peerID, batchID, requestedBy string, plans []SiteMigrationBatchSitePlan) (*SiteMigrationBatchPlanResult, error) {
+	siteMigrationPairingGenerateMu.Lock()
+	defer siteMigrationPairingGenerateMu.Unlock()
 	requestedBy = strings.TrimSpace(requestedBy)
 	if !validSiteMigrationID(peerID) || !validSiteMigrationID(batchID) || !validSiteMigrationRequester(requestedBy) || len(plans) == 0 || len(plans) > 500 {
 		return nil, errors.New("invalid site migration batch plan")

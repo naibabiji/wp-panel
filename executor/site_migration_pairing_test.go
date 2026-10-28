@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +33,11 @@ const pairingPeerTestSchema = `CREATE TABLE site_migration_peers (
 	pair_attempts INTEGER NOT NULL DEFAULT 0, protocol_version INTEGER NOT NULL DEFAULT 1,
 	status TEXT NOT NULL DEFAULT 'pending', paired_at DATETIME, revoked_at DATETIME,
 	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+)`
+
+const pairingBatchTestSchema = `CREATE TABLE site_migration_batches (
+	id TEXT PRIMARY KEY, peer_id TEXT NOT NULL, direction TEXT NOT NULL,
+	status TEXT NOT NULL DEFAULT 'draft'
 )`
 
 func TestSiteMigrationPairingBidirectionalPinnedTLS(t *testing.T) {
@@ -111,11 +119,30 @@ func TestSiteMigrationPairingBidirectionalPinnedTLS(t *testing.T) {
 	if err := serviceB.AuthorizePeer(context.Background(), pkg.PeerID, "wrong credential"); err == nil {
 		t.Fatal("wrong peer credential unexpectedly authorized")
 	}
-	if err := serviceA.RevokePeerEverywhere(context.Background(), pkg.PeerID); err != nil {
+	replacement, err := serviceB.GeneratePackage(context.Background(), serverB.URL)
+	if err != nil {
+		t.Fatalf("GeneratePackage() replacement: %v", err)
+	}
+	if err := serviceA.Connect(context.Background(), *replacement, serverA.URL); err != nil {
+		t.Fatalf("Connect() replacement: %v", err)
+	}
+	var pairedA, pairedB int
+	if err := dbA.QueryRow(`SELECT COUNT(*) FROM site_migration_peers WHERE status='paired'`).Scan(&pairedA); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbB.QueryRow(`SELECT COUNT(*) FROM site_migration_peers WHERE status='paired'`).Scan(&pairedB); err != nil {
+		t.Fatal(err)
+	}
+	if pairedA != 1 || pairedB != 1 {
+		t.Fatalf("paired connections after replacement: source=%d target=%d, want 1/1", pairedA, pairedB)
+	}
+	if err := serviceA.RevokePeerEverywhere(context.Background(), replacement.PeerID); err != nil {
 		t.Fatalf("RevokePeerEverywhere(): %v", err)
 	}
 	assertPeerStatus(t, dbA, pkg.PeerID, "revoked")
 	assertPeerStatus(t, dbB, pkg.PeerID, "revoked")
+	assertPeerStatus(t, dbA, replacement.PeerID, "revoked")
+	assertPeerStatus(t, dbB, replacement.PeerID, "revoked")
 
 	bad := *pkg
 	bad.PeerID = "peer_invalidfingerprint01"
@@ -179,6 +206,111 @@ func TestSiteMigrationPairingRejectsExpiredAndFiveFailures(t *testing.T) {
 	}
 }
 
+func TestSiteMigrationGeneratePackageReplacesExistingPeer(t *testing.T) {
+	db := newPairingTestDB(t)
+	certPath, _ := newPairingTestCertificate(t, "panel-replace")
+	service, _ := NewSiteMigrationPairingService(db, "1.2.3", certPath)
+	service.httpTimeout = 10 * time.Millisecond
+	oldID := "peer_old_connection"
+	targetURL := "https://target.example:8443"
+	sourceURL := "https://source.example:8443"
+	localFingerprint, err := migrationCertificateFingerprint(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO site_migration_peers
+		(id,base_url,certificate_sha256,local_certificate_sha256,status,protocol_version) VALUES (?,?,?,?, 'paired',?)`, oldID, sourceURL, strings.Repeat("a", 64), localFingerprint, siteMigrationProtocolVersion); err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := service.GeneratePackage(context.Background(), targetURL+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkg.PeerID == oldID {
+		t.Fatal("replacement reused the old peer ID")
+	}
+	assertPeerStatus(t, db, oldID, "revoked")
+	assertPeerStatus(t, db, pkg.PeerID, "pending")
+	var active int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM site_migration_peers WHERE status IN ('pending','paired') AND (base_url=? OR local_certificate_sha256=?)`, targetURL, localFingerprint).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != 1 {
+		t.Fatalf("active peers for target=%d, want 1", active)
+	}
+}
+
+func TestSiteMigrationGeneratePackageRejectsPeerInUse(t *testing.T) {
+	db := newPairingTestDB(t)
+	certPath, _ := newPairingTestCertificate(t, "panel-in-use")
+	service, _ := NewSiteMigrationPairingService(db, "1.2.3", certPath)
+	oldID := "peer_active_connection"
+	baseURL := "https://source.example:8443"
+	localFingerprint, err := migrationCertificateFingerprint(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO site_migration_peers
+		(id,base_url,certificate_sha256,local_certificate_sha256,status,protocol_version) VALUES (?,?,?,?, 'paired',?)`, oldID, baseURL, strings.Repeat("b", 64), localFingerprint, siteMigrationProtocolVersion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO site_migration_batches (id,peer_id,direction,status) VALUES (?,?,?,'active')`, "batch_active", oldID, "source"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.GeneratePackage(context.Background(), baseURL); !errors.Is(err, ErrSiteMigrationPeerInUse) {
+		t.Fatalf("GeneratePackage() error=%v, want ErrSiteMigrationPeerInUse", err)
+	}
+	assertPeerStatus(t, db, oldID, "paired")
+}
+
+func TestSiteMigrationErrorCodePreservesPeerFailureClass(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "not paired", err: ErrSiteMigrationPeerNotPaired, want: "peer_not_paired"},
+		{name: "auth", err: &SiteMigrationPeerHTTPError{Status: http.StatusUnauthorized}, want: "peer_auth_failed"},
+		{name: "database busy", err: &SiteMigrationPeerHTTPError{Status: http.StatusServiceUnavailable}, want: "peer_database_busy"},
+		{name: "protocol", err: errors.New("site migration peer protocol mismatch"), want: "peer_protocol_mismatch"},
+		{name: "unknown remote code", err: &SiteMigrationPeerHTTPError{Status: http.StatusBadRequest, Code: "attacker_supplied_code"}, want: "peer_http_error"},
+		{name: "local database", err: &SiteMigrationLocalError{Err: context.Canceled}, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SiteMigrationErrorCode(tt.err); got != tt.want {
+				t.Fatalf("SiteMigrationErrorCode()=%q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSiteMigrationPeerHTTPErrorPreservesRemoteCode(t *testing.T) {
+	_, cert := newPairingTestCertificate(t, "peer-error")
+	server := newPairingTLSServer(t, cert, func(mux *http.ServeMux) {
+		mux.HandleFunc("/error", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"success":false,"error_code":"peer_database_busy"}`))
+		})
+	})
+	defer server.Close()
+	block, _ := pem.Decode(cert.certPEM)
+	fingerprint := sha256.Sum256(block.Bytes)
+	err := postPinnedJSON(context.Background(), server.URL+"/error", hex.EncodeToString(fingerprint[:]), "", map[string]string{"probe": "1"}, nil, time.Second)
+	if got := SiteMigrationErrorCode(err); got != "peer_database_busy" {
+		t.Fatalf("remote error code=%q err=%v", got, err)
+	}
+
+	serviceDB := newPairingTestDB(t)
+	certPath, _ := newPairingTestCertificate(t, "local")
+	service, _ := NewSiteMigrationPairingService(serviceDB, "1.2.3", certPath)
+	err = service.Connect(context.Background(), SiteMigrationPairingPackage{PeerID: "peer_00000000000000000001", BaseURL: server.URL, CertificateSHA256: strings.Repeat("a", 64), Token: strings.Repeat("t", 40), ProtocolVersion: 1, PanelVersion: "old", ExpiresAt: time.Now().Add(time.Minute)}, server.URL)
+	if got := SiteMigrationErrorCode(err); got != "peer_protocol_mismatch" {
+		t.Fatalf("protocol error code=%q err=%v", got, err)
+	}
+}
+
 func newPairingTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "panel.db"))
@@ -186,6 +318,9 @@ func newPairingTestDB(t *testing.T) *sql.DB {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(pairingPeerTestSchema); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(pairingBatchTestSchema); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
