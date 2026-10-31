@@ -29,7 +29,14 @@ type alertRule struct {
 	lastFired         time.Time
 	firing            bool
 	lastAlertMsg      string
+	emailAlertCount   int
 	runtimeStateDirty bool
+}
+
+const siteAlertEmailLimit = 3
+
+func shouldSendAlertEmail(key string, emailAlertCount int, hasSMTP bool) bool {
+	return hasSMTP && (key != "alert_site" || emailAlertCount < siteAlertEmailLimit)
 }
 
 type alertManager struct {
@@ -124,7 +131,7 @@ func (m *alertManager) runChecks() {
 	defer m.mu.Unlock()
 
 	cfg := GetSMTPConfig()
-	hasSMTP := cfg != nil && cfg.Host != "" && cfg.AdminEmail != ""
+	hasSMTP := alertSMTPConfigured(cfg)
 
 	wCfg := GetWebhookConfig()
 	hasWebhook := webhookConfigured(wCfg)
@@ -161,11 +168,16 @@ func (m *alertManager) runChecks() {
 			r.firing = true
 			r.lastFired = now
 			r.lastAlertMsg = msg
-			sendAlertNotificationWithChannels(r.key, msg, false, hasSMTP, hasWebhook)
+			emailAllowed := shouldSendAlertEmail(r.key, r.emailAlertCount, hasSMTP)
+			sendAlertNotificationWithChannelsLimited(r.key, msg, false, hasSMTP, hasWebhook, emailAllowed)
+			if r.key == "alert_site" && emailAllowed {
+				r.emailAlertCount++
+			}
 			persistAlertRuntimeState(r)
 		} else if !firing && r.firing {
 			// Transition: alert → normal
 			r.firing = false
+			r.emailAlertCount = 0
 			recoveryDetail := buildRecoveryDetail(r)
 			if r.sendRecovery {
 				logAlert(r.key, "info", recoveryDetail)
@@ -185,7 +197,11 @@ func (m *alertManager) runChecks() {
 			// Continuous alert — re-send on each rule's interval.
 			if time.Since(r.lastFired) > alertResendInterval(r.key) {
 				r.lastFired = time.Now()
-				sendAlertNotificationWithChannels(r.key, msg, true, hasSMTP, hasWebhook)
+				emailAllowed := shouldSendAlertEmail(r.key, r.emailAlertCount, hasSMTP)
+				sendAlertNotificationWithChannelsLimited(r.key, msg, true, hasSMTP, hasWebhook, emailAllowed)
+				if r.key == "alert_site" && emailAllowed {
+					r.emailAlertCount++
+				}
 				persistAlertRuntimeState(r)
 			}
 		} else if wasPending != !r.pendingSince.IsZero() || (!firing && !r.pendingSince.IsZero()) {
@@ -207,6 +223,7 @@ func disableAlertRule(r *alertRule) {
 	wasActive := r.firing || !r.pendingSince.IsZero()
 	r.firing = false
 	r.pendingSince = time.Time{}
+	r.emailAlertCount = 0
 	if !wasActive {
 		return
 	}
@@ -262,8 +279,9 @@ func loadAlertRuntimeState(rules []*alertRule) {
 			continue
 		}
 		var status, pending, fired, message string
-		err := db.QueryRow(`SELECT status, pending_since, last_fired_at, last_message
-			FROM alert_runtime_state WHERE alert_type = ?`, r.key).Scan(&status, &pending, &fired, &message)
+		var emailAlertCount int
+		err := db.QueryRow(`SELECT status, pending_since, last_fired_at, last_message, email_alert_count
+			FROM alert_runtime_state WHERE alert_type = ?`, r.key).Scan(&status, &pending, &fired, &message, &emailAlertCount)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -275,6 +293,7 @@ func loadAlertRuntimeState(rules []*alertRule) {
 		r.pendingSince = parseAlertStateTime(pending)
 		r.lastFired = parseAlertStateTime(fired)
 		r.lastAlertMsg = message
+		r.emailAlertCount = emailAlertCount
 	}
 }
 
@@ -289,12 +308,13 @@ func persistAlertRuntimeState(r *alertRule) error {
 		status = "pending"
 	}
 	_, err := database.GetDB().Exec(`INSERT INTO alert_runtime_state
-		(alert_type, status, pending_since, last_fired_at, last_message, updated_at)
-		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		(alert_type, status, pending_since, last_fired_at, last_message, email_alert_count, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(alert_type) DO UPDATE SET status=excluded.status,
 		pending_since=excluded.pending_since, last_fired_at=excluded.last_fired_at,
-		last_message=excluded.last_message, updated_at=CURRENT_TIMESTAMP`,
-		r.key, status, formatAlertStateTime(r.pendingSince), formatAlertStateTime(r.lastFired), r.lastAlertMsg)
+		last_message=excluded.last_message, email_alert_count=excluded.email_alert_count,
+		updated_at=CURRENT_TIMESTAMP`,
+		r.key, status, formatAlertStateTime(r.pendingSince), formatAlertStateTime(r.lastFired), r.lastAlertMsg, r.emailAlertCount)
 	r.runtimeStateDirty = err != nil
 	if err != nil {
 		reportAlertStateError("保存告警运行状态失败 [%s]，下一轮将重试: %v", r.key, err)
@@ -319,19 +339,31 @@ func parseAlertStateTime(raw string) time.Time {
 
 func sendAlertMilestone(key, message string) {
 	smtp := GetSMTPConfig()
-	hasSMTP := smtp != nil && smtp.Host != "" && smtp.AdminEmail != ""
+	hasSMTP := alertSMTPConfigured(smtp)
 	webhook := GetWebhookConfig()
 	hasWebhook := webhookConfigured(webhook)
 	logAlertEvent(key, "critical", message)
 	deliverAlertNotification(key, message, false, hasSMTP, hasWebhook)
 }
 
+func alertSMTPConfigured(cfg *SMTPConfig) bool {
+	return cfg != nil && cfg.Host != "" && cfg.User != "" && cfg.Pass != "" && cfg.AdminEmail != "" && smtpFromEmail(cfg) != ""
+}
+
 func sendAlertNotificationWithChannels(key, message string, ongoing, hasSMTP, hasWebhook bool) {
+	sendAlertNotificationWithChannelsLimited(key, message, ongoing, hasSMTP, hasWebhook, true)
+}
+
+func sendAlertNotificationWithChannelsLimited(key, message string, ongoing, hasSMTP, hasWebhook, emailAllowed bool) {
 	logAlert(key, "critical", message)
-	deliverAlertNotification(key, message, ongoing, hasSMTP, hasWebhook)
+	deliverAlertNotificationLimited(key, message, ongoing, hasSMTP, hasWebhook, emailAllowed)
 }
 
 func deliverAlertNotification(key, message string, ongoing, hasSMTP, hasWebhook bool) {
+	deliverAlertNotificationLimited(key, message, ongoing, hasSMTP, hasWebhook, true)
+}
+
+func deliverAlertNotificationLimited(key, message string, ongoing, hasSMTP, hasWebhook, emailAllowed bool) {
 	label := alertLabel(key)
 	title := getPanelTitle() + " 告警 — " + label
 	emailTitle := label
@@ -339,7 +371,7 @@ func deliverAlertNotification(key, message string, ongoing, hasSMTP, hasWebhook 
 		title += "（持续中）"
 		emailTitle += "（持续中）"
 	}
-	if hasSMTP {
+	if hasSMTP && emailAllowed {
 		go SendMail("", title, formatEmailHTML(emailTitle, message, getEmailTip(key, false), true))
 	}
 	if hasWebhook {
@@ -466,7 +498,7 @@ func getEmailTip(key string, isRecovery bool) string {
 	case "alert_cron_fail":
 		return "请查看任务日志并确认下一次执行成功。"
 	case "alert_site":
-		return "请检查域名解析、服务器状态和网站程序。"
+		return "请检查域名解析、服务器状态和网站程序。网站不可访问告警邮件最多提醒三次；达到三次后仅暂停邮件提醒，不代表网站已经恢复。网站恢复后仍会发送恢复通知。"
 	case "alert_system_update":
 		return "请在合适的维护窗口执行系统更新。"
 	case "alert_panel_update":
@@ -1026,22 +1058,11 @@ func checkSystemUpdate() (bool, string) {
 	}
 	sysUpdateCache.mu.Unlock()
 
-	out, err := exec.Command("bash", "-c", "apt list --upgradable 2>/dev/null").Output()
+	out, err := systemPackageUpdateCommandOutput("apt", "list", "--upgradable")
 	if err != nil {
 		return false, ""
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	var names []string
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "Listing...") {
-			continue
-		}
-		parts := strings.SplitN(line, "/", 2)
-		if len(parts) > 0 {
-			names = append(names, parts[0])
-		}
-	}
+	names := parseAPTUpgradableNames(string(out))
 
 	sysUpdateCache.mu.Lock()
 	sysUpdateCache.lastAt = time.Now()

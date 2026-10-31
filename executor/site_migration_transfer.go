@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const siteMigrationTransferManifestPage = 10
+const siteMigrationTransferManifestPage = 1000
 
 type siteMigrationTransferSource interface {
 	ListManifest(context.Context, string, string, int64, int) ([]SiteMigrationManifestEntry, int64, bool, error)
@@ -30,6 +30,12 @@ type siteMigrationTransferReceiver interface {
 	WriteChunk(context.Context, string, string, string, int64, []byte, string) error
 	ReceiveFileShard(context.Context, string, int, []SiteMigrationManifestEntry, func(io.Writer) error) error
 	Finalize(context.Context, string) error
+}
+
+type siteMigrationManifestPageConsumer func(func([]SiteMigrationManifestEntry) error) error
+
+type siteMigrationStreamingManifestReceiver interface {
+	PrepareManifest(context.Context, string, SiteMigrationManifestEntry, siteMigrationManifestPageConsumer) error
 }
 
 type SiteMigrationTargetTransferService struct {
@@ -133,16 +139,24 @@ func (s *SiteMigrationTargetTransferService) transfer(ctx context.Context, peerI
 		return err
 	}
 	if !prepared {
-		files, err := s.loadManifest(ctx, peerID, taskID)
-		if err != nil {
-			return err
-		}
 		databaseArtifact, err := s.source.DatabaseArtifact(ctx, peerID, taskID)
 		if err != nil {
 			return err
 		}
-		if err := s.receiver.Prepare(ctx, taskID, files, databaseArtifact); err != nil {
-			return err
+		if streamingReceiver, ok := s.receiver.(siteMigrationStreamingManifestReceiver); ok {
+			if err := streamingReceiver.PrepareManifest(ctx, taskID, databaseArtifact, func(consume func([]SiteMigrationManifestEntry) error) error {
+				return s.streamManifest(ctx, peerID, taskID, consume)
+			}); err != nil {
+				return err
+			}
+		} else {
+			files, err := s.loadManifest(ctx, peerID, taskID)
+			if err != nil {
+				return err
+			}
+			if err := s.receiver.Prepare(ctx, taskID, files, databaseArtifact); err != nil {
+				return err
+			}
 		}
 	}
 	certPrepared, err := s.certificatesPrepared(ctx, taskID)
@@ -193,38 +207,81 @@ func (s *SiteMigrationTargetTransferService) transferFileShards(ctx context.Cont
 
 func (s *SiteMigrationTargetTransferService) loadManifest(ctx context.Context, peerID, taskID string) ([]SiteMigrationManifestEntry, error) {
 	var all []SiteMigrationManifestEntry
+	if err := s.streamManifest(ctx, peerID, taskID, func(entries []SiteMigrationManifestEntry) error {
+		all = append(all, entries...)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return all, nil
+}
+
+func (s *SiteMigrationTargetTransferService) streamManifest(ctx context.Context, peerID, taskID string, consume func([]SiteMigrationManifestEntry) error) error {
+	if consume == nil {
+		return errors.New("source manifest consumer unavailable")
+	}
 	var after int64
+	var total int
 	for {
-		entries, next, more, err := s.source.ListManifest(ctx, peerID, taskID, after, siteMigrationTransferManifestPage)
+		entries, next, more, err := s.listManifestWhenReady(ctx, peerID, taskID, after)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(entries) > siteMigrationTransferManifestPage || more != (len(entries) == siteMigrationTransferManifestPage) || next < after || len(entries) == 0 && more || next == after && len(entries) != 0 {
-			return nil, errors.New("source manifest pagination changed")
+			return errors.New("source manifest pagination changed")
 		}
-		all = append(all, entries...)
-		if len(all) > 1_000_000 {
-			return nil, errors.New("source manifest is too large")
+		total += len(entries)
+		if total > 1_000_000 {
+			return errors.New("source manifest is too large")
+		}
+		if err := consume(entries); err != nil {
+			return err
 		}
 		if !more {
-			return all, nil
+			return nil
 		}
 		after = next
 	}
 }
 
+func (s *SiteMigrationTargetTransferService) listManifestWhenReady(ctx context.Context, peerID, taskID string, after int64) ([]SiteMigrationManifestEntry, int64, bool, error) {
+	const attempts = 10
+	for attempt := 0; attempt < attempts; attempt++ {
+		entries, next, more, err := s.source.ListManifest(ctx, peerID, taskID, after, siteMigrationTransferManifestPage)
+		if err == nil {
+			return entries, next, more, nil
+		}
+		var peerHTTP *SiteMigrationPeerHTTPError
+		if !errors.As(err, &peerHTTP) || peerHTTP.Status != 409 || attempt == attempts-1 {
+			return nil, 0, false, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, 0, false, ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+	return nil, 0, false, ErrSiteMigrationSourceNotReady
+}
+
 func (s *SiteMigrationTargetTransferService) prepared(ctx context.Context, taskID string) (bool, error) {
-	var resources, databaseArtifacts int
+	var resources, databaseArtifacts, manifestMarkers int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_migration_resources WHERE migration_site_id=? AND resource_type='target_staging_root' AND status='created'`, taskID).Scan(&resources); err != nil {
 		return false, err
 	}
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_migration_artifacts WHERE migration_site_id=? AND artifact_type='database'`, taskID).Scan(&databaseArtifacts); err != nil {
 		return false, err
 	}
-	if resources == 0 && databaseArtifacts == 0 {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_migration_resources WHERE migration_site_id=? AND resource_type='target_manifest' AND status='created'`, taskID).Scan(&manifestMarkers); err != nil {
+		return false, err
+	}
+	if manifestMarkers == 0 {
+		if (resources != 0 && resources != 1) || (databaseArtifacts != 0 && databaseArtifacts != 1) {
+			return false, errors.New("target transfer manifest state is inconsistent")
+		}
 		return false, nil
 	}
-	if resources != 1 || databaseArtifacts != 1 {
+	if resources != 1 || databaseArtifacts != 1 || manifestMarkers != 1 {
 		return false, errors.New("target transfer manifest state is inconsistent")
 	}
 	return true, nil

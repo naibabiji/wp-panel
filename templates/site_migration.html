@@ -143,7 +143,7 @@ function siteMigrationPairing() {
 					if (task.transfer_extracting) return t('site_migration.progress_remote_extracting');
 					if (received > 0 && speed > 0) return t('site_migration.progress_sending_speed', {sent: this.formatBytes(received), speed: this.formatBytes(speed)});
 					if (received > 0) return t('site_migration.progress_sending_bytes', {sent: this.formatBytes(received)});
-					return t('site_migration.progress_sending');
+					return t('site_migration.progress_waiting_first_shard');
 				}
 				if (task.transfer_extracting) return t('site_migration.progress_extracting');
 				if (received > 0 && speed > 0) return t('site_migration.progress_receiving_speed', {received: this.formatBytes(received), speed: this.formatBytes(speed)});
@@ -151,7 +151,13 @@ function siteMigrationPairing() {
 				return t('site_migration.progress_receiving');
 			}
 			if (task.stage === 'transferring_database') return t(task.direction === 'source' ? 'site_migration.progress_preparing_source' : 'site_migration.progress_receiving');
-			if (task.stage === 'preparing_target' || task.stage === 'publishing' || task.stage === 'configuring_target') return t('site_migration.progress_building_target');
+			if (task.stage === 'publishing') {
+				const progress = task.publish_total ? ' (' + task.publish_completed + '/' + task.publish_total + ')' : '';
+				if (task.publish_step === 'database_import') return t('site_migration.progress_importing_database') + progress;
+				if (task.publish_step === 'file_publish') return t('site_migration.progress_publishing_files') + progress;
+				return t('site_migration.progress_finalizing_publish') + progress;
+			}
+			if (task.stage === 'preparing_target' || task.stage === 'configuring_target') return t('site_migration.progress_building_target');
 			if (task.stage === 'awaiting_cutover' || task.stage === 'activating_target' || task.stage === 'activation_runtime_sync') return t('site_migration.progress_activating');
 			if (task.direction === 'source') return t('site_migration.progress_preparing_source');
 			return t('site_migration.progress_processing');

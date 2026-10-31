@@ -27,25 +27,22 @@ jobs:
 
       - name: Prepare static assets
         run: |
+          set -euo pipefail
           mkdir -p static/css static/js bin
 
-          curl -sSL "https://cdn.jsdelivr.net/npm/alpinejs@3.13.7/dist/cdn.min.js" -o static/js/alpine.min.js
-          curl -sSL "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" -o static/js/chart.min.js
+          curl -fsSL "https://cdn.jsdelivr.net/npm/alpinejs@3.13.7/dist/cdn.min.js" -o static/js/alpine.min.js
+          printf '%s  %s\n' "5bdc5d6356b4364d902406552c8195a89e878861bcf75183165ef80d2a295ae2" static/js/alpine.min.js | sha256sum --check --status
+          curl -fsSL "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" -o static/js/chart.min.js
+          printf '%s  %s\n' "d2af8974e95271638772e9e9524db5b9a6f58d6ec2d5d781400447b4a31c681e" static/js/chart.min.js | sha256sum --check --status
 
           TAILWIND_VERSION="v3.4.4"
-          curl -sSL "https://github.com/tailwindlabs/tailwindcss/releases/download/${TAILWIND_VERSION}/tailwindcss-linux-x64" -o bin/tailwindcss
+          curl -fsSL "https://github.com/tailwindlabs/tailwindcss/releases/download/${TAILWIND_VERSION}/tailwindcss-linux-x64" -o bin/tailwindcss
+          printf '%s  %s\n' "d7c31bb2acd872bf61b0e379859ba3101cef8bbbf2433a5864e0a2b5862ae476" bin/tailwindcss | sha256sum --check --status
           chmod +x bin/tailwindcss
           bin/tailwindcss -i input.css -o static/css/main.css --minify
 
-      - name: Test
-        run: |
-          packages=$(go list ./... | grep -v '/scratch$')
-          go test $packages
-
-      - name: Static check
-        run: |
-          packages=$(go list ./... | grep -v '/scratch$')
-          go vet $packages
+      - name: Release preflight
+        run: scripts/release-preflight.sh
 
       - name: Build binary
         run: |

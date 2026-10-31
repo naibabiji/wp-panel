@@ -451,6 +451,7 @@ var migrations = append([]string{
 		pending_since   TEXT NOT NULL DEFAULT '',
 		last_fired_at   TEXT NOT NULL DEFAULT '',
 		last_message    TEXT NOT NULL DEFAULT '',
+		email_alert_count INTEGER NOT NULL DEFAULT 0,
 		updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		CHECK (status IN ('normal', 'pending', 'firing'))
 	)`,

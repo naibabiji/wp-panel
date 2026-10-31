@@ -96,3 +96,34 @@ func TestSiteMigrationFileShardRejectsHardLinkBeforePublishing(t *testing.T) {
 		t.Fatalf("hard link failure published a file: %v", err)
 	}
 }
+
+func TestSiteMigrationFileShardRejectsSymlinkReplacement(t *testing.T) {
+	sourceRoot := t.TempDir()
+	outsideRoot := t.TempDir()
+	path := filepath.Join(sourceRoot, "index.php")
+	outside := filepath.Join(outsideRoot, "index.php")
+	if err := os.WriteFile(outside, []byte("outside"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("inside"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := siteMigrationShardEntry{ID: 1, Status: "verified", SiteMigrationManifestEntry: SiteMigrationManifestEntry{
+		RelativePath: "index.php", EntryType: "file", Mode: 0644, Size: int64(len("inside")),
+		SHA256: migrationTestHash([]byte("inside")), ModifiedUnixNS: info.ModTime().UnixNano(),
+	}}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, path); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	var output bytes.Buffer
+	if err := writeMigrationFileShard(context.Background(), sourceRoot, []siteMigrationShardEntry{entry}, &output); err == nil {
+		t.Fatal("symlink replacement was accepted")
+	}
+}

@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -13,6 +14,19 @@ func TestCountAPTUpgradablePackages(t *testing.T) {
 	got := countAPTUpgradablePackages("Listing... Done\nphp8.3-fpm/stable 8.3.36 amd64 [upgradable from: 8.3.35]\nnginx/stable 1.26 amd64 [upgradable from: 1.25]\n")
 	if got != 2 {
 		t.Fatalf("count = %d, want 2", got)
+	}
+}
+
+func TestParseAPTUpgradableNamesIgnoresLocalizedHeading(t *testing.T) {
+	output := "正在列表...\n"
+	if got := parseAPTUpgradableNames(output); len(got) != 0 {
+		t.Fatalf("localized apt heading should not be an update: %#v", got)
+	}
+
+	output = "Listing... Done\nphp8.3-fpm/stable 8.3.36 amd64 [upgradable from: 8.3.35]\nnginx:amd64/stable 1.26 amd64 [upgradable from: 1.25]\n"
+	want := []string{"php8.3-fpm", "nginx:amd64"}
+	if got := parseAPTUpgradableNames(output); !reflect.DeepEqual(got, want) {
+		t.Fatalf("names=%#v, want %#v", got, want)
 	}
 }
 

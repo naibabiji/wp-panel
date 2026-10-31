@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/naibabiji/wp-panel/database"
 )
 
 func withSystemSettingStubs(t *testing.T) {
@@ -96,6 +97,41 @@ func TestUpdateSettingsAcceptsVerifiedSystemValues(t *testing.T) {
 
 	recorder := updateSystemSetting(t, `{"timezone":"Asia/Shanghai","hostname":"panel-test","ntp_sync":true}`)
 	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRebootRequestsFixedServerActionAndLogsSuccess(t *testing.T) {
+	setupBackupOverviewTestDB(t)
+	called := false
+	handler := &SettingsHandler{RebootServer: func() error {
+		called = true
+		return nil
+	}}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/settings/reboot", nil)
+	handler.Reboot(ctx)
+	if recorder.Code != http.StatusAccepted || !called {
+		t.Fatalf("status=%d called=%v body=%s", recorder.Code, called, recorder.Body.String())
+	}
+	var operation, target, status string
+	if err := database.GetDB().QueryRow(`SELECT operation,target,status FROM operation_logs ORDER BY id DESC LIMIT 1`).Scan(&operation, &target, &status); err != nil {
+		t.Fatal(err)
+	}
+	if operation != "server_reboot" || target != "server" || status != "success" {
+		t.Fatalf("operation=%q target=%q status=%q", operation, target, status)
+	}
+}
+
+func TestRebootReportsCommandFailure(t *testing.T) {
+	setupBackupOverviewTestDB(t)
+	handler := &SettingsHandler{RebootServer: func() error { return errors.New("reboot failed") }}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/settings/reboot", nil)
+	handler.Reboot(ctx)
+	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

@@ -36,6 +36,13 @@ func (f *fakeSiteMigrationTargetRollbackOps) ReloadCron() error { return f.step(
 
 func TestSiteMigrationTargetRollbackRemovesOnlyOwnedResources(t *testing.T) {
 	service, siteID, ops := setupSiteMigrationTargetRollbackTest(t, false)
+	var stagingRoot string
+	if err := service.db.QueryRow(`SELECT identifier FROM site_migration_resources WHERE migration_site_id='migration_0000001' AND resource_type='target_staging_root'`).Scan(&stagingRoot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.db.Exec(`INSERT INTO site_migration_resources(migration_site_id,resource_type,identifier,ownership_tag,status,created_at,updated_at) VALUES ('migration_0000001','target_manifest',?,?, 'created',?,?)`, stagingRoot, "migration_0000001", freezerTestTime(), freezerTestTime()); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.Abandon(context.Background(), "migration_0000001", "example.com", "admin", "", false); err != nil {
 		t.Fatal(err)
 	}

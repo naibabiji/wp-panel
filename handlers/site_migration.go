@@ -300,7 +300,11 @@ func (h *SiteMigrationHandler) SourceManifest(c *gin.Context) {
 	}
 	entries, next, err := h.Source.ListManifest(c.Request.Context(), req.PeerID, req.MigrationSiteID, bearerFromMigrationRequest(c), req.AfterID, req.Limit)
 	if err != nil {
-		siteMigrationError(c, http.StatusUnauthorized, "common.operation_failed")
+		if errors.Is(err, executor.ErrSiteMigrationSourceNotReady) {
+			c.JSON(http.StatusConflict, models.ErrorResponseWithCode("peer_task_not_ready", i18n.TE(c.Request, "site_migration.peer_task_not_ready")))
+		} else {
+			siteMigrationError(c, http.StatusUnauthorized, "common.operation_failed")
+		}
 		return
 	}
 	c.Header("Cache-Control", "no-store")

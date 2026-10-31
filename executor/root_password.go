@@ -33,6 +33,13 @@ func ChangeRootPassword(ctx context.Context, password string) error {
 	return changeRootPasswordWithTimeout(ctx, password, rootPasswordChangeTimeout)
 }
 
+// RebootServer requests a normal systemd reboot. The command has no
+// user-controlled arguments; authorization and CSRF protection belong to the
+// authenticated panel handler.
+func RebootServer() error {
+	return exec.Command("systemctl", "reboot").Run()
+}
+
 func changeRootPasswordWithTimeout(ctx context.Context, password string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

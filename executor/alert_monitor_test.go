@@ -79,11 +79,34 @@ func TestAlertResendIntervalsByAlertClass(t *testing.T) {
 	}
 }
 
+func TestSiteAlertEmailLimit(t *testing.T) {
+	if !shouldSendAlertEmail("alert_site", 0, true) ||
+		!shouldSendAlertEmail("alert_site", 2, true) ||
+		shouldSendAlertEmail("alert_site", 3, true) {
+		t.Fatal("site alert email should be limited to three sends per incident")
+	}
+	if !shouldSendAlertEmail("alert_ssl", 99, true) {
+		t.Fatal("other alert types should not use the site alert email limit")
+	}
+	if shouldSendAlertEmail("alert_site", 0, false) {
+		t.Fatal("site alert email should require configured SMTP")
+	}
+}
+
+func TestAlertSMTPConfiguredMatchesMailPrerequisites(t *testing.T) {
+	if alertSMTPConfigured(&SMTPConfig{Host: "smtp.example.test", AdminEmail: "admin@example.test"}) {
+		t.Fatal("incomplete SMTP settings should not consume alert email quota")
+	}
+	if !alertSMTPConfigured(&SMTPConfig{Host: "smtp.example.test", User: "user", Pass: "pass", AdminEmail: "admin@example.test", FromEmail: "sender@example.test"}) {
+		t.Fatal("complete SMTP settings should be eligible for alert email")
+	}
+}
+
 func TestAlertRuntimeStateSurvivesReload(t *testing.T) {
 	db := openAlertTestDB(t)
 	mustExec(t, db, `CREATE TABLE alert_runtime_state (
 		alert_type TEXT PRIMARY KEY, status TEXT, pending_since TEXT,
-		last_fired_at TEXT, last_message TEXT, updated_at DATETIME)`)
+		last_fired_at TEXT, last_message TEXT, email_alert_count INTEGER DEFAULT 0, updated_at DATETIME)`)
 	now := time.Date(2026, 8, 23, 3, 4, 5, 0, time.UTC)
 	r := &alertRule{key: "alert_ssl", firing: true, lastFired: now, lastAlertMsg: "still expiring"}
 	persistAlertRuntimeState(r)
@@ -103,7 +126,7 @@ func TestAlertRuntimeStateRetriesAfterDatabaseRecovers(t *testing.T) {
 	}
 	mustExec(t, db, `CREATE TABLE alert_runtime_state (
 		alert_type TEXT PRIMARY KEY, status TEXT, pending_since TEXT,
-		last_fired_at TEXT, last_message TEXT, updated_at DATETIME)`)
+		last_fired_at TEXT, last_message TEXT, email_alert_count INTEGER DEFAULT 0, updated_at DATETIME)`)
 	retryDirtyAlertRuntimeState(r)
 	if r.runtimeStateDirty {
 		t.Fatalf("retry should converge after recovery: rule=%+v", r)
@@ -121,7 +144,7 @@ func TestLoadAlertRuntimeStateDistinguishesMissingRowFromReadFailure(t *testing.
 	db := openAlertTestDB(t)
 	mustExec(t, db, `CREATE TABLE alert_runtime_state (
 		alert_type TEXT PRIMARY KEY, status TEXT, pending_since TEXT,
-		last_fired_at TEXT, last_message TEXT, updated_at DATETIME)`)
+		last_fired_at TEXT, last_message TEXT, email_alert_count INTEGER DEFAULT 0, updated_at DATETIME)`)
 	previousReporter := reportAlertStateError
 	var reports []string
 	reportAlertStateError = func(format string, args ...any) {
@@ -297,7 +320,7 @@ func TestDisableAlertRuleResolvesOpenAlerts(t *testing.T) {
 		resolved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`)
 	mustExec(t, db, `CREATE TABLE alert_runtime_state (
 		alert_type TEXT PRIMARY KEY, status TEXT, pending_since TEXT,
-		last_fired_at TEXT, last_message TEXT, updated_at DATETIME)`)
+		last_fired_at TEXT, last_message TEXT, email_alert_count INTEGER DEFAULT 0, updated_at DATETIME)`)
 	mustExec(t, db, `INSERT INTO alert_log (alert_type, level, message) VALUES ('alert_cpu', 'critical', 'high')`)
 	r := &alertRule{key: "alert_cpu", firing: true, lastFired: time.Now(), lastAlertMsg: "high"}
 	disableAlertRule(r)

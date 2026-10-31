@@ -152,7 +152,7 @@ func (o productionSiteMigrationTargetConfigureOps) Health(ctx context.Context, s
 			return err
 		}
 	}
-	return runMigrationLocalHTTPHealth(ctx, spec.Domain, identity.SSLEnabled)
+	return runMigrationLocalHTTPHealth(ctx, spec.Domain, spec.Aliases, identity.SSLEnabled)
 }
 
 func (p *SiteMigrationTargetPublisher) ConfigureAndHealth(ctx context.Context, migrationSiteID string, ops siteMigrationTargetConfigureOps) error {
@@ -481,7 +481,14 @@ func runMigrationWordPressHealth(ctx context.Context, spec siteMigrationPublishS
 	return nil
 }
 
-func runMigrationLocalHTTPHealth(ctx context.Context, domain string, sslEnabled bool) error {
+func runMigrationLocalHTTPHealth(ctx context.Context, domain string, aliases []string, sslEnabled bool) error {
+	allowedHosts := map[string]struct{}{strings.ToLower(strings.TrimSpace(domain)): {}}
+	for _, alias := range aliases {
+		alias = strings.ToLower(strings.TrimSpace(alias))
+		if alias != "" {
+			allowedHosts[alias] = struct{}{}
+		}
+	}
 	transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 		port := "80"
 		if strings.HasSuffix(address, ":443") {
@@ -490,7 +497,10 @@ func runMigrationLocalHTTPHealth(ctx context.Context, domain string, sslEnabled 
 		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, "127.0.0.1:"+port)
 	}, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 3 || !strings.EqualFold(req.URL.Hostname(), domain) {
+		if len(via) >= 3 {
+			return http.ErrUseLastResponse
+		}
+		if _, ok := allowedHosts[strings.ToLower(req.URL.Hostname())]; !ok || (req.URL.Scheme != "http" && req.URL.Scheme != "https") {
 			return http.ErrUseLastResponse
 		}
 		return nil

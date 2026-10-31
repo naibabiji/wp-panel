@@ -134,14 +134,27 @@ func recordSystemPackageAutoCheck(status string, count int, message string) {
 }
 
 func countAPTUpgradablePackages(output string) int {
-	count := 0
+	return len(parseAPTUpgradableNames(output))
+}
+
+// parseAPTUpgradableNames accepts only apt's package-list rows. The heading
+// printed by apt is localized (for example "Listing..." or "正在列表...") and
+// must never be treated as a package name.
+func parseAPTUpgradableNames(output string) []string {
+	names := make([]string, 0)
 	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "Listing...") && strings.Contains(line, "/") {
-			count++
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 0 {
+			continue
 		}
+		packageToken := fields[0]
+		packageName, _, ok := strings.Cut(packageToken, "/")
+		if !ok || packageName == "" {
+			continue
+		}
+		names = append(names, packageName)
 	}
-	return count
+	return names
 }
 
 // systemPackageUpdateCommandOutput captures standard output only so apt

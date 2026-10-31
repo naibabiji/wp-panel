@@ -27,16 +27,18 @@ import (
 )
 
 const (
-	siteMigrationPairTTL      = 15 * time.Minute
-	siteMigrationPairMaxFails = 5
-	siteMigrationMaxResponse  = 64 << 10
+	siteMigrationPairTTL         = 15 * time.Minute
+	siteMigrationPairMaxFails    = 5
+	siteMigrationMaxResponse     = 64 << 10
+	siteMigrationMaxPeerResponse = 8 << 20
 )
 
 var (
-	ErrSiteMigrationPairRejected  = errors.New("site migration pairing rejected")
-	ErrSiteMigrationPairConflict  = errors.New("site migration peer already exists")
-	ErrSiteMigrationPeerNotPaired = errors.New("site migration peer is not paired")
-	ErrSiteMigrationPeerInUse     = errors.New("site migration peer is in use")
+	ErrSiteMigrationPairRejected   = errors.New("site migration pairing rejected")
+	ErrSiteMigrationSourceNotReady = errors.New("site migration source task not ready")
+	ErrSiteMigrationPairConflict   = errors.New("site migration peer already exists")
+	ErrSiteMigrationPeerNotPaired  = errors.New("site migration peer is not paired")
+	ErrSiteMigrationPeerInUse      = errors.New("site migration peer is in use")
 )
 
 var siteMigrationPairingGenerateMu sync.Mutex
@@ -78,6 +80,9 @@ func SiteMigrationErrorCode(err error) string {
 	}
 	if errors.Is(err, ErrSiteMigrationPeerInUse) {
 		return "peer_in_use"
+	}
+	if errors.Is(err, ErrSiteMigrationSourceNotReady) {
+		return "peer_task_not_ready"
 	}
 	var localErr *SiteMigrationLocalError
 	if errors.As(err, &localErr) {
@@ -190,6 +195,9 @@ type SiteMigrationTaskSummary struct {
 	SourceCanRestore        bool      `json:"source_can_restore"`
 	TransferReceivedBytes   int64     `json:"transfer_received_bytes"`
 	TransferExtracting      bool      `json:"transfer_extracting"`
+	PublishStep             string    `json:"publish_step,omitempty"`
+	PublishCompleted        int       `json:"publish_completed,omitempty"`
+	PublishTotal            int       `json:"publish_total,omitempty"`
 	UpdatedAt               time.Time `json:"updated_at"`
 }
 
@@ -200,6 +208,9 @@ type SiteMigrationRemoteTaskStatus struct {
 	ErrorCode             string    `json:"error_code"`
 	TransferReceivedBytes int64     `json:"transfer_received_bytes"`
 	TransferExtracting    bool      `json:"transfer_extracting"`
+	PublishStep           string    `json:"publish_step,omitempty"`
+	PublishCompleted      int       `json:"publish_completed,omitempty"`
+	PublishTotal          int       `json:"publish_total,omitempty"`
 	UpdatedAt             time.Time `json:"updated_at"`
 }
 
@@ -762,12 +773,56 @@ func (s *SiteMigrationPairingService) ListTasks(ctx context.Context) ([]SiteMigr
 				task.SkippedCustomCommands = snapshot.MigrationWarnings.SkippedCustomCommands
 			}
 		}
+		if task.Direction == "target" && task.Stage == "publishing" {
+			if err := s.populatePublishProgress(ctx, &task); err != nil {
+				return nil, err
+			}
+		}
 		if task.Direction != "source" || (task.Status != "awaiting_cutover" && task.Status != "failed_retryable" && task.Status != "interrupted_unknown" && task.Status != "cleanup_failed") {
 			task.SourceCanRestore = false
 		}
 		tasks = append(tasks, task)
 	}
 	return tasks, rows.Err()
+}
+
+func (s *SiteMigrationPairingService) populatePublishProgress(ctx context.Context, task *SiteMigrationTaskSummary) error {
+	if task == nil || task.ID == "" || task.Stage != "publishing" {
+		return nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT resource_type,status FROM site_migration_resources
+		WHERE migration_site_id=? AND resource_type IN ('database_import','file_publish')`, task.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	statuses := make(map[string]string, 2)
+	for rows.Next() {
+		var resourceType, status string
+		if err := rows.Scan(&resourceType, &status); err != nil {
+			return err
+		}
+		statuses[resourceType] = status
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	task.PublishTotal = 2
+	if statuses["database_import"] == "published" {
+		task.PublishCompleted++
+	}
+	if statuses["file_publish"] == "published" {
+		task.PublishCompleted++
+	}
+	switch {
+	case statuses["database_import"] != "published":
+		task.PublishStep = "database_import"
+	case statuses["file_publish"] != "published":
+		task.PublishStep = "file_publish"
+	default:
+		task.PublishStep = "finalizing"
+	}
+	return nil
 }
 
 func (s *SiteMigrationPairingService) RevokePeer(ctx context.Context, peerID string) error {
@@ -907,7 +962,7 @@ func postPinnedJSON(ctx context.Context, endpoint, fingerprint, bearer string, b
 }
 
 func postPinnedJSONLimit(ctx context.Context, endpoint, fingerprint, bearer string, body, response any, timeout time.Duration, responseLimit int64) error {
-	if responseLimit <= 0 || responseLimit > 1<<20 {
+	if responseLimit <= 0 || responseLimit > siteMigrationMaxPeerResponse {
 		return errors.New("invalid peer response limit")
 	}
 	payload, err := json.Marshal(body)

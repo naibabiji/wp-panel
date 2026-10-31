@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"path/filepath"
 	"time"
 
@@ -237,7 +238,15 @@ func (p *siteMigrationStageProcessor) processTarget(ctx context.Context, peerID 
 					return errSiteMigrationNotClaimed
 				}
 			}
-			return p.cutover.ActivateAfterHealth(ctx, job.ID)
+			if err := p.cutover.ActivateAfterHealth(ctx, job.ID); err != nil {
+				return err
+			}
+			if p.cleanup != nil {
+				if err := p.cleanup.removeTaskRuntimeFiles("target", job.ID); err != nil {
+					log.Printf("网站搬家目标 staging 清理失败 task=%s: %v", job.ID, err)
+				}
+			}
+			return nil
 		default:
 			return errors.New("site migration target stage is not executable")
 		}

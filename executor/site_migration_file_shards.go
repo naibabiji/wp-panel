@@ -105,6 +105,12 @@ func loadMigrationShardEntries(ctx context.Context, db *sql.DB, taskID string) (
 }
 
 func writeMigrationFileShard(ctx context.Context, root string, entries []siteMigrationShardEntry, dst io.Writer) error {
+	sourceRoot, err := openMigrationSourceRoot(root)
+	if err != nil {
+		return err
+	}
+	defer sourceRoot.Close()
+
 	encoder, err := zstd.NewWriter(dst, zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(3)), zstd.WithEncoderConcurrency(4), zstd.WithEncoderCRC(true))
 	if err != nil {
 		return err
@@ -128,6 +134,7 @@ func writeMigrationFileShard(ctx context.Context, root string, entries []siteMig
 		closed = true
 		return nil
 	}
+	copyBuffer := make([]byte, 256*1024)
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			_ = tarWriter.Close()
@@ -137,7 +144,7 @@ func writeMigrationFileShard(ctx context.Context, root string, entries []siteMig
 		if entry.EntryType != "file" || entry.Size <= 0 || entry.Size > SiteMigrationFileShardBytes {
 			return errors.New("invalid source shard entry")
 		}
-		file, info, err := openMigrationSourceFile(root, entry.RelativePath)
+		file, info, err := sourceRoot.Open(entry.RelativePath)
 		if err != nil {
 			return err
 		}
@@ -151,7 +158,7 @@ func writeMigrationFileShard(ctx context.Context, root string, entries []siteMig
 			return err
 		}
 		hash := sha256.New()
-		written, copyErr := io.CopyN(io.MultiWriter(tarWriter, hash), file, entry.Size)
+		written, copyErr := io.CopyBuffer(io.MultiWriter(tarWriter, hash), io.LimitReader(file, entry.Size), copyBuffer)
 		after, statErr := file.Stat()
 		closeErr := file.Close()
 		if copyErr != nil || written != entry.Size {

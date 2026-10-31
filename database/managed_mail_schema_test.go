@@ -49,7 +49,7 @@ func checkManagedMailSchema(t *testing.T) {
 		'managed_mail_quota_notice_state')`).Scan(&settings); err != nil || settings != 10 {
 		t.Fatalf("managed mail settings=%d err=%v", settings, err)
 	}
-	if LatestVersion() != "1.0.68" {
+	if LatestVersion() != "1.0.69" {
 		t.Fatalf("latest version=%s", LatestVersion())
 	}
 }

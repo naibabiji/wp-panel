@@ -138,7 +138,7 @@ func (s *SiteMigrationTargetRollbackService) Abandon(ctx context.Context, taskID
 		{"site_secret_publish", sitePluginSecretsDir(scope.Spec.Domain), []string{"site_secret_publish"}},
 		{"web_root", scope.Spec.WebRoot, []string{"web_root", "file_publish"}},
 		{"log_dir", scope.Spec.LogDir, []string{"log_dir"}},
-		{"target_staging_root", filepath.Join(s.stagingRoot, taskID), []string{"target_staging_root", "database_identity", "site_identity"}},
+		{"target_staging_root", filepath.Join(s.stagingRoot, taskID), []string{"target_staging_root", "target_manifest", "database_identity", "site_identity"}},
 	} {
 		if !hasAnyMigrationResource(scope.Resources, item.marks...) {
 			continue
@@ -274,7 +274,15 @@ func (s *SiteMigrationTargetRollbackService) loadScope(ctx context.Context, task
 	if err != nil {
 		return siteMigrationRollbackScope{}, err
 	}
-	return siteMigrationRollbackScope{Spec: snapshot.TargetSpec, Settings: snapshot.RuntimeSettings, SiteID: siteID.Int64, Activated: stage == "completed" || stage == "activation_runtime_sync" || lockStatus == "released", Resources: resources}, nil
+	resolvedSiteID := siteID.Int64
+	if !siteID.Valid && len(resources["website_record"]) == 1 {
+		parsed, parseErr := strconv.ParseInt(resources["website_record"][0], 10, 64)
+		if parseErr != nil || parsed <= 0 {
+			return siteMigrationRollbackScope{}, errors.New("target rollback website resource identity invalid")
+		}
+		resolvedSiteID = parsed
+	}
+	return siteMigrationRollbackScope{Spec: snapshot.TargetSpec, Settings: snapshot.RuntimeSettings, SiteID: resolvedSiteID, Activated: stage == "completed" || stage == "activation_runtime_sync" || lockStatus == "released", Resources: resources}, nil
 }
 
 func (s *SiteMigrationTargetRollbackService) loadResources(ctx context.Context, taskID string, spec siteMigrationPublishSpec) (map[string][]string, error) {
@@ -284,7 +292,7 @@ func (s *SiteMigrationTargetRollbackService) loadResources(ctx context.Context, 
 	}
 	defer rows.Close()
 	resources := map[string][]string{}
-	allowed := map[string]bool{"target_staging_root": true, "system_user": true, "web_root": true, "log_dir": true, "database": true, "database_user": true, "database_identity": true, "site_identity": true, "database_import": true, "file_publish": true, "site_secret_publish": true, "certificate_publish": true, "runtime_config_publish": true, "website_record": true, "cron_job": true, "cdn_custom_group": true, "target_marker_config": true}
+	allowed := map[string]bool{"target_staging_root": true, "target_manifest": true, "system_user": true, "web_root": true, "log_dir": true, "database": true, "database_user": true, "database_identity": true, "site_identity": true, "database_import": true, "file_publish": true, "site_secret_publish": true, "certificate_publish": true, "runtime_config_publish": true, "website_record": true, "cron_job": true, "cdn_custom_group": true, "target_marker_config": true}
 	for rows.Next() {
 		var kind, identifier, owner, status string
 		if err := rows.Scan(&kind, &identifier, &owner, &status); err != nil {
@@ -305,7 +313,7 @@ func (s *SiteMigrationTargetRollbackService) loadResources(ctx context.Context, 
 		return nil, err
 	}
 	want := map[string]string{
-		"target_staging_root": filepath.Join(s.stagingRoot, taskID), "system_user": spec.SystemUser, "web_root": spec.WebRoot, "log_dir": spec.LogDir,
+		"target_staging_root": filepath.Join(s.stagingRoot, taskID), "target_manifest": filepath.Join(s.stagingRoot, taskID), "system_user": spec.SystemUser, "web_root": spec.WebRoot, "log_dir": spec.LogDir,
 		"database": spec.DBName, "database_user": spec.DBUser, "database_identity": filepath.Join(s.stagingRoot, taskID, "identity", "database.json"),
 		"site_identity": filepath.Join(s.stagingRoot, taskID, "identity", sitePluginConfigFileName), "database_import": spec.DBName, "file_publish": spec.WebRoot,
 		"site_secret_publish": sitePluginSecretsDir(spec.Domain), "certificate_publish": filepath.Join(s.cfg.Paths.Certificates, spec.Domain),

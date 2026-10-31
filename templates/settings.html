@@ -93,6 +93,14 @@
                 <button @click="openRootPasswordModal()" class="btn-secondary shrink-0 text-sm">{{t .Lang "settings.change_root_password"}}</button>
             </div>
 
+            <div class="mb-4 flex items-center justify-between gap-3 rounded p-3" style="background-color: #0f172a; border: 1px solid #7f1d1d;">
+                <div>
+                    <p class="text-sm text-gray-300 font-medium mb-1">{{t .Lang "settings.server_reboot_title"}}</p>
+                    <p class="text-xs text-gray-400">{{t .Lang "settings.server_reboot_summary"}}</p>
+                </div>
+                <button @click="rebootServer()" :disabled="serverRebooting" class="shrink-0 text-sm py-2 px-3 rounded text-white disabled:opacity-50" style="background-color: #b91c1c;" x-text="serverRebooting ? t('settings.server_rebooting') : t('settings.server_reboot')"></button>
+            </div>
+
             <div class="mb-4">
                 <label class="label">{{t .Lang "settings.github_proxy"}}</label>
                 <p class="text-xs text-gray-500 mb-2">{{t .Lang "settings.github_proxy_help"}}</p>
@@ -538,6 +546,7 @@ function panelSettings() {
         proxyOk: false,
         accountSaving: false,
         accountSaved: false,
+        serverRebooting: false,
         autoUpdate: {
             enabled: false,
             mode: 'all_stable',
@@ -641,6 +650,17 @@ function panelSettings() {
                 showToast(r.data?.message || t('settings.time_sync_triggered'), 'success');
                 this.ntpSynced = true;
             } catch(e) { showToast(e.message, 'error'); }
+        },
+        async rebootServer() {
+            if (!await confirmModal(t('settings.confirm_server_reboot'))) return;
+            this.serverRebooting = true;
+            try {
+                const r = await api('/settings/reboot', { method: 'POST', timeout: 10000 });
+                showToast(r.data?.message || t('settings.server_reboot_started'), 'success');
+            } catch(e) {
+                this.serverRebooting = false;
+                showToast(e.message || t('settings.server_reboot_failed'), 'error');
+            }
         },
         async saveBasic() {
             try {

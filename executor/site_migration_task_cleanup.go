@@ -21,7 +21,7 @@ func (s *SiteMigrationControlService) loadTaskCleanupScope(ctx context.Context, 
 	err := s.db.QueryRowContext(ctx, `SELECT ms.id,ms.batch_id,mb.peer_id,mb.direction,ms.source_domain,ms.status,ms.stage,
 		ms.source_site_id,ms.target_site_id,
 		EXISTS(SELECT 1 FROM site_migration_resources r WHERE r.migration_site_id=ms.id AND r.resource_type='source_maintenance_config' AND r.status='created'),
-		EXISTS(SELECT 1 FROM site_migration_resources r WHERE r.migration_site_id=ms.id AND r.resource_type NOT IN ('target_staging_root','database_identity','site_identity') AND r.status IN ('created','published','remove_failed')),
+		EXISTS(SELECT 1 FROM site_migration_resources r WHERE r.migration_site_id=ms.id AND r.resource_type NOT IN ('target_staging_root','target_manifest','database_identity','site_identity') AND r.status IN ('created','published','remove_failed')),
 		EXISTS(SELECT 1 FROM site_migration_locks ml WHERE ml.migration_site_id=ms.id AND ml.direction='target' AND ml.status='released')
 		FROM site_migration_sites ms JOIN site_migration_batches mb ON mb.id=ms.batch_id
 		WHERE ms.id=?`, taskID).Scan(&scope.ID, &scope.BatchID, &scope.PeerID, &scope.Direction, &scope.Domain, &scope.Status, &scope.Stage,
@@ -144,7 +144,12 @@ func (s *SiteMigrationControlService) deleteTargetTask(ctx context.Context, scop
 
 func (s *SiteMigrationControlService) removeTaskRuntimeFiles(direction, taskID string) error {
 	if direction == "target" && s.stagingRoot != "" {
-		return os.RemoveAll(filepath.Join(s.stagingRoot, taskID))
+		if err := os.RemoveAll(filepath.Join(s.stagingRoot, taskID)); err != nil {
+			return err
+		}
+		_, err := s.db.Exec(`UPDATE site_migration_resources SET status='removed',updated_at=CURRENT_TIMESTAMP
+			WHERE migration_site_id=? AND resource_type IN ('target_staging_root','target_manifest') AND status IN ('created','published','remove_failed')`, taskID)
+		return err
 	}
 	if direction == "source" && s.freezer != nil && s.freezer.cfg.Panel.DataDir != "" {
 		for _, name := range []string{"database", "certificates"} {

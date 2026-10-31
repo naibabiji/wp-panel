@@ -92,7 +92,10 @@ func (s *SiteMigrationRemoteSource) ListManifest(ctx context.Context, peerID, ta
 		Next    int64                        `json:"next_after_id"`
 		HasMore bool                         `json:"has_more"`
 	}
-	if err := postPinnedJSON(ctx, peer.baseURL+"/api/site-migration/v1/source/manifest", peer.fingerprint, peer.credential, request, &response, s.pairing.httpTimeout); err != nil || !response.Success {
+	if err := postPinnedJSONLimit(ctx, peer.baseURL+"/api/site-migration/v1/source/manifest", peer.fingerprint, peer.credential, request, &response, s.pairing.httpTimeout, siteMigrationMaxPeerResponse); err != nil {
+		return nil, 0, false, err
+	}
+	if !response.Success {
 		return nil, 0, false, ErrSiteMigrationPairRejected
 	}
 	return response.Entries, response.Next, response.HasMore, nil
@@ -108,7 +111,10 @@ func (s *SiteMigrationRemoteSource) DatabaseArtifact(ctx context.Context, peerID
 		Artifact SiteMigrationManifestEntry `json:"artifact"`
 	}
 	request := map[string]string{"peer_id": peerID, "migration_site_id": taskID}
-	if err := postPinnedJSON(ctx, peer.baseURL+"/api/site-migration/v1/source/database", peer.fingerprint, peer.credential, request, &response, s.pairing.httpTimeout); err != nil || !response.Success {
+	if err := postPinnedJSON(ctx, peer.baseURL+"/api/site-migration/v1/source/database", peer.fingerprint, peer.credential, request, &response, s.pairing.httpTimeout); err != nil {
+		return SiteMigrationManifestEntry{}, fmt.Errorf("remote database artifact: %w", err)
+	}
+	if !response.Success {
 		return SiteMigrationManifestEntry{}, ErrSiteMigrationPairRejected
 	}
 	return response.Artifact, nil
@@ -124,7 +130,10 @@ func (s *SiteMigrationRemoteSource) CertificateArtifacts(ctx context.Context, pe
 		Artifacts []SiteMigrationCertificateArtifact `json:"artifacts"`
 	}
 	request := map[string]string{"peer_id": peerID, "migration_site_id": taskID}
-	if err := postPinnedJSON(ctx, peer.baseURL+"/api/site-migration/v1/source/certificates", peer.fingerprint, peer.credential, request, &response, s.pairing.httpTimeout); err != nil || !response.Success {
+	if err := postPinnedJSON(ctx, peer.baseURL+"/api/site-migration/v1/source/certificates", peer.fingerprint, peer.credential, request, &response, s.pairing.httpTimeout); err != nil {
+		return nil, fmt.Errorf("remote certificate artifacts: %w", err)
+	}
+	if !response.Success {
 		return nil, ErrSiteMigrationPairRejected
 	}
 	return response.Artifacts, nil
@@ -140,7 +149,10 @@ func (s *SiteMigrationRemoteSource) RuntimeSettings(ctx context.Context, peerID,
 		Settings SiteMigrationRuntimeSettings `json:"settings"`
 	}
 	request := map[string]string{"peer_id": peerID, "migration_site_id": taskID}
-	if err := postPinnedJSONLimit(ctx, peer.baseURL+"/api/site-migration/v1/source/settings", peer.fingerprint, peer.credential, request, &response, s.pairing.httpTimeout, 1<<20); err != nil || !response.Success || validateSiteMigrationRuntimeSettings(&response.Settings) != nil {
+	if err := postPinnedJSONLimit(ctx, peer.baseURL+"/api/site-migration/v1/source/settings", peer.fingerprint, peer.credential, request, &response, s.pairing.httpTimeout, 1<<20); err != nil {
+		return SiteMigrationRuntimeSettings{}, fmt.Errorf("remote runtime settings: %w", err)
+	}
+	if !response.Success || validateSiteMigrationRuntimeSettings(&response.Settings) != nil {
 		return SiteMigrationRuntimeSettings{}, ErrSiteMigrationPairRejected
 	}
 	return response.Settings, nil

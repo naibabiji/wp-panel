@@ -114,6 +114,18 @@ func (s *SiteMigrationControlService) TargetStatuses(ctx context.Context, peerID
 		}
 		if _, ok := seen[item.ID]; ok {
 			item.TransferReceivedBytes, item.TransferExtracting = siteMigrationTransferTelemetry(s.stagingRoot, item.ID, item.Status, item.Stage)
+			if item.Stage == "publishing" {
+				if s.pairing == nil {
+					return nil, errors.New("site migration pairing unavailable")
+				}
+				progress := SiteMigrationTaskSummary{ID: item.ID, Stage: item.Stage}
+				if err := s.pairing.populatePublishProgress(ctx, &progress); err != nil {
+					return nil, err
+				}
+				item.PublishStep = progress.PublishStep
+				item.PublishCompleted = progress.PublishCompleted
+				item.PublishTotal = progress.PublishTotal
+			}
 			result = append(result, item)
 		}
 	}
@@ -183,6 +195,9 @@ func mergeSiteMigrationRemoteTargetStatus(task *SiteMigrationTaskSummary, remote
 	task.ErrorCode = remote.ErrorCode
 	task.TransferReceivedBytes = remote.TransferReceivedBytes
 	task.TransferExtracting = remote.TransferExtracting
+	task.PublishStep = remote.PublishStep
+	task.PublishCompleted = remote.PublishCompleted
+	task.PublishTotal = remote.PublishTotal
 	task.UpdatedAt = remote.UpdatedAt
 }
 

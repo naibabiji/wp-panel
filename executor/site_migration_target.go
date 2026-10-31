@@ -38,41 +38,35 @@ func NewSiteMigrationTargetReceiver(db *sql.DB, root string) (*SiteMigrationTarg
 }
 
 func (r *SiteMigrationTargetReceiver) Prepare(ctx context.Context, migrationSiteID string, files []SiteMigrationManifestEntry, databaseArtifact SiteMigrationManifestEntry) error {
+	return r.PrepareManifest(ctx, migrationSiteID, databaseArtifact, func(consume func([]SiteMigrationManifestEntry) error) error {
+		return consume(files)
+	})
+}
+
+func (r *SiteMigrationTargetReceiver) PrepareManifest(ctx context.Context, migrationSiteID string, databaseArtifact SiteMigrationManifestEntry, stream siteMigrationManifestPageConsumer) (err error) {
 	if err := r.authorizeTarget(ctx, migrationSiteID, "transferring_files"); err != nil {
 		return err
 	}
-	if len(files) > 1_000_000 || databaseArtifact.RelativePath != siteMigrationDatabaseArtifactName || databaseArtifact.EntryType != "file" || databaseArtifact.Size <= 0 || databaseArtifact.Mode&^0777 != 0 || !validMigrationSHA256(databaseArtifact.SHA256) {
+	if stream == nil || databaseArtifact.RelativePath != siteMigrationDatabaseArtifactName || databaseArtifact.EntryType != "file" || databaseArtifact.Size <= 0 || databaseArtifact.Mode&^0777 != 0 || !validMigrationSHA256(databaseArtifact.SHA256) {
 		return errors.New("invalid target migration manifest")
 	}
-	seen := make(map[string]struct{}, len(files))
 	declaredSize := databaseArtifact.Size
-	for _, item := range files {
-		if err := validateTargetManifestEntry(item); err != nil {
-			return err
-		}
-		if _, exists := seen[item.RelativePath]; exists {
-			return errors.New("duplicate target manifest path")
-		}
-		seen[item.RelativePath] = struct{}{}
-		if item.Size > 0 && declaredSize > int64(^uint64(0)>>1)-item.Size {
-			return errors.New("target migration size overflow")
-		}
-		declaredSize += item.Size
-	}
-	if err := validateTargetManifestStructure(files); err != nil {
-		return err
-	}
 	siteRoot := filepath.Join(r.root, migrationSiteID)
-	available, err := r.available(r.root)
-	if err != nil || uint64(declaredSize) > available {
-		return errors.New("insufficient target staging space")
-	}
 	var existing int
 	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_migration_artifacts WHERE migration_site_id=?`, migrationSiteID).Scan(&existing); err != nil {
 		return err
 	}
 	if existing != 0 {
-		return errors.New("target migration manifest already prepared")
+		var complete int
+		if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_migration_resources WHERE migration_site_id=? AND resource_type='target_manifest' AND status='created'`, migrationSiteID).Scan(&complete); err != nil {
+			return err
+		}
+		if complete != 0 {
+			return errors.New("target migration manifest already prepared")
+		}
+		if err := r.resetIncompleteManifest(ctx, migrationSiteID, siteRoot); err != nil {
+			return err
+		}
 	}
 	if err := os.RemoveAll(siteRoot); err != nil {
 		return err
@@ -83,21 +77,15 @@ func (r *SiteMigrationTargetReceiver) Prepare(ctx context.Context, migrationSite
 	if err := os.MkdirAll(filepath.Join(siteRoot, "database"), 0700); err != nil {
 		return err
 	}
-	for _, item := range files {
-		if item.EntryType != "file" || item.Size != 0 {
-			continue
+	prepared := false
+	defer func() {
+		if !prepared {
+			cleanupErr := r.resetIncompleteManifest(context.Background(), migrationSiteID, siteRoot)
+			if cleanupErr != nil {
+				err = errors.Join(err, cleanupErr)
+			}
 		}
-		path := filepath.Join(siteRoot, "files", filepath.FromSlash(item.RelativePath))
-		if err := ensureMigrationTargetParents(filepath.Join(siteRoot, "files"), filepath.Dir(path)); err != nil {
-			return err
-		}
-		if err := os.WriteFile(path, nil, os.FileMode(item.Mode).Perm()); err != nil {
-			return err
-		}
-		if err := os.Chmod(path, os.FileMode(item.Mode).Perm()); err != nil {
-			return err
-		}
-	}
+	}()
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -108,20 +96,121 @@ func (r *SiteMigrationTargetReceiver) Prepare(ctx context.Context, migrationSite
 		VALUES (?,'target_staging_root',?,?,'created',?,?)`, migrationSiteID, siteRoot, migrationSiteID, r.now().UTC(), r.now().UTC()); err != nil {
 		return err
 	}
-	for _, item := range files {
-		status := "pending"
-		if item.EntryType == "directory" || item.EntryType == "symlink" || item.EntryType == "file" && item.Size == 0 {
-			status = "verified"
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO site_migration_artifacts
-			(migration_site_id,relative_path,artifact_type,entry_type,file_mode,link_target,modified_unix_ns,file_size,sha256,status)
-			VALUES (?,?,'file',?,?,?,?,?,?,?)`, migrationSiteID, item.RelativePath, item.EntryType, item.Mode, item.LinkTarget, item.ModifiedUnixNS, item.Size, item.SHA256, status); err != nil {
-			return err
-		}
-	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO site_migration_artifacts
 		(migration_site_id,relative_path,artifact_type,entry_type,file_mode,modified_unix_ns,file_size,sha256,status)
 		VALUES (?,?,'database','file',?,?,?,?,'pending')`, migrationSiteID, databaseArtifact.RelativePath, databaseArtifact.Mode, databaseArtifact.ModifiedUnixNS, databaseArtifact.Size, databaseArtifact.SHA256); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	types := make(map[string]string)
+	if err := stream(func(files []SiteMigrationManifestEntry) error {
+		if len(files) > siteMigrationTransferManifestPage {
+			return errors.New("target manifest page is too large")
+		}
+		pageTypes := make(map[string]string, len(files))
+		for _, item := range files {
+			if err := validateTargetManifestEntry(item); err != nil {
+				return err
+			}
+			if _, exists := types[item.RelativePath]; exists {
+				return errors.New("duplicate target manifest path")
+			}
+			if _, exists := pageTypes[item.RelativePath]; exists {
+				return errors.New("duplicate target manifest path")
+			}
+			pageTypes[item.RelativePath] = item.EntryType
+			if item.Size > 0 && declaredSize > int64(^uint64(0)>>1)-item.Size {
+				return errors.New("target migration size overflow")
+			}
+			declaredSize += item.Size
+		}
+		pageTx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		for _, item := range files {
+			status := "pending"
+			if item.EntryType == "directory" || item.EntryType == "symlink" || item.EntryType == "file" && item.Size == 0 {
+				status = "verified"
+			}
+			if _, err := pageTx.ExecContext(ctx, `INSERT INTO site_migration_artifacts
+				(migration_site_id,relative_path,artifact_type,entry_type,file_mode,link_target,modified_unix_ns,file_size,sha256,status)
+				VALUES (?,?,'file',?,?,?,?,?,?,?)`, migrationSiteID, item.RelativePath, item.EntryType, item.Mode, item.LinkTarget, item.ModifiedUnixNS, item.Size, item.SHA256, status); err != nil {
+				_ = pageTx.Rollback()
+				return err
+			}
+		}
+		if err := pageTx.Commit(); err != nil {
+			return err
+		}
+		for _, item := range files {
+			types[item.RelativePath] = item.EntryType
+			if item.EntryType != "file" || item.Size != 0 {
+				continue
+			}
+			path := filepath.Join(siteRoot, "files", filepath.FromSlash(item.RelativePath))
+			if err := ensureMigrationTargetParents(filepath.Join(siteRoot, "files"), filepath.Dir(path)); err != nil {
+				return err
+			}
+			if err := os.WriteFile(path, nil, os.FileMode(item.Mode).Perm()); err != nil {
+				return err
+			}
+			if err := os.Chmod(path, os.FileMode(item.Mode).Perm()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := validateTargetManifestStructureTypes(types); err != nil {
+		return err
+	}
+	available, err := r.available(r.root)
+	if err != nil || declaredSize < 0 || uint64(declaredSize) > available {
+		return errors.New("insufficient target staging space")
+	}
+	markerTx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer markerTx.Rollback()
+	if _, err := markerTx.ExecContext(ctx, `INSERT INTO site_migration_resources
+		(migration_site_id,resource_type,identifier,ownership_tag,status,created_at,updated_at)
+		VALUES (?,'target_manifest',?,?, 'created',?,?)`, migrationSiteID, siteRoot, migrationSiteID, r.now().UTC(), r.now().UTC()); err != nil {
+		return err
+	}
+	if err := markerTx.Commit(); err != nil {
+		return err
+	}
+	prepared = true
+	return nil
+}
+
+func (r *SiteMigrationTargetReceiver) resetIncompleteManifest(ctx context.Context, migrationSiteID, siteRoot string) error {
+	var identifier, ownership string
+	err := r.db.QueryRowContext(ctx, `SELECT identifier,ownership_tag FROM site_migration_resources
+		WHERE migration_site_id=? AND resource_type='target_staging_root' AND status='created'`, migrationSiteID).Scan(&identifier, &ownership)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err == nil && (filepath.Clean(identifier) != filepath.Clean(siteRoot) || ownership != migrationSiteID) {
+		return errors.New("target staging ownership mismatch")
+	}
+	if err := r.removeAll(siteRoot); err != nil {
+		return fmt.Errorf("remove incomplete target staging root: %w", err)
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM site_migration_artifacts WHERE migration_site_id=?`, migrationSiteID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM site_migration_resources WHERE migration_site_id=? AND resource_type IN ('target_staging_root','target_manifest')`, migrationSiteID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -156,7 +245,7 @@ func (r *SiteMigrationTargetReceiver) Cleanup(ctx context.Context, migrationSite
 	if _, err := tx.ExecContext(ctx, `DELETE FROM site_migration_artifacts WHERE migration_site_id=?`, migrationSiteID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE site_migration_resources SET status='removed',updated_at=? WHERE migration_site_id=? AND resource_type='target_staging_root' AND status='created'`, r.now().UTC(), migrationSiteID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE site_migration_resources SET status='removed',updated_at=? WHERE migration_site_id=? AND resource_type IN ('target_staging_root','target_manifest') AND status IN ('created','prepared')`, r.now().UTC(), migrationSiteID); err != nil {
 		return err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE site_migration_locks SET status='released',released_at=?,updated_at=? WHERE migration_site_id=? AND direction='target' AND status='active'`, r.now().UTC(), r.now().UTC(), migrationSiteID)
@@ -255,7 +344,7 @@ func validateTargetManifestEntry(item SiteMigrationManifestEntry) error {
 	}
 	switch item.EntryType {
 	case "file":
-		if !validMigrationSHA256(item.SHA256) || item.LinkTarget != "" {
+		if item.Size > SiteMigrationFileShardBytes || !validMigrationSHA256(item.SHA256) || item.LinkTarget != "" {
 			return errors.New("invalid target file entry")
 		}
 		if item.Size == 0 {
@@ -291,8 +380,12 @@ func validateTargetManifestStructure(items []SiteMigrationManifestEntry) error {
 	for _, item := range items {
 		types[item.RelativePath] = item.EntryType
 	}
-	for _, item := range items {
-		parent := filepath.ToSlash(filepath.Dir(filepath.FromSlash(item.RelativePath)))
+	return validateTargetManifestStructureTypes(types)
+}
+
+func validateTargetManifestStructureTypes(types map[string]string) error {
+	for path := range types {
+		parent := filepath.ToSlash(filepath.Dir(filepath.FromSlash(path)))
 		for parent != "." {
 			if kind, exists := types[parent]; exists && kind != "directory" {
 				return errors.New("target manifest leaf path has children")
@@ -509,6 +602,10 @@ func syncMigrationDirectory(path string) error {
 func (r *SiteMigrationTargetReceiver) Finalize(ctx context.Context, migrationSiteID string) error {
 	if err := r.authorizeTarget(ctx, migrationSiteID, "transferring_files", "transferring_database"); err != nil {
 		return err
+	}
+	var manifestPrepared int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_migration_resources WHERE migration_site_id=? AND resource_type='target_manifest' AND status='created'`, migrationSiteID).Scan(&manifestPrepared); err != nil || manifestPrepared != 1 {
+		return errors.New("target migration manifest is not complete")
 	}
 	var pending int
 	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_migration_artifacts WHERE migration_site_id=? AND entry_type='file' AND status!='verified'`, migrationSiteID).Scan(&pending); err != nil || pending != 0 {

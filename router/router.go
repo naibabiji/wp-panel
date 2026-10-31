@@ -169,6 +169,13 @@ var i18nKeys = []string{
 	"settings.current_password_required",
 	"settings.current_panel_password_required",
 	"settings.change_root_password",
+	"settings.server_reboot_title",
+	"settings.server_reboot_summary",
+	"settings.server_reboot",
+	"settings.server_rebooting",
+	"settings.confirm_server_reboot",
+	"settings.server_reboot_started",
+	"settings.server_reboot_failed",
 	"settings.changing_root_password",
 	"settings.delete",
 	"settings.deleted",
@@ -280,6 +287,7 @@ var i18nKeys = []string{
 	"site_migration.peer_in_use",
 	"site_migration.peer_not_paired",
 	"site_migration.peer_auth_failed",
+	"site_migration.peer_task_not_ready",
 	"site_migration.peer_protocol_mismatch",
 	"site_migration.peer_unreachable",
 	"site_migration.peer_database_busy",
@@ -300,11 +308,15 @@ var i18nKeys = []string{
 	"site_migration.progress_receiving_bytes",
 	"site_migration.progress_receiving_speed",
 	"site_migration.progress_sending",
+	"site_migration.progress_waiting_first_shard",
 	"site_migration.progress_sending_bytes",
 	"site_migration.progress_sending_speed",
 	"site_migration.progress_extracting",
 	"site_migration.progress_remote_extracting",
 	"site_migration.progress_building_target",
+	"site_migration.progress_importing_database",
+	"site_migration.progress_publishing_files",
+	"site_migration.progress_finalizing_publish",
 	"site_migration.progress_activating",
 	"site_migration.progress_processing",
 	"site_migration.progress_decision",
@@ -1745,6 +1757,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/api/settings", settingsHandler.GetSettings)
 	protected.PUT("/api/settings", settingsHandler.UpdateSettings)
 	protected.POST("/api/settings/root-password", settingsHandler.UpdateRootPassword)
+	protected.POST("/api/settings/reboot", settingsHandler.Reboot)
 	protected.GET("/api/settings/logs", settingsHandler.GetOperationLogs)
 	protected.GET("/api/settings/wp-package", settingsHandler.GetWPPackage)
 	protected.POST("/api/settings/wp-package/upload", settingsHandler.UploadWPPackage)

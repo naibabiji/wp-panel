@@ -31,6 +31,7 @@ type SettingsHandler struct {
 	WPPackageService   *executor.WPPackageService
 	ConfigPath         string
 	ChangeRootPassword func(context.Context, string) error
+	RebootServer       func() error
 }
 
 type rootPasswordChangeRequest struct {
@@ -203,6 +204,23 @@ func (h *SettingsHandler) UpdateRootPassword(c *gin.Context) {
 		log.Printf("记录 root 密码修改操作失败: %v", err)
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"message": i18n.TE(c.Request, "settings.root_password_changed")}))
+}
+
+func (h *SettingsHandler) Reboot(c *gin.Context) {
+	reboot := h.RebootServer
+	if reboot == nil {
+		reboot = executor.RebootServer
+	}
+	if err := reboot(); err != nil {
+		log.Printf("服务器重启请求失败: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "settings.server_reboot_failed")))
+		return
+	}
+	if _, err := database.GetDB().Exec(`INSERT INTO operation_logs(operation,target,status,message) VALUES(?,?,?,?)`,
+		"server_reboot", "server", "success", "已通过面板请求重启服务器"); err != nil {
+		log.Printf("记录服务器重启操作失败: %v", err)
+	}
+	c.JSON(http.StatusAccepted, models.SuccessResponse(gin.H{"message": i18n.TE(c.Request, "settings.server_reboot_started")}))
 }
 
 func validateRootPassword(password string) error {

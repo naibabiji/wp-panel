@@ -16,20 +16,22 @@ import (
 )
 
 type fakeSiteMigrationTransferSource struct {
-	files        []SiteMigrationManifestEntry
-	data         map[string][]byte
-	database     SiteMigrationManifestEntry
-	databaseData []byte
-	certificates []SiteMigrationCertificateArtifact
-	certData     map[string][]byte
-	failPath     string
-	reads        map[string]int
-	block        chan struct{}
-	release      chan struct{}
-	blockOnce    sync.Once
+	files          []SiteMigrationManifestEntry
+	data           map[string][]byte
+	database       SiteMigrationManifestEntry
+	databaseData   []byte
+	certificates   []SiteMigrationCertificateArtifact
+	certData       map[string][]byte
+	failPath       string
+	reads          map[string]int
+	manifestLimits []int
+	block          chan struct{}
+	release        chan struct{}
+	blockOnce      sync.Once
 }
 
-func (f *fakeSiteMigrationTransferSource) ListManifest(_ context.Context, _, _ string, after int64, _ int) ([]SiteMigrationManifestEntry, int64, bool, error) {
+func (f *fakeSiteMigrationTransferSource) ListManifest(_ context.Context, _, _ string, after int64, limit int) ([]SiteMigrationManifestEntry, int64, bool, error) {
+	f.manifestLimits = append(f.manifestLimits, limit)
 	if f.block != nil {
 		f.blockOnce.Do(func() {
 			close(f.block)
@@ -179,6 +181,9 @@ func TestSiteMigrationTargetTransferRetriesFromConfirmedArtifacts(t *testing.T) 
 	}
 	if source.reads["one.php"] != 2 || source.reads["two.php"] != 2 || source.reads[siteMigrationDatabaseArtifactName] != 1 || source.reads["certificate"] != 1 || source.reads["private_key"] != 1 {
 		t.Fatalf("reads=%v", source.reads)
+	}
+	if len(source.manifestLimits) == 0 || source.manifestLimits[0] != siteMigrationTransferManifestPage {
+		t.Fatalf("manifest page limits=%v, want first=%d", source.manifestLimits, siteMigrationTransferManifestPage)
 	}
 	for _, path := range []string{"files/one.php", "files/two.php", "database/" + siteMigrationDatabaseArtifactName, "certificates/certificate.pem", "certificates/private-key.pem"} {
 		if _, err := receiverFileStat(root, "migration_0000001", path); err != nil {

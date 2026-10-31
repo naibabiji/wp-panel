@@ -153,8 +153,11 @@ func (s *SiteMigrationSourceService) authorize(ctx context.Context, peerID, migr
 		JOIN site_migration_locks ml ON ml.migration_site_id=ms.id AND ml.status='active' AND ml.direction='source'
 		WHERE ms.id=? AND mb.peer_id=? AND mb.direction='source' AND mb.status='active'
 		AND ms.stage IN ('manifest_ready','transferring_files','transferring_database')`, migrationSiteID, peerID).Scan(&count)
-	if err != nil || count != 1 {
-		return ErrSiteMigrationPairRejected
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrSiteMigrationSourceNotReady
 	}
 	return nil
 }
@@ -442,6 +445,10 @@ func (s *siteMigrationSourceFiles) persistManifest(ctx context.Context, migratio
 		if err != nil {
 			_ = tx.Rollback()
 			return err
+		}
+		if item.EntryType == "file" && item.Size > SiteMigrationFileShardBytes {
+			_ = tx.Rollback()
+			return errors.New("source file exceeds migration shard limit")
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO site_migration_artifacts
 			(migration_site_id,relative_path,artifact_type,entry_type,file_mode,link_target,modified_unix_ns,file_size,sha256,status)

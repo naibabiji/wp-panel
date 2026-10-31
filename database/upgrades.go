@@ -767,6 +767,13 @@ var upgrades = []Upgrade{
 		Description: "新增 WordPress 托管发信策略、额度与幂等元数据",
 		SQL:         managedMailSchemaStatements,
 	},
+	{
+		Version:     "1.0.69",
+		Description: "网站不可访问告警邮件每次故障最多提醒三次并持久化计数",
+		SQL: []string{
+			`ALTER TABLE alert_runtime_state ADD COLUMN email_alert_count INTEGER NOT NULL DEFAULT 0`,
+		},
+	},
 }
 
 func ensureMonitoringCPUBreakdownColumns() error {

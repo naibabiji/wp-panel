@@ -8,10 +8,81 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/naibabiji/wp-panel/database"
 )
+
+func TestSiteMigrationTargetManifestRejectsOversizedFile(t *testing.T) {
+	entry := SiteMigrationManifestEntry{RelativePath: "large.bin", EntryType: "file", Mode: 0644, Size: SiteMigrationFileShardBytes + 1, SHA256: strings.Repeat("a", 64)}
+	if err := validateTargetManifestEntry(entry); err == nil {
+		t.Fatal("oversized file accepted by target manifest")
+	}
+}
+
+func TestSiteMigrationTargetReceiverConsumesManifestPages(t *testing.T) {
+	receiver, _ := setupMigrationTargetReceiverTest(t)
+	databaseArtifact := SiteMigrationManifestEntry{RelativePath: siteMigrationDatabaseArtifactName, EntryType: "file", Mode: 0600, Size: 1, SHA256: strings.Repeat("a", 64)}
+	files := []SiteMigrationManifestEntry{
+		{RelativePath: "assets", EntryType: "directory", Mode: 0750},
+		{RelativePath: "assets/app.php", EntryType: "file", Mode: 0644, Size: 1, SHA256: strings.Repeat("b", 64)},
+	}
+	if err := receiver.PrepareManifest(context.Background(), "migration_0000001", databaseArtifact, func(consume func([]SiteMigrationManifestEntry) error) error {
+		if err := consume(files[:1]); err != nil {
+			return err
+		}
+		return consume(files[1:])
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM site_migration_artifacts WHERE migration_site_id='migration_0000001' AND artifact_type='file'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != len(files) {
+		t.Fatalf("manifest artifacts=%d, want %d", count, len(files))
+	}
+}
+
+func TestSiteMigrationTargetReceiverRebuildsManifestAfterCleanupFailure(t *testing.T) {
+	receiver, _ := setupMigrationTargetReceiverTest(t)
+	databaseArtifact := SiteMigrationManifestEntry{RelativePath: siteMigrationDatabaseArtifactName, EntryType: "file", Mode: 0600, Size: 1, SHA256: strings.Repeat("a", 64)}
+	files := []SiteMigrationManifestEntry{{RelativePath: "index.php", EntryType: "file", Mode: 0644, Size: 1, SHA256: strings.Repeat("b", 64)}}
+	removeCalls := 0
+	receiver.removeAll = func(path string) error {
+		removeCalls++
+		if removeCalls == 1 {
+			return errors.New("injected stale manifest cleanup failure")
+		}
+		return os.RemoveAll(path)
+	}
+	err := receiver.PrepareManifest(context.Background(), "migration_0000001", databaseArtifact, func(consume func([]SiteMigrationManifestEntry) error) error {
+		if err := consume(files); err != nil {
+			return err
+		}
+		return errors.New("injected manifest page failure")
+	})
+	if err == nil {
+		t.Fatal("manifest failure unexpectedly succeeded")
+	}
+	receiver.removeAll = os.RemoveAll
+	if err := receiver.PrepareManifest(context.Background(), "migration_0000001", databaseArtifact, func(consume func([]SiteMigrationManifestEntry) error) error {
+		return consume(files)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var marker, artifacts int
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM site_migration_resources WHERE migration_site_id='migration_0000001' AND resource_type='target_manifest' AND status='created'`).Scan(&marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.GetDB().QueryRow(`SELECT COUNT(*) FROM site_migration_artifacts WHERE migration_site_id='migration_0000001'`).Scan(&artifacts); err != nil {
+		t.Fatal(err)
+	}
+	if marker != 1 || artifacts != 2 {
+		t.Fatalf("marker=%d artifacts=%d, want marker=1 artifacts=2", marker, artifacts)
+	}
+}
 
 func TestSiteMigrationTargetReceiverWritesAndFinalizesIsolatedArtifacts(t *testing.T) {
 	receiver, root := setupMigrationTargetReceiverTest(t)

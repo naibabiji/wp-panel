@@ -272,6 +272,37 @@ func TestSiteMigrationDeleteFailedTargetWithOnlyStagingFiles(t *testing.T) {
 	}
 }
 
+func TestSiteMigrationRuntimeCleanupMarksTargetStagingResourceRemoved(t *testing.T) {
+	planner := newSiteMigrationBatchPlannerTest(t, 1<<30)
+	result, err := planner.CreateTargetBatch(context.Background(), "peer_00000000001", "admin", []SiteMigrationBatchSitePlan{{Domain: "cleanup.example.com", SiteType: "php", FileBytes: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID := result.Sites[0].ID
+	stagingRoot := t.TempDir()
+	taskRoot := filepath.Join(stagingRoot, taskID)
+	if err := os.MkdirAll(taskRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := planner.db.Exec(`INSERT INTO site_migration_resources(migration_site_id,resource_type,identifier,ownership_tag,status) VALUES (?,'target_staging_root',?,?,'created')`, taskID, taskRoot, taskID); err != nil {
+		t.Fatal(err)
+	}
+	control := &SiteMigrationControlService{db: planner.db, stagingRoot: stagingRoot}
+	if err := control.removeTaskRuntimeFiles("target", taskID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(taskRoot); !os.IsNotExist(err) {
+		t.Fatalf("target staging root remains after runtime cleanup: %v", err)
+	}
+	var status string
+	if err := planner.db.QueryRow(`SELECT status FROM site_migration_resources WHERE migration_site_id=? AND resource_type='target_staging_root'`, taskID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "removed" {
+		t.Fatalf("target staging resource status=%q, want removed", status)
+	}
+}
+
 func TestSiteMigrationDeleteTargetWithRuntimeIntentRequiresRollback(t *testing.T) {
 	planner := newSiteMigrationBatchPlannerTest(t, 1<<30)
 	result, err := planner.CreateTargetBatch(context.Background(), "peer_00000000001", "admin", []SiteMigrationBatchSitePlan{{Domain: "runtime.example.com", SiteType: "php", FileBytes: 1}})
@@ -412,6 +443,30 @@ func TestSiteMigrationTargetStatusesArePeerScopedAndComplete(t *testing.T) {
 	}
 }
 
+func TestDeleteTargetTaskCleansPreparedManifestDuringTransfer(t *testing.T) {
+	receiver, root := setupMigrationTargetReceiverTest(t)
+	if _, err := receiver.db.Exec(`INSERT INTO site_migration_resources(migration_site_id,resource_type,identifier,ownership_tag,status,created_at,updated_at) VALUES ('migration_0000001','target_manifest',?,?, 'created',?,?)`, filepath.Join(root, "migration_0000001"), "migration_0000001", freezerTestTime(), freezerTestTime()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "migration_0000001"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	control := &SiteMigrationControlService{db: receiver.db, stagingRoot: root}
+	if err := control.DeleteTargetTask(context.Background(), "migration_0000001"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "migration_0000001")); !os.IsNotExist(err) {
+		t.Fatalf("target staging remains: %v", err)
+	}
+	var remaining int
+	if err := receiver.db.QueryRow(`SELECT COUNT(*) FROM site_migration_resources WHERE migration_site_id='migration_0000001' AND resource_type IN ('target_staging_root','target_manifest') AND status!='removed'`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("remaining target resources=%d, want 0", remaining)
+	}
+}
+
 func TestSiteMigrationTaskStatusKeepsLocalSourceFailureUntilPrepared(t *testing.T) {
 	localUpdated := time.Unix(100, 0).UTC()
 	remoteUpdated := time.Unix(200, 0).UTC()
@@ -424,8 +479,9 @@ func TestSiteMigrationTaskStatusKeepsLocalSourceFailureUntilPrepared(t *testing.
 
 	task.Status, task.Stage, task.ErrorCode = "awaiting_cutover", "transferring_database", ""
 	remote.Status, remote.Stage, remote.ErrorCode, remote.TransferReceivedBytes, remote.TransferExtracting = "failed_retryable", "publishing", "database_import_failed", 1234, true
+	remote.PublishStep, remote.PublishCompleted, remote.PublishTotal = "file_publish", 1, 2
 	mergeSiteMigrationRemoteTargetStatus(&task, remote)
-	if task.Status != remote.Status || task.Stage != remote.Stage || task.ErrorCode != remote.ErrorCode || task.TransferReceivedBytes != 1234 || !task.TransferExtracting || !task.UpdatedAt.Equal(remoteUpdated) {
+	if task.Status != remote.Status || task.Stage != remote.Stage || task.ErrorCode != remote.ErrorCode || task.TransferReceivedBytes != 1234 || !task.TransferExtracting || task.PublishStep != "file_publish" || task.PublishCompleted != 1 || task.PublishTotal != 2 || !task.UpdatedAt.Equal(remoteUpdated) {
 		t.Fatalf("prepared source did not expose target state: %+v", task)
 	}
 
