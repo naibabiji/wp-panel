@@ -85,8 +85,13 @@ func TestSiteAlertEmailLimit(t *testing.T) {
 		shouldSendAlertEmail("alert_site", 3, true) {
 		t.Fatal("site alert email should be limited to three sends per incident")
 	}
-	if !shouldSendAlertEmail("alert_ssl", 99, true) {
-		t.Fatal("other alert types should not use the site alert email limit")
+	if !shouldSendAlertEmail("alert_ssl", 0, true) ||
+		!shouldSendAlertEmail("alert_ssl", 2, true) ||
+		shouldSendAlertEmail("alert_ssl", 3, true) {
+		t.Fatal("SSL alert email should be limited to three sends per incident")
+	}
+	if !shouldSendAlertEmail("alert_backup", 99, true) {
+		t.Fatal("unlimited alert types should not use the per-incident email limit")
 	}
 	if shouldSendAlertEmail("alert_site", 0, false) {
 		t.Fatal("site alert email should require configured SMTP")

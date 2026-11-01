@@ -21,12 +21,55 @@ import (
 
 var errScheduledWorkNotAllowed = errors.New("网站当前不允许运行自动任务")
 
+const fileBackupTarOutputLimit = 64 * 1024
+
 var (
 	fileBackupLockWait         = 5 * time.Second
 	fileBackupLockTimeout      = 2 * time.Hour
 	fileBackupLockFileName     = "file-backup.lock"
 	fileBackupAfterInitialGate = func() {}
+	fileBackupTarRetryDelays   = []time.Duration{3 * time.Second, 10 * time.Second}
+	runFileBackupTar           = func(args []string) ([]byte, error) {
+		return runFileBackupTarCommand(args)
+	}
 )
+
+type cappedFileBackupOutput struct {
+	buffer    bytes.Buffer
+	truncated bool
+}
+
+func (o *cappedFileBackupOutput) Write(p []byte) (int, error) {
+	remaining := fileBackupTarOutputLimit - o.buffer.Len()
+	if remaining > 0 {
+		if len(p) > remaining {
+			_, _ = o.buffer.Write(p[:remaining])
+			o.truncated = true
+		} else {
+			_, _ = o.buffer.Write(p)
+		}
+	} else if len(p) > 0 {
+		o.truncated = true
+	}
+	return len(p), nil
+}
+
+func (o *cappedFileBackupOutput) Bytes() []byte {
+	output := append([]byte(nil), o.buffer.Bytes()...)
+	if o.truncated {
+		output = append(output, []byte("\n[tar 诊断输出已截断]")...)
+	}
+	return output
+}
+
+func runFileBackupTarCommand(args []string) ([]byte, error) {
+	cmd := exec.Command("tar", args...)
+	var output cappedFileBackupOutput
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	err := cmd.Run()
+	return output.Bytes(), err
+}
 
 type fileBackupLock struct {
 	file *os.File
@@ -189,6 +232,7 @@ func executeFileBackup(siteID int, mode string, keepCount int, scheduled bool) (
 
 	tarExcludes := []string{
 		"--exclude=wp-content/cache",
+		"--exclude=wp-content/litespeed",
 		"--exclude=wp-content/upgrade",
 		"--exclude=wp-content/debug.log",
 		"--exclude=*.tmp",
@@ -196,28 +240,24 @@ func executeFileBackup(siteID int, mode string, keepCount int, scheduled bool) (
 		"--exclude=*.backup",
 		"--exclude=*.swp",
 		"--exclude=wp-content/updraft",
+		"--exclude=wp-content/wflogs",
+		"--exclude=wp-content/ithemes-security/logs",
+		"--exclude=wp-content/aiowps_backups",
 		"--exclude=wp-content/ai1wm-backups",
 		"--exclude=wp-content/backups-dup-lite",
 		"--exclude=wp-content/backups-dup-pro",
 		"--exclude=wp-content/wpvivid_backups",
+		"--exclude=wp-content/wpvividbackups",
 		"--exclude=wp-content/backups",
+		"--exclude=wp-content/backup",
 		"--exclude=wp-content/backup-db",
 	}
 
 	if isFull {
 		tarName = fmt.Sprintf("file_full_%s.tar.gz", ts)
 		fullPath = filepath.Join(backupDir, tarName)
-		args := []string{"-czf", fullPath, "--warning=no-file-changed"}
-		args = append(args, tarExcludes...)
-		args = append(args, "-C", filepath.Dir(webRoot), filepath.Base(webRoot))
-		cmd := exec.Command("tar", args...)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			_ = os.Remove(fullPath)
-			if len(out) == 0 {
-				return "", fmt.Errorf("全量备份失败: %v", err)
-			}
-			return "", fmt.Errorf("全量备份失败: %s", string(out))
+		if err := createFullFileArchive(fullPath, webRoot, tarExcludes); err != nil {
+			return "", err
 		}
 	} else {
 		tarName = fmt.Sprintf("file_inc_%s.tar.gz", ts)
@@ -277,6 +317,44 @@ func executeFileBackup(siteID int, mode string, keepCount int, scheduled bool) (
 	}
 	appendCronLog(logMsg)
 	return logMsg, nil
+}
+
+func createFullFileArchive(target, webRoot string, excludes []string) error {
+	args := []string{"-czf", target}
+	args = append(args, excludes...)
+	args = append(args, "-C", filepath.Dir(webRoot), filepath.Base(webRoot))
+
+	for attempt := 0; ; attempt++ {
+		out, err := runFileBackupTar(args)
+		if err == nil {
+			return nil
+		}
+		_ = os.Remove(target)
+
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			if attempt < len(fileBackupTarRetryDelays) {
+				time.Sleep(fileBackupTarRetryDelays[attempt])
+				continue
+			}
+			return fmt.Errorf("全量备份失败：归档期间文件发生变化，已尝试 %d 次%s", len(fileBackupTarRetryDelays)+1, formatTarOutput(out))
+		}
+		return fmt.Errorf("全量备份失败：%s", formatTarOutput(out, err))
+	}
+}
+
+func formatTarOutput(out []byte, fallback ...error) string {
+	message := strings.TrimSpace(string(out))
+	if message == "" && len(fallback) > 0 {
+		message = fallback[0].Error()
+	}
+	if message == "" {
+		return ""
+	}
+	const maxDiagnosticBytes = 4096
+	if len(message) > maxDiagnosticBytes {
+		message = message[:maxDiagnosticBytes] + "…"
+	}
+	return ": " + message
 }
 
 func createIncrementalFileArchive(uploadsDir, stampFile, target string) (bool, error) {

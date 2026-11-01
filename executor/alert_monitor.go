@@ -33,10 +33,14 @@ type alertRule struct {
 	runtimeStateDirty bool
 }
 
-const siteAlertEmailLimit = 3
+const alertEmailLimit = 3
+
+func usesAlertEmailLimit(key string) bool {
+	return key == "alert_site" || key == "alert_ssl"
+}
 
 func shouldSendAlertEmail(key string, emailAlertCount int, hasSMTP bool) bool {
-	return hasSMTP && (key != "alert_site" || emailAlertCount < siteAlertEmailLimit)
+	return hasSMTP && (!usesAlertEmailLimit(key) || emailAlertCount < alertEmailLimit)
 }
 
 type alertManager struct {
@@ -170,7 +174,7 @@ func (m *alertManager) runChecks() {
 			r.lastAlertMsg = msg
 			emailAllowed := shouldSendAlertEmail(r.key, r.emailAlertCount, hasSMTP)
 			sendAlertNotificationWithChannelsLimited(r.key, msg, false, hasSMTP, hasWebhook, emailAllowed)
-			if r.key == "alert_site" && emailAllowed {
+			if usesAlertEmailLimit(r.key) && emailAllowed {
 				r.emailAlertCount++
 			}
 			persistAlertRuntimeState(r)
@@ -199,7 +203,7 @@ func (m *alertManager) runChecks() {
 				r.lastFired = time.Now()
 				emailAllowed := shouldSendAlertEmail(r.key, r.emailAlertCount, hasSMTP)
 				sendAlertNotificationWithChannelsLimited(r.key, msg, true, hasSMTP, hasWebhook, emailAllowed)
-				if r.key == "alert_site" && emailAllowed {
+				if usesAlertEmailLimit(r.key) && emailAllowed {
 					r.emailAlertCount++
 				}
 				persistAlertRuntimeState(r)

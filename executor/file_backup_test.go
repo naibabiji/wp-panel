@@ -3,8 +3,10 @@ package executor
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -341,5 +343,62 @@ func TestCreateAndVerifyIncrementalFileArchive(t *testing.T) {
 	}
 	if err := verifyFileBackupArchive(target); err == nil {
 		t.Fatal("corrupt archive verification error = nil")
+	}
+}
+
+func TestCreateFullFileArchiveRetriesChangedFiles(t *testing.T) {
+	oldRun := runFileBackupTar
+	oldDelays := fileBackupTarRetryDelays
+	t.Cleanup(func() {
+		runFileBackupTar = oldRun
+		fileBackupTarRetryDelays = oldDelays
+	})
+	fileBackupTarRetryDelays = []time.Duration{0}
+	attempts := 0
+	runFileBackupTar = func(args []string) ([]byte, error) {
+		attempts++
+		if attempts == 1 {
+			cmd := exec.Command("sh", "-c", "echo changed >&2; exit 1")
+			out, err := cmd.CombinedOutput()
+			return out, err
+		}
+		return nil, nil
+	}
+
+	if err := createFullFileArchive(filepath.Join(t.TempDir(), "full.tar.gz"), "/srv/example.com", nil); err != nil {
+		t.Fatalf("createFullFileArchive() error = %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("tar attempts = %d, want 2", attempts)
+	}
+}
+
+func TestCreateFullFileArchiveReportsExhaustedChangedFiles(t *testing.T) {
+	oldRun := runFileBackupTar
+	oldDelays := fileBackupTarRetryDelays
+	t.Cleanup(func() {
+		runFileBackupTar = oldRun
+		fileBackupTarRetryDelays = oldDelays
+	})
+	fileBackupTarRetryDelays = []time.Duration{0}
+	runFileBackupTar = func(args []string) ([]byte, error) {
+		cmd := exec.Command("sh", "-c", "echo changed >&2; exit 1")
+		return cmd.CombinedOutput()
+	}
+
+	err := createFullFileArchive(filepath.Join(t.TempDir(), "full.tar.gz"), "/srv/example.com", nil)
+	if err == nil || !strings.Contains(err.Error(), "归档期间文件发生变化") || !strings.Contains(err.Error(), "changed") {
+		t.Fatalf("createFullFileArchive() error = %v, want changed-file diagnostic", err)
+	}
+}
+
+func TestCappedFileBackupOutputLimitsDiagnostics(t *testing.T) {
+	var output cappedFileBackupOutput
+	input := strings.Repeat("x", fileBackupTarOutputLimit+1)
+	if n, err := output.Write([]byte(input)); err != nil || n != len(input) {
+		t.Fatalf("Write() = (%d, %v), want (%d, nil)", n, err, len(input))
+	}
+	if len(output.Bytes()) > fileBackupTarOutputLimit+len("\n[tar 诊断输出已截断]") || !strings.Contains(string(output.Bytes()), "诊断输出已截断") {
+		t.Fatalf("capped output length=%d, want bounded output with truncation marker", len(output.Bytes()))
 	}
 }
