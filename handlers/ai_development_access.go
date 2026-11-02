@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -66,6 +67,7 @@ func (h *AIDevelopmentAccessHandler) Enable(c *gin.Context) {
 		InstallWPCLI  bool   `json:"install_wp_cli"`
 		InstallNodeJS bool   `json:"install_nodejs"`
 		Force         bool   `json:"force"`
+		RepairSSH     bool   `json:"repair_ssh_public_key_authentication"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.ConfirmDomain) != site.Domain {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_development.confirm_domain_invalid")))
@@ -73,6 +75,20 @@ func (h *AIDevelopmentAccessHandler) Enable(c *gin.Context) {
 	}
 	if site.FileLockEnabled {
 		c.JSON(http.StatusLocked, models.ErrorResponse(i18n.TE(c.Request, "ai_development.file_lock_enabled")))
+		return
+	}
+	sshRepaired, err := executor.EnsureAIDevelopmentSSHResult(c.Request.Context(), site.SystemUser, site.Domain, req.RepairSSH)
+	if err != nil {
+		log.Printf("检查 AI SSH 公钥认证失败 site=%d repair=%v: %v", site.ID, req.RepairSSH, err)
+		if errors.Is(err, executor.ErrAIDevelopmentSSHPublicKeyAuthDisabled) && !req.RepairSSH {
+			respondAIDevelopmentSSHRepairRequired(c)
+			return
+		}
+		if errors.Is(err, executor.ErrAIDevelopmentSSHEnvironment) {
+			c.JSON(http.StatusConflict, models.ErrorResponseWithCode("ai_development_ssh_environment_unavailable", i18n.TE(c.Request, "ai_development.ssh_environment_unavailable")))
+		} else {
+			c.JSON(http.StatusConflict, models.ErrorResponseWithCode("ai_development_ssh_repair_failed", i18n.TE(c.Request, "ai_development.ssh_repair_failed")))
+		}
 		return
 	}
 	knownHosts, err := executor.ReadSSHHostKnownHosts()
@@ -106,13 +122,24 @@ func (h *AIDevelopmentAccessHandler) Enable(c *gin.Context) {
 		return
 	}
 	service := executor.NewAIDevelopmentAccessService(database.GetDB())
-	if err := service.Enable(c.Request.Context(), websiteAIDevelopmentSite(site), credential.PublicKey, credential.Fingerprint, sessionUsername(c), req.Force); err != nil {
+	if err := service.Enable(c.Request.Context(), websiteAIDevelopmentSite(site), credential.PublicKey, credential.Fingerprint, sessionUsername(c), req.Force, req.RepairSSH, true); err != nil {
 		log.Printf("开启 AI 开发访问失败 site=%d force=%v: %v", site.ID, req.Force, err)
 		if !req.Force && errors.Is(err, executor.ErrAIDevelopmentSiteBusy) {
+			c.JSON(http.StatusConflict, models.ErrorResponseWithCode(
+				"ai_development_site_busy",
+				i18n.TE(c.Request, "ai_development.enable_failed_busy"),
+			))
+			return
+		}
+		if errors.Is(err, executor.ErrAIDevelopmentSSHPublicKeyAuthDisabled) && !req.RepairSSH {
+			respondAIDevelopmentSSHRepairRequired(c)
+			return
+		}
+		if sshRepaired {
 			c.JSON(http.StatusConflict, models.ApiResponse{
 				Success: false,
-				Message: i18n.TE(c.Request, "ai_development.enable_failed_busy"),
-				Data:    gin.H{"code": "ai_development_site_busy"},
+				Message: i18n.TE(c.Request, "ai_development.enable_failed_after_ssh_repair"),
+				Data:    gin.H{"ssh_repaired": true},
 			})
 			return
 		}
@@ -129,9 +156,35 @@ func (h *AIDevelopmentAccessHandler) Enable(c *gin.Context) {
 	writeAIDevelopmentPackage(c, site.Domain, packageData)
 }
 
+func respondAIDevelopmentSSHRepairRequired(c *gin.Context) {
+	c.JSON(http.StatusConflict, models.ErrorResponseWithCode(
+		"ai_development_ssh_pubkey_repair_required",
+		i18n.TE(c.Request, "ai_development.ssh_pubkey_repair_required"),
+	))
+}
+
 func (h *AIDevelopmentAccessHandler) Rotate(c *gin.Context) {
 	_, site, ok := aiDevelopmentSiteFromRequest(c)
 	if !ok {
+		return
+	}
+	var req struct {
+		RepairSSH bool `json:"repair_ssh_public_key_authentication"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "common.invalid_params")))
+		return
+	}
+	if err := executor.EnsureAIDevelopmentSSH(c.Request.Context(), site.SystemUser, site.Domain, req.RepairSSH); err != nil {
+		if errors.Is(err, executor.ErrAIDevelopmentSSHPublicKeyAuthDisabled) && !req.RepairSSH {
+			respondAIDevelopmentSSHRepairRequired(c)
+			return
+		}
+		if errors.Is(err, executor.ErrAIDevelopmentSSHEnvironment) {
+			c.JSON(http.StatusConflict, models.ErrorResponseWithCode("ai_development_ssh_environment_unavailable", i18n.TE(c.Request, "ai_development.ssh_environment_unavailable")))
+		} else {
+			c.JSON(http.StatusConflict, models.ErrorResponseWithCode("ai_development_ssh_repair_failed", i18n.TE(c.Request, "ai_development.ssh_repair_failed")))
+		}
 		return
 	}
 	knownHosts, err := executor.ReadSSHHostKnownHosts()

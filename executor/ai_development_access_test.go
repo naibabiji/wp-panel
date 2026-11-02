@@ -20,6 +20,7 @@ type fakeAIDevelopmentSystem struct {
 	passwd       aiDevelopmentPasswd
 	calls        []string
 	errAt        string
+	ensureErr    error
 	onCall       func(string)
 	configureErr func(force bool) error
 }
@@ -37,6 +38,9 @@ func (f *fakeAIDevelopmentSystem) record(name string) error {
 
 func (f *fakeAIDevelopmentSystem) LookupPasswd(context.Context, string) (aiDevelopmentPasswd, error) {
 	return f.passwd, f.record("lookup")
+}
+func (f *fakeAIDevelopmentSystem) EnsureSSH(context.Context, string, string, bool) error {
+	return f.ensureErr
 }
 func (f *fakeAIDevelopmentSystem) Configure(_ context.Context, _ AIDevelopmentSite, _, _ string, force bool) error {
 	name := "configure"
@@ -254,7 +258,7 @@ func TestAIDevelopmentEnableSurfacesBusyErrorAndHonorsForce(t *testing.T) {
 			},
 		}
 		service := &AIDevelopmentAccessService{db: db, system: fake, verify: noopVerify}
-		err := service.Enable(context.Background(), site, "ssh-ed25519 key", "fingerprint", "tester", false)
+		err := service.Enable(context.Background(), site, "ssh-ed25519 key", "fingerprint", "tester", false, false, false)
 		if !errors.Is(err, ErrAIDevelopmentSiteBusy) {
 			t.Fatalf("Enable() err=%v, want ErrAIDevelopmentSiteBusy", err)
 		}
@@ -269,13 +273,36 @@ func TestAIDevelopmentEnableSurfacesBusyErrorAndHonorsForce(t *testing.T) {
 			passwd: aiDevelopmentPasswd{Home: "/nonexistent", Shell: "/usr/sbin/nologin", UID: 1, GID: 1},
 		}
 		service := &AIDevelopmentAccessService{db: db, system: fake, verify: noopVerify}
-		if err := service.Enable(context.Background(), site, "ssh-ed25519 key", "fingerprint", "tester", true); err != nil {
+		if err := service.Enable(context.Background(), site, "ssh-ed25519 key", "fingerprint", "tester", true, false, false); err != nil {
 			t.Fatalf("Enable(force=true) failed: %v", err)
 		}
 		if want := []string{"lookup", "configure-force"}; !reflect.DeepEqual(fake.calls, want) {
 			t.Fatalf("calls=%v want=%v", fake.calls, want)
 		}
 	})
+}
+
+func TestAIDevelopmentEnableStopsBeforeAuthorizationWhenSSHNeedsRepair(t *testing.T) {
+	db := openAIDevelopmentTestDB(t)
+	fake := &fakeAIDevelopmentSystem{
+		passwd:    aiDevelopmentPasswd{Home: "/nonexistent", Shell: "/usr/sbin/nologin", UID: 1, GID: 1},
+		ensureErr: ErrAIDevelopmentSSHPublicKeyAuthDisabled,
+	}
+	service := &AIDevelopmentAccessService{db: db, system: fake, verify: func(context.Context, AIDevelopmentSite) error { return nil }}
+	site := AIDevelopmentSite{ID: 9, Domain: "example.com", SystemUser: "wp_example", WebRoot: t.TempDir(), DBName: "db_example", DBUser: "db_example"}
+	if err := service.Enable(context.Background(), site, "ssh-ed25519 key", "fingerprint", "tester", false, false, false); !errors.Is(err, ErrAIDevelopmentSSHPublicKeyAuthDisabled) {
+		t.Fatalf("Enable() error=%v, want SSH repair error", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM website_ai_development_access`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("authorization rows=%d, want 0", count)
+	}
+	if !reflect.DeepEqual(fake.calls, []string{"lookup"}) {
+		t.Fatalf("system calls=%v, want lookup only", fake.calls)
+	}
 }
 
 func TestAIDevelopmentEnableAndRotateRejectActiveMigration(t *testing.T) {
@@ -298,7 +325,7 @@ func TestAIDevelopmentEnableAndRotateRejectActiveMigration(t *testing.T) {
 			site := AIDevelopmentSite{ID: 7, Domain: "example.com", SystemUser: "wp_example", WebRoot: t.TempDir(), DBName: "db_example", DBUser: "db_example"}
 			var err error
 			if operation == "enable" {
-				err = service.Enable(context.Background(), site, "ssh-ed25519 key", "fingerprint", "tester", false)
+				err = service.Enable(context.Background(), site, "ssh-ed25519 key", "fingerprint", "tester", false, false, false)
 			} else {
 				err = service.Rotate(context.Background(), site, "ssh-ed25519 key", "fingerprint")
 			}

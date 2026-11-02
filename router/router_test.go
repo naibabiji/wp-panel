@@ -478,8 +478,8 @@ func TestRenderedPageScriptsParse(t *testing.T) {
 
 func TestAIDevelopmentForceRetryStartsAfterOuterBusyCleanup(t *testing.T) {
 	page := string(renderPage(t, "website_detail.html", "websites_detail_content"))
-	start := strings.Index(page, "async enableAIDevelopment(force)")
-	end := strings.Index(page[start:], "async downloadAIDevelopmentCredential()")
+	start := strings.Index(page, "async enableAIDevelopment(force, skipEnableConfirm = false)")
+	end := strings.Index(page[start:], "async downloadAIDevelopmentCredential(repairSSH = false)")
 	if start < 0 || end < 0 {
 		t.Fatal("AI development enable function missing")
 	}
@@ -488,6 +488,9 @@ func TestAIDevelopmentForceRetryStartsAfterOuterBusyCleanup(t *testing.T) {
 	retry := strings.Index(body, "if (retryForce) return this.enableAIDevelopment(true)")
 	if cleanup < 0 || retry < cleanup {
 		t.Fatal("forced retry can be cleared by the outer finally")
+	}
+	if !strings.Contains(body, "e.errorCode === 'ai_development_ssh_pubkey_repair_required'") || strings.Contains(body, "e.code === 'ai_development_ssh_pubkey_repair_required'") {
+		t.Fatal("AI SSH repair confirmation must use the normalized API errorCode")
 	}
 }
 

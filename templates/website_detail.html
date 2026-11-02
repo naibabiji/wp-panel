@@ -836,7 +836,7 @@ function websiteDetail() {
         aiDevelopmentModalOpen: false,
         aiCredentialPackage: null,
         aiCredentialDownloaded: false,
-        aiAccess: { loading: true, enabled: false, status: 'disabled', busy: false, stage: '', installWPCLI: true, installNodeJS: false, confirmDomain: '', tools: [] },
+        aiAccess: { loading: true, enabled: false, status: 'disabled', busy: false, stage: '', installWPCLI: true, installNodeJS: false, repairSSH: false, confirmDomain: '', tools: [] },
         init() {
             this.fetchDetail();
         },
@@ -902,7 +902,8 @@ function websiteDetail() {
                         loading: false,
                         busy: false,
                         installWPCLI: r.data.status === 'disabled' ? !wpCLIInstalled : false,
-                        installNodeJS: false
+                        installNodeJS: false,
+                        repairSSH: false
                     };
                 }
             } catch(e) { this.aiAccess.loading = false; }
@@ -953,9 +954,9 @@ function websiteDetail() {
             if (!response.ok) {
                 let message = t('common.operation_failed');
                 let code = null;
-                try { const data = await response.json(); message = data.message || message; code = data.data?.code || null; } catch(e) {}
+                try { const data = await response.json(); message = data.message || message; code = data.error_code || data.data?.code || null; } catch(e) {}
                 const err = new Error(message);
-                err.code = code;
+                err.errorCode = code;
                 throw err;
             }
             return await response.blob();
@@ -970,9 +971,9 @@ function websiteDetail() {
             link.remove();
             URL.revokeObjectURL(url);
         },
-        async enableAIDevelopment(force) {
+        async enableAIDevelopment(force, skipEnableConfirm = false) {
             if (this.aiAccess.confirmDomain !== this.site.domain) return;
-            if (!force && !await confirmModal(t('ai_development.enable_confirm', { domain: this.site.domain }))) return;
+            if (!force && !skipEnableConfirm && !await confirmModal(t('ai_development.enable_confirm', { domain: this.site.domain }))) return;
             this.aiAccess.busy = true;
             let retryForce = false;
             try {
@@ -989,18 +990,29 @@ function websiteDetail() {
                     confirm_domain: this.aiAccess.confirmDomain,
                     install_wp_cli: false,
                     install_nodejs: false,
-                    force: !!force
+                    force: !!force,
+                    repair_ssh_public_key_authentication: !!this.aiAccess.repairSSH
                 });
                 this.aiCredentialDownloaded = false;
                 showToast(t('ai_development.enabled_ready_download'), 'success');
                 await this.fetchAIDevelopment();
             } catch(e) {
-                if (!force && e.code === 'ai_development_site_busy') {
+                if (!force && e.errorCode === 'ai_development_ssh_pubkey_repair_required') {
+                    this.aiAccess.busy = false;
+                    this.aiAccess.stage = '';
+                    const repair = await confirmModal(t('ai_development.ssh_pubkey_repair_confirm'));
+                    if (repair) {
+                        this.aiAccess.repairSSH = true;
+                        return this.enableAIDevelopment(false, true);
+                    }
+                    return;
+                }
+                if (!force && e.errorCode === 'ai_development_site_busy') {
                     this.aiAccess.busy = false;
                     this.aiAccess.stage = '';
                     retryForce = await confirmModal(t('ai_development.enable_busy_force_confirm'));
                 } else {
-                    showToast(e.message, 'error');
+                    showToast(e.data?.ssh_repaired ? t('ai_development.enable_failed_after_ssh_repair') : e.message, 'error');
                     await this.fetchAIDevelopment();
                 }
             } finally {
@@ -1009,7 +1021,7 @@ function websiteDetail() {
             }
             if (retryForce) return this.enableAIDevelopment(true);
         },
-        async downloadAIDevelopmentCredential() {
+        async downloadAIDevelopmentCredential(repairSSH = false) {
             if (this.aiCredentialPackage && !this.aiCredentialDownloaded) {
                 this.saveAIDevelopmentPackage(this.aiCredentialPackage);
                 this.aiCredentialPackage = null;
@@ -1017,17 +1029,27 @@ function websiteDetail() {
                 showToast(t('ai_development.package_downloaded'), 'success');
                 return;
             }
-            if (!await confirmModal(t('ai_development.redownload_rotates_confirm'))) return;
+            if (!repairSSH && !await confirmModal(t('ai_development.redownload_rotates_confirm'))) return;
             this.aiAccess.busy = true;
             this.aiAccess.stage = t('ai_development.stage_rotating_package');
             try {
-                this.aiCredentialPackage = await this.requestAIDevelopmentPackage('/websites/' + this.site.id + '/ai-development-access/rotate', {});
+                this.aiCredentialPackage = await this.requestAIDevelopmentPackage('/websites/' + this.site.id + '/ai-development-access/rotate', { repair_ssh_public_key_authentication: !!repairSSH });
                 this.saveAIDevelopmentPackage(this.aiCredentialPackage);
                 this.aiCredentialPackage = null;
                 this.aiCredentialDownloaded = true;
                 showToast(t('ai_development.rotated_downloaded'), 'success');
                 await this.fetchAIDevelopment();
-            } catch(e) { showToast(e.message, 'error'); }
+            } catch(e) {
+                if (!repairSSH && e.errorCode === 'ai_development_ssh_pubkey_repair_required') {
+                    this.aiAccess.busy = false;
+                    this.aiAccess.stage = '';
+                    if (await confirmModal(t('ai_development.ssh_pubkey_repair_rotate_confirm'))) {
+                        return this.downloadAIDevelopmentCredential(true);
+                    }
+                    return;
+                }
+                showToast(e.message, 'error');
+            }
             finally {
                 this.aiAccess.busy = false;
                 this.aiAccess.stage = '';
@@ -1049,7 +1071,7 @@ function websiteDetail() {
                 showToast(t('ai_development.disabled'), 'success');
                 this.aiCredentialPackage = null;
                 this.aiCredentialDownloaded = false;
-                this.aiAccess = { loading: false, enabled: false, status: 'disabled', busy: false, stage: '', installWPCLI: true, installNodeJS: false, confirmDomain: '', tools: [] };
+                this.aiAccess = { loading: false, enabled: false, status: 'disabled', busy: false, stage: '', installWPCLI: true, installNodeJS: false, repairSSH: false, confirmDomain: '', tools: [] };
             } catch(e) { showToast(e.message, 'error'); }
             finally { this.aiAccess.busy = false; }
         },

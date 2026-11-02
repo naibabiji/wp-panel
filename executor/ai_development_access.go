@@ -38,6 +38,10 @@ var aiDevelopmentSessionPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 // caller may retry with force to terminate those workers before retrying.
 var ErrAIDevelopmentSiteBusy = errors.New("site has active PHP processes")
 
+// ErrAIDevelopmentSSHPublicKeyAuthDisabled asks the UI to obtain an explicit
+// administrator confirmation before changing the server-wide SSH policy.
+var ErrAIDevelopmentSSHPublicKeyAuthDisabled = errors.New("SSH public-key authentication is disabled")
+
 type AIDevelopmentSite struct {
 	ID            int64
 	Domain        string
@@ -59,6 +63,7 @@ type aiDevelopmentPasswd struct {
 
 type aiDevelopmentSystem interface {
 	LookupPasswd(context.Context, string) (aiDevelopmentPasswd, error)
+	EnsureSSH(context.Context, string, string, bool) error
 	Configure(ctx context.Context, site AIDevelopmentSite, publicKey, fingerprint string, force bool) error
 	UpdateHandoff(context.Context, AIDevelopmentSite, string) error
 	RevokeKey(context.Context, string) error
@@ -157,7 +162,7 @@ func (s *AIDevelopmentAccessService) RefreshEnabledHandoffs(ctx context.Context)
 	return errors.Join(refreshErrors...)
 }
 
-func (s *AIDevelopmentAccessService) Enable(ctx context.Context, site AIDevelopmentSite, publicKey, fingerprint, requestedBy string, force bool) error {
+func (s *AIDevelopmentAccessService) Enable(ctx context.Context, site AIDevelopmentSite, publicKey, fingerprint, requestedBy string, force, repairSSH, sshPreflighted bool) error {
 	if !TryAcquireSiteOpLock(int(site.ID), "ai_development") {
 		return ErrMaintenanceBusy
 	}
@@ -187,6 +192,11 @@ func (s *AIDevelopmentAccessService) Enable(ctx context.Context, site AIDevelopm
 	}
 	if err := s.verify(ctx, site); err != nil {
 		return err
+	}
+	if !sshPreflighted {
+		if err := s.system.EnsureSSH(ctx, site.SystemUser, site.Domain, repairSSH); err != nil {
+			return err
+		}
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO website_ai_development_access
 		(site_id,status,system_user,web_root,original_shell,original_home,public_key,key_fingerprint,requested_by)

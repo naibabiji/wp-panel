@@ -11,9 +11,27 @@ import (
 	"strings"
 	"testing"
 
+	"encoding/json"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/ssh"
 )
+
+func TestAIDevelopmentSSHRepairResponseUsesTopLevelErrorCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	respondAIDevelopmentSSHRepairRequired(ctx)
+	var response struct {
+		Success   bool   `json:"success"`
+		ErrorCode string `json:"error_code"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != 409 || response.Success || response.ErrorCode != "ai_development_ssh_pubkey_repair_required" {
+		t.Fatalf("status=%d response=%+v body=%s", recorder.Code, response, recorder.Body.String())
+	}
+}
 
 func TestAIDevelopmentCredentialPackageUsesConfiguredPortAndPrivateMode(t *testing.T) {
 	credential, err := generateAIDevelopmentCredential()

@@ -138,14 +138,14 @@ function api(path, options = {}) {
                 console.error('API error:', resp.status, data);
                 const err = new Error(data.message || 'Request failed (' + resp.status + ')');
                 err.status = resp.status;
-				if (data.error_code) err.errorCode = data.error_code;
+				if (data.error_code || data.data?.code) err.errorCode = data.error_code || data.data.code;
                 if (data.conflicts) err.conflicts = data.conflicts;
                 if (data.data) err.data = data.data;
                 throw err;
             }
             if (!data.success) {
                 const err = new Error(data.message || t('common.operation_failed'));
-				if (data.error_code) err.errorCode = data.error_code;
+				if (data.error_code || data.data?.code) err.errorCode = data.error_code || data.data.code;
                 if (data.conflicts) err.conflicts = data.conflicts;
                 throw err;
             }
