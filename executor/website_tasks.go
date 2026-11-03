@@ -672,6 +672,11 @@ func executeDeleteSite(task *Task) TaskResult {
 	os.Remove(phpPoolPath)
 	os.Remove(enabledPath)
 	os.Remove(nginxConfPath)
+	customCleanupWarning := ""
+	if err := removeNginxCustomFiles(site.Domain); err != nil {
+		log.Printf("删除自定义 Nginx 配置警告 domain=%s: %v", site.Domain, err)
+		customCleanupWarning = "，但自定义 Nginx 配置清理失败，请检查旧域名配置文件"
+	}
 	for _, maintenancePath := range maintenancePaths {
 		os.Remove(maintenancePath)
 	}
@@ -691,7 +696,36 @@ func executeDeleteSite(task *Task) TaskResult {
 		}
 	}
 
-	return TaskResult{Success: true, Message: "网站 " + site.Domain + " 已删除" + dbCleanupWarning}
+	return TaskResult{Success: true, Message: "网站 " + site.Domain + " 已删除" + dbCleanupWarning + customCleanupWarning}
+}
+
+// removeNginxCustomFiles removes only the two panel-managed custom snippets
+// for a validated website domain. These files are domain-keyed resources and
+// must not survive site deletion to block a later site or domain rename.
+func removeNginxCustomFiles(domain string) error {
+	if !IsValidDomain(domain) {
+		return fmt.Errorf("无效的网站域名")
+	}
+	var errs []error
+	for _, suffix := range []string{".pre.conf", ".conf"} {
+		path := filepath.Join(nginxCustomDir, domain+suffix)
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", path, err))
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			errs = append(errs, fmt.Errorf("%s: 不是普通文件", path))
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", path, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func markWebsiteDeleting(db *sql.DB, siteID int) error {
@@ -1247,10 +1281,13 @@ func executeUpdateDomains(task *Task) TaskResult {
 			return taskFailure("检查原备份目录失败", err)
 		}
 		for i, oldPath := range oldCustomPaths {
+			newPath := newCustomPaths[i]
+			if _, err := os.Lstat(newPath); err == nil {
+				return taskFailure("主域名预检查失败", fmt.Errorf("新自定义 Nginx 文件已存在: %s", newPath))
+			} else if !os.IsNotExist(err) {
+				return taskFailure("主域名预检查失败", fmt.Errorf("检查新自定义 Nginx 文件失败: %w", err))
+			}
 			if _, err := os.Lstat(oldPath); err == nil {
-				if err := requireDomainTargetAvailable(newCustomPaths[i], "新自定义 Nginx 文件"); err != nil {
-					return taskFailure("主域名预检查失败", err)
-				}
 			} else if !os.IsNotExist(err) {
 				return taskFailure("检查原自定义 Nginx 文件失败", err)
 			}

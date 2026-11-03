@@ -119,8 +119,29 @@ func TestPrimaryDomainPreflightRejectsOccupiedTargetWithoutChanges(t *testing.T)
 	}
 }
 
+func TestPrimaryDomainPreflightRejectsOccupiedCustomNginxTargetWithoutChanges(t *testing.T) {
+	site, newDomain := setupPrimaryDomainTest(t)
+	target := filepath.Join(nginxCustomDir, newDomain+".pre.conf")
+	if err := os.WriteFile(target, []byte("unknown residue"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	result := runPrimaryDomainUpdate(site, newDomain)
+	if result.Success || !strings.Contains(result.Message, "新自定义 Nginx 文件") {
+		t.Fatalf("result=%+v", result)
+	}
+	if _, err := os.Stat(site.WebRoot); err != nil {
+		t.Fatalf("old web root changed: %v", err)
+	}
+	if content, err := os.ReadFile(target); err != nil || string(content) != "unknown residue" {
+		t.Fatalf("target custom file changed: content=%q err=%v", content, err)
+	}
+}
+
 func TestPrimaryDomainDatabaseFailureRestoresFilesystemAndConfig(t *testing.T) {
 	site, newDomain := setupPrimaryDomainTest(t)
+	if err := os.WriteFile(filepath.Join(nginxCustomDir, "old.example.com.pre.conf"), []byte("old pre"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	changeWebsitePrimaryDomain = func(int, string, *models.Website) error { return errors.New("database failed") }
 	result := runPrimaryDomainUpdate(site, newDomain)
 	if result.Success {
@@ -141,6 +162,9 @@ func TestPrimaryDomainDatabaseFailureRestoresFilesystemAndConfig(t *testing.T) {
 	}
 	if content, err := os.ReadFile(filepath.Join(nginxCustomDir, "old.example.com.conf")); err != nil || string(content) != "custom" {
 		t.Fatalf("old custom nginx not restored: content=%q err=%v", content, err)
+	}
+	if content, err := os.ReadFile(filepath.Join(nginxCustomDir, "old.example.com.pre.conf")); err != nil || string(content) != "old pre" {
+		t.Fatalf("old custom nginx pre not restored: content=%q err=%v", content, err)
 	}
 }
 
@@ -190,6 +214,9 @@ func TestPrimaryDomainReportsRollbackFailure(t *testing.T) {
 
 func TestPrimaryDomainSuccessPersistsAndVerifies(t *testing.T) {
 	site, newDomain := setupPrimaryDomainTest(t)
+	if err := os.WriteFile(filepath.Join(nginxCustomDir, "old.example.com.pre.conf"), []byte("custom pre"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	result := runPrimaryDomainUpdate(site, newDomain)
 	if !result.Success || site.Domain != newDomain {
 		t.Fatalf("result=%+v site=%+v", result, site)
@@ -206,6 +233,9 @@ func TestPrimaryDomainSuccessPersistsAndVerifies(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(nginxCustomDir, newDomain+".conf")); err != nil || string(data) != "custom" {
 		t.Fatalf("custom nginx not moved: data=%q err=%v", data, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(nginxCustomDir, newDomain+".pre.conf")); err != nil || string(data) != "custom pre" {
+		t.Fatalf("custom nginx pre not moved: data=%q err=%v", data, err)
 	}
 }
 

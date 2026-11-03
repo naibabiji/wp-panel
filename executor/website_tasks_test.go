@@ -377,6 +377,47 @@ func TestDeleteSiteWithEnabledFileBackupCronDoesNotDeadlockQueue(t *testing.T) {
 	}
 }
 
+func TestRemoveNginxCustomFilesRemovesBothManagedSnippets(t *testing.T) {
+	root := t.TempDir()
+	oldDir := nginxCustomDir
+	nginxCustomDir = root
+	t.Cleanup(func() { nginxCustomDir = oldDir })
+
+	for _, suffix := range []string{".pre.conf", ".conf"} {
+		if err := os.WriteFile(filepath.Join(root, "deleted.example.com"+suffix), []byte("managed"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := removeNginxCustomFiles("deleted.example.com"); err != nil {
+		t.Fatalf("removeNginxCustomFiles failed: %v", err)
+	}
+	for _, suffix := range []string{".pre.conf", ".conf"} {
+		if _, err := os.Stat(filepath.Join(root, "deleted.example.com"+suffix)); !os.IsNotExist(err) {
+			t.Fatalf("managed snippet %s still exists: %v", suffix, err)
+		}
+	}
+}
+
+func TestRemoveNginxCustomFilesRejectsInvalidDomain(t *testing.T) {
+	if err := removeNginxCustomFiles("../outside.example.com"); err == nil {
+		t.Fatal("invalid domain unexpectedly accepted")
+	}
+}
+
+func TestRemoveNginxCustomFilesReportsCleanupError(t *testing.T) {
+	root := t.TempDir()
+	oldDir := nginxCustomDir
+	nginxCustomDir = root
+	t.Cleanup(func() { nginxCustomDir = oldDir })
+
+	if err := os.Mkdir(filepath.Join(root, "deleted.example.com.conf"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeNginxCustomFiles("deleted.example.com"); err == nil {
+		t.Fatal("directory collision unexpectedly reported success")
+	}
+}
+
 func TestDeleteSiteRejectsActiveMigrationBeforeExternalCleanup(t *testing.T) {
 	store, siteID := newSiteMigrationStoreTest(t)
 	if err := store.acquireLock(context.Background(), "migration_0000001", &siteID, "example.com", "source", time.Now().UTC()); err != nil {
