@@ -68,8 +68,11 @@ type TaskResult struct {
 }
 
 type CreateSitePayload struct {
-	Domain             string
-	Aliases            []string
+	Domain  string
+	Aliases []string
+	// InternalSiteName is selected under the site-creation lock. It is not a
+	// user input or part of the public request/response contract.
+	InternalSiteName   string `json:"-"`
 	SSLEnabled         bool
 	DBPassword         string
 	ExpiresAt          string

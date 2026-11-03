@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -130,6 +131,7 @@ func acquireSiteCreationLock() (*siteCreationLock, error) {
 }
 
 type siteProvisioningResources struct {
+	SiteName         string `json:"-"`
 	SystemUser       string `json:"system_user"`
 	DBName           string `json:"db_name"`
 	DBUser           string `json:"db_user"`
@@ -142,14 +144,21 @@ type siteProvisioningResources struct {
 }
 
 func deriveBasicSiteProvisioningResources(domain string) (siteProvisioningResources, error) {
+	return deriveSiteProvisioningResources(domain, "wordpress", buildSiteName(domain))
+}
+
+func deriveSiteProvisioningResources(domain, siteType, siteName string) (siteProvisioningResources, error) {
 	if config.AppConfig == nil {
 		return siteProvisioningResources{}, errors.New("面板配置未加载")
 	}
 	domain = strings.ToLower(strings.TrimSpace(domain))
-	siteName := buildSiteName(domain)
 	configBase := siteConfigBaseName(siteName)
+	systemUser := "wp_" + siteName
+	if siteType == "php" {
+		systemUser = "php_" + siteName
+	}
 	resources := siteProvisioningResources{
-		SystemUser:       "wp_" + siteName,
+		SiteName: siteName, SystemUser: systemUser,
 		DBName:           "db_" + siteName,
 		DBUser:           "user_" + siteName,
 		WebRoot:          filepath.Join(config.AppConfig.Paths.WWWRoot, domain),
@@ -163,6 +172,55 @@ func deriveBasicSiteProvisioningResources(domain string) (siteProvisioningResour
 		return siteProvisioningResources{}, err
 	}
 	return resources, nil
+}
+
+func alternateCreateSiteName(domain string) string {
+	return buildSiteName(domain + "-" + uuid.NewString())
+}
+
+func ensureCreateSiteDomainResourcesAvailable(webRoot, logDir string) error {
+	db := database.GetDB()
+	if db != nil {
+		var domain string
+		err := db.QueryRow(`
+			SELECT domain FROM websites WHERE web_root = ? OR log_dir = ? LIMIT 1
+		`, webRoot, logDir).Scan(&domain)
+		if err == nil {
+			return fmt.Errorf("web root or log directory is already used by site %s", domain)
+		}
+		if err != sql.ErrNoRows {
+			return fmt.Errorf("check existing site directories: %w", err)
+		}
+	}
+	for label, path := range map[string]string{"web root": webRoot, "log dir": logDir} {
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Errorf("%s already exists: %s", label, path)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("check %s: %w", label, err)
+		}
+	}
+	return nil
+}
+
+func allocateCreateSiteResources(domain, siteType string) (siteProvisioningResources, error) {
+	for attempt := 0; attempt < 8; attempt++ {
+		siteName := buildSiteName(domain)
+		if attempt > 0 {
+			siteName = alternateCreateSiteName(domain)
+		}
+		resources, err := deriveSiteProvisioningResources(domain, siteType, siteName)
+		if err != nil {
+			return siteProvisioningResources{}, err
+		}
+		if err := ensureCreateSiteResourcesAvailable(resources.SystemUser, resources.WebRoot, resources.LogDir, resources.DBName, resources.DBUser, resources.PHPFPMPath, resources.NginxConfigPath, resources.NginxEnabledPath, resources.PHPSocketPath); err == nil {
+			return resources, nil
+		}
+		// Domain-bound paths must never be silently moved to an alternate name.
+		if err := ensureCreateSiteDomainResourcesAvailable(resources.WebRoot, resources.LogDir); err != nil {
+			return siteProvisioningResources{}, err
+		}
+	}
+	return siteProvisioningResources{}, errors.New("unable to allocate unique internal site resources")
 }
 
 func normalizeSiteProvisioningAliases(aliases []string, domain string) ([]string, error) {
@@ -226,18 +284,24 @@ func checkCreateSiteDomainAndMigration(ctx context.Context, domain string, alias
 	return nil
 }
 
-func checkBasicSiteProvisioningConflicts(ctx context.Context, domain string, aliases []string) (siteProvisioningResources, error) {
+func checkBasicSiteProvisioningConflicts(ctx context.Context, domain string, aliases []string, requestedSiteName string) (siteProvisioningResources, error) {
 	if !IsValidDomain(domain) {
 		return siteProvisioningResources{}, siteProvisioningError("invalid_domain", "域名格式不合法")
 	}
 	if err := checkCreateSiteDomainAndMigration(ctx, domain, aliases); err != nil {
 		return siteProvisioningResources{}, err
 	}
-	resources, err := deriveBasicSiteProvisioningResources(domain)
-	if err != nil {
-		return siteProvisioningResources{}, siteProvisioningError("resource_conflict", "网站资源路径无效")
+	var resources siteProvisioningResources
+	var err error
+	if requestedSiteName == "" {
+		resources, err = allocateCreateSiteResources(domain, "wordpress")
+	} else {
+		resources, err = deriveSiteProvisioningResources(domain, "wordpress", requestedSiteName)
+		if err == nil {
+			err = ensureCreateSiteResourcesAvailable(resources.SystemUser, resources.WebRoot, resources.LogDir, resources.DBName, resources.DBUser, resources.PHPFPMPath, resources.NginxConfigPath, resources.NginxEnabledPath, resources.PHPSocketPath)
+		}
 	}
-	if err := ensureCreateSiteResourcesAvailable(resources.SystemUser, resources.WebRoot, resources.LogDir, resources.DBName, resources.DBUser, resources.PHPFPMPath, resources.NginxConfigPath, resources.NginxEnabledPath, resources.PHPSocketPath); err != nil {
+	if err != nil {
 		return siteProvisioningResources{}, siteProvisioningError("resource_conflict", "网站资源已存在或冲突")
 	}
 	return resources, nil
@@ -251,6 +315,7 @@ type siteProvisioningPlanPayload struct {
 	SiteType       string   `json:"site_type"`
 	SSLEnabled     bool     `json:"ssl_enabled"`
 	ExpiresAt      string   `json:"expires_at"`
+	ResourceName   string   `json:"resource_name"`
 	OptionsDigest  string   `json:"options_digest"`
 	ResourcesHash  string   `json:"resources_hash"`
 	PanelVersion   string   `json:"panel_version"`
@@ -301,6 +366,7 @@ func makeSiteProvisioningPayload(domain string, aliases []string, resources site
 	return siteProvisioningPlanPayload{
 		CapabilityID: "server-ai.site-provisioning", Action: "create", Domain: domain, Aliases: aliases,
 		SiteType: "wordpress", SSLEnabled: false, ExpiresAt: "", OptionsDigest: siteProvisioningOptionsDigest(),
+		ResourceName:  resources.SiteName,
 		ResourcesHash: siteProvisioningResourcesHash(resources), PanelVersion: panelVersion, ManifestSHA256: aiPanelManifestPayloadSHA256,
 		GeneratedAt: generated.UTC().Format(time.RFC3339Nano), ExpiresPlanAt: expires.UTC().Format(time.RFC3339Nano),
 		SideEffects: "create one basic WordPress HTTP site and managed runtime resources",
@@ -369,7 +435,7 @@ func PrepareSiteProvisioningPlan(ctx context.Context, domain string, aliases []s
 		return SiteProvisioningResponse{}, err
 	}
 	defer lock.Close()
-	resources, err := checkBasicSiteProvisioningConflicts(ctx, domain, aliases)
+	resources, err := checkBasicSiteProvisioningConflicts(ctx, domain, aliases, "")
 	if err != nil {
 		return SiteProvisioningResponse{}, err
 	}
@@ -426,7 +492,7 @@ func ExecuteSiteProvisioningPlan(ctx context.Context, digest, panelVersion strin
 	if err != nil || !equalStringSlices(aliases, file.Payload.Aliases) {
 		return SiteProvisioningResponse{}, siteProvisioningError("plan_invalid", "操作计划域名参数无效")
 	}
-	resources, err := checkBasicSiteProvisioningConflicts(ctx, file.Payload.Domain, aliases)
+	resources, err := checkBasicSiteProvisioningConflicts(ctx, file.Payload.Domain, aliases, file.Payload.ResourceName)
 	if err != nil {
 		return SiteProvisioningResponse{}, err
 	}
@@ -439,7 +505,7 @@ func ExecuteSiteProvisioningPlan(ctx context.Context, digest, panelVersion strin
 	if err := writeSiteProvisioningPlan(digest, file); err != nil {
 		return SiteProvisioningResponse{}, siteProvisioningError("create_failed", "确认操作计划失败")
 	}
-	payload := &CreateSitePayload{Domain: file.Payload.Domain, Aliases: file.Payload.Aliases, SiteType: "wordpress", SSLEnabled: false}
+	payload := &CreateSitePayload{Domain: file.Payload.Domain, Aliases: file.Payload.Aliases, InternalSiteName: file.Payload.ResourceName, SiteType: "wordpress", SSLEnabled: false}
 	recordOperationLog("create_site", payload.Domain, "started", "服务器级 AI 建站已开始")
 	result := executeSiteProvisioningCore(&Task{Type: TaskCreateSite, Payload: payload})
 	if !result.Success {

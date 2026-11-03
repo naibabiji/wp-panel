@@ -79,6 +79,19 @@ func TestAlertResendIntervalsByAlertClass(t *testing.T) {
 	}
 }
 
+func TestSuppressOngoingAlertResendForScheduledAndBackupFailures(t *testing.T) {
+	for _, key := range []string{"alert_cron_fail", "alert_backup", "alert_remote_backup"} {
+		if !suppressOngoingAlertResend(key) {
+			t.Fatalf("%s should suppress ongoing resend", key)
+		}
+	}
+	for _, key := range []string{"alert_disk", "alert_service", "alert_ssl", "alert_site"} {
+		if suppressOngoingAlertResend(key) {
+			t.Fatalf("%s should retain ongoing resend", key)
+		}
+	}
+}
+
 func TestSiteAlertEmailLimit(t *testing.T) {
 	if !shouldSendAlertEmail("alert_site", 0, true) ||
 		!shouldSendAlertEmail("alert_site", 2, true) ||

@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -181,6 +182,48 @@ func TestPrepareSiteProvisioningRejectsDomainAliasResourceAndMigrationConflicts(
 			t.Fatalf("err=%v code=%s", err, SiteProvisioningErrorCode(err))
 		}
 	})
+}
+
+func TestSiteProvisioningAllocatesAlternateInternalNameAfterDomainRename(t *testing.T) {
+	root := setupSiteProvisioningConflictTest(t)
+	preferred := buildSiteName("peyath.com")
+	if _, err := database.GetDB().Exec(`INSERT INTO websites (id, name, domain, system_user, web_root, log_dir, db_name, db_user, php_pool_path, nginx_conf_path)
+		VALUES (1, 'renamed site', 'test.peyath.com', ?, ?, ?, ?, ?, ?, ?)`,
+		"wp_"+preferred,
+		filepath.Join(root, "www", "test.peyath.com"),
+		filepath.Join(root, "logs", "test.peyath.com"),
+		"db_"+preferred, "user_"+preferred,
+		filepath.Join(root, "pool", preferred+".conf"),
+		filepath.Join(root, "available", preferred+".conf")); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := PrepareSiteProvisioningPlan(context.Background(), "peyath.com", nil, "dev")
+	if err != nil {
+		t.Fatalf("PrepareSiteProvisioningPlan() error = %v", err)
+	}
+	path, err := siteProvisioningPlanPath(plan.PlanDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file siteProvisioningPlanFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	if file.Payload.ResourceName == "" || file.Payload.ResourceName == preferred {
+		t.Fatalf("resource name = %q, want a non-conflicting fallback", file.Payload.ResourceName)
+	}
+	resources, err := deriveSiteProvisioningResources("peyath.com", "wordpress", file.Payload.ResourceName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureCreateSiteResourcesAvailable(resources.SystemUser, resources.WebRoot, resources.LogDir, resources.DBName, resources.DBUser, resources.PHPFPMPath, resources.NginxConfigPath, resources.NginxEnabledPath, resources.PHPSocketPath); err != nil {
+		t.Fatalf("fallback resources remain unavailable: %v", err)
+	}
 }
 
 func TestExecuteSiteProvisioningPlanConsumesConcurrentDigestOnce(t *testing.T) {

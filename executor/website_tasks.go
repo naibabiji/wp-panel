@@ -206,6 +206,14 @@ func executeCreateSite(task *Task) TaskResult {
 		if err := checkCreateSiteDomainAndMigration(context.Background(), strings.ToLower(strings.TrimSpace(payload.Domain)), payload.Aliases); err != nil {
 			return TaskResult{Success: false, Message: SiteProvisioningPublicErrorMessage(err), ErrorCode: SiteProvisioningErrorCode(err), Diagnostic: err.Error()}
 		}
+		if payload.InternalSiteName == "" {
+			resources, err := allocateCreateSiteResources(strings.ToLower(strings.TrimSpace(payload.Domain)), payload.SiteType)
+			if err != nil {
+				log.Printf("站点资源名冲突 domain=%s: %v", payload.Domain, err)
+				return TaskResult{Success: false, Message: "站点资源名冲突: " + err.Error()}
+			}
+			payload.InternalSiteName = resources.SiteName
+		}
 	}
 	return executeCreateSiteUnlocked(task)
 }
@@ -239,7 +247,10 @@ func executeCreateSiteUnlocked(task *Task) TaskResult {
 
 	cfg := config.AppConfig
 	domain := strings.ToLower(strings.TrimSpace(payload.Domain))
-	siteName := buildSiteName(domain)
+	siteName := payload.InternalSiteName
+	if siteName == "" {
+		siteName = buildSiteName(domain)
+	}
 
 	dbPassword := payload.DBPassword
 	if dbPassword == "" {

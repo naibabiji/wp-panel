@@ -198,8 +198,10 @@ func (m *alertManager) runChecks() {
 			persistAlertRuntimeState(r)
 		} else if firing && r.firing {
 			r.lastAlertMsg = msg
-			// Continuous alert — re-send on each rule's interval.
-			if time.Since(r.lastFired) > alertResendInterval(r.key) {
+			// Scheduled-task and backup failures stay visible as active alerts, but
+			// do not resend the same unresolved incident. A later failure can alert
+			// again only after the current condition has recovered.
+			if !suppressOngoingAlertResend(r.key) && time.Since(r.lastFired) > alertResendInterval(r.key) {
 				r.lastFired = time.Now()
 				emailAllowed := shouldSendAlertEmail(r.key, r.emailAlertCount, hasSMTP)
 				sendAlertNotificationWithChannelsLimited(r.key, msg, true, hasSMTP, hasWebhook, emailAllowed)
@@ -271,6 +273,10 @@ func alertResendInterval(key string) time.Duration {
 		return 24 * time.Hour
 	}
 	return 30 * time.Minute
+}
+
+func suppressOngoingAlertResend(key string) bool {
+	return key == "alert_cron_fail" || key == "alert_backup" || key == "alert_remote_backup"
 }
 
 func loadAlertRuntimeState(rules []*alertRule) {
