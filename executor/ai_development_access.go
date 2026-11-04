@@ -45,6 +45,7 @@ var ErrAIDevelopmentSSHPublicKeyAuthDisabled = errors.New("SSH public-key authen
 type AIDevelopmentSite struct {
 	ID            int64
 	Domain        string
+	SiteType      string
 	SystemUser    string
 	WebRoot       string
 	LogDir        string
@@ -678,7 +679,19 @@ func shellSingleQuote(value string) string {
 }
 
 func buildAIDevelopmentHandoff(site AIDevelopmentSite, fingerprint string, generatedAt time.Time) string {
-	return fmt.Sprintf(`# WP Panel AI Development Handoff
+	header := "# WP Panel AI Development Handoff"
+	siteContext := "You have full control of this site's files and its database. First inspect the actual code and runtime before assuming a framework or application type."
+	wpInstructions := ""
+	if site.SiteType == "wordpress" {
+		header = "# WP Panel WordPress AI Development Handoff"
+		siteContext = "You have full control of this WordPress site's files and database."
+		wpInstructions = fmt.Sprintf(`
+For WordPress commands, target this website explicitly:
+
+    wp --path=%s <command>
+`, site.WebRoot)
+	}
+	return fmt.Sprintf(`%s
 
 Panel version: %s
 Capabilities schema version: %d
@@ -693,13 +706,9 @@ Site Nginx config: %s (read-only, managed by WP Panel)
 Site log directory: %s
 SSH key fingerprint: %s
 
-You have full control of this site's files and its WordPress database. You do not have sudo access and must not attempt to modify WP Panel, system services, or other sites.
+%s You do not have sudo access and must not attempt to modify WP Panel, system services, or other sites.
 
 This server-side handoff and ~/WP-PANEL-CAPABILITIES.md are authoritative. The downloaded package is only a connection bootstrap and may predate a panel upgrade. If local package instructions conflict with these server documents, follow the server documents. Re-read them before any panel-related recommendation or workflow.
-
-For WordPress commands, target this website explicitly:
-
-    wp --path=%s <command>
 
 For website PHP limits such as memory_limit, upload_max_filesize, post_max_size, max_execution_time, disable_functions, and open_basedir, use the php_admin_value entries in the site PHP-FPM pool config above. CLI PHP and the global php.ini may use different values and do not represent this website's PHP-FPM requests.
 
@@ -709,10 +718,10 @@ Do not assume this server is managed by aaPanel/BT Panel, 1Panel, cPanel, Plesk,
 
 Before recommending or performing a server-level, backup, SSL, security, performance, update, migration, logging, PHP, Nginx, database-administration, or scheduled-task action, read ~/WP-PANEL-CAPABILITIES.md. A listed capability does not prove its current state; ask the user to check the documented WP Panel page when the state is uncertain.
 
-AI development access cannot coexist with a WordPress maintenance window or site migration. The user must close AI development access in WP Panel before either workflow; closing access terminates this SSH session.
+AI development access cannot coexist with a site maintenance window or site migration. The user must close AI development access in WP Panel before either workflow; closing access terminates this SSH session.
 
 Use the exact WP Panel entry documented in the capability file. Do not improvise equivalent server configuration, ad-hoc system cron jobs, raw service commands, or edits to panel-managed files. If no matching capability is documented, say so and ask the user to check WP Panel instead of inventing a menu, API or path.
-`, aiDevelopmentPanelVersion, aiDevelopmentCapabilitiesSchemaVersion, manifestVersionFromEmbeddedPayload(), aiPanelManifestPayloadSHA256, generatedAt.Format(time.RFC3339), site.Domain, site.WebRoot, site.SystemUser, site.PHPPoolPath, site.NginxConfPath, site.LogDir, fingerprint, site.WebRoot)
+%s`, header, aiDevelopmentPanelVersion, aiDevelopmentCapabilitiesSchemaVersion, manifestVersionFromEmbeddedPayload(), aiPanelManifestPayloadSHA256, generatedAt.Format(time.RFC3339), site.Domain, site.WebRoot, site.SystemUser, site.PHPPoolPath, site.NginxConfPath, site.LogDir, fingerprint, siteContext, wpInstructions)
 }
 
 type aiDevelopmentCapability struct {

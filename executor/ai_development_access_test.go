@@ -362,7 +362,7 @@ func TestAIDevelopmentRotationDoesNotReportSuccessAfterStateDisappears(t *testin
 
 func TestAIDevelopmentHandoffDescribesSiteAndPanelBoundaries(t *testing.T) {
 	handoff := buildAIDevelopmentHandoff(AIDevelopmentSite{
-		Domain: "example.com", SystemUser: "wp_example", WebRoot: "/var/www/example",
+		Domain: "example.com", SiteType: "wordpress", SystemUser: "wp_example", WebRoot: "/var/www/example",
 		LogDir: "/www/wwwlogs/example.com", PHPPoolPath: "/etc/php/8.3/fpm/pool.d/wp_example.conf",
 		NginxConfPath: "/etc/nginx/sites-available/wp_example.conf",
 	}, "SHA256:test", time.Date(2026, 9, 15, 1, 2, 3, 0, time.UTC))
@@ -374,6 +374,20 @@ func TestAIDevelopmentHandoffDescribesSiteAndPanelBoundaries(t *testing.T) {
 	for _, forbidden := range []string{"AI-CONTEXT.md", "DEVELOPMENT-PLAN.md", "AI-CHANGELOG.md", "Git is optional", "wait for explicit approval"} {
 		if strings.Contains(handoff, forbidden) {
 			t.Fatalf("handoff unexpectedly contains development guidance %q: %s", forbidden, handoff)
+		}
+	}
+}
+
+func TestAIDevelopmentHandoffForPHPDoesNotAssumeWordPress(t *testing.T) {
+	handoff := buildAIDevelopmentHandoff(AIDevelopmentSite{
+		Domain: "example.com", SiteType: "php", SystemUser: "php_example", WebRoot: "/var/www/example",
+	}, "SHA256:test", time.Date(2026, 9, 15, 1, 2, 3, 0, time.UTC))
+	if !strings.Contains(handoff, "inspect the actual code and runtime before assuming a framework") {
+		t.Fatalf("PHP handoff does not require application discovery: %s", handoff)
+	}
+	for _, forbidden := range []string{"WordPress database", "For WordPress commands", "wp --path="} {
+		if strings.Contains(handoff, forbidden) {
+			t.Fatalf("PHP handoff assumes WordPress through %q: %s", forbidden, handoff)
 		}
 	}
 }

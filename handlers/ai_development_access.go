@@ -147,7 +147,7 @@ func (h *AIDevelopmentAccessHandler) Enable(c *gin.Context) {
 		return
 	}
 	host := requestSSHHost(c.Request)
-	packageData, err := buildAIDevelopmentCredentialPackage(site.Domain, host, executor.DetectSSHPort(c.Request.Context()), site.SystemUser, site.WebRoot, knownHosts, credential)
+	packageData, err := buildAIDevelopmentCredentialPackage(site.Domain, site.SiteType, host, executor.DetectSSHPort(c.Request.Context()), site.SystemUser, site.WebRoot, knownHosts, credential)
 	if err != nil {
 		log.Printf("构建 AI SSH 连接包失败 site=%d: %v", site.ID, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_development.package_failed_rotate")))
@@ -204,7 +204,7 @@ func (h *AIDevelopmentAccessHandler) Rotate(c *gin.Context) {
 		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "ai_development.rotate_failed")))
 		return
 	}
-	packageData, err := buildAIDevelopmentCredentialPackage(site.Domain, requestSSHHost(c.Request), executor.DetectSSHPort(c.Request.Context()), site.SystemUser, site.WebRoot, knownHosts, credential)
+	packageData, err := buildAIDevelopmentCredentialPackage(site.Domain, site.SiteType, requestSSHHost(c.Request), executor.DetectSSHPort(c.Request.Context()), site.SystemUser, site.WebRoot, knownHosts, credential)
 	if err != nil {
 		log.Printf("构建 AI SSH 轮换连接包失败 site=%d: %v", site.ID, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_development.package_failed_rotate")))
@@ -243,7 +243,7 @@ func aiDevelopmentSiteFromRequest(c *gin.Context) (int, *models.Website, bool) {
 
 func websiteAIDevelopmentSite(site *models.Website) executor.AIDevelopmentSite {
 	return executor.AIDevelopmentSite{
-		ID: int64(site.ID), Domain: site.Domain, SystemUser: site.SystemUser, WebRoot: site.WebRoot,
+		ID: int64(site.ID), Domain: site.Domain, SiteType: site.SiteType, SystemUser: site.SystemUser, WebRoot: site.WebRoot,
 		LogDir: site.LogDir, PHPPoolPath: site.PHPPoolPath, NginxConfPath: site.NginxConfPath,
 		DBName: site.DBName, DBUser: site.DBUser,
 	}
@@ -269,7 +269,7 @@ func generateAIDevelopmentCredential() (aiDevelopmentCredential, error) {
 	}, nil
 }
 
-func buildAIDevelopmentCredentialPackage(domain, host string, port int, systemUser, webRoot, knownHosts string, credential aiDevelopmentCredential) ([]byte, error) {
+func buildAIDevelopmentCredentialPackage(domain, siteType, host string, port int, systemUser, webRoot, knownHosts string, credential aiDevelopmentCredential) ([]byte, error) {
 	if strings.TrimSpace(knownHosts) == "" {
 		return nil, errors.New("SSH host keys are unavailable")
 	}
@@ -281,7 +281,7 @@ func buildAIDevelopmentCredentialPackage(domain, host string, port int, systemUs
 		content []byte
 		mode    os.FileMode
 	}{
-		prefix + "AGENTS.md":                  {content: []byte(buildAIDevelopmentProjectInstructions(domain, webRoot)), mode: 0644},
+		prefix + "AGENTS.md":                  {content: []byte(buildAIDevelopmentProjectInstructions(domain, siteType, webRoot)), mode: 0644},
 		prefix + "CLAUDE.md":                  {content: []byte("Read and follow AGENTS.md completely before working on this project.\n"), mode: 0644},
 		prefix + "README.md":                  {content: []byte(buildAIDevelopmentProjectReadme(domain, projectName)), mode: 0644},
 		prefix + ".gitignore":                 {content: []byte(".wp-panel-ai/\n"), mode: 0644},
@@ -327,14 +327,26 @@ If connection fails:
 - Timeout, unreachable, or refused errors mean the network, address, port, or SSH service is unavailable.
 - A missing-file message means the ZIP was not fully extracted. Keep all files together and retry.
 
+If the local AI tool reports an environment error:
+
+- "approval required" while writing to an interactive SSH session is a local AI sandbox or PTY policy error, not a remote website error. Prefer a remote command such as `+"`bash .wp-panel-ai/connect.sh 'echo connected'`"+` or continue in a normal WSL/terminal.
+- "socket: Operation not permitted" before SSH reaches the server is usually a local WSL, sandbox, or connection-proxy restriction. Do not change the server or use root just for this message. In a normal terminal, retry with `+"`ssh -vvv -o ControlMaster=no -o ControlPath=none -F .wp-panel-ai/ssh_config -i .wp-panel-ai/id_ed25519 -o UserKnownHostsFile=.wp-panel-ai/known_hosts wp-panel-ai 'echo connected'`"+`.
+- If the normal terminal succeeds, the panel, server, and package are likely working; continue there or report the local AI tool limitation. Only ask the user to run a diagnostic manually after confirming that the failure is local, and do not ask them to run unreviewed site-changing commands.
+
 After connecting, read `+"`~/WP-PANEL-AI-HANDOFF.md`"+` on the server.
 `, domain, webRoot, systemUser, host, port)
 }
 
-func buildAIDevelopmentProjectInstructions(domain, webRoot string) string {
-	return fmt.Sprintf(`# WP Panel Remote AI Project
+func buildAIDevelopmentProjectInstructions(domain, siteType, webRoot string) string {
+	projectTitle := "WP Panel Remote AI Project"
+	applicationGuidance := "Before choosing tools or making assumptions, inspect the actual files, entry points, dependencies, runtime configuration and available logs to determine what application this site runs. Do not assume WordPress or another framework."
+	if siteType == "wordpress" {
+		projectTitle = "WP Panel Remote WordPress Project"
+		applicationGuidance = "Inspect the WordPress core, theme, plugins, custom code, runtime configuration and available logs before making changes."
+	}
+	return fmt.Sprintf(`# %s
 
-This package connects to %[1]s. Website files remain on the server at %[2]s.
+This package connects to %[2]s. Website files remain on the server at %[3]s.
 
 ## Start here
 
@@ -346,11 +358,12 @@ This package connects to %[1]s. Website files remain on the server at %[2]s.
 
 - Work only on this website and its database. Do not use sudo or modify WP Panel, system services or other sites.
 - Do not print, copy, commit or upload passwords, private keys, cookies, tokens, API keys, salts, full wp-config.php contents, Git credentials or payment credentials.
-- If WP-CLI, Node.js/npm or another system component is missing, use the current server-side operations.software capability to guide the administrator. Do not attempt system installation or rely on a menu name copied into this package.
+- %s
+- If a required development tool or another system component is missing, use the current server-side operations.software capability to guide the administrator. Do not attempt system installation or rely on a menu name copied into this package.
 - Never print, copy, commit or upload anything inside .wp-panel-ai. It contains connection credentials, the pinned server identity, connection scripts and connection details, and is excluded by .gitignore.
-- AI development access cannot coexist with a WordPress maintenance window or site migration. The administrator must close AI development access before using either WP Panel workflow; closing access terminates this SSH session.
+- AI development access cannot coexist with a site maintenance window or site migration. The administrator must close AI development access before using either WP Panel workflow; closing access terminates this SSH session.
 - Treat the current server-side ~/WP-PANEL-AI-HANDOFF.md and ~/WP-PANEL-CAPABILITIES.md as authoritative. The downloaded package can become older than the running panel; if it conflicts with either server document, follow the server document. Do not copy capability claims from this local file or rely on remembered menu names.
-`, domain, webRoot)
+`, projectTitle, domain, webRoot, applicationGuidance)
 }
 
 func buildAIDevelopmentProjectReadme(domain, projectName string) string {

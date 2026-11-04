@@ -39,7 +39,7 @@ func TestAIDevelopmentCredentialPackageUsesConfiguredPortAndPrivateMode(t *testi
 		t.Fatal(err)
 	}
 	knownHosts := "wp-panel-ai-target ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE3h7V1s95BrjhMuVZ7oBvP3G4XCNiCBN3qO3U1YQ6Ks\n"
-	data, err := buildAIDevelopmentCredentialPackage("example.com", "203.0.113.10", 2222, "wp_example", "/var/www/example", knownHosts, credential)
+	data, err := buildAIDevelopmentCredentialPackage("example.com", "wordpress", "203.0.113.10", 2222, "wp_example", "/var/www/example", knownHosts, credential)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,6 +127,15 @@ func TestAIDevelopmentCredentialPackageUsesConfiguredPortAndPrivateMode(t *testi
 			t.Fatalf("AGENTS.md unexpectedly contains development guidance %q: %s", forbidden, agentInstructions)
 		}
 	}
+	connectionGuide, err := readZipFile(files[prefix+".wp-panel-ai/CONNECTION.md"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"approval required", "socket: Operation not permitted", "ControlMaster=no", "normal WSL/terminal", "Do not change the server or use root", "`bash .wp-panel-ai/connect.sh", "`ssh -vvv"} {
+		if !strings.Contains(string(connectionGuide), required) {
+			t.Fatalf("CONNECTION.md missing troubleshooting guidance %q: %s", required, connectionGuide)
+		}
+	}
 	gitignore, err := readZipFile(files[prefix+".gitignore"])
 	if err != nil {
 		t.Fatal(err)
@@ -160,13 +169,47 @@ func TestAIDevelopmentCredentialPackageUsesConfiguredPortAndPrivateMode(t *testi
 	}
 }
 
+func TestAIDevelopmentCredentialPackageForPHPDoesNotAssumeWordPress(t *testing.T) {
+	credential, err := generateAIDevelopmentCredential()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := buildAIDevelopmentCredentialPackage("example.com", "php", "203.0.113.10", 22, "php_example", "/var/www/example", "wp-panel-ai-target ssh-ed25519 AAAA\n", credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range archive.File {
+		if strings.HasSuffix(file.Name, "/AGENTS.md") {
+			content, readErr := readZipFile(file)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			text := string(content)
+			if !strings.Contains(text, "Do not assume WordPress or another framework") {
+				t.Fatalf("PHP AGENTS.md does not require application discovery: %s", text)
+			}
+			for _, forbidden := range []string{"WP-CLI", "WordPress maintenance window", "theme, plugins", "WooCommerce"} {
+				if strings.Contains(text, forbidden) {
+					t.Fatalf("PHP AGENTS.md assumes WordPress through %q: %s", forbidden, text)
+				}
+			}
+			return
+		}
+	}
+	t.Fatal("AGENTS.md missing")
+}
+
 func TestAIDevelopmentConnectScriptSecuresPrivateKey(t *testing.T) {
 	credential, err := generateAIDevelopmentCredential()
 	if err != nil {
 		t.Fatal(err)
 	}
 	knownHosts := "wp-panel-ai-target ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE3h7V1s95BrjhMuVZ7oBvP3G4XCNiCBN3qO3U1YQ6Ks\n"
-	data, err := buildAIDevelopmentCredentialPackage("example.com", "203.0.113.10", 22, "wp_example", "/var/www/example", knownHosts, credential)
+	data, err := buildAIDevelopmentCredentialPackage("example.com", "wordpress", "203.0.113.10", 22, "wp_example", "/var/www/example", knownHosts, credential)
 	if err != nil {
 		t.Fatal(err)
 	}

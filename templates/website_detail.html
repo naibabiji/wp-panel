@@ -558,7 +558,7 @@ location ^~ /api/ {
                 <div>
                     <p class="text-sm font-medium text-white mb-2">{{t .Lang "ai_development.component_check"}}</p>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div class="rounded border border-gray-700 p-3">
+                        <div x-show="site.site_type === 'wordpress'" class="rounded border border-gray-700 p-3">
                             <div class="flex items-center justify-between gap-3">
                                 <span class="text-white">WP-CLI</span>
                                 <span x-show="developmentToolInstalled('wp-cli')" class="text-xs px-2 py-1 rounded bg-green-900/50 text-green-200">{{t .Lang "software.installed"}}</span>
@@ -607,7 +607,7 @@ location ^~ /api/ {
                         <li>{{t .Lang "ai_development.usage_step_open"}}</li>
                     </ol>
                     <label class="block text-xs text-gray-400 mt-4 mb-1">{{t .Lang "ai_development.first_prompt_label"}}</label>
-                    <textarea readonly :value="t('ai_development.first_prompt')" rows="5" class="w-full rounded p-3 text-xs font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;"></textarea>
+                    <textarea readonly :value="aiDevelopmentFirstPrompt()" rows="5" class="w-full rounded p-3 text-xs font-mono" style="background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; resize: vertical;"></textarea>
                     <div class="flex flex-wrap items-center justify-between gap-3 mt-3">
                         <p class="text-xs text-yellow-300">{{t .Lang "ai_development.credential_once_warning"}}</p>
                         <div class="flex flex-wrap gap-2">
@@ -977,7 +977,7 @@ function websiteDetail() {
             this.aiAccess.busy = true;
             let retryForce = false;
             try {
-                if (this.aiAccess.installWPCLI && !this.developmentToolInstalled('wp-cli')) {
+                if (this.site.site_type === 'wordpress' && this.aiAccess.installWPCLI && !this.developmentToolInstalled('wp-cli')) {
                     this.aiAccess.stage = t('ai_development.stage_installing_wp_cli');
                     await api('/software/development-tools/install', { method: 'POST', body: { id: 'wp-cli' }, timeout: 600000 });
                 }
@@ -1057,11 +1057,14 @@ function websiteDetail() {
         },
         async copyAIDevelopmentFirstPrompt() {
             try {
-                await navigator.clipboard.writeText(t('ai_development.first_prompt'));
+                await navigator.clipboard.writeText(this.aiDevelopmentFirstPrompt());
                 showToast(t('ai_development.first_prompt_copied'), 'success');
             } catch(e) {
                 showToast(t('common.operation_failed'), 'error');
             }
+        },
+        aiDevelopmentFirstPrompt() {
+            return this.site?.site_type === 'wordpress' ? t('ai_development.first_prompt') : t('ai_development.first_prompt_php');
         },
         async disableAIDevelopment() {
             if (!await confirmModal(t('ai_development.disable_confirm'))) return;

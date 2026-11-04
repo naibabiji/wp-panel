@@ -1028,6 +1028,7 @@ var i18nKeys = []string{
 	"ai_development.stage_rotating_package",
 	"ai_development.enabled_ready_download",
 	"ai_development.first_prompt",
+	"ai_development.first_prompt_php",
 	"ai_development.first_prompt_copied",
 	"ai_development.download_package",
 	"ai_development.regenerate_package",
