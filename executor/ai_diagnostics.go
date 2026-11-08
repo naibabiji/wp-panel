@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -48,9 +47,7 @@ var aiReadWPDiagnosticOptions = ReadWPDiagnosticOptions
 
 var aiProviderRetryDelay = 800 * time.Millisecond
 
-var aiRunProcessList = func() ([]byte, error) {
-	return exec.Command("ps", "-eo", "user:32,%cpu,%mem,comm").Output()
-}
+var aiRecentSiteResourceUsage = RecentSiteResourceUsage
 
 var aiHTTPProbeClient = &http.Client{
 	Timeout: 5 * time.Second,
@@ -1720,15 +1717,6 @@ func aiCurrentMemorySummary() map[string]interface{} {
 	}
 }
 
-type aiPHPSiteResource struct {
-	User      string
-	SiteID    int
-	Domain    string
-	CPU       float64
-	Mem       float64
-	ProcCount int
-}
-
 func aiSiteResourceSummary(site *models.Website) map[string]interface{} {
 	result := map[string]interface{}{
 		"checked": false,
@@ -1740,15 +1728,16 @@ func aiSiteResourceSummary(site *models.Website) map[string]interface{} {
 	}
 	result["active_site_count"] = aiWebsiteCount(db, "active")
 	result["total_site_count"] = aiWebsiteCount(db, "")
-	resources, err := aiCollectPHPSiteResources(db)
+	resources, err := aiRecentSiteResourceUsage(time.Now())
 	if err != nil {
-		result["message"] = err.Error()
+		result["message"] = "读取网站资源采样失败: " + err.Error()
 		return result
 	}
 	result["checked"] = true
+	result["window"] = "最近 5 分钟平均"
 	result["top_php_fpm_sites"] = aiTopSiteResources(resources, 5)
 	if site != nil {
-		result["current_site"] = aiFindSiteResource(resources, site.SystemUser, site.Domain)
+		result["current_site"] = aiFindSiteResource(resources, site.ID, site.Domain)
 	}
 	return result
 }
@@ -1763,56 +1752,7 @@ func aiWebsiteCount(db *sql.DB, status string) int {
 	return count
 }
 
-func aiCollectPHPSiteResources(db *sql.DB) ([]aiPHPSiteResource, error) {
-	out, err := aiRunProcessList()
-	if err != nil {
-		return nil, fmt.Errorf("读取 PHP-FPM 进程资源失败: %v", err)
-	}
-	agg := map[string]*aiPHPSiteResource{}
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 4 {
-			continue
-		}
-		user := fields[0]
-		if !strings.HasPrefix(user, "wp_") && !strings.HasPrefix(user, "php_") {
-			continue
-		}
-		comm := fields[3]
-		if !strings.HasPrefix(comm, "php-fpm") {
-			continue
-		}
-		cpu, _ := strconv.ParseFloat(fields[1], 64)
-		mem, _ := strconv.ParseFloat(fields[2], 64)
-		item := agg[user]
-		if item == nil {
-			item = &aiPHPSiteResource{User: user}
-			agg[user] = item
-		}
-		item.CPU += cpu
-		item.Mem += mem
-		item.ProcCount++
-	}
-	result := make([]aiPHPSiteResource, 0, len(agg))
-	for _, item := range agg {
-		_ = db.QueryRow("SELECT id, domain FROM websites WHERE system_user = ?", item.User).Scan(&item.SiteID, &item.Domain)
-		if item.Domain == "" {
-			continue
-		}
-		item.CPU = aiRoundFloat(item.CPU)
-		item.Mem = aiRoundFloat(item.Mem)
-		result = append(result, *item)
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].CPU == result[j].CPU {
-			return result[i].Mem > result[j].Mem
-		}
-		return result[i].CPU > result[j].CPU
-	})
-	return result, nil
-}
-
-func aiTopSiteResources(resources []aiPHPSiteResource, limit int) []map[string]interface{} {
+func aiTopSiteResources(resources []SiteResourceUsage, limit int) []map[string]interface{} {
 	if limit <= 0 || len(resources) == 0 {
 		return []map[string]interface{}{}
 	}
@@ -1826,9 +1766,9 @@ func aiTopSiteResources(resources []aiPHPSiteResource, limit int) []map[string]i
 	return out
 }
 
-func aiFindSiteResource(resources []aiPHPSiteResource, systemUser, domain string) map[string]interface{} {
+func aiFindSiteResource(resources []SiteResourceUsage, siteID int, domain string) map[string]interface{} {
 	for _, item := range resources {
-		if item.User == systemUser || (domain != "" && item.Domain == domain) {
+		if (siteID > 0 && item.SiteID == siteID) || (domain != "" && item.Domain == domain) {
 			found := aiSiteResourceMap(item)
 			found["found"] = true
 			return found
@@ -1837,16 +1777,16 @@ func aiFindSiteResource(resources []aiPHPSiteResource, systemUser, domain string
 	return map[string]interface{}{
 		"found":   false,
 		"domain":  domain,
-		"message": "当前未发现该站点的活跃 php-fpm 进程；可能刚好无请求，或进程采样时未命中。",
+		"message": "最近 5 分钟没有该站点的进程采样；按需启动的 PHP-FPM 在无请求时没有进程。",
 	}
 }
 
-func aiSiteResourceMap(item aiPHPSiteResource) map[string]interface{} {
+func aiSiteResourceMap(item SiteResourceUsage) map[string]interface{} {
 	return map[string]interface{}{
 		"site_id":     item.SiteID,
 		"domain":      item.Domain,
-		"cpu_percent": item.CPU,
-		"mem_percent": item.Mem,
+		"cpu_percent": aiRoundFloat(item.CPU),
+		"mem_percent": aiRoundFloat(item.Mem),
 		"proc_count":  item.ProcCount,
 	}
 }

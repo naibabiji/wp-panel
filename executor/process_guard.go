@@ -430,7 +430,7 @@ func isCoreGuardService(service string) bool {
 }
 
 func sendServiceIncidentNotification(service, message string) {
-	sendResolvedAlertEvent("alert_service", service+" 服务异常", message, "请查看服务日志和自动恢复结果。")
+	sendResolvedAlertEvent("alert_service", service+" 服务异常", message, serviceIncidentClue(time.Now()), "请查看服务日志和自动恢复结果。")
 }
 
 func pruneIncidents(db *sql.DB) {

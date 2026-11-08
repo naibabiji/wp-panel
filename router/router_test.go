@@ -321,6 +321,8 @@ func TestAlertLogKeepsMetadataColumnsReadable(t *testing.T) {
 		[]byte(`class="py-2 pr-3 align-top text-sm text-gray-300" style="white-space: normal; overflow-wrap: anywhere;" x-text="typeLabel(l.alert_type)"`),
 		[]byte(`py-2 whitespace-nowrap`),
 		[]byte(`style="white-space: normal; overflow-wrap: anywhere;" x-text="l.message"`),
+		[]byte(`x-show="l.attribution"`),
+		[]byte(`style="white-space: pre-line; overflow-wrap: anywhere;" x-text="l.attribution"`),
 	} {
 		if !bytes.Contains(page, expected) {
 			t.Fatalf("alert log table is missing %q", expected)

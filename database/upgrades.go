@@ -774,7 +774,49 @@ var upgrades = []Upgrade{
 			`ALTER TABLE alert_runtime_state ADD COLUMN email_alert_count INTEGER NOT NULL DEFAULT 0`,
 		},
 	},
+	{
+		Version:     "1.0.70",
+		Description: "新增对象级资源采样与告警初步归因字段",
+		SQL: []string{
+			resourceObjectSamplesTable,
+			resourceObjectSamplesIndex,
+		},
+		Func: ensureAlertLogAttributionColumn,
+	},
 }
+
+func ensureAlertLogAttributionColumn() error {
+	var tableExists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='alert_log'`).Scan(&tableExists); err != nil {
+		return err
+	}
+	if tableExists == 0 {
+		return nil
+	}
+	var exists int
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('alert_log') WHERE name = 'attribution'`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		_, err := DB.Exec(`ALTER TABLE alert_log ADD COLUMN attribution TEXT`)
+		return err
+	}
+	return nil
+}
+
+// 资源告警初步归因使用的每分钟对象级采样，保留 7 天。
+const resourceObjectSamplesTable = `CREATE TABLE IF NOT EXISTS resource_object_samples (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		window_start DATETIME NOT NULL,
+		window_end   DATETIME NOT NULL,
+		object_type  TEXT NOT NULL,
+		object_key   TEXT NOT NULL,
+		label        TEXT NOT NULL DEFAULT '',
+		cpu_seconds  REAL NOT NULL DEFAULT 0,
+		rss_bytes    INTEGER NOT NULL DEFAULT 0
+	)`
+
+const resourceObjectSamplesIndex = `CREATE INDEX IF NOT EXISTS idx_resource_object_samples_end ON resource_object_samples(window_end)`
 
 func ensureMonitoringCPUBreakdownColumns() error {
 	var tableExists int

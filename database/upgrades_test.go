@@ -547,7 +547,7 @@ func TestUpgradeAddsWPUpdateSchemaFrom1031(t *testing.T) {
 			t.Fatalf("table %s exists=%d err=%v", table, exists, err)
 		}
 	}
-	if got := LatestVersion(); got != "1.0.69" {
+	if got := LatestVersion(); got != "1.0.70" {
 		t.Fatalf("LatestVersion=%q", got)
 	}
 	for _, column := range []string{"database_backup_mode", "database_backup_source_id", "auto_rollback", "batch_id"} {
@@ -2034,5 +2034,79 @@ func TestUpgradeAddsBotRateLimitSettingsToExistingSchema(t *testing.T) {
 		if got != setting.want {
 			t.Fatalf("%s = %q, want %q", setting.key, got, setting.want)
 		}
+	}
+}
+
+func TestUpgradeAddsResourceAttributionSchemaToExistingSchema(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("initial RunUpgrades() error = %v", err)
+	}
+	for _, stmt := range []string{
+		"DROP TABLE resource_object_samples",
+		"DROP TABLE alert_log",
+		`CREATE TABLE alert_log (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			alert_type TEXT    NOT NULL,
+			level      TEXT    NOT NULL DEFAULT 'warning',
+			message    TEXT    NOT NULL,
+			resolved   INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		"INSERT INTO alert_log (alert_type, level, message) VALUES ('alert_cpu', 'critical', 'old')",
+		"DELETE FROM schema_version",
+		"INSERT INTO schema_version (version) VALUES ('1.0.69')",
+	} {
+		if _, err := DB.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("RunUpgrades() error = %v", err)
+	}
+	if err := RunUpgrades(); err != nil {
+		t.Fatalf("second RunUpgrades() error = %v", err)
+	}
+	var tableExists, indexExists, columnExists int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='resource_object_samples'").Scan(&tableExists); err != nil {
+		t.Fatal(err)
+	}
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_resource_object_samples_end'").Scan(&indexExists); err != nil {
+		t.Fatal(err)
+	}
+	if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('alert_log') WHERE name='attribution'").Scan(&columnExists); err != nil {
+		t.Fatal(err)
+	}
+	if tableExists != 1 || indexExists != 1 || columnExists != 1 {
+		t.Fatalf("resource attribution schema = table %d index %d column %d, want all 1", tableExists, indexExists, columnExists)
+	}
+	var message string
+	var attribution *string
+	if err := DB.QueryRow("SELECT message, attribution FROM alert_log").Scan(&message, &attribution); err != nil {
+		t.Fatal(err)
+	}
+	if message != "old" || attribution != nil {
+		t.Fatalf("old alert row = %q/%v, want unchanged message and NULL attribution", message, attribution)
+	}
+}
+
+func TestFreshInstallHasResourceAttributionSchema(t *testing.T) {
+	openTempDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+	var tableExists, columnExists int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='resource_object_samples'").Scan(&tableExists); err != nil {
+		t.Fatal(err)
+	}
+	if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('alert_log') WHERE name='attribution'").Scan(&columnExists); err != nil {
+		t.Fatal(err)
+	}
+	if tableExists != 1 || columnExists != 1 {
+		t.Fatalf("fresh install resource attribution schema = table %d column %d, want 1/1", tableExists, columnExists)
 	}
 }

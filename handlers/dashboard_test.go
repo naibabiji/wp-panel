@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/naibabiji/wp-panel/database"
 )
 
 func TestFormatMetricLabelUsesServerLocalTime(t *testing.T) {
@@ -38,5 +39,19 @@ func TestMetricsRejectsUnimplemented30DayRange(t *testing.T) {
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics?range=30d", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSiteResourcesReturnsErrorWhenUsageQueryFails(t *testing.T) {
+	oldDB := database.DB
+	database.DB = nil
+	t.Cleanup(func() { database.DB = oldDB })
+
+	router := gin.New()
+	router.GET("/site-resources", (&DashboardHandler{}).GetSiteResources)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/site-resources", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s, want 500 instead of an empty success list", rec.Code, rec.Body.String())
 	}
 }

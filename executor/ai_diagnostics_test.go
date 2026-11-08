@@ -702,15 +702,14 @@ func TestBuildAIDiagnosticPromptIncludesPerformanceSummary(t *testing.T) {
 	stubAIHTTPProbe(t, 200, 302)
 	setupAIPerformanceTestDB(t)
 
-	oldRunProcessList := aiRunProcessList
-	aiRunProcessList = func() ([]byte, error) {
-		return []byte(strings.Join([]string{
-			"USER                              %CPU %MEM COMMAND",
-			"wp_demo                           37.5  5.5 php-fpm8.3",
-			"wp_noisy                          82.0 12.0 php-fpm8.3",
-		}, "\n")), nil
+	oldUsage := aiRecentSiteResourceUsage
+	aiRecentSiteResourceUsage = func(time.Time) ([]SiteResourceUsage, error) {
+		return []SiteResourceUsage{
+			{SiteID: 2, Domain: "noisy.com", CPU: 82, Mem: 12, ProcCount: 4},
+			{SiteID: 1, Domain: "demo.com", CPU: 37.5, Mem: 5.5, ProcCount: 2},
+		}, nil
 	}
-	t.Cleanup(func() { aiRunProcessList = oldRunProcessList })
+	t.Cleanup(func() { aiRecentSiteResourceUsage = oldUsage })
 
 	oldOptions := aiReadWPDiagnosticOptions
 	aiReadWPDiagnosticOptions = func(dbName, tablePrefix string, cfg *config.Config) (map[string]string, error) {
@@ -770,6 +769,7 @@ func TestBuildAIDiagnosticPromptIncludesPerformanceSummary(t *testing.T) {
 		"server_resource_summary",
 		"site_resource_summary",
 		"top_php_fpm_sites",
+		"最近 5 分钟平均",
 		"noisy.com",
 		"page_cache_plugins",
 		"asset_optimization_plugins",
@@ -790,11 +790,11 @@ func TestBuildAIDiagnosticPromptIncludesPerformanceSummary(t *testing.T) {
 func TestBuildAIDiagnosticPromptForbidsPageCachePluginWhenFastCGIEnabled(t *testing.T) {
 	stubAIHTTPProbe(t, 200, 302)
 
-	oldRunProcessList := aiRunProcessList
-	aiRunProcessList = func() ([]byte, error) {
-		return []byte("USER                              %CPU %MEM COMMAND\nwp_demo                            2.0  1.0 php-fpm8.3\n"), nil
+	oldUsage := aiRecentSiteResourceUsage
+	aiRecentSiteResourceUsage = func(time.Time) ([]SiteResourceUsage, error) {
+		return []SiteResourceUsage{{SiteID: 1, Domain: "demo.com", CPU: 2, Mem: 1, ProcCount: 1}}, nil
 	}
-	t.Cleanup(func() { aiRunProcessList = oldRunProcessList })
+	t.Cleanup(func() { aiRecentSiteResourceUsage = oldUsage })
 
 	oldConfig := config.AppConfig
 	config.AppConfig = &config.Config{}

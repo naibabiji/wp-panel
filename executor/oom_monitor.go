@@ -107,7 +107,8 @@ func recordOOMEvent(event oomEvent) error {
 			return err
 		}
 	}
-	sendResolvedAlertEvent("alert_oom", "系统内存耗尽", message, "请检查当时的内存占用和相关服务日志。")
+	attribution := buildOOMAttribution(event.PID, event.OccurredAt)
+	sendResolvedAlertEvent("alert_oom", "系统内存耗尽", message, attribution, "请检查当时的内存占用和相关服务日志。")
 	return nil
 }
 

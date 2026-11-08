@@ -134,6 +134,8 @@ var migrations = append([]string{
 		recorded_at        DATETIME NOT NULL
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_metrics_recorded ON monitoring_metrics(recorded_at)`,
+	resourceObjectSamplesTable,
+	resourceObjectSamplesIndex,
 
 	// ============================================================
 	// firewall_bans
@@ -442,7 +444,8 @@ var migrations = append([]string{
 		level      TEXT    NOT NULL DEFAULT 'warning',
 		message    TEXT    NOT NULL,
 		resolved   INTEGER NOT NULL DEFAULT 0,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		attribution TEXT
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_alert_log_type ON alert_log(alert_type, created_at)`,
 	`CREATE TABLE IF NOT EXISTS alert_runtime_state (

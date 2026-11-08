@@ -118,7 +118,8 @@ func TestLogIncidentWritesCoreServiceAlert(t *testing.T) {
 	)`)
 	mustExec(t, db, `CREATE TABLE alert_log (
 		id INTEGER PRIMARY KEY, alert_type TEXT, level TEXT, message TEXT,
-		resolved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		resolved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		attribution TEXT
 	)`)
 	mustExec(t, db, `CREATE TABLE security_settings (skey TEXT PRIMARY KEY, svalue TEXT)`)
 	mustExec(t, db, `INSERT INTO security_settings (skey, svalue) VALUES ('alert_service', 'true')`)
@@ -146,7 +147,8 @@ func TestUnexpectedActiveDoesNotCreateAbnormalAlert(t *testing.T) {
 	)`)
 	mustExec(t, db, `CREATE TABLE alert_log (
 		id INTEGER PRIMARY KEY, alert_type TEXT, level TEXT, message TEXT,
-		resolved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		resolved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		attribution TEXT
 	)`)
 	mustExec(t, db, `CREATE TABLE security_settings (skey TEXT PRIMARY KEY, svalue TEXT)`)
 	mustExec(t, db, `INSERT INTO security_settings (skey, svalue) VALUES ('alert_service', 'true')`)
@@ -213,7 +215,8 @@ func TestLogIncidentLeavesUnrecoveredFailureToStateMonitor(t *testing.T) {
 	)`)
 	mustExec(t, db, `CREATE TABLE alert_log (
 		id INTEGER PRIMARY KEY, alert_type TEXT, level TEXT, message TEXT,
-		resolved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		resolved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		attribution TEXT
 	)`)
 	mustExec(t, db, `CREATE TABLE security_settings (skey TEXT PRIMARY KEY, svalue TEXT)`)
 	mustExec(t, db, `INSERT INTO security_settings (skey, svalue) VALUES ('alert_service', 'true')`)
@@ -245,7 +248,8 @@ func TestLogIncidentSuppressesRecoveredEventWhenStateAlertIsFiring(t *testing.T)
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`)
 	mustExec(t, db, `CREATE TABLE alert_log (
 		id INTEGER PRIMARY KEY, alert_type TEXT, level TEXT, message TEXT,
-		resolved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`)
+		resolved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		attribution TEXT)`)
 	mustExec(t, db, `CREATE TABLE security_settings (skey TEXT PRIMARY KEY, svalue TEXT)`)
 	mustExec(t, db, `INSERT INTO security_settings VALUES ('alert_service', 'true')`)
 	mustExec(t, db, `CREATE TABLE alert_runtime_state (alert_type TEXT PRIMARY KEY, status TEXT, email_alert_count INTEGER NOT NULL DEFAULT 0)`)

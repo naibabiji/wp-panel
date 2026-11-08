@@ -173,7 +173,8 @@ func (m *alertManager) runChecks() {
 			r.lastFired = now
 			r.lastAlertMsg = msg
 			emailAllowed := shouldSendAlertEmail(r.key, r.emailAlertCount, hasSMTP)
-			sendAlertNotificationWithChannelsLimited(r.key, msg, false, hasSMTP, hasWebhook, emailAllowed)
+			attribution := buildAlertAttribution(r.key, r.pendingSince, now, false)
+			sendAlertNotificationWithChannelsLimited(r.key, msg, attribution, false, hasSMTP, hasWebhook, emailAllowed)
 			if usesAlertEmailLimit(r.key) && emailAllowed {
 				r.emailAlertCount++
 			}
@@ -204,7 +205,8 @@ func (m *alertManager) runChecks() {
 			if !suppressOngoingAlertResend(r.key) && time.Since(r.lastFired) > alertResendInterval(r.key) {
 				r.lastFired = time.Now()
 				emailAllowed := shouldSendAlertEmail(r.key, r.emailAlertCount, hasSMTP)
-				sendAlertNotificationWithChannelsLimited(r.key, msg, true, hasSMTP, hasWebhook, emailAllowed)
+				attribution := buildAlertAttribution(r.key, r.pendingSince, now, true)
+				sendAlertNotificationWithChannelsLimited(r.key, msg, attribution, true, hasSMTP, hasWebhook, emailAllowed)
 				if usesAlertEmailLimit(r.key) && emailAllowed {
 					r.emailAlertCount++
 				}
@@ -352,7 +354,7 @@ func sendAlertMilestone(key, message string) {
 	hasSMTP := alertSMTPConfigured(smtp)
 	webhook := GetWebhookConfig()
 	hasWebhook := webhookConfigured(webhook)
-	logAlertEvent(key, "critical", message)
+	logAlertEvent(key, "critical", message, "")
 	deliverAlertNotification(key, message, false, hasSMTP, hasWebhook)
 }
 
@@ -361,12 +363,22 @@ func alertSMTPConfigured(cfg *SMTPConfig) bool {
 }
 
 func sendAlertNotificationWithChannels(key, message string, ongoing, hasSMTP, hasWebhook bool) {
-	sendAlertNotificationWithChannelsLimited(key, message, ongoing, hasSMTP, hasWebhook, true)
+	sendAlertNotificationWithChannelsLimited(key, message, "", ongoing, hasSMTP, hasWebhook, true)
 }
 
-func sendAlertNotificationWithChannelsLimited(key, message string, ongoing, hasSMTP, hasWebhook, emailAllowed bool) {
-	logAlert(key, "critical", message)
-	deliverAlertNotificationLimited(key, message, ongoing, hasSMTP, hasWebhook, emailAllowed)
+// sendAlertNotificationWithChannelsLimited 记录并发送告警。attribution 为可选的初步归因，
+// 单独写入 alert_log.attribution，只在通知正文中与原消息临时组合。
+func sendAlertNotificationWithChannelsLimited(key, message, attribution string, ongoing, hasSMTP, hasWebhook, emailAllowed bool) {
+	logAlertWithAttribution(key, "critical", message, attribution, false)
+	deliverAlertNotificationLimited(key, composeAlertBody(message, attribution), ongoing, hasSMTP, hasWebhook, emailAllowed)
+}
+
+// composeAlertBody 在原告警内容后追加初步归因；没有归因时正文保持原样。
+func composeAlertBody(message, attribution string) string {
+	if attribution == "" {
+		return message
+	}
+	return message + "\n\n" + attribution
 }
 
 func deliverAlertNotification(key, message string, ongoing, hasSMTP, hasWebhook bool) {
@@ -389,14 +401,15 @@ func deliverAlertNotificationLimited(key, message string, ongoing, hasSMTP, hasW
 	}
 }
 
-func sendResolvedAlertEvent(key, title, message, tip string) {
-	logAlertEvent(key, "critical", message)
+func sendResolvedAlertEvent(key, title, message, attribution, tip string) {
+	logAlertEvent(key, "critical", message, attribution)
 	subject := getPanelTitle() + " 告警 — " + title
+	body := composeAlertBody(message, attribution)
 	if cfg := GetSMTPConfig(); cfg != nil && cfg.Host != "" && cfg.AdminEmail != "" {
-		go SendMail("", subject, formatEmailHTML(title, message, tip, true))
+		go SendMail("", subject, formatEmailHTML(title, body, tip, true))
 	}
 	if cfg := GetWebhookConfig(); webhookConfigured(cfg) {
-		go SendWebhook(subject, message)
+		go SendWebhook(subject, body)
 	}
 }
 
@@ -466,21 +479,30 @@ func alertLabel(key string) string {
 }
 
 func logAlert(alertType, level, message string) {
-	db := database.GetDB()
-	if db == nil {
-		return
-	}
-	db.Exec("INSERT INTO alert_log (alert_type, level, message) VALUES (?, ?, ?)", alertType, level, message)
-	// 告警历史按时间保留，避免高频事件在数小时内挤掉所有上下文。
-	db.Exec("DELETE FROM alert_log WHERE created_at < datetime('now', '-90 days')")
+	logAlertWithAttribution(alertType, level, message, "", false)
 }
 
-func logAlertEvent(alertType, level, message string) {
+func logAlertEvent(alertType, level, message, attribution string) {
+	logAlertWithAttribution(alertType, level, message, attribution, true)
+}
+
+// logAlertWithAttribution 写入告警历史。message 始终是原始告警内容；
+// 只有存在归因时才写 attribution 列。
+func logAlertWithAttribution(alertType, level, message, attribution string, resolved bool) {
 	db := database.GetDB()
 	if db == nil {
 		return
 	}
-	db.Exec("INSERT INTO alert_log (alert_type, level, message, resolved) VALUES (?, ?, ?, 1)", alertType, level, message)
+	resolvedValue := 0
+	if resolved {
+		resolvedValue = 1
+	}
+	if attribution == "" {
+		db.Exec("INSERT INTO alert_log (alert_type, level, message, resolved) VALUES (?, ?, ?, ?)", alertType, level, message, resolvedValue)
+	} else {
+		db.Exec("INSERT INTO alert_log (alert_type, level, message, resolved, attribution) VALUES (?, ?, ?, ?, ?)", alertType, level, message, resolvedValue, attribution)
+	}
+	// 告警历史按时间保留，避免高频事件在数小时内挤掉所有上下文。
 	db.Exec("DELETE FROM alert_log WHERE created_at < datetime('now', '-90 days')")
 }
 
@@ -568,7 +590,7 @@ func formatEmailHTML(title, detail, tip string, isAlert bool) string {
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #333;">
 `)
 	fmt.Fprintf(&b, `<h2 style="color: %s; margin: 0 0 16px 0; font-size: 18px;">%s %s</h2>`+"\n", titleColor, icon, title)
-	fmt.Fprintf(&b, `<p style="font-size: 15px; line-height: 1.7; margin: 0 0 24px 0; color: #444;">%s</p>`+"\n", detail)
+	fmt.Fprintf(&b, `<p style="font-size: 15px; line-height: 1.7; margin: 0 0 24px 0; color: #444;">%s</p>`+"\n", strings.ReplaceAll(detail, "\n", "<br>"))
 	if tip != "" {
 		b.WriteString(`<hr style="border: none; border-top: 1px solid #e0e0e0; margin: 24px 0;">` + "\n")
 		fmt.Fprintf(&b, `<p style="font-size: 13px; line-height: 1.6; color: #888; margin: 0;">%s</p>`+"\n", tip)

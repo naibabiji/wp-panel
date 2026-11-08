@@ -118,7 +118,7 @@ func NewMaintenanceManager(db *sql.DB) *MaintenanceManager {
 	return &MaintenanceManager{db: db, now: time.Now, unlock: ApplySiteUnlockedPermissions, lock: ApplySiteFileLockMode, verifyLock: VerifySiteFileLockMode,
 		uncertain: map[int]bool{}, retry: map[int]int64{}, alerted: map[int]bool{},
 		alert: func(id int, code string) {
-			sendResolvedAlertEvent("alert_wp_maintenance", "WordPress 维护告警", fmt.Sprintf("site=%d event=%s", id, code), "请核查网站维护状态及操作日志。")
+			sendResolvedAlertEvent("alert_wp_maintenance", "WordPress 维护告警", fmt.Sprintf("site=%d event=%s", id, code), "", "请核查网站维护状态及操作日志。")
 		},
 	}
 }

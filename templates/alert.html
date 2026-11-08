@@ -223,7 +223,13 @@
                                 <span x-show="l.level === 'critical'" class="text-red-400 text-xs">{{t .Lang "alert.level_critical"}}</span>
                                 <span x-show="l.level === 'info'" class="text-green-400 text-xs">{{t .Lang "alert.level_info"}}</span>
                             </td>
-                            <td class="py-2 text-sm text-gray-400" style="white-space: normal; overflow-wrap: anywhere;" x-text="l.message"></td>
+                            <td class="py-2 text-sm text-gray-400" style="white-space: normal; overflow-wrap: anywhere;">
+                                <div style="white-space: normal; overflow-wrap: anywhere;" x-text="l.message"></div>
+                                <div x-show="l.attribution" class="mt-2 border-l-2 border-gray-700 pl-3 text-xs text-gray-400">
+                                    <div class="mb-1 text-gray-500">{{t .Lang "alert.attribution_label"}}</div>
+                                    <div style="white-space: pre-line; overflow-wrap: anywhere;" x-text="l.attribution"></div>
+                                </div>
+                            </td>
                         </tr>
                     </template>
                     <tr x-show="logs.length === 0">

@@ -36,6 +36,8 @@ func cleanup() {
 	}
 	cutoff := time.Now().UTC().Add(-15 * 24 * time.Hour).Format("2006-01-02 15:04:05")
 	db.Exec("DELETE FROM monitoring_metrics WHERE recorded_at < ?", cutoff)
+	objectCutoff := time.Now().UTC().Add(-objectSampleRetention).Format("2006-01-02 15:04:05")
+	db.Exec("DELETE FROM resource_object_samples WHERE window_end < ?", objectCutoff)
 }
 
 func collect() {
@@ -60,6 +62,7 @@ func collect() {
 	if err != nil {
 		log.Printf("采集器写入失败: %v", err)
 	}
+	collectObjectSamples()
 }
 
 var prevCPU cpuTicks

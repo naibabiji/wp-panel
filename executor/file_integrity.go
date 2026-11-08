@@ -695,7 +695,7 @@ func summarizeFileIntegrityComponents(changes []fileIntegrityComponentChange) st
 
 func notifyFileIntegrityChanges(site *models.Website, newCount int, components []fileIntegrityComponentChange) {
 	msg := fmt.Sprintf("%s 在文件锁定期间发现 %d 项新的代码完整性变化：%s。请在安全防御的文件安全页面核查。", site.Domain, newCount, summarizeFileIntegrityComponents(components))
-	sendResolvedAlertEvent("alert_wp_code_integrity", "WordPress 代码完整性变化", msg, "请确认是否来自授权维护；面板不会自动删除或恢复文件。")
+	sendResolvedAlertEvent("alert_wp_code_integrity", "WordPress 代码完整性变化", msg, "", "请确认是否来自授权维护；面板不会自动删除或恢复文件。")
 }
 
 func compareFileIntegrityPath(a, b string) int {

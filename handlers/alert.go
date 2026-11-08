@@ -291,7 +291,7 @@ func (h *AlertHandler) TestWebhook(c *gin.Context) {
 
 func (h *AlertHandler) GetLog(c *gin.Context) {
 	db := database.GetDB()
-	rows, err := db.Query("SELECT id, alert_type, level, message, resolved, created_at FROM alert_log WHERE created_at >= datetime('now', '-90 days') ORDER BY id DESC LIMIT 100")
+	rows, err := db.Query("SELECT id, alert_type, level, message, COALESCE(attribution, ''), resolved, created_at FROM alert_log WHERE created_at >= datetime('now', '-90 days') ORDER BY id DESC LIMIT 100")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("查询失败"))
 		return
@@ -299,18 +299,19 @@ func (h *AlertHandler) GetLog(c *gin.Context) {
 	defer rows.Close()
 
 	type logEntry struct {
-		ID        int    `json:"id"`
-		AlertType string `json:"alert_type"`
-		Level     string `json:"level"`
-		Message   string `json:"message"`
-		Resolved  bool   `json:"resolved"`
-		CreatedAt string `json:"created_at"`
+		ID          int    `json:"id"`
+		AlertType   string `json:"alert_type"`
+		Level       string `json:"level"`
+		Message     string `json:"message"`
+		Attribution string `json:"attribution"`
+		Resolved    bool   `json:"resolved"`
+		CreatedAt   string `json:"created_at"`
 	}
 	var logs []logEntry
 	for rows.Next() {
 		var e logEntry
 		var r int
-		if rows.Scan(&e.ID, &e.AlertType, &e.Level, &e.Message, &r, &e.CreatedAt) == nil {
+		if rows.Scan(&e.ID, &e.AlertType, &e.Level, &e.Message, &e.Attribution, &r, &e.CreatedAt) == nil {
 			e.Resolved = r == 1
 			logs = append(logs, e)
 		}

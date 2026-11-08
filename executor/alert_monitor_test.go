@@ -335,7 +335,8 @@ func TestDisableAlertRuleResolvesOpenAlerts(t *testing.T) {
 	db := openAlertTestDB(t)
 	mustExec(t, db, `CREATE TABLE alert_log (
 		id INTEGER PRIMARY KEY, alert_type TEXT, level TEXT, message TEXT,
-		resolved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`)
+		resolved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		attribution TEXT)`)
 	mustExec(t, db, `CREATE TABLE alert_runtime_state (
 		alert_type TEXT PRIMARY KEY, status TEXT, pending_since TEXT,
 		last_fired_at TEXT, last_message TEXT, email_alert_count INTEGER DEFAULT 0, updated_at DATETIME)`)
