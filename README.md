@@ -63,13 +63,27 @@ WP Panel 只做一件事：**在 VPS 上高效管理 WordPress 网站**。不做
 apt-get update && apt-get install -y wget ca-certificates && wget -qO- https://raw.githubusercontent.com/naibabiji/wp-panel/main/install.sh | bash
 ```
 
+安装前可以先执行只读检查。检查模式不会安装软件、修改 APT 源、创建 Swap、写入配置或留下安装锁：
+
+```bash
+wget -qO- https://raw.githubusercontent.com/naibabiji/wp-panel/main/install.sh | bash -s -- --check
+```
+
 **国内服务器**：GitHub 无法访问时，使用国内优化版脚本：
 
 ```bash
 apt-get update && apt-get install -y wget ca-certificates && wget -qO- https://gh.wp-panel.org/https://raw.githubusercontent.com/naibabiji/wp-panel/main/install-cn.sh | bash
 ```
 
+国内入口的检查模式：
+
+```bash
+wget -qO- https://gh.wp-panel.org/https://raw.githubusercontent.com/naibabiji/wp-panel/main/install-cn.sh | bash -s -- --check
+```
+
 安装完成后输出面板地址和两层登录凭据（BasicAuth + Web 登录）。
+
+检查结果最后一行固定为 `WP Panel 检查结果 / Check result: PASS | WARN | FAIL`。退出码为：`0` 表示可以安装（可能有警告），`10` 表示环境阻断，`20` 表示检查脚本自身错误。正式安装也会在任何系统修改前执行同一组阻断检查。
 
 > 自签名证书首次访问浏览器提示不安全，点击「高级」→「继续访问」即可。
 
@@ -156,6 +170,7 @@ WP Panel 支持在两台相同版本的面板之间搬迁 WordPress 或通用 PH
 | 操作系统 | Debian 13 (Trixie) |
 | CPU | 1 核及以上 |
 | 内存 | 1 GB 及以上（低于自动创建 Swap） |
+| 根分区空间 | 至少 5 GB 可用，建议至少 8 GB |
 | 架构 | x86_64 |
 
 > 各云厂商魔改镜像可能导致未知问题。安装遇到困难时，建议使用 [bin456789/reinstall](https://github.com/bin456789/reinstall) 重装为纯净 Debian 13 后重试。

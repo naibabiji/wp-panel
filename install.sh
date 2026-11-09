@@ -33,6 +33,11 @@ REPAIR_UNIT_EXISTED=false
 REPAIR_TLS_EXISTED=false
 REPAIR_DB_EXISTED=false
 REPAIR_MUTATED=false
+CHECK_MODE=false
+PREFLIGHT_FAILS=0
+PREFLIGHT_WARNS=0
+SCRIPT_ERROR_EXIT=20
+ENVIRONMENT_BLOCK_EXIT=10
 
 if [[ "${WP_PANEL_PREFER_CN_MIRROR:-0}" == "1" ]] || [[ "${WP_PANEL_PREFER_CN_MIRROR:-}" == "true" ]]; then
     PREFER_CN=true
@@ -40,7 +45,7 @@ fi
 
 log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; exit "$SCRIPT_ERROR_EXIT"; }
 
 systemctl_enable_best_effort() {
     local svc="$1"
@@ -55,6 +60,180 @@ systemctl_start_required() {
         journalctl -u "$svc" -n 20 --no-pager 2>/dev/null || true
         log_error "${svc} 启动失败，请根据上方日志排查"
     fi
+}
+
+preflight_item() {
+    local status="$1"
+    local title="$2"
+    local detail="$3"
+    local advice="${4:-}"
+
+    case "$status" in
+        PASS)
+            echo -e "  ${GREEN}[通过 / PASS]${NC} ${title}: ${detail}"
+            ;;
+        WARN)
+            PREFLIGHT_WARNS=$((PREFLIGHT_WARNS + 1))
+            echo -e "  ${YELLOW}[警告 / WARN]${NC} ${title}: ${detail}"
+            ;;
+        FAIL)
+            PREFLIGHT_FAILS=$((PREFLIGHT_FAILS + 1))
+            echo -e "  ${RED}[失败 / FAIL]${NC} ${title}: ${detail}"
+            ;;
+    esac
+    if [[ -n "$advice" ]]; then
+        echo -e "      建议 / Advice: ${advice}"
+    fi
+}
+
+preflight_port_status() {
+    local port="$1"
+    local expected="$2"
+    local line=""
+
+    if ! command -v ss >/dev/null 2>&1; then
+        preflight_item WARN "端口 ${port} / Port ${port}" "无法检测：缺少 ss / cannot inspect: ss is missing" "请在标准 Debian 13 系统上重试 / retry on a standard Debian 13 system"
+        return 0
+    fi
+    line=$(ss -ltnp 2>/dev/null | awk -v port=":${port}" '$4 ~ port"$" {print; exit}' || true)
+    if [[ -z "$line" ]]; then
+        preflight_item PASS "端口 ${port} / Port ${port}" "未被监听 / not listening" "正式安装将按需配置 / The installer will configure it when needed"
+    elif [[ "$line" =~ $expected ]]; then
+        preflight_item PASS "端口 ${port} / Port ${port}" "已由预期组件监听 / used by an expected component"
+    else
+        preflight_item WARN "端口 ${port} / Port ${port}" "已被其他程序监听 / occupied by another program" "停止占用该端口的程序，或确认其不会与 WP Panel 冲突 / stop the conflicting program or confirm it will not conflict with WP Panel"
+    fi
+}
+
+run_preflight_checks() {
+    local os_release="/etc/os-release"
+    local os_id=""
+    local os_version=""
+    local os_codename=""
+    local arch=""
+    local total_mem_kb=""
+    local total_mem_mb=""
+    local root_available_kb=""
+    local virt=""
+    local pid1=""
+    local required_cmd=""
+
+    PREFLIGHT_FAILS=0
+    PREFLIGHT_WARNS=0
+    echo ""
+    echo "WP Panel 安装前检查 / WP Panel pre-install checks"
+    echo "只读取系统状态，不会安装软件或修改系统 / Read-only: no packages or system files will be changed"
+    echo ""
+
+    if [[ $EUID -eq 0 ]]; then
+        preflight_item PASS "管理员权限 / Root privileges" "当前为 root / running as root"
+    else
+        preflight_item FAIL "管理员权限 / Root privileges" "当前不是 root / not running as root" "请使用 root 或 sudo 重新执行 / run again as root or with sudo"
+    fi
+
+    if [[ ! -r "$os_release" ]]; then
+        preflight_item FAIL "操作系统 / Operating system" "无法读取 ${os_release} / cannot read ${os_release}" "请在可读取系统信息的 Debian 服务器上执行 / run on a server with readable OS metadata"
+        echo "WP Panel 检查结果 / Check result: FAIL"
+        return "$SCRIPT_ERROR_EXIT"
+    fi
+    os_id=$(awk -F= '$1 == "ID" {gsub(/"/, "", $2); print $2; exit}' "$os_release")
+    os_version=$(awk -F= '$1 == "VERSION_ID" {gsub(/"/, "", $2); print $2; exit}' "$os_release")
+    os_codename=$(awk -F= '$1 == "VERSION_CODENAME" {gsub(/"/, "", $2); print $2; exit}' "$os_release")
+    if [[ "$os_id" == "debian" && "$os_version" == "13" && "$os_codename" == "trixie" ]]; then
+        preflight_item PASS "操作系统 / Operating system" "Debian 13 (trixie)"
+    else
+        preflight_item FAIL "操作系统 / Operating system" "检测到 ${os_id:-unknown} ${os_version:-unknown} (${os_codename:-unknown})，仅支持 Debian 13 (trixie) / detected unsupported system" "请按照官网教程准备纯净 Debian 13：https://wp-panel.org/help/getting-started/ / prepare a clean Debian 13 system using the official guide"
+    fi
+
+    arch=$(uname -m 2>/dev/null || true)
+    if [[ "$arch" == "x86_64" ]]; then
+        preflight_item PASS "CPU 架构 / CPU architecture" "x86_64"
+    else
+        preflight_item FAIL "CPU 架构 / CPU architecture" "检测到 ${arch:-unknown}，Release 仅提供 x86_64 / detected unsupported architecture" "请使用 x86_64 服务器 / use an x86_64 server"
+    fi
+
+    total_mem_kb=$(awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true)
+    if [[ "$total_mem_kb" =~ ^[0-9]+$ ]]; then
+        total_mem_mb=$((total_mem_kb / 1024))
+        if [[ $total_mem_mb -lt 1024 ]]; then
+            preflight_item FAIL "内存 / Memory" "${total_mem_mb} MB，小于最低 1 GB / below the 1 GB minimum" "请更换至少 1 GB 内存的服务器 / use a server with at least 1 GB RAM"
+        elif [[ $total_mem_mb -lt 2048 ]]; then
+            preflight_item WARN "内存 / Memory" "${total_mem_mb} MB，安装可能需要 Swap / installation may need Swap"
+        else
+            preflight_item PASS "内存 / Memory" "${total_mem_mb} MB"
+        fi
+    else
+        preflight_item FAIL "内存 / Memory" "无法读取 /proc/meminfo / cannot read /proc/meminfo" "请确认运行环境提供标准 Linux 内存信息 / use an environment exposing standard Linux memory information"
+    fi
+
+    root_available_kb=$(df -P -k / 2>/dev/null | awk 'NR == 2 {print $4}')
+    if [[ "$root_available_kb" =~ ^[0-9]+$ ]]; then
+        if [[ $root_available_kb -lt $((5 * 1024 * 1024)) ]]; then
+            preflight_item FAIL "根分区空间 / Root filesystem" "$((root_available_kb / 1024)) MB 可用，小于建议最低 5 GB / below the 5 GB minimum" "清理磁盘或更换更大系统盘 / free disk space or use a larger system disk"
+        elif [[ $root_available_kb -lt $((8 * 1024 * 1024)) ]]; then
+            preflight_item WARN "根分区空间 / Root filesystem" "$((root_available_kb / 1024)) MB 可用，空间较紧张 / available space is tight" "建议至少保留 8 GB 可用空间 / keeping at least 8 GB free is recommended"
+        else
+            preflight_item PASS "根分区空间 / Root filesystem" "$((root_available_kb / 1024)) MB 可用 / available"
+        fi
+    else
+        preflight_item FAIL "根分区空间 / Root filesystem" "无法读取根分区空间 / cannot read root filesystem space" "请确认 df 可用且根分区正常挂载 / ensure df works and / is mounted"
+    fi
+
+    for required_cmd in apt-get awk df flock install mkdir mv ps ss systemctl uname; do
+        if ! command -v "$required_cmd" >/dev/null 2>&1; then
+            preflight_item FAIL "必要命令 / Required command" "缺少 ${required_cmd} / ${required_cmd} is missing" "请使用标准 Debian 13 系统 / use a standard Debian 13 system"
+        fi
+    done
+
+    if command -v systemctl >/dev/null 2>&1; then
+        pid1=$(ps -p 1 -o comm= 2>/dev/null | awk '{print $1}' || true)
+        if [[ -d /run/systemd/system || "$pid1" == "systemd" ]]; then
+            preflight_item PASS "systemd" "systemd 可用 / available"
+        else
+            preflight_item FAIL "systemd" "当前环境不是正常 systemd 启动环境 / systemd is not running as PID 1" "请使用支持 systemd 的 Debian 13 VPS / use a Debian 13 VPS with systemd"
+        fi
+    fi
+
+    if command -v systemd-detect-virt >/dev/null 2>&1; then
+        virt=$(systemd-detect-virt 2>/dev/null || true)
+        case "$virt" in
+            lxc|openvz)
+                preflight_item WARN "虚拟化环境 / Virtualization" "检测到 ${virt} / detected ${virt}" "请确认服务商允许 systemd、网络和内核功能；不建议在受限容器中安装 / confirm required system and kernel features are available"
+                ;;
+            none|"")
+                preflight_item PASS "虚拟化环境 / Virtualization" "未检测到受限 LXC/OpenVZ / no restricted LXC/OpenVZ detected"
+                ;;
+            *)
+                preflight_item PASS "虚拟化环境 / Virtualization" "检测到 ${virt} / detected ${virt}"
+                ;;
+        esac
+    else
+        preflight_item WARN "虚拟化环境 / Virtualization" "无法检测 / detection command unavailable" "请确认不是受限 LXC/OpenVZ 容器 / confirm this is not a restricted LXC/OpenVZ container"
+    fi
+
+    preflight_port_status 80 'nginx|wp-panel'
+    preflight_port_status 443 'nginx|wp-panel'
+    preflight_port_status 8443 'wp-panel'
+    preflight_port_status 3306 'mariadbd|mysqld|mysql'
+
+    if [[ -f "$CONFIG_FILE" && -s "$BIN_PATH" && -x "$BIN_PATH" ]]; then
+        preflight_item WARN "已有 WP Panel / Existing WP Panel" "检测到已安装面板 / an installed panel was found" "正式安装时会显示 repair/重装选择菜单 / the normal installer will show the repair/reinstall menu"
+    elif [[ -e "$CONFIG_FILE" || -e "$BIN_PATH" || -d "$INSTALL_DIR" || -f "$SERVICE_PATH" ]]; then
+        preflight_item WARN "已有 WP Panel / Existing WP Panel" "检测到安装残留 / installation traces were found" "正式安装时会显示残留处理选择菜单 / the normal installer will show the cleanup menu"
+    else
+        preflight_item PASS "已有 WP Panel / Existing WP Panel" "未发现安装或残留 / none found"
+    fi
+
+    if [[ $PREFLIGHT_FAILS -gt 0 ]]; then
+        echo "WP Panel 检查结果 / Check result: FAIL"
+        return "$ENVIRONMENT_BLOCK_EXIT"
+    fi
+    if [[ $PREFLIGHT_WARNS -gt 0 ]]; then
+        echo "WP Panel 检查结果 / Check result: WARN"
+    else
+        echo "WP Panel 检查结果 / Check result: PASS"
+    fi
+    return 0
 }
 
 # ============================================================
@@ -131,6 +310,10 @@ LIMITSEOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --check)
+            CHECK_MODE=true
+            shift
+            ;;
         --prefer-cn|--cn)
             PREFER_CN=true
             shift
@@ -152,6 +335,20 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# 预检必须在安装锁、异常 trap、repair 备份和任何系统修改之前运行。
+PREFLIGHT_CODE=0
+if run_preflight_checks; then
+    PREFLIGHT_CODE=0
+else
+    PREFLIGHT_CODE=$?
+fi
+if $CHECK_MODE; then
+    exit "$PREFLIGHT_CODE"
+fi
+if [[ $PREFLIGHT_CODE -ne 0 ]]; then
+    exit "$PREFLIGHT_CODE"
+fi
 
 # 异常退出时显示友好反馈提示
 trap 'e=$?; rm -f "${PANEL_CANDIDATE:-}"; if [[ $e -ne 0 ]]; then repair_rollback; echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; echo -e "${RED}  安装未完成 / Installation incomplete${NC}"; echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; echo -e "  安装失败通常与系统环境不纯净有关。"; echo -e "  Installation failures are commonly caused by a non-clean system environment."; echo -e "  建议使用纯净版 Debian 13 重装系统后再安装，或联系面板开发者协助排查。"; echo -e "  Please retry on a clean Debian 13 system, or contact the developer for help."; echo ""; echo -e "  请将上方错误信息截图发送至 / Send a screenshot of the error above to:"; echo -e "  blog@naibabiji.com"; echo -e "  微信 / WeChat: vv15_zhi"; echo ""; fi' EXIT
@@ -655,11 +852,8 @@ do_purge() {
 }
 
 # ============================================================
-# 权限检查
+# 安装互斥锁
 # ============================================================
-if [[ $EUID -ne 0 ]]; then
-    log_error "请使用 root 权限运行此脚本"
-fi
 exec 9>/run/lock/wp-panel-install.lock
 flock -n 9 || log_error "另一个WP Panel安装或repair进程正在运行"
 log_info "权限检查通过"
@@ -789,12 +983,8 @@ if $REPAIR_MODE; then
 fi
 
 # ============================================================
-# 系统检测与Swap配置
+# Swap配置
 # ============================================================
-if ! grep -qi "debian" /etc/os-release 2>/dev/null; then
-    log_error "此脚本仅支持 Debian 系统"
-fi
-
 TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 TOTAL_MEM_MB=$((TOTAL_MEM_KB / 1024))
 log_info "物理内存: ${TOTAL_MEM_MB}MB"
