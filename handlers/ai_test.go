@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/naibabiji/wp-panel/database"
@@ -28,6 +30,19 @@ func TestDiagnoseRejectsLogAnalysisWithoutLogContext(t *testing.T) {
 	(&AIHandler{}).Diagnose(c)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "日志分析页面") {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDiagnoseRejectsAlertIDForOrdinarySymptom(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Params = gin.Params{{Key: "id", Value: "1"}}
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/websites/1/ai/diagnose", bytes.NewBufferString(`{"symptom":"site_500","alert_id":1}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	(&AIHandler{}).Diagnose(c)
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "告警事件无效") {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -92,6 +107,84 @@ func TestDiagnoseSendsPreparedPromptAndRestoresAliases(t *testing.T) {
 	}
 	if !strings.Contains(rawText, "198.51.100.8") || strings.Contains(rawText, "IP-01") {
 		t.Fatalf("stored response did not restore local IP alias: %s", rawText)
+	}
+}
+
+func TestAlertDiagnosisClearsInterruptedSessionBeforeReuse(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDB := database.DB
+	database.DB = db
+	t.Cleanup(func() { database.DB = oldDB; db.Close() })
+	if err := database.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	result, err := db.Exec(`INSERT INTO websites (name,domain,system_user,web_root,log_dir,db_name,db_user,php_pool_path,nginx_conf_path)
+		VALUES ('Alert Test','alert.example','wp_alert','/tmp/alert.example','/tmp/alert.example-logs','wp_alert','wp_alert','/tmp/alert-pool.conf','/tmp/alert-nginx.conf')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	siteID, _ := result.LastInsertId()
+	logDir := t.TempDir()
+	if err := os.WriteFile(logDir+"/access.log", []byte(""), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE websites SET log_dir=? WHERE id=?`, logDir, siteID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE ai_settings SET enabled=1,api_key='test-key' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().In(time.Local).Truncate(time.Minute)
+	start := now.Add(-5 * time.Minute)
+	attr := fmt.Sprintf("初步归因：alert.example（可信度：高）\n时间段：%s–%s（服务器本地时间）", start.Format("2006-01-02 15:04"), now.Format("15:04"))
+	created := now.Add(10 * time.Second)
+	if _, err := db.Exec(`INSERT INTO alert_log(alert_type,level,message,created_at,attribution) VALUES('alert_cpu','critical','CPU high',?,?)`, created.UTC().Format("2006-01-02 15:04:05"), attr); err != nil {
+		t.Fatal(err)
+	}
+	var alertID int64
+	if err := db.QueryRow(`SELECT id FROM alert_log ORDER BY id DESC LIMIT 1`).Scan(&alertID); err != nil {
+		t.Fatal(err)
+	}
+	sessionResult, err := db.Exec(`INSERT INTO ai_sessions(site_id,symptom,status,context_type,context_id,updated_at) VALUES(?,?,?,?,?,datetime('now','-11 minutes'))`, siteID, models.AIDiagnosisAlert, models.AISessionRunning, "alert_diagnosis", alertID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	interruptedID, _ := sessionResult.LastInsertId()
+	oldCall := callAIChat
+	t.Cleanup(func() { callAIChat = oldCall })
+	callAIChat = func(_ context.Context, _ *models.AISettings, _, _ string) (string, int64, error) {
+		return `{"summary":"alert reviewed","risk_level":"low","likely_causes":[],"recommended_actions":[],"needs_more_info":false}`, 1, nil
+	}
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(siteID)}}
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/websites/1/ai/diagnose", bytes.NewBufferString(fmt.Sprintf(`{"symptom":"alert_diagnosis","alert_id":%d}`, alertID)))
+	c.Request.Header.Set("Content-Type", "application/json")
+	(&AIHandler{}).Diagnose(c)
+	if recorder.Code != http.StatusOK || strings.Contains(recorder.Body.String(), `"reused":true`) {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var oldStatus string
+	if err := db.QueryRow(`SELECT status FROM ai_sessions WHERE id=?`, interruptedID).Scan(&oldStatus); err != nil {
+		t.Fatal(err)
+	}
+	if oldStatus != models.AISessionFailed {
+		t.Fatalf("interrupted session status=%q, want failed", oldStatus)
+	}
+
+	recorder = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(recorder)
+	c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(siteID)}}
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/websites/1/ai/diagnose", bytes.NewBufferString(fmt.Sprintf(`{"symptom":"alert_diagnosis","alert_id":%d}`, alertID)))
+	c.Request.Header.Set("Content-Type", "application/json")
+	(&AIHandler{}).Diagnose(c)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"reused":true`) {
+		t.Fatalf("completed session was not reused: status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

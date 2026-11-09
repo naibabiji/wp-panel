@@ -34,6 +34,36 @@ const (
 
 type AIHandler struct{}
 
+func (h *AIHandler) ListAlertCandidates(c *gin.Context) {
+	id, err := parseSiteID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "website.invalid_site_id")))
+		return
+	}
+	site := getWebsiteByID(id)
+	if site == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse(i18n.TE(c.Request, "website.not_found")))
+		return
+	}
+	items, err := executor.AlertDiagnosisCandidates(database.GetDB(), site, 20)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.alert_candidates_failed")))
+		return
+	}
+	result := make([]gin.H, 0, len(items))
+	for _, item := range items {
+		result = append(result, gin.H{
+			"id": item.ID, "alert_type": item.AlertType, "alert_label": executor.AlertDiagnosisTypeLabel(item.AlertType),
+			"created_at":         executor.AlertDiagnosisFormatTime(item.CreatedAt),
+			"attribution_window": executor.AlertDiagnosisFormatWindow(item.AttributionStart, item.AttributionEnd),
+			"log_window":         executor.AlertDiagnosisFormatWindow(item.LogStart, item.LogEnd),
+			"relation":           item.Relation, "relation_label": executor.AlertDiagnosisRelationLabel(item.Relation),
+			"summary": excerpt(item.Message, 180),
+		})
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(result))
+}
+
 func (h *AIHandler) GetSettings(c *gin.Context) {
 	settings, err := loadAISettings()
 	if err != nil {
@@ -128,6 +158,10 @@ func (h *AIHandler) Diagnose(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.invalid_symptom")))
 		return
 	}
+	if req.Symptom != models.AIDiagnosisAlert && req.AlertID != 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.invalid_alert")))
+		return
+	}
 	if req.Symptom == models.AIDiagnosisLogAnalysis {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.log_analysis_entry_required")))
 		return
@@ -152,6 +186,19 @@ func (h *AIHandler) Diagnose(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.api_key_required")))
 		return
 	}
+	var alertContext executor.AlertDiagnosisContext
+	if req.Symptom == models.AIDiagnosisAlert {
+		if req.AlertID <= 0 {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.alert_required")))
+			return
+		}
+		var alertErr error
+		alertContext, alertErr = executor.LoadAlertDiagnosisContext(database.GetDB(), site, req.AlertID)
+		if alertErr != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.invalid_alert")))
+			return
+		}
+	}
 
 	// Mark sessions left in 'running' by a previous process restart as failed.
 	_, _ = database.GetDB().Exec(
@@ -159,6 +206,15 @@ func (h *AIHandler) Diagnose(c *gin.Context) {
 			 WHERE site_id = ? AND status = ? AND updated_at <= datetime('now', '-10 minutes')`,
 		models.AISessionFailed, i18n.TE(c.Request, "ai_diagnostics.session_interrupted"), site.ID, models.AISessionRunning,
 	)
+
+	if req.Symptom == models.AIDiagnosisAlert {
+		var existingID int
+		var existingStatus string
+		if database.GetDB().QueryRow(`SELECT id, status FROM ai_sessions WHERE site_id=? AND symptom=? AND context_type='alert_diagnosis' AND context_id=? AND status<>? ORDER BY id DESC LIMIT 1`, site.ID, models.AIDiagnosisAlert, req.AlertID, models.AISessionFailed).Scan(&existingID, &existingStatus) == nil {
+			c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"session_id": existingID, "status": existingStatus, "reused": true}))
+			return
+		}
+	}
 
 	// Prevent concurrent diagnoses for the same site within this process.
 	if _, loaded := aiDiagnosisMu.LoadOrStore(site.ID, struct{}{}); loaded {
@@ -180,18 +236,44 @@ func (h *AIHandler) Diagnose(c *gin.Context) {
 		return
 	}
 
-	sessionID, err := createAISession(site.ID, req.Symptom)
+	contextType := ""
+	contextID := 0
+	if req.Symptom == models.AIDiagnosisAlert {
+		contextType, contextID = "alert_diagnosis", req.AlertID
+	}
+	sessionID, err := createAISessionWithContext(site.ID, req.Symptom, models.AIDiagnosticContextRef{Type: contextType, ID: contextID}, "")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.create_session_failed")))
 		return
 	}
 	updateAISessionStatus(sessionID, models.AISessionRunning, "")
 
-	systemPrompt, userPrompt, err := buildAIDiagnosticPrompt(site, req.Symptom)
+	var systemPrompt, userPrompt string
+	var promptTools []models.AIToolEvent
+	if req.Symptom == models.AIDiagnosisAlert {
+		report, reportErr := executor.AnalyzeWebsiteLogs(site, alertContext.LogStart, alertContext.LogEnd, database.GetDB(), i18n.LangFromRequest(c.Request))
+		if reportErr != nil {
+			failAISession(sessionID, reportErr.Error(), 0, 0)
+			c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"session_id": sessionID, "status": models.AISessionFailed, "error_message": reportErr.Error()}))
+			return
+		}
+		contextJSON, contextErr := executor.EncodeAIAlertSessionSnapshot(alertContext, report)
+		if contextErr != nil || updateAISessionContext(sessionID, contextJSON) != nil {
+			failAISession(sessionID, i18n.TE(c.Request, "ai_diagnostics.collect_context_failed"), 0, 0)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.collect_context_failed")))
+			return
+		}
+		systemPrompt, userPrompt, promptTools, err = executor.BuildAIAlertDiagnosticPrompt(site, alertContext, report, sessionID)
+	} else {
+		systemPrompt, userPrompt, err = buildAIDiagnosticPrompt(site, req.Symptom)
+	}
 	if err != nil {
 		failAISession(sessionID, err.Error(), len(userPrompt), 0)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(i18n.TE(c.Request, "ai_diagnostics.collect_context_failed")))
 		return
+	}
+	for _, event := range promptTools {
+		recordAIToolEvent(sessionID, event.ToolName, event.ResultSummary)
 	}
 	userPrompt, err = executor.PrepareAIDiagnosticPrompt(sessionID, userPrompt)
 	if err != nil {
@@ -206,7 +288,7 @@ func (h *AIHandler) Diagnose(c *gin.Context) {
 	defer cancel()
 	content, _, err := callAIChat(ctx, settings, systemPrompt, userPrompt)
 	if err != nil {
-		msg := aiUserErrorWithContext(i18n.LangFromRequest(c.Request), err, len(systemPrompt)+len(userPrompt), req.Symptom == models.AIDiagnosisLogAnalysis)
+		msg := aiUserErrorWithContext(i18n.LangFromRequest(c.Request), err, len(systemPrompt)+len(userPrompt), req.Symptom == models.AIDiagnosisLogAnalysis || req.Symptom == models.AIDiagnosisAlert)
 		failAISession(sessionID, msg, len(userPrompt), 0)
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"session_id":    sessionID,
@@ -411,7 +493,7 @@ func (h *AIHandler) SendMessage(c *gin.Context) {
 	defer cancel()
 	reply, _, err := executor.CallAIChat(ctx, settings, systemPrompt, userPrompt)
 	if err != nil {
-		msg := aiUserErrorWithContext(i18n.LangFromRequest(c.Request), err, len(systemPrompt)+len(userPrompt), session.ContextType == "log_analysis")
+		msg := aiUserErrorWithContext(i18n.LangFromRequest(c.Request), err, len(systemPrompt)+len(userPrompt), session.ContextType == "log_analysis" || session.ContextType == "alert_diagnosis")
 		_, _ = createAIMessage(sessionID, "assistant", "", len(userPrompt), 0, msg)
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"status":        models.AISessionFailed,
@@ -587,6 +669,11 @@ func createAISessionWithContext(siteID int, symptom string, ref models.AIDiagnos
 	}
 	id, err := res.LastInsertId()
 	return int(id), err
+}
+
+func updateAISessionContext(sessionID int, contextJSON string) error {
+	_, err := database.GetDB().Exec(`UPDATE ai_sessions SET context_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, contextJSON, sessionID)
+	return err
 }
 
 func loadAISessionDetail(siteID, sessionID int) (models.AISessionDetail, error) {

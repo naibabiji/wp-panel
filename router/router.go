@@ -596,6 +596,7 @@ var i18nKeys = []string{
 	"ai_diagnostics.symptom_ssl_failure",
 	"ai_diagnostics.symptom_wp_admin_down",
 	"ai_diagnostics.symptom_log_analysis",
+	"ai_diagnostics.symptom_alert_diagnosis", "ai_diagnostics.alert_select", "ai_diagnostics.alert_select_placeholder", "ai_diagnostics.alert_candidates_loading", "ai_diagnostics.alert_candidates_load_failed", "ai_diagnostics.alert_notification_time", "ai_diagnostics.alert_attribution_window", "ai_diagnostics.alert_log_window", "ai_diagnostics.alert_candidates_empty", "ai_diagnostics.alert_relation_attribution", "ai_diagnostics.alert_relation_clue", "ai_diagnostics.alert_diagnosis_hint", "ai_diagnostics.alert_deeper_help",
 	"ai_diagnostics.log_context_description",
 	"ai_diagnostics.data_read_count",
 	"ai_diagnostics.tool_runtime_config",
@@ -606,6 +607,7 @@ var i18nKeys = []string{
 	"ai_diagnostics.tool_log_bot",
 	"ai_diagnostics.tool_log_ip",
 	"ai_diagnostics.tool_log_category",
+	"ai_diagnostics.tool_alert_context",
 	"ai_diagnostics.waiting",
 	"ai_diagnostics.waiting_ai_request",
 	"ai_diagnostics.waiting_analysis",
@@ -954,6 +956,7 @@ var i18nKeys = []string{
 	"ai_diagnostics.followup_wait",
 	"ai_diagnostics.invalid_session_id",
 	"ai_diagnostics.invalid_symptom",
+	"ai_diagnostics.invalid_alert", "ai_diagnostics.alert_required", "ai_diagnostics.alert_candidates_failed",
 	"ai_diagnostics.load_context_failed",
 	"ai_diagnostics.load_messages_failed",
 	"ai_diagnostics.load_sessions_failed",
@@ -1781,6 +1784,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.PUT("/api/ai/settings", aiHandler.SaveSettings)
 	protected.POST("/api/ai/test", aiHandler.Test)
 	protected.POST("/api/websites/:id/ai/diagnose", aiHandler.Diagnose)
+	protected.GET("/api/websites/:id/ai/alert-candidates", aiHandler.ListAlertCandidates)
 	protected.GET("/api/websites/:id/ai/sessions", aiHandler.ListSessions)
 	protected.GET("/api/websites/:id/ai/sessions/:session_id", aiHandler.GetSession)
 	protected.GET("/api/websites/:id/ai/sessions/:session_id/messages", aiHandler.ListMessages)

@@ -215,7 +215,13 @@ func BuildAIFollowupPromptWithTools(site *models.Website, session *models.AISess
 	if userMessage == "" {
 		return "", "", nil, fmt.Errorf("追问内容不能为空")
 	}
-	_, currentContext, err := BuildAIDiagnosticPrompt(site, session.Symptom)
+	contextSymptom := session.Symptom
+	if session.ContextType == "alert_diagnosis" {
+		// Alert diagnosis reuses the log-analysis site context while keeping the
+		// alert-specific evidence and response rules in the session payload.
+		contextSymptom = models.AIDiagnosisLogAnalysis
+	}
+	_, currentContext, err := BuildAIDiagnosticPrompt(site, contextSymptom)
 	if err != nil {
 		return "", "", nil, err
 	}

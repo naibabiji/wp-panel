@@ -62,13 +62,25 @@
                     </div>
                     <div>
                         <label class="label">{{t .Lang "ai_diagnostics.issue_type"}}</label>
-                        <select x-model="symptom" class="input-field text-sm">
+                        <select x-model="symptom" @change="onSymptomChange()" class="input-field text-sm">
                             <template x-for="item in symptoms" :key="item.value">
                                 <option :value="item.value" x-text="item.label"></option>
                             </template>
                         </select>
                     </div>
-                    <button @click="runDiagnosis()" :disabled="diagnosing || !selectedSiteID" class="btn-primary w-full text-sm" x-text="diagnosing ? t('ai_diagnostics.diagnosing', { seconds: elapsedSeconds }) : t('ai_diagnostics.start_diagnosis_button')"></button>
+                    <div x-show="symptom === 'alert_diagnosis'" x-cloak>
+                        <label class="label">{{t .Lang "ai_diagnostics.alert_select"}}</label>
+                        <select x-model="selectedAlertID" class="input-field text-sm" :disabled="alertCandidatesLoading || !selectedSiteID">
+                            <option value="" x-text="alertCandidatesLoading ? t('ai_diagnostics.alert_candidates_loading') : t('ai_diagnostics.alert_select_placeholder')"></option>
+                            <template x-for="item in alertCandidates" :key="item.id">
+                                <option :value="String(item.id)" x-text="alertLabel(item)"></option>
+                            </template>
+                        </select>
+                        <p class="text-xs text-gray-500 mt-1" x-show="symptom === 'alert_diagnosis'" x-text="t('ai_diagnostics.alert_diagnosis_hint')"></p>
+                        <p class="text-xs text-red-400 mt-1" x-show="alertCandidatesLoadError" x-text="t('ai_diagnostics.alert_candidates_load_failed')"></p>
+                        <p class="text-xs text-gray-500 mt-1" x-show="!alertCandidatesLoading && !alertCandidatesLoadError && !alertCandidates.length" x-text="t('ai_diagnostics.alert_candidates_empty')"></p>
+                    </div>
+                    <button @click="runDiagnosis()" :disabled="diagnosing || !selectedSiteID || (symptom === 'alert_diagnosis' && !selectedAlertID)" class="btn-primary w-full text-sm" x-text="diagnosing ? t('ai_diagnostics.diagnosing', { seconds: elapsedSeconds }) : t('ai_diagnostics.start_diagnosis_button')"></button>
                     <div x-show="diagnosing" class="p-3 rounded text-xs text-gray-300" style="background-color: #0f172a; border: 1px solid #1e293b;">
                         <p x-text="waitMessage()"></p>
                         <p class="text-gray-500 mt-1">{{t .Lang "ai_diagnostics.timeout_help"}}</p>
@@ -199,7 +211,8 @@
                                 </template>
                             </div>
 
-                            <p x-show="report?.needs_more_info" class="text-xs text-yellow-400">{{t .Lang "ai_diagnostics.needs_more_info"}}</p>
+                        <p x-show="report?.needs_more_info" class="text-xs text-yellow-400">{{t .Lang "ai_diagnostics.needs_more_info"}}</p>
+                        <p x-show="sessionDetail?.symptom === 'alert_diagnosis'" class="text-xs text-gray-500">{{t .Lang "ai_diagnostics.alert_deeper_help"}}</p>
                             <pre x-show="!report && rawText" x-text="rawText" class="text-xs text-gray-300 whitespace-pre-wrap overflow-auto max-h-[560px] p-4 rounded" style="background-color: #0f172a; border: 1px solid #334155;"></pre>
                         </div>
                     </div>
@@ -247,13 +260,18 @@ function aiDiagnosticsPage() {
         websites: [],
         selectedSiteID: '',
         symptom: 'site_500',
+        selectedAlertID: '',
+        alertCandidates: [],
+        alertCandidatesLoading: false,
+        alertCandidatesLoadError: false,
         symptoms: [
             { value: 'site_500', label: t('ai_diagnostics.symptom_site_500') },
             { value: 'wp_admin_down', label: t('ai_diagnostics.symptom_wp_admin_down') },
             { value: 'ssl_failure', label: t('ai_diagnostics.symptom_ssl_failure') },
             { value: 'db_connection', label: t('ai_diagnostics.symptom_db_connection') },
             { value: 'cache_issue', label: t('ai_diagnostics.symptom_cache_issue') },
-            { value: 'performance', label: t('ai_diagnostics.symptom_performance') }
+            { value: 'performance', label: t('ai_diagnostics.symptom_performance') },
+            { value: 'alert_diagnosis', label: t('ai_diagnostics.symptom_alert_diagnosis') }
         ],
         sessions: [],
         report: null,
@@ -335,6 +353,7 @@ function aiDiagnosticsPage() {
                 this.selectedSiteID = String(this.websites[0].id);
             }
             await this.fetchSessions();
+            if (this.symptom === 'alert_diagnosis') await this.fetchAlertCandidates();
             if (requestedSessionID && this.selectedSiteID) await this.loadSession(Number(requestedSessionID));
         },
         async fetchWebsites() {
@@ -356,12 +375,37 @@ function aiDiagnosticsPage() {
             this.toolEvents = [];
             this.messages = [];
             this.followupText = '';
+            this.selectedAlertID = '';
+            this.alertCandidates = [];
+            this.alertCandidatesLoadError = false;
             this.diagnosisCollapsed = false;
             this.error = '';
             await this.fetchSessions();
+            if (this.symptom === 'alert_diagnosis') await this.fetchAlertCandidates();
+        },
+        async onSymptomChange() {
+            this.selectedAlertID = '';
+            this.alertCandidates = [];
+            this.alertCandidatesLoadError = false;
+            if (this.symptom === 'alert_diagnosis') await this.fetchAlertCandidates();
+        },
+        async fetchAlertCandidates() {
+            if (!this.selectedSiteID) return;
+            this.alertCandidatesLoading = true;
+            this.alertCandidatesLoadError = false;
+            try {
+                const r = await api('/websites/' + this.selectedSiteID + '/ai/alert-candidates', { silent: true });
+                if (r.success) this.alertCandidates = r.data || [];
+                else throw new Error(t('ai_diagnostics.alert_candidates_load_failed'));
+            } catch (e) { this.alertCandidatesLoadError = true; this.error = e.message; }
+            this.alertCandidatesLoading = false;
+        },
+        alertLabel(item) {
+            return (item.alert_label || item.alert_type) + ' · ' + t('ai_diagnostics.alert_notification_time') + ' ' + (item.created_at || '--') + ' · ' + t('ai_diagnostics.alert_attribution_window') + ' ' + (item.attribution_window || '--') + ' · ' + t('ai_diagnostics.alert_log_window') + ' ' + (item.log_window || '--') + ' · ' + (item.relation_label || '');
         },
         symptomLabel(value) {
             if (value === 'log_analysis') return t('ai_diagnostics.symptom_log_analysis');
+            if (value === 'alert_diagnosis') return t('ai_diagnostics.symptom_alert_diagnosis');
             const found = this.symptoms.find(item => item.value === value);
             return found ? found.label : value;
         },
@@ -425,7 +469,7 @@ function aiDiagnosticsPage() {
             try {
                 const r = await api('/websites/' + this.selectedSiteID + '/ai/diagnose', {
                     method: 'POST',
-                    body: { symptom: this.symptom },
+                    body: { symptom: this.symptom, ...(this.symptom === 'alert_diagnosis' ? { alert_id: Number(this.selectedAlertID) } : {}) },
                     timeout: 210000
                 });
                 const d = r.data || {};
@@ -504,6 +548,9 @@ function aiDiagnosticsPage() {
         },
         contextDescription() {
             if (!this.sessionDetail?.context_type) return '';
+            if (this.sessionDetail.context_type === 'alert_diagnosis') {
+                return t('ai_diagnostics.symptom_alert_diagnosis') + ' #' + this.sessionDetail.context_id;
+            }
             if (this.sessionDetail.context_type === 'log_analysis') {
                 let text = t('ai_diagnostics.log_context_description', { id: this.sessionDetail.context_id });
                 if (this.sessionDetail.focus_kind && this.sessionDetail.focus_value) text += ' · ' + this.sessionDetail.focus_kind + ': ' + this.sessionDetail.focus_value;
@@ -520,7 +567,8 @@ function aiDiagnosticsPage() {
                 read_log_detail_path: t('ai_diagnostics.tool_log_path'),
                 read_log_detail_bot: t('ai_diagnostics.tool_log_bot'),
                 read_log_detail_ip: t('ai_diagnostics.tool_log_ip'),
-                read_log_detail_category: t('ai_diagnostics.tool_log_category')
+                read_log_detail_category: t('ai_diagnostics.tool_log_category'),
+                read_alert_context: t('ai_diagnostics.tool_alert_context')
             };
             return labels[name] || name;
         },

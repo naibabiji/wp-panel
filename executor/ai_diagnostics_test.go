@@ -80,6 +80,15 @@ func TestLogDiagnosticResponseRulesAreFocusSpecific(t *testing.T) {
 	}
 }
 
+func TestAlertDiagnosticRulesRetainLogSafetyRules(t *testing.T) {
+	joined := strings.Join(alertDiagnosticResponseRules(), "\n")
+	for _, want := range []string{"IP-01", "不能强行关联", "不要仅凭请求量"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("alert rules missing %q: %s", want, joined)
+		}
+	}
+}
+
 func TestAISafeConfigDirectivesOnlyReturnsAllowlist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pool.conf")
 	content := "pm = dynamic\npm.max_children = 12\nuser = private-user\nphp_admin_value[memory_limit] = 256M\nenv[SECRET] = hidden\n"
@@ -112,6 +121,27 @@ func TestAICompactFollowupContextRemovesBulkyEvidence(t *testing.T) {
 	}
 	if _, ok := got["db_check"]; !ok {
 		t.Fatal("database summary must be retained")
+	}
+}
+
+func TestAICompactFollowupToolContextPreservesAlertEvidence(t *testing.T) {
+	items := make([]interface{}, 20)
+	toolContext := map[string]interface{}{
+		"alert":            map[string]interface{}{"id": 42, "attribution": "初步归因：site.example", "log_start": "2026-11-08 18:15"},
+		"missing_evidence": []string{"日志被截断", "时段内无记录不代表无异常"},
+		"log_overview":     map[string]interface{}{"report": map[string]interface{}{"top_paths": items}},
+	}
+	got := aiCompactFollowupToolContext(toolContext)
+	alert, ok := got["alert"].(map[string]interface{})
+	if !ok || alert["attribution"] != "初步归因：site.example" {
+		t.Fatalf("alert evidence was changed or removed: %#v", got["alert"])
+	}
+	if _, ok := got["missing_evidence"]; !ok {
+		t.Fatal("missing evidence was removed")
+	}
+	report := got["log_overview"].(map[string]interface{})["report"].(map[string]interface{})
+	if len(report["top_paths"].([]interface{})) > 8 {
+		t.Fatal("bulky log evidence was not compacted")
 	}
 }
 

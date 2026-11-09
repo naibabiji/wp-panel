@@ -20,6 +20,20 @@ type aiLogSessionSnapshot struct {
 	StartAt time.Time                 `json:"start_at"`
 	EndAt   time.Time                 `json:"end_at"`
 	Report  *models.LogAnalysisReport `json:"report"`
+	Alert   *aiAlertSessionSnapshot   `json:"alert,omitempty"`
+}
+
+type aiAlertSessionSnapshot struct {
+	ID               int       `json:"id"`
+	AlertType        string    `json:"alert_type"`
+	Message          string    `json:"message"`
+	Attribution      string    `json:"attribution"`
+	CreatedAt        time.Time `json:"created_at"`
+	AttributionStart time.Time `json:"attribution_start"`
+	AttributionEnd   time.Time `json:"attribution_end"`
+	LogStart         time.Time `json:"log_start"`
+	LogEnd           time.Time `json:"log_end"`
+	Relation         string    `json:"relation"`
 }
 
 var aiStatusQuestionPattern = regexp.MustCompile(`(?i)(?:HTTP\s*)?\b([1-5][0-9]{2})\b`)
@@ -68,6 +82,58 @@ func BuildAILogDiagnosticPrompt(site *models.Website, job *models.LogAnalysisJob
 		return "", "", nil, err
 	}
 	return aiSystemPrompt(), anonymized, tools, nil
+}
+
+func EncodeAIAlertSessionSnapshot(alert AlertDiagnosisContext, report *models.LogAnalysisReport) (string, error) {
+	snapshot := aiLogSessionSnapshot{Domain: alert.Domain, StartAt: alert.LogStart, EndAt: alert.LogEnd, Report: sanitizeLogReportForAISession(report), Alert: &aiAlertSessionSnapshot{
+		ID: alert.ID, AlertType: alert.AlertType, Message: sanitizeLogAnalysisAITextKeepingIPs(alert.Message), Attribution: sanitizeLogAnalysisAITextKeepingIPs(alert.Attribution),
+		CreatedAt: alert.CreatedAt, AttributionStart: alert.AttributionStart, AttributionEnd: alert.AttributionEnd, LogStart: alert.LogStart, LogEnd: alert.LogEnd, Relation: alert.Relation,
+	}}
+	data, err := json.Marshal(snapshot)
+	return string(data), err
+}
+
+func BuildAIAlertDiagnosticPrompt(site *models.Website, alert AlertDiagnosisContext, report *models.LogAnalysisReport, sessionID int) (string, string, []models.AIToolEvent, error) {
+	if site == nil || alert.ID <= 0 || report == nil {
+		return "", "", nil, fmt.Errorf("告警诊断上下文不存在")
+	}
+	contextJSON, err := EncodeAIAlertSessionSnapshot(alert, report)
+	if err != nil {
+		return "", "", nil, err
+	}
+	session := &models.AISessionDetail{ID: sessionID, SiteID: site.ID, Symptom: models.AIDiagnosisAlert, ContextType: "alert_diagnosis", ContextID: alert.ID, ContextJSON: contextJSON}
+	toolContext, tools, err := collectAIDiagnosticToolContext(site, session, "")
+	if err != nil {
+		return "", "", nil, err
+	}
+	_, siteContext, err := BuildAIDiagnosticPrompt(site, models.AIDiagnosisLogAnalysis)
+	if err != nil {
+		return "", "", nil, err
+	}
+	payload := map[string]interface{}{"mode": "alert_diagnosis_initial", "current_site_context": aiCompactFollowupSiteContext(siteContext), "readonly_tool_context": toolContext, "output_schema": aiOutputSchema(), "response_rules": alertDiagnosticResponseRules()}
+	prompt, err := aiMarshalMap(payload)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if len(prompt) > aiMaxFollowupChars {
+		payload["readonly_tool_context"] = aiCompactFollowupToolContext(toolContext)
+		prompt, err = aiMarshalMap(payload)
+		if err != nil {
+			return "", "", nil, err
+		}
+	}
+	anonymized, err := AnonymizeAIText(sessionID, string(prompt))
+	return aiSystemPrompt(), anonymized, tools, err
+}
+
+func alertDiagnosticResponseRules() []string {
+	rules := []string{
+		"先复述告警类型、告警通知时间、初步归因时间段和本次日志排查时间段。",
+		"严格区分告警原文、资源归因、日志事实、基于证据的推断和人工建议；初步归因不代表已确认根因。",
+		"当前站点配置和当前状态不能用来否定历史告警；日志缺失、时段内无记录或扫描被截断都不等于没有异常。",
+		"只提供只读排查建议，不执行或声称执行 Shell、SQL、文件、服务、网站或配置操作。",
+	}
+	return append(rules, logDiagnosticResponseRules("", "")...)
 }
 
 func logDiagnosticResponseRules(kind, value string) []string {
@@ -135,7 +201,13 @@ func statusDiagnosticRules(status string) []string {
 }
 
 func logDiagnosticRulesForSession(session *models.AISessionDetail, userMessage string) []string {
-	if session == nil || session.ContextType != "log_analysis" {
+	if session == nil {
+		return nil
+	}
+	if session.ContextType == "alert_diagnosis" {
+		return alertDiagnosticResponseRules()
+	}
+	if session.ContextType != "log_analysis" {
 		return nil
 	}
 	kind, value := selectLogDiagnosticFocus(session.FocusKind, session.FocusValue, userMessage)
@@ -149,7 +221,7 @@ func collectAIDiagnosticToolContext(site *models.Website, session *models.AISess
 	events = append(events, models.AIToolEvent{ToolName: "read_site_runtime_configuration", ResultSummary: "已读取网站、PHP、Nginx和WordPress只读配置摘要"})
 	result["security_configuration"] = aiSecuritySummary(site)
 	events = append(events, models.AIToolEvent{ToolName: "read_security_configuration", ResultSummary: "已读取限速、Fail2ban、CDN真实IP和封禁状态摘要"})
-	if session == nil || session.ContextType != "log_analysis" || strings.TrimSpace(session.ContextJSON) == "" {
+	if session == nil || (session.ContextType != "log_analysis" && session.ContextType != "alert_diagnosis") || strings.TrimSpace(session.ContextJSON) == "" {
 		return result, events, nil
 	}
 	var snapshot aiLogSessionSnapshot
@@ -163,7 +235,13 @@ func collectAIDiagnosticToolContext(site *models.Website, session *models.AISess
 		overview.Report.Findings[i].Evidence = nil
 	}
 	result["log_overview"] = overview
-	events = append(events, models.AIToolEvent{ToolName: "read_log_analysis_overview", ResultSummary: fmt.Sprintf("已读取日志任务 #%d 的完整汇总（%s 至 %s）", snapshot.JobID, snapshot.StartAt.Format("2006-01-02 15:04"), snapshot.EndAt.Format("2006-01-02 15:04"))})
+	if snapshot.Alert != nil {
+		result["alert"] = snapshot.Alert
+		result["missing_evidence"] = alertDiagnosisMissingEvidence(snapshot.Report)
+		events = append(events, models.AIToolEvent{ToolName: "read_alert_context", ResultSummary: fmt.Sprintf("已读取告警 #%d 及其日志汇总（%s 至 %s）", snapshot.Alert.ID, snapshot.StartAt.Format("2006-01-02 15:04"), snapshot.EndAt.Format("2006-01-02 15:04"))})
+	} else {
+		events = append(events, models.AIToolEvent{ToolName: "read_log_analysis_overview", ResultSummary: fmt.Sprintf("已读取日志任务 #%d 的完整汇总（%s 至 %s）", snapshot.JobID, snapshot.StartAt.Format("2006-01-02 15:04"), snapshot.EndAt.Format("2006-01-02 15:04"))})
+	}
 
 	kind, value := selectLogDiagnosticFocus(session.FocusKind, session.FocusValue, userMessage)
 	if kind == "" || value == "" {
@@ -184,6 +262,23 @@ func collectAIDiagnosticToolContext(site *models.Website, session *models.AISess
 	result["focused_log_detail"] = detail
 	events = append(events, models.AIToolEvent{ToolName: "read_log_detail_" + kind, ResultSummary: fmt.Sprintf("已分析 %s=%s，共 %d 条匹配日志，发送最多30条脱敏样本", kind, sanitizeLogAnalysisAIText(value), detail.Total)})
 	return result, events, nil
+}
+
+func alertDiagnosisMissingEvidence(report *models.LogAnalysisReport) []string {
+	if report == nil {
+		return []string{"日志分析报告不可用"}
+	}
+	missing := []string{}
+	if report.LinesInRange == 0 {
+		missing = append(missing, "日志时间段内没有匹配到可解析记录，不能据此证明没有异常")
+	}
+	if report.Truncated {
+		missing = append(missing, "日志扫描达到大小或行数上限，结果可能不完整")
+	}
+	if report.PHPFatalCount == 0 && report.PHPWarningCount == 0 && report.NginxErrorCount == 0 {
+		missing = append(missing, "本次汇总未发现 PHP 或 Nginx 错误计数；仍需考虑日志缺失、轮转和未覆盖的错误类型")
+	}
+	return missing
 }
 
 func selectLogDiagnosticFocus(defaultKind, defaultValue, question string) (string, string) {
