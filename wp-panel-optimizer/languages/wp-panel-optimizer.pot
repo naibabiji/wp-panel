@@ -2,7 +2,7 @@
 # This file is distributed under the GPL-2.0+.
 msgid ""
 msgstr ""
-"Project-Id-Version: WP Panel Optimizer 1.1.38\n"
+"Project-Id-Version: WP Panel Optimizer 1.1.39\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/wp-panel-optimizer\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1562,7 +1562,11 @@ msgstr ""
 msgid "Automatic (comment activity)"
 msgstr ""
 
-#: includes/trait-settings.php:979
+#: includes/trait-settings.php:978
+msgid "AI development (WP-CLI)"
+msgstr ""
+
+#: includes/trait-settings.php:980
 msgid "Automatic"
 msgstr ""
 

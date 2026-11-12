@@ -975,6 +975,7 @@ trait WPP_Optimizer_Settings_Trait {
                                                     'manual'  => __('Manual clear', 'wp-panel-optimizer'),
                                                     'auto'    => __('Automatic (post published)', 'wp-panel-optimizer'),
                                                     'comment' => __('Automatic (comment activity)', 'wp-panel-optimizer'),
+                                                    'ai_cli'  => __('AI development (WP-CLI)', 'wp-panel-optimizer'),
                                                 ];
                                                 echo esc_html($labels[$entry['type']] ?? __('Automatic', 'wp-panel-optimizer'));
                                             ?></td>

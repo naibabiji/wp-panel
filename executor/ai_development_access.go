@@ -130,7 +130,7 @@ func (s *AIDevelopmentAccessService) ReconcilePending(ctx context.Context) error
 // RefreshEnabledHandoffs keeps the server-side documents authoritative across
 // panel upgrades without rotating credentials or interrupting active sessions.
 func (s *AIDevelopmentAccessService) RefreshEnabledHandoffs(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT w.id,w.domain,w.system_user,w.web_root,w.log_dir,w.php_pool_path,w.nginx_conf_path,w.db_name,w.db_user,a.key_fingerprint
+	rows, err := s.db.QueryContext(ctx, `SELECT w.id,w.domain,w.site_type,w.system_user,w.web_root,w.log_dir,w.php_pool_path,w.nginx_conf_path,w.db_name,w.db_user,a.key_fingerprint
 		FROM website_ai_development_access a
 		JOIN websites w ON w.id=a.site_id
 		WHERE a.status='enabled' AND a.operation=''
@@ -146,7 +146,7 @@ func (s *AIDevelopmentAccessService) RefreshEnabledHandoffs(ctx context.Context)
 	var items []enabledHandoff
 	for rows.Next() {
 		var item enabledHandoff
-		if err := rows.Scan(&item.site.ID, &item.site.Domain, &item.site.SystemUser, &item.site.WebRoot, &item.site.LogDir, &item.site.PHPPoolPath, &item.site.NginxConfPath, &item.site.DBName, &item.site.DBUser, &item.fingerprint); err != nil {
+		if err := rows.Scan(&item.site.ID, &item.site.Domain, &item.site.SiteType, &item.site.SystemUser, &item.site.WebRoot, &item.site.LogDir, &item.site.PHPPoolPath, &item.site.NginxConfPath, &item.site.DBName, &item.site.DBUser, &item.fingerprint); err != nil {
 			return err
 		}
 		items = append(items, item)
@@ -689,7 +689,22 @@ func buildAIDevelopmentHandoff(site AIDevelopmentSite, fingerprint string, gener
 For WordPress commands, target this website explicitly:
 
     wp --path=%s <command>
-`, site.WebRoot)
+
+After a batch of code changes that can affect rendered pages, clear the WP Panel
+FastCGI page cache once before browser or HTTP verification:
+
+    WP_PANEL_CONFIG_PATH=/var/wp-panel/site-secrets/%s/wp-panel-config.json wp --path=%s wpp cache clear --json
+
+Run this as the current site user, never as root, and do not run it once per
+file or retry it automatically. This requires WP Panel Optimizer %s or newer
+and the WP-CLI development tool. If WP-CLI is missing, the companion plugin is
+disabled/too old, or WP_PANEL_CONFIG_PATH is invalid after a domain change,
+report that clearly and ask the user to install/update/enable the tool or
+refresh AI development access in WP Panel. The command only clears FastCGI
+page cache; it does not clear Redis, WordPress file, CDN, or browser caches.
+After a successful clear, wait 1-2 seconds before verifying a page because
+Nginx workers may reload asynchronously; use the X-FastCGI-Cache response header
+as the cache verification signal.`, site.WebRoot, site.Domain, site.WebRoot, CompanionPluginVersion())
 	}
 	return fmt.Sprintf(`%s
 

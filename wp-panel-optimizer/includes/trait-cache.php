@@ -10,6 +10,44 @@ if (!defined('ABSPATH')) exit;
 
 trait WPP_Optimizer_Cache_Trait {
 
+	public static function register_cli() {
+		if (!defined('WP_CLI') || !WP_CLI || !class_exists('WP_CLI')) {
+			return;
+		}
+		WP_CLI::add_command('wpp cache clear', [__CLASS__, 'cli_clear']);
+	}
+
+	public static function cli_clear($args, $assoc_args) {
+		$emit = static function ($payload, $status) {
+			fwrite(STDOUT, wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+			exit($status);
+		};
+		if (!function_exists('posix_geteuid')) {
+			$emit(['ok' => false, 'code' => 'identity_check_unavailable', 'message' => __('Unable to verify the current process identity.', 'wp-panel-optimizer')], 1);
+		}
+		if (posix_geteuid() === 0) {
+			$emit(['ok' => false, 'code' => 'root_not_allowed', 'message' => __('Run this command as the current site user. Root should use the server-level WP Panel cache command.', 'wp-panel-optimizer')], 1);
+		}
+		$path = getenv('WP_PANEL_CONFIG_PATH');
+		$path = is_string($path) ? str_replace('\\', '/', trim($path)) : '';
+		if (!preg_match('#^/var/wp-panel/site-secrets/([A-Za-z0-9.-]+)/wp-panel-config\.json$#', $path, $matches) || !is_readable($path)) {
+			$emit(['ok' => false, 'code' => 'config_missing', 'message' => __('WP_PANEL_CONFIG_PATH is missing or invalid. Refresh AI development access in WP Panel.', 'wp-panel-optimizer')], 1);
+		}
+		$result = self::do_clear($matches[1]);
+		self::log_clear('ai_cli', !empty($result['success']));
+		$payload = [
+			'ok' => !empty($result['success']),
+			'code' => $result['code'] ?? (!empty($result['success']) ? 'ok' : 'operation_failed'),
+			'message' => $result['message'] ?? '',
+		];
+		foreach (['scope', 'not_cleared'] as $field) {
+			if (isset($result[$field]) && $result[$field] !== null) {
+				$payload[$field] = $result[$field];
+			}
+		}
+		$emit($payload, !empty($result['success']) ? 0 : 1);
+	}
+
     public static function clear_notice() {
         if (isset($_GET['wpp_cleared'])) {
             if (!isset($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'wpp_clear_notice')) return;

@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"errors"
 	"fmt"
 	"os"
@@ -16,9 +17,17 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// The production binary injects the embedded companion plugin during startup.
+// Keep the same minimal filesystem shape in unit tests so handoff tests verify
+// the real version parser instead of silently accepting an empty version.
+//
+//go:embed wp-panel-optimizer/wp-panel-optimizer.php
+var testCompanionPluginFS embed.FS
+
 type fakeAIDevelopmentSystem struct {
 	passwd       aiDevelopmentPasswd
 	calls        []string
+	handoffSites []AIDevelopmentSite
 	errAt        string
 	ensureErr    error
 	onCall       func(string)
@@ -55,7 +64,9 @@ func (f *fakeAIDevelopmentSystem) Configure(_ context.Context, _ AIDevelopmentSi
 	}
 	return nil
 }
-func (f *fakeAIDevelopmentSystem) UpdateHandoff(context.Context, AIDevelopmentSite, string) error {
+
+func (f *fakeAIDevelopmentSystem) UpdateHandoff(_ context.Context, site AIDevelopmentSite, _ string) error {
+	f.handoffSites = append(f.handoffSites, site)
 	return f.record("handoff")
 }
 func (f *fakeAIDevelopmentSystem) RevokeKey(context.Context, string) error {
@@ -91,7 +102,7 @@ func openAIDevelopmentTestDB(t *testing.T) *sql.DB {
 	);
 	CREATE TABLE websites (
 		id INTEGER PRIMARY KEY, domain TEXT NOT NULL, system_user TEXT NOT NULL,
-		web_root TEXT NOT NULL, log_dir TEXT NOT NULL DEFAULT '', php_pool_path TEXT NOT NULL DEFAULT '',
+		site_type TEXT NOT NULL DEFAULT 'wordpress', web_root TEXT NOT NULL, log_dir TEXT NOT NULL DEFAULT '', php_pool_path TEXT NOT NULL DEFAULT '',
 		nginx_conf_path TEXT NOT NULL DEFAULT '', db_name TEXT NOT NULL, db_user TEXT NOT NULL
 	);
 	CREATE TABLE site_migration_locks (
@@ -106,9 +117,9 @@ func openAIDevelopmentTestDB(t *testing.T) *sql.DB {
 
 func TestRefreshEnabledHandoffsUsesCurrentServerDocuments(t *testing.T) {
 	db := openAIDevelopmentTestDB(t)
-	if _, err := db.Exec(`INSERT INTO websites(id,domain,system_user,web_root,db_name,db_user)
-		VALUES (7,'example.com','wp_example','/var/www/example','db_example','db_example'),
-		       (8,'disabled.example','wp_disabled','/var/www/disabled','db_disabled','db_disabled');
+	if _, err := db.Exec(`INSERT INTO websites(id,domain,site_type,system_user,web_root,db_name,db_user)
+		VALUES (7,'example.com','wordpress','wp_example','/var/www/example','db_example','db_example'),
+		       (8,'disabled.example','php','wp_disabled','/var/www/disabled','db_disabled','db_disabled');
 		INSERT INTO website_ai_development_access
 		(site_id,status,system_user,web_root,original_shell,original_home,public_key,key_fingerprint)
 		VALUES (7,'enabled','wp_example','/var/www/example','/usr/sbin/nologin','/nonexistent','key','fingerprint'),
@@ -122,6 +133,13 @@ func TestRefreshEnabledHandoffsUsesCurrentServerDocuments(t *testing.T) {
 	}
 	if want := []string{"handoff"}; !reflect.DeepEqual(fake.calls, want) {
 		t.Fatalf("calls=%v want=%v", fake.calls, want)
+	}
+	if len(fake.handoffSites) != 1 || fake.handoffSites[0].SiteType != "wordpress" {
+		t.Fatalf("handoff site type=%v want wordpress", fake.handoffSites)
+	}
+	handoff := buildAIDevelopmentHandoff(fake.handoffSites[0], "fingerprint", time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC))
+	if !strings.Contains(handoff, "wpp cache clear --json") {
+		t.Fatalf("refreshed WordPress handoff is missing cache-clear guidance: %s", handoff)
 	}
 }
 
@@ -361,6 +379,13 @@ func TestAIDevelopmentRotationDoesNotReportSuccessAfterStateDisappears(t *testin
 }
 
 func TestAIDevelopmentHandoffDescribesSiteAndPanelBoundaries(t *testing.T) {
+	previousPluginFS := cacheHelperPluginFS
+	cacheHelperPluginFS = testCompanionPluginFS
+	t.Cleanup(func() { cacheHelperPluginFS = previousPluginFS })
+	pluginVersion := CompanionPluginVersion()
+	if pluginVersion == "" {
+		t.Fatal("CompanionPluginVersion() must not be empty")
+	}
 	handoff := buildAIDevelopmentHandoff(AIDevelopmentSite{
 		Domain: "example.com", SiteType: "wordpress", SystemUser: "wp_example", WebRoot: "/var/www/example",
 		LogDir: "/www/wwwlogs/example.com", PHPPoolPath: "/etc/php/8.3/fpm/pool.d/wp_example.conf",
@@ -369,6 +394,15 @@ func TestAIDevelopmentHandoffDescribesSiteAndPanelBoundaries(t *testing.T) {
 	for _, required := range []string{"Panel version:", "Generated at: 2026-09-15T01:02:03Z", "Site: example.com", "WebRoot: /var/www/example", "Site PHP-FPM pool config: /etc/php/8.3/fpm/pool.d/wp_example.conf (read-only, managed by WP Panel)", "Site Nginx config: /etc/nginx/sites-available/wp_example.conf (read-only, managed by WP Panel)", "Site log directory: /www/wwwlogs/example.com", "php_admin_value", "CLI PHP and the global php.ini", "server-side handoff", "authoritative", "WP-PANEL-CAPABILITIES.md", "aaPanel/BT Panel", "cannot coexist", "ask the user to check the documented WP Panel page"} {
 		if !strings.Contains(handoff, required) {
 			t.Fatalf("handoff missing %q: %s", required, handoff)
+		}
+	}
+	for _, required := range []string{
+		"WP_PANEL_CONFIG_PATH=/var/wp-panel/site-secrets/example.com/wp-panel-config.json wp --path=/var/www/example wpp cache clear --json",
+		"Run this as the current site user, never as root",
+		"WP Panel Optimizer " + pluginVersion + " or newer",
+	} {
+		if !strings.Contains(handoff, required) {
+			t.Fatalf("handoff missing cache-clear guidance %q: %s", required, handoff)
 		}
 	}
 	for _, forbidden := range []string{"AI-CONTEXT.md", "DEVELOPMENT-PLAN.md", "AI-CHANGELOG.md", "Git is optional", "wait for explicit approval"} {
@@ -385,7 +419,7 @@ func TestAIDevelopmentHandoffForPHPDoesNotAssumeWordPress(t *testing.T) {
 	if !strings.Contains(handoff, "inspect the actual code and runtime before assuming a framework") {
 		t.Fatalf("PHP handoff does not require application discovery: %s", handoff)
 	}
-	for _, forbidden := range []string{"WordPress database", "For WordPress commands", "wp --path="} {
+	for _, forbidden := range []string{"WordPress database", "For WordPress commands", "wp --path=", "wpp cache clear", "WP_PANEL_CONFIG_PATH"} {
 		if strings.Contains(handoff, forbidden) {
 			t.Fatalf("PHP handoff assumes WordPress through %q: %s", forbidden, handoff)
 		}

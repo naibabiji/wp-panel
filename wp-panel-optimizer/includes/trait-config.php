@@ -65,7 +65,8 @@ trait WPP_Optimizer_Config_Trait {
 
         // Compatibility for pools generated before WP_PANEL_CONFIG_PATH was
         // introduced. These candidates can be removed after the legacy support
-        // window ends; no new code should infer panel identity from home_url().
+        // window ends; callers that require an explicit identity validate it
+        // before reaching this general-purpose loader.
         $domain = wp_parse_url(home_url(), PHP_URL_HOST);
         if ($domain) {
             $domain = strtolower(trim($domain));
@@ -94,6 +95,13 @@ trait WPP_Optimizer_Config_Trait {
             }
         }
         return null;
+    }
+
+    private static function current_site_domain($domain = null) {
+        if (is_string($domain) && $domain !== '') {
+            return strtolower(trim($domain));
+        }
+        return strtolower(trim((string) wp_parse_url(home_url(), PHP_URL_HOST)));
     }
 
     private static function get_panel_url() {
@@ -158,14 +166,35 @@ trait WPP_Optimizer_Config_Trait {
         return true;
     }
 
-    private static function do_clear() {
-        $domain = wp_parse_url(home_url(), PHP_URL_HOST);
+    private static function do_clear($domain = null) {
+        $domain = self::current_site_domain($domain);
+        if ($domain === '') {
+            return ['success' => false, 'code' => 'config_missing', 'message' => __('Unable to determine the current site identity from WP_PANEL_CONFIG_PATH.', 'wp-panel-optimizer')];
+        }
         $resp = self::api_request('DELETE', '/api/sites/clear-cache', ['domain' => $domain]);
         if (is_wp_error($resp)) {
-            return ['success' => false, 'message' => $resp->get_error_message()];
+            $data = $resp->get_error_data();
+            $payload = is_array($data) && isset($data['payload']) && is_array($data['payload']) ? $data['payload'] : [];
+            return [
+                'success' => false,
+                'code' => !empty($payload['error_code']) ? (string) $payload['error_code'] : (string) $resp->get_error_code(),
+                'message' => $resp->get_error_message(),
+                'scope' => $payload['scope'] ?? null,
+                'not_cleared' => $payload['not_cleared'] ?? [],
+            ];
         }
         $data = json_decode($resp, true);
-        return ['success' => !empty($data['success']), 'message' => $data['message'] ?? ''];
+        if (!is_array($data)) {
+            return ['success' => false, 'code' => 'invalid_response', 'message' => __('The panel returned an invalid cache-clear response.', 'wp-panel-optimizer')];
+        }
+        $success = !empty($data['success']);
+        return [
+            'success' => $success,
+            'code' => !$success && !empty($data['error_code']) ? (string) $data['error_code'] : ($success ? 'ok' : 'operation_failed'),
+            'message' => $data['message'] ?? ($data['data']['message'] ?? ''),
+            'scope' => $data['data']['scope'] ?? $data['scope'] ?? null,
+            'not_cleared' => $data['data']['not_cleared'] ?? $data['not_cleared'] ?? [],
+        ];
     }
 
     public static function api_request_public($method, $path, $body = null) {
@@ -209,7 +238,7 @@ trait WPP_Optimizer_Config_Trait {
             } else {
                 $msg = $body ?: "HTTP $code";
             }
-            return new \WP_Error('api_error', $msg);
+            return new \WP_Error('api_error', $msg, ['http_status' => $code, 'payload' => is_array($decoded) ? $decoded : []]);
         }
 
         return wp_remote_retrieve_body($response);

@@ -3,7 +3,7 @@ Contributors: naibabiji
 Requires at least: 5.0
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 1.1.38
+Stable tag: 1.1.39
 License: GPL-2.0+
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -40,6 +40,9 @@ WP Panel Optimizer 是 [WP Panel](https://wp-panel.org/) 的配套插件，通�
 插件安装后，面板会在 Web 目录外的 /var/wp-panel/site-secrets/<domain>/wp-panel-config.json 写入配置文件（含面板地址和 API Key），并由站点 PHP-FPM pool 向插件提供当前文件路径，无需手动填写凭证，也不依赖 WordPress 站点 URL 推断配置位置。
 
 == Changelog ==
+
+= 1.1.39 =
+* Add a site-user WP-CLI cache-clear command for AI development, with structured JSON output and explicit site identity handling.
 
 = 1.1.38 =
 * Expand the managed-email detail modal with sender, recipients, date, delivery diagnostics, attachments and custom headers.
