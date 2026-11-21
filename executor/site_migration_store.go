@@ -86,6 +86,11 @@ func (s *siteMigrationStore) acquireLock(ctx context.Context, migrationSiteID st
 		return errors.New("invalid site migration lock")
 	}
 	var nullableSiteID any
+	admission, admissionErr := acquireMaintenanceMigrationAdmission()
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer admission.Close()
 	if siteID != nil {
 		if *siteID <= 0 {
 			return errors.New("invalid site migration lock site")

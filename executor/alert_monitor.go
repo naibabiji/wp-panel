@@ -85,6 +85,7 @@ func StartAlertMonitor(currentVersion string) {
 		{key: "alert_cron_fail", checkFn: checkCronFail, sendRecovery: true},
 		{key: "alert_site", checkFn: checkSites, sendRecovery: true},
 		{key: "alert_system_update", checkFn: checkSystemUpdate},
+		{key: "alert_system_maintenance", checkFn: checkSystemMaintenance, sendRecovery: true},
 		{key: "alert_panel_update", checkFn: checkPanelUpdate},
 		{key: "alert_wp_fake_search_bot", checkFn: checkWPFakeSearchBotThreshold},
 	}
@@ -432,6 +433,8 @@ func isRuleEnabled(key string) bool {
 
 func alertLabel(key string) string {
 	switch key {
+	case "alert_system_maintenance":
+		return "系统自动维护"
 	case "alert_wp_admin_change":
 		return "WordPress 管理员变化"
 	case "alert_wp_post_volume":

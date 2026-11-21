@@ -72,6 +72,9 @@ func TestRunSystemPackageUpdatePlanCompletesAllChecks(t *testing.T) {
 }
 
 func TestRefreshSystemPackageIndexesOnlyRunsAptGetUpdate(t *testing.T) {
+	oldLockPath := systemPackageUpdateLockPath
+	systemPackageUpdateLockPath = filepath.Join(t.TempDir(), "apt.lock")
+	t.Cleanup(func() { systemPackageUpdateLockPath = oldLockPath })
 	oldCommand := systemPackageUpdateCommand
 	t.Cleanup(func() { systemPackageUpdateCommand = oldCommand })
 	called := false
@@ -341,6 +344,9 @@ func TestRunSystemPackageUpdatePlanKeepsSuccessWhenRebootDetectionIsUnknown(t *t
 }
 
 func TestReconcileSystemPackageUpdateStatusClearsRebootAfterBootChanges(t *testing.T) {
+	oldRequired := systemPackageRebootRequired
+	systemPackageRebootRequired = func() (bool, error) { return false, nil }
+	t.Cleanup(func() { systemPackageRebootRequired = oldRequired })
 	dataDir := t.TempDir()
 	cfg := &config.Config{Panel: config.PanelConfig{DataDir: dataDir}}
 	statusPath := SystemPackageUpdateStatusPath(cfg)

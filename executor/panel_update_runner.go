@@ -93,6 +93,7 @@ type autoUpdateSettings struct {
 }
 
 var (
+	errSystemMaintenanceBusy = errors.New("已有系统维护操作正在执行，请稍后再试")
 	panelUpdateMu            sync.Mutex
 	panelUpdateStatusMu      sync.Mutex
 	currentPanelUpdateStatus = PanelUpdateStatus{
@@ -112,9 +113,19 @@ func ExecutePanelUpdate(opts PanelUpdateOptions) (*GithubRelease, error) {
 	}
 	defer panelUpdateMu.Unlock()
 	if !panelLifecycleMu.TryLock() {
-		return nil, fmt.Errorf("已有面板维护操作正在执行，请稍后再试")
+		return nil, errSystemMaintenanceBusy
 	}
 	defer panelLifecycleMu.Unlock()
+	if opts.Config != nil {
+		lock, err := acquireMaintenanceLifecycleFile(opts.Config)
+		if err != nil {
+			if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+				return nil, errSystemMaintenanceBusy
+			}
+			return nil, fmt.Errorf("已有系统维护操作正在执行，或无法取得维护锁")
+		}
+		defer lock.Close()
+	}
 	if opts.Config != nil && ReconcilePanelDBRestoreStatus(opts.Config).Status == "running" {
 		return nil, fmt.Errorf("面板数据库正在恢复，请稍后再更新")
 	}
@@ -723,7 +734,8 @@ func runPanelAutoUpdateCheck(currentVersion, configPath string, cfg *config.Conf
 	}
 	now := time.Now()
 	settings := readAutoUpdateSettings()
-	if !settings.Valid || !settings.Enabled || !withinAutoUpdateWindow(settings.Window, now) {
+	location, locationErr := currentMaintenanceLocation()
+	if !settings.Valid || !settings.Enabled || locationErr != nil || !withinAutoUpdateWindow(settings.Window, now.In(location)) {
 		return
 	}
 	if settings.LastStatus == "failed" && settings.LastStage != "fetch_release" && settings.LastAttemptAt.After(now.Add(-autoUpdateFailureCooldown)) {
@@ -767,6 +779,10 @@ func runPanelAutoUpdateCheck(currentVersion, configPath string, cfg *config.Conf
 		Config:         cfg,
 		UseWatchdog:    true,
 	})
+	if errors.Is(err, errSystemMaintenanceBusy) {
+		recordPanelUpdateStage("auto", latest.TagName, "waiting_maintenance", "waiting", "系统维护忙碌，将在更新时间窗口内重试")
+		return
+	}
 	if err != nil && err != errWaitingSignature {
 		sendPanelUpdateMail(false, latest.TagName, readSecuritySetting("panel_auto_update_last_stage"), err.Error())
 	}

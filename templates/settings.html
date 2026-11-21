@@ -245,15 +245,33 @@
                 <p class="text-xs text-gray-500 mt-2">{{t .Lang "settings.system_update_refresh_help"}}</p>
                 <div class="mt-4 rounded border border-gray-700 p-3 space-y-2">
                     <label class="flex items-start gap-2 text-sm text-gray-300">
-                        <input type="checkbox" x-model="autoInstall" @change="saveAutoInstall()" class="mt-1">
+                        <input type="checkbox" x-model="autoInstall" @change="saveAutoInstall()" :disabled="maintenanceSaving" class="mt-1">
                         <span>{{t .Lang "settings.system_update_auto_install"}}</span>
                     </label>
                     <p class="text-xs text-gray-500">{{t .Lang "settings.system_update_auto_install_help"}}</p>
+                    <div class="flex flex-wrap gap-2 items-center">
+                        <select x-model="maintenanceMode" @change="saveAutoInstall()" :disabled="maintenanceSaving" class="input-field text-sm">
+                            <option value="scheduled">{{t .Lang "settings.maintenance_scheduled"}}</option>
+                            <option value="immediate">{{t .Lang "settings.maintenance_immediate"}}</option>
+                        </select>
+                        <input x-show="maintenanceMode === 'scheduled'" x-model="maintenanceWindow" aria-label="{{t .Lang "settings.maintenance_window"}}" class="input-field text-sm w-40" placeholder="04:00-06:00">
+                        <button x-show="maintenanceMode === 'scheduled'" @click="saveAutoInstall()" :disabled="maintenanceSaving" class="btn-secondary text-xs">{{t .Lang "common.save"}}</button>
+                    </div>
+                    <p class="text-xs text-gray-500">{{t .Lang "settings.maintenance_window_help"}}</p>
+                    <p x-show="!maintenanceNotifications" class="text-xs text-yellow-400">{{t .Lang "settings.maintenance_no_notifications"}}</p>
+                    <p class="text-xs text-gray-400" x-text="maintenanceStateText(maintenanceInspection.status)"></p>
+                    <p x-show="maintenanceUnavailable" class="text-xs text-red-400">{{t .Lang "settings.maintenance_unavailable"}}</p>
+                    <template x-for="action in maintenanceActions" :key="action.id">
+                        <div class="flex flex-wrap justify-between gap-2 border-t border-gray-700 pt-2 text-xs text-gray-400">
+                            <span><span x-text="action.target"></span> · <span x-text="maintenanceStateText(action.status)"></span><span x-show="action.reason" x-text="' · ' + action.reason"></span></span>
+                            <button x-show="['service','reboot'].includes(action.kind) && ['failed','unknown'].includes(action.status)" :disabled="!autoInstall || maintenanceSaving || action.retry_pending || updating" @click="retryMaintenance(action)" class="btn-secondary text-xs">{{t .Lang "settings.maintenance_retry"}}</button>
+                        </div>
+                    </template>
                     <p class="text-xs text-gray-500">{{t .Lang "settings.system_update_auto_last"}}<span class="text-gray-300" x-text="autoLastCheck || t('settings.no_data')"></span> · <span x-text="autoStatusText"></span><span x-show="autoLastCount"> (<span x-text="autoLastCount"></span>)</span></p>
                     <p x-show="autoLastError" class="text-xs text-red-400" x-text="autoLastError"></p>
                 </div>
                 <p x-show="count > 0" class="text-xs text-yellow-500 mt-2">{{t .Lang "settings.system_update_warning"}}</p>
-                <p x-show="msg" class="text-sm mt-2" :class="ok ? 'text-green-400' : 'text-red-400'" x-text="msg"></p>
+                <p x-show="msg" class="text-sm mt-2" :class="lastTaskStatus === 'deferred' ? 'text-yellow-500' : (ok ? 'text-green-400' : 'text-red-400')" x-text="msg"></p>
 
                 <div x-cloak x-show="removalOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" @click.self="removalOpen = false" @keydown.escape.window="removalOpen = false">
                     <div class="bg-gray-800 border border-gray-700 rounded-lg shadow-xl w-full max-w-xl max-h-[85vh] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="system-update-removal-title">
@@ -348,9 +366,9 @@
                     </div>
                 </div>
             </div>
-		</div>
+        </div>
 
-	</div>
+    </div>
 
     <div class="card mb-6" x-data="dbBackup()" x-init="init()">
         <div class="flex items-center justify-between mb-4">
@@ -1064,22 +1082,52 @@ function systemUpdate() {
         removalOpen: false,
         removalPackages: [],
         autoInstall: false,
+        maintenanceMode: 'scheduled',
+        maintenanceWindow: '04:00-06:00',
+        maintenanceSaving: false,
+        maintenanceActions: [],
+        maintenanceInspection: {status: 'not_checked'},
+        maintenanceNotifications: false,
+        maintenanceUnavailable: false,
+        maintenanceTimer: null,
         autoLastCheck: '',
         autoLastStatus: '',
         autoStatusText: t('settings.no_data'),
         autoLastCount: '',
         autoLastError: '',
         pollTimer: null,
+        lastTaskStatus: 'idle',
+        lastCompletedID: '',
         init() {
             this.resume();
             this.loadAutoSettings();
             this.scheduleCheck();
+            this.maintenanceTimer = setInterval(() => this.resume(), 30000);
+        },
+        destroy() { clearInterval(this.maintenanceTimer); clearTimeout(this.pollTimer); },
+        maintenanceStateText(status) {
+            const states = {not_checked: t('settings.maintenance_state_not_checked'), checked: t('settings.maintenance_state_checked'), waiting: t('settings.maintenance_state_waiting'), busy: t('settings.maintenance_state_busy'), unknown: t('settings.maintenance_state_unknown'), attention: t('settings.maintenance_state_attention'), reboot_unknown: t('settings.maintenance_state_reboot_unknown'), pending: t('settings.maintenance_state_waiting'), requested: t('settings.maintenance_state_requested'), failed: t('settings.maintenance_state_failed'), succeeded: t('settings.maintenance_state_completed')};
+            return states[status] || states.unknown;
+        },
+        async retryMaintenance(action) {
+            if (!this.autoInstall || !await confirmModal(t('settings.maintenance_retry_confirm'))) return;
+            this.maintenanceSaving = true;
+            try {
+                await api('/system/maintenance/retry', {method: 'POST', body: {id: action.id}});
+                action.retry_pending = true;
+                showToast(t('settings.maintenance_retry_accepted'), 'success');
+                await this.resume();
+            } catch(e) { showToast(e.message, 'error'); }
+            finally { this.maintenanceSaving = false; }
         },
         async loadAutoSettings() {
             try {
                 const r = await api('/settings');
                 const s = r.data.system_package_auto_update || {};
-                this.autoInstall = s.enabled === 'true';
+                const p = r.data.system_maintenance || {};
+                this.autoInstall = p.enabled === true;
+                this.maintenanceMode = p.mode || 'scheduled';
+                this.maintenanceWindow = p.window || '04:00-06:00';
                 this.autoLastCheck = s.last_check_at || '';
                 this.autoLastStatus = s.last_status || '';
                 const statusLabels = {
@@ -1096,14 +1144,16 @@ function systemUpdate() {
             } catch(e) { console.error('system package auto-update settings error:', e); }
         },
         async saveAutoInstall() {
+            if (this.maintenanceSaving) return;
             const desired = this.autoInstall;
+            this.maintenanceSaving = true;
             try {
-                await api('/settings', { method: 'PUT', body: { system_package_auto_update_enabled: desired ? 'true' : 'false' } });
+                await api('/settings', { method: 'PUT', body: { system_maintenance_enabled: desired ? 'true' : 'false', system_maintenance_mode: this.maintenanceMode, system_maintenance_window: this.maintenanceWindow } });
                 showToast(t('settings.system_update_auto_saved'), 'success');
             } catch(e) {
-                this.autoInstall = !desired;
+                await this.loadAutoSettings();
                 showToast(e.message, 'error');
-            }
+            } finally { this.maintenanceSaving = false; }
         },
         scheduleCheck() {
             deferTask(() => this.check(), 1600);
@@ -1140,6 +1190,7 @@ function systemUpdate() {
             }
         },
         async resume() {
+            clearTimeout(this.pollTimer);
             this.pollTimer = null;
             try {
                 const r = await api('/system/updates/status');
@@ -1153,6 +1204,11 @@ function systemUpdate() {
             }
         },
         applyStatus(status) {
+            this.lastTaskStatus = status.status || 'idle';
+            this.maintenanceActions = status.maintenance_actions || [];
+            this.maintenanceInspection = status.maintenance_inspection || {status: 'not_checked'};
+            this.maintenanceUnavailable = status.maintenance_unavailable === true;
+            this.maintenanceNotifications = status.maintenance_notifications_configured === true;
             this.updating = status.status === 'running';
             this.removalPackages = status.removal_packages || [];
             this.removalOpen = status.status === 'blocked';
@@ -1166,7 +1222,8 @@ function systemUpdate() {
                     this.pollTimer = null;
                     this.resume();
                 }, 1500);
-            } else if (status.status === 'success') {
+            } else if (status.status === 'success' && status.id !== this.lastCompletedID) {
+                this.lastCompletedID = status.id;
                 this.check(true);
             }
         },

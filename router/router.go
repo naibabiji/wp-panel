@@ -24,6 +24,52 @@ import (
 var panelVersion string
 
 var i18nKeys = []string{
+	"settings.maintenance_state_attention",
+	"settings.maintenance_state_reboot_unknown",
+	"settings.maintenance_install_deferred",
+	"settings.maintenance_reason_backup",
+	"settings.maintenance_reason_apt",
+	"settings.maintenance_reason_migration",
+	"settings.maintenance_reason_wp",
+	"settings.maintenance_reason_panel",
+	"settings.maintenance_reason_site",
+	"settings.maintenance_round",
+	"settings.maintenance_migration_notice",
+	"settings.maintenance_reboot",
+	"settings.maintenance_reboot_kernel",
+	"settings.system_update_status_runtime_unknown",
+
+	"settings.maintenance_scheduled",
+	"settings.maintenance_immediate",
+	"settings.maintenance_window",
+	"settings.maintenance_window_help",
+	"settings.maintenance_no_notifications",
+	"settings.maintenance_unavailable",
+	"settings.maintenance_retry",
+	"settings.maintenance_retry_confirm",
+	"settings.maintenance_retry_accepted",
+	"settings.maintenance_retry_unavailable",
+	"settings.maintenance_state_not_checked",
+	"settings.maintenance_state_checked",
+	"settings.maintenance_state_waiting",
+	"settings.maintenance_state_busy",
+	"settings.maintenance_state_unknown",
+	"settings.maintenance_state_requested",
+	"settings.maintenance_state_failed",
+	"settings.maintenance_state_completed",
+	"settings.maintenance_reason_attention",
+	"settings.maintenance_reason_ready",
+	"settings.maintenance_reason_installing",
+	"settings.maintenance_reason_completed",
+	"settings.maintenance_reason_requested",
+	"settings.maintenance_reason_migrated",
+	"settings.maintenance_reason_busy",
+	"settings.maintenance_reason_budget",
+	"settings.system_update_auto_install",
+	"settings.system_update_auto_install_help",
+	"alert.type_system_maintenance",
+	"alert.rule_system_maintenance",
+
 	"anomaly.disabled", "anomaly.pending", "anomaly.last_success", "anomaly.post_count", "anomaly.application_password_count", "anomaly.application_password_pending", "anomaly.database_object_count", "anomaly.database_object_pending",
 	"anomaly.plugin_required", "anomaly.multisite_unsupported", "anomaly.site_busy", "anomaly.site_unavailable",
 	"anomaly.sample_malformed", "anomaly.sample_too_large",
@@ -1894,6 +1940,7 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.POST("/api/system/updates/refresh", sysUpdateHandler.Refresh)
 	protected.GET("/api/system/updates/status", sysUpdateHandler.Status)
 	protected.POST("/api/system/updates/do", sysUpdateHandler.Update)
+	protected.POST("/api/system/maintenance/retry", sysUpdateHandler.RetryMaintenance)
 
 	tmpl := template.Must(template.New("").Funcs(i18n.FuncMap()).ParseFS(tmplFS, "templates/*.html"))
 	r.SetHTMLTemplate(tmpl)

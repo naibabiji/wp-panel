@@ -51,7 +51,10 @@ WP Panel focuses on one job: **running WordPress sites efficiently on VPS server
 | **Software and runtime** | Manage PHP, Nginx, MariaDB, and Redis, inspect logs, and adjust PHP or Nginx settings for individual sites |
 | **Panel security** | Use a private login path and two login checks; repeated password failures or repeated scans of invalid paths are restricted automatically |
 | **Safe updates** | Check for panel and Debian software updates; panel packages are verified before installation and restored to the previous version if an update fails |
+| **Automatic system maintenance** | One switch authorizes system updates and necessary restarts, immediately or in a scheduled window; checks supported processes and the running kernel, with visible results and an explicit retry action |
 | **Backups and offsite copies** | Back up sites and panel data automatically, and copy site backups to another server or object storage to reduce single-server risk |
+
+Automatic maintenance is off on new installations. Existing installations with automatic system installation enabled are migrated directly to full maintenance, including necessary server reboots, scheduled for 04:00–06:00 in the server timezone by default. You can disable or adjust it in System updates. Restarts briefly interrupt sites and SSH, and the checks do not prove that every vulnerability is fixed.
 
 ## One-Click Installation
 
@@ -146,7 +149,7 @@ A normal login requires the server's unique private path, the browser prompt, an
 
 - 100% open source under GPL-3.0
 - no sensitive business data is collected; anonymous stats are limited to the version number and can be disabled in the panel
-- update checks connect only to GitHub, not to other external services
+- panel self-update checks use GitHub; system package checks connect to the APT sources configured on the server
 - no web shell and no online code editor
 - passwords are stored with bcrypt cost 12, never in plain text
 

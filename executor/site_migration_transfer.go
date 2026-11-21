@@ -91,6 +91,11 @@ func (s *SiteMigrationTargetTransferService) begin(ctx context.Context, taskID, 
 	if !validSiteMigrationID(taskID) || leaseOwner == "" || len(leaseOwner) > 128 {
 		return "", errors.New("invalid target transfer task")
 	}
+	admission, admissionErr := acquireMaintenanceMigrationAdmission()
+	if admissionErr != nil {
+		return "", admissionErr
+	}
+	defer admission.Close()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err

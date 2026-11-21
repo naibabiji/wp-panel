@@ -58,6 +58,9 @@ type settingsUpdateRequest struct {
 	PanelAutoUpdateSigTimeout      *string `json:"panel_auto_update_signature_timeout_minutes"`
 	WPPackageAutoCheckEnabled      *string `json:"wp_package_auto_check_enabled"`
 	SystemPackageAutoUpdateEnabled *string `json:"system_package_auto_update_enabled"`
+	SystemMaintenanceEnabled       *string `json:"system_maintenance_enabled"`
+	SystemMaintenanceMode          *string `json:"system_maintenance_mode"`
+	SystemMaintenanceWindow        *string `json:"system_maintenance_window"`
 }
 
 const defaultPanelConfigPath = "/www/server/panel/config.json"
@@ -128,18 +131,21 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 	timezone := getTimezone()
 	hostname := getHostname()
 	ntpSynced, ntpServer := getNTPSyncStatus()
+	maintenance, maintenanceErr := executor.ReadSystemMaintenancePolicy(database.GetDB())
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"username":          username,
-		"basic_auth_user":   basicAuthUser,
-		"panel_title":       panelTitle,
-		"github_proxy":      githubProxy,
-		"timezone":          timezone,
-		"hostname":          hostname,
-		"ntp_synced":        ntpSynced,
-		"ntp_server":        ntpServer,
-		"server_time":       time.Now().UnixMilli(),
-		"panel_auto_update": autoUpdate,
+		"username":                       username,
+		"basic_auth_user":                basicAuthUser,
+		"panel_title":                    panelTitle,
+		"github_proxy":                   githubProxy,
+		"timezone":                       timezone,
+		"hostname":                       hostname,
+		"ntp_synced":                     ntpSynced,
+		"ntp_server":                     ntpServer,
+		"server_time":                    time.Now().UnixMilli(),
+		"panel_auto_update":              autoUpdate,
+		"system_maintenance":             maintenance,
+		"system_maintenance_unavailable": maintenanceErr != nil,
 		"system_package_auto_update": map[string]string{
 			"enabled":       readSecuritySettingForSettings("system_package_auto_update_enabled"),
 			"last_check_at": readSecuritySettingForSettings("system_package_auto_check_at"),
@@ -458,12 +464,60 @@ func validateDatabaseSettings(req settingsUpdateRequest) (map[string]string, str
 			return nil, "系统自动更新开关参数错误"
 		}
 		updates["system_package_auto_update_enabled"] = v
+		updates["system_maintenance_enabled"] = v
+	}
+	if req.SystemMaintenanceEnabled != nil {
+		v := *req.SystemMaintenanceEnabled
+		if v != "true" && v != "false" {
+			return nil, "自动维护开关参数错误"
+		}
+		if old, ok := updates["system_maintenance_enabled"]; ok && old != v {
+			return nil, "自动维护开关参数冲突"
+		}
+		updates["system_maintenance_enabled"] = v
+	}
+	if req.SystemMaintenanceMode != nil {
+		v := *req.SystemMaintenanceMode
+		if v != "scheduled" && v != "immediate" {
+			return nil, "自动维护执行方式不正确"
+		}
+		updates["system_maintenance_mode"] = v
+	}
+	if req.SystemMaintenanceWindow != nil {
+		v := *req.SystemMaintenanceWindow
+		if err := (executor.SystemMaintenancePolicy{Mode: "scheduled", Window: v}).Validate(); err != nil {
+			return nil, "维护时段格式不正确或不足一小时"
+		}
+		updates["system_maintenance_window"] = v
 	}
 	return updates, ""
 }
 
 func saveSecuritySettingsTransaction(db *sql.DB, updates map[string]string) error {
 	if len(updates) == 0 {
+		return nil
+	}
+	_, enabled := updates["system_maintenance_enabled"]
+	_, mode := updates["system_maintenance_mode"]
+	_, window := updates["system_maintenance_window"]
+	if enabled || mode || window {
+		p, err := executor.ReadSystemMaintenancePolicy(db)
+		if err != nil {
+			return err
+		}
+		if v, ok := updates["system_maintenance_enabled"]; ok {
+			p.Enabled = v == "true"
+		}
+		if v, ok := updates["system_maintenance_mode"]; ok {
+			p.Mode = v
+		}
+		if v, ok := updates["system_maintenance_window"]; ok {
+			p.Window = v
+		}
+		if err := executor.SaveSystemMaintenancePolicyWithSettings(db, p, updates); err != nil {
+			return err
+		}
+		executor.WakeSystemMaintenance()
 		return nil
 	}
 	tx, err := db.Begin()

@@ -4,10 +4,11 @@
 
 WP Panel 是专门用于在 Debian 13 VPS 上托管和运维 WordPress 网站的开源服务器管理面板。它以单个 Go 程序运行，直接在系统上安装和管理 Nginx、PHP 8.3、MariaDB、Redis、Fail2ban 和 nftables，不是通用 Linux 面板，也不是 Docker 平台。
 
-Facts below apply to v1.13.3 and were last reviewed on 2026-11-12. Treat features not listed in the full facts file as not provided.
+Facts below apply to v1.14.0 and were last reviewed on 2026-11-21. Treat features not listed in the full facts file as not provided.
 
 ## Key facts
 
+- Automatic maintenance authorization and activation scope: One switch authorizes full system updates and necessary restarts. The schedule controls when maintenance starts: a round progressing normally may finish beyond the window, while a busy deferral makes it wait for an allowed window. File-based checks require persistent, verifiable executable or shared-library replacement; kernel and reboot markers use their own local facts. Recovery verifies the target rather than treating a new boot alone as success. Limits: No vulnerability-fix guarantee is made when sources lack an update, installation fails or additional configuration is needed. Self-chrooting services can remain unconfirmed after real file replacement until reboot. Suppressing unchanged-file warnings does not mean all chroot workloads are supported.
 - Runtime and stack: The panel is one Go binary managed by systemd and stores its own state in SQLite. Websites run on native Debian packages: Nginx, PHP 8.3 (PHP-FPM), MariaDB, Redis, Fail2ban and nftables. Docker and containers are not used. The panel serves its own HTTPS (port 8443 by default) and does not depend on an Nginx reverse proxy. Limits: Only Debian 13 is supported. PHP is fixed at 8.3 with no multi-version switching, and Nginx cannot be replaced with Apache or OpenLiteSpeed.
 - One system user per site: Every site gets its own Linux system user and matching group at creation (no login shell), and the site directory is owned by that user. Sites never share a system user. Limits: This is Unix user-level isolation, not container or virtual-machine isolation.
 - One PHP-FPM pool per site: Every site has its own PHP-FPM pool and its own socket, and its PHP workers run as that site's own system user. Sites do not share a single PHP pool. Limits: All pools belong to the same PHP 8.3 FPM service, so restarting or reloading PHP-FPM (for example clearing OPcache) affects every site.

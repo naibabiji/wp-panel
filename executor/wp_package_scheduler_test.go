@@ -16,6 +16,9 @@ import (
 
 func setupWPPackageSchedulerTestDB(t *testing.T) {
 	t.Helper()
+	oldLockPath := systemPackageUpdateLockPath
+	systemPackageUpdateLockPath = filepath.Join(t.TempDir(), "apt.lock")
+	t.Cleanup(func() { systemPackageUpdateLockPath = oldLockPath })
 	oldDB := database.DB
 	if err := database.Open(filepath.Join(t.TempDir(), "panel.db")); err != nil {
 		t.Fatalf("open db: %v", err)

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/naibabiji/wp-panel/config"
+	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/executor"
 	"github.com/naibabiji/wp-panel/i18n"
 	"github.com/naibabiji/wp-panel/models"
@@ -119,17 +120,55 @@ func systemUpdateStatusResponse(c *gin.Context, status executor.SystemPackageUpd
 	if status.MessageKey != "" {
 		message = i18n.TE(c.Request, status.MessageKey)
 	}
-	return gin.H{
-		"id":               status.ID,
-		"status":           status.Status,
-		"stage":            status.Stage,
-		"message":          message,
-		"message_key":      status.MessageKey,
-		"started_at":       status.StartedAt,
-		"updated_at":       status.UpdatedAt,
-		"removal_packages": status.RemovalPackages,
-		"reboot_required":  status.RebootRequired,
+	policy, policyErr := executor.ReadSystemMaintenancePolicy(database.GetDB())
+	actions, actionsErr := executor.SystemMaintenanceActions()
+	views := make([]gin.H, 0, len(actions))
+	for _, a := range actions {
+		display := strings.TrimSuffix(a.Target, ".service")
+		switch a.Kind {
+		case "round":
+			display = i18n.TE(c.Request, "settings.maintenance_round")
+		case "notice":
+			display = i18n.TE(c.Request, "settings.maintenance_migration_notice")
+		case "reboot":
+			display = i18n.TE(c.Request, "settings.maintenance_reboot")
+			if parts := strings.Split(a.Target, "/"); len(parts) > 1 && parts[0] == "kernel" {
+				display = i18n.TE(c.Request, "settings.maintenance_reboot_kernel", i18n.P{"version": parts[1]})
+			}
+		}
+		views = append(views, gin.H{"id": a.ID, "kind": a.Kind, "target": display, "status": a.Status, "reason": i18n.TE(c.Request, executor.SystemMaintenanceReasonKey(a.MessageCode)), "requested_at": a.RequestedAt, "retry_pending": a.RetryPending})
 	}
+	return gin.H{
+		"maintenance_policy":                   policy,
+		"maintenance_actions":                  views,
+		"maintenance_notifications_configured": executor.SystemMaintenanceNotificationsConfigured(),
+		"maintenance_inspection":               executor.SnapshotSystemMaintenanceInspection(),
+		"maintenance_unavailable":              policyErr != nil || actionsErr != nil,
+		"id":                                   status.ID,
+		"status":                               status.Status,
+		"stage":                                status.Stage,
+		"message":                              message,
+		"message_key":                          status.MessageKey,
+		"started_at":                           status.StartedAt,
+		"updated_at":                           status.UpdatedAt,
+		"removal_packages":                     status.RemovalPackages,
+		"reboot_required":                      status.RebootRequired,
+	}
+}
+
+func (h *SystemUpdateHandler) RetryMaintenance(c *gin.Context) {
+	var req struct {
+		ID int64 `json:"id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.ID < 1 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(i18n.TE(c.Request, "common.invalid_params")))
+		return
+	}
+	if err := executor.RetrySystemMaintenance(req.ID); err != nil {
+		c.JSON(http.StatusConflict, models.ErrorResponse(i18n.TE(c.Request, "settings.maintenance_retry_unavailable")))
+		return
+	}
+	c.JSON(http.StatusAccepted, models.SuccessResponse(gin.H{"message": i18n.TE(c.Request, "settings.maintenance_retry_accepted")}))
 }
 
 func getUpgradablePackages() ([]systemPackage, error) {

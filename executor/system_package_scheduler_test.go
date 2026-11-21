@@ -73,7 +73,7 @@ func TestSystemPackageAutoCheckDailyRefreshAndOptIn(t *testing.T) {
 	setSecuritySetting("system_package_auto_update_enabled", "true")
 	setSecuritySetting("system_package_auto_check_at", "")
 	runSystemPackageAutoCheck(cfg)
-	if refreshes != 2 || starts != 1 || readSecuritySetting("system_package_auto_check_status") != "update_started" {
+	if refreshes != 2 || starts != 0 || readSecuritySetting("system_package_auto_check_status") != "updates_available" {
 		t.Fatalf("refreshes=%d starts=%d status=%q", refreshes, starts, readSecuritySetting("system_package_auto_check_status"))
 	}
 }

@@ -783,6 +783,11 @@ var upgrades = []Upgrade{
 		},
 		Func: ensureAlertLogAttributionColumn,
 	},
+	{
+		Version:     "1.0.71",
+		Description: "新增自动系统维护策略、动作预算与重启恢复记录",
+		SQL:         systemMaintenanceSchemaStatements,
+	},
 }
 
 func ensureAlertLogAttributionColumn() error {

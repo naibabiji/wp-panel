@@ -156,6 +156,11 @@ func (s *SiteMigrationSourcePreparationService) DeclareBatch(ctx context.Context
 		items = append(items, siteMigrationPreparedSourceDeclaration{SiteMigrationSourceDeclaration: declaration, snapshot: string(raw)})
 	}
 
+	admission, admissionErr := acquireMaintenanceMigrationAdmission()
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer admission.Close()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

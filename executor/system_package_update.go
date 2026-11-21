@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,12 +39,15 @@ type SystemPackageUpdateStatus struct {
 }
 
 type systemPackageUpdatePlan struct {
-	ID         string `json:"id"`
-	StatusPath string `json:"status_path"`
-	PlanPath   string `json:"plan_path"`
+	ID                 string `json:"id"`
+	StatusPath         string `json:"status_path"`
+	PlanPath           string `json:"plan_path"`
+	MaintenanceRoundID int64  `json:"maintenance_round_id,omitempty"`
+	MaintenanceDBPath  string `json:"maintenance_db_path,omitempty"`
 }
 
 var (
+	errSystemPackageUpdateBusy    = errors.New("系统更新正在执行")
 	systemPackageUpdateCommand    = runSystemPackageUpdateCommand
 	systemPackageUpdatePreflight  = runSystemPackageUpdatePreflight
 	systemPackageRebootRequired   = detectSystemPackageRebootRequired
@@ -69,10 +73,17 @@ func StartSystemPackageAutoUpdateScheduler(cfg *config.Config) {
 		go func() {
 			time.Sleep(systemPackageAutoCheckStartDelay)
 			runSystemPackageAutoCheck(cfg)
-			ticker := time.NewTicker(time.Hour)
+			runSystemMaintenanceTick(cfg, false)
+			ticker := time.NewTicker(time.Minute)
 			defer ticker.Stop()
-			for range ticker.C {
-				runSystemPackageAutoCheck(cfg)
+			for {
+				select {
+				case <-ticker.C:
+					runSystemPackageAutoCheck(cfg)
+					runSystemMaintenanceTick(cfg, false)
+				case <-maintenanceWake:
+					runSystemMaintenanceTick(cfg, true)
+				}
 			}
 		}()
 	})
@@ -107,16 +118,7 @@ func runSystemPackageAutoCheck(cfg *config.Config) {
 		recordSystemPackageAutoCheck("up_to_date", 0, "")
 		return
 	}
-	if readSecuritySetting("system_package_auto_update_enabled") != "true" {
-		recordSystemPackageAutoCheck("updates_available", count, "")
-		return
-	}
-	if _, err := startSystemPackageUpdate(cfg); err != nil {
-		log.Printf("系统软件包每日自动更新任务启动失败: %v", err)
-		recordSystemPackageAutoCheck("update_not_started", count, "更新任务未能启动，请在系统更新卡片查看任务状态或手动重试")
-		return
-	}
-	recordSystemPackageAutoCheck("update_started", count, "")
+	recordSystemPackageAutoCheck("updates_available", count, "")
 }
 
 func systemPackageAutoCheckDue(now time.Time) bool {
@@ -196,7 +198,11 @@ func ReconcileSystemPackageUpdateStatus(cfg *config.Config) SystemPackageUpdateS
 	if status.Status == "success" && status.RebootRequired {
 		clearReboot := false
 		if currentBootID, err := systemPackageBootID(); err == nil {
-			clearReboot = status.BootID != "" && currentBootID != status.BootID
+			if status.BootID != "" && currentBootID != status.BootID {
+				if required, checkErr := systemPackageRebootRequired(); checkErr == nil {
+					clearReboot = !required
+				}
+			}
 		}
 		if status.BootID == "" {
 			if rebootRequired, err := systemPackageRebootRequired(); err == nil {
@@ -227,15 +233,33 @@ func ReconcileSystemPackageUpdateStatus(cfg *config.Config) SystemPackageUpdateS
 }
 
 func StartSystemPackageUpdate(cfg *config.Config) (SystemPackageUpdateStatus, error) {
+	return startSystemPackageUpdateForRound(cfg, 0)
+}
+
+func startMaintenancePackageUpdate(cfg *config.Config, roundID int64) (SystemPackageUpdateStatus, error) {
+	return startSystemPackageUpdateForRound(cfg, roundID)
+}
+
+func startSystemPackageUpdateForRound(cfg *config.Config, roundID int64) (SystemPackageUpdateStatus, error) {
 	systemPackageUpdateStartMu.Lock()
 	defer systemPackageUpdateStartMu.Unlock()
 
 	if cfg == nil {
 		return SystemPackageUpdateStatus{}, errors.New("panel config unavailable")
 	}
+	// Admission probe only; the detached runner remains the lock owner during
+	// installation. Holding this fd through systemd-run would race its startup.
+	probe, probeErr := tryMaintenanceFileLock(systemPackageUpdateLockPath)
+	if errors.Is(probeErr, syscall.EWOULDBLOCK) || errors.Is(probeErr, syscall.EAGAIN) {
+		return SystemPackageUpdateStatus{}, errSystemPackageUpdateBusy
+	}
+	if probeErr != nil {
+		return SystemPackageUpdateStatus{}, errors.New("system package lock unavailable")
+	}
+	probe.Close()
 	current := ReconcileSystemPackageUpdateStatus(cfg)
 	if current.Status == "running" {
-		return SystemPackageUpdateStatus{}, errors.New("系统更新正在执行")
+		return SystemPackageUpdateStatus{}, errSystemPackageUpdateBusy
 	}
 	if _, err := exec.LookPath("systemd-run"); err != nil {
 		return SystemPackageUpdateStatus{}, errors.New("systemd-run unavailable")
@@ -246,7 +270,25 @@ func StartSystemPackageUpdate(cfg *config.Config) (SystemPackageUpdateStatus, er
 	}
 	id := fmt.Sprintf("%d", time.Now().UnixNano())
 	planPath := filepath.Join(cfg.Panel.DataDir, "system-package-update-"+id+".json")
+	planPath, err = filepath.Abs(planPath)
+	if err != nil {
+		return SystemPackageUpdateStatus{}, err
+	}
 	plan := systemPackageUpdatePlan{ID: id, StatusPath: SystemPackageUpdateStatusPath(cfg), PlanPath: planPath}
+	plan.StatusPath, err = filepath.Abs(plan.StatusPath)
+	if err != nil {
+		return SystemPackageUpdateStatus{}, err
+	}
+	if roundID > 0 {
+		if strings.TrimSpace(cfg.SQLite.Path) == "" {
+			return SystemPackageUpdateStatus{}, errors.New("maintenance database path unavailable")
+		}
+		plan.MaintenanceRoundID = roundID
+		plan.MaintenanceDBPath, err = filepath.Abs(cfg.SQLite.Path)
+		if err != nil {
+			return SystemPackageUpdateStatus{}, err
+		}
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	status := SystemPackageUpdateStatus{ID: id, Status: "running", Stage: "queued", MessageKey: "settings.system_update_status_queued", StartedAt: now, UpdatedAt: now}
 	if err := writePanelDBRestoreJSON(planPath, plan); err != nil {
@@ -270,6 +312,11 @@ func StartSystemPackageUpdate(cfg *config.Config) (SystemPackageUpdateStatus, er
 func RefreshSystemPackageIndexes() error {
 	ctx, cancel := context.WithTimeout(context.Background(), systemPackageIndexRefreshTimeout)
 	defer cancel()
+	lock, err := acquireSystemPackageLock(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseSystemPackageLock(lock)
 	return systemPackageUpdateCommand(ctx, "apt-get", "update")
 }
 
@@ -283,15 +330,43 @@ func RunSystemPackageUpdatePlan(planPath string) error {
 		return err
 	}
 	defer os.Remove(plan.PlanPath)
-	lock, err := os.OpenFile(systemPackageUpdateLockPath, os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return err
+	var maintenanceDB *sql.DB
+	if plan.MaintenanceRoundID > 0 {
+		var release func()
+		var reason string
+		maintenanceDB, release, reason, err = prepareMaintenancePackageRun(plan)
+		if maintenanceDB != nil {
+			defer maintenanceDB.Close()
+		}
+		if release == nil {
+			if maintenanceDB != nil {
+				_ = deferMaintenanceRound(maintenanceDB, &systemMaintenanceAction{ID: plan.MaintenanceRoundID}, reason)
+			}
+			status := "deferred"
+			key := "settings.maintenance_install_deferred"
+			if err != nil {
+				status = "failed"
+				key = "settings.system_update_status_start_failed"
+			}
+			writeErr := writePanelDBRestoreJSON(plan.StatusPath, SystemPackageUpdateStatus{ID: plan.ID, Status: status, Stage: "start", MessageKey: key, StartedAt: time.Now().UTC().Format(time.RFC3339), UpdatedAt: time.Now().UTC().Format(time.RFC3339)})
+			if err != nil {
+				return err
+			}
+			return writeErr
+		}
+		defer release()
+	} else {
+		lock, err := os.OpenFile(systemPackageUpdateLockPath, os.O_CREATE|os.O_RDWR, 0600)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			_ = writePanelDBRestoreJSON(plan.StatusPath, SystemPackageUpdateStatus{ID: plan.ID, Status: "failed", Stage: "start", MessageKey: "settings.system_update_status_start_failed", UpdatedAt: time.Now().UTC().Format(time.RFC3339)})
+			return errors.New("another system update is running")
+		}
+		defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 	}
-	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		return errors.New("another system update is running")
-	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 	started := time.Now().UTC().Format(time.RFC3339)
 	writeStatus := func(status, stage, messageKey string, removalPackages []string) error {
 		return writePanelDBRestoreJSON(plan.StatusPath, SystemPackageUpdateStatus{ID: plan.ID, Status: status, Stage: stage, MessageKey: messageKey, StartedAt: started, UpdatedAt: time.Now().UTC().Format(time.RFC3339), RemovalPackages: removalPackages})
@@ -302,6 +377,13 @@ func RunSystemPackageUpdatePlan(planPath string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
+	// Preserve intentionally stopped services in automated installations.
+	wasActive := map[string]bool{}
+	if plan.MaintenanceRoundID > 0 {
+		for _, service := range []string{"nginx", "php8.3-fpm", "mariadb", "redis-server", "wp-panel"} {
+			wasActive[service] = systemPackageUpdateCommand(ctx, "systemctl", "is-active", "--quiet", service) == nil
+		}
+	}
 	_ = writeStatus("running", "refresh", "settings.system_update_status_refresh", nil)
 	if err := systemPackageUpdateCommand(ctx, "apt-get", "update"); err != nil {
 		return fail("refresh", "settings.system_update_status_failed")
@@ -333,6 +415,9 @@ func RunSystemPackageUpdatePlan(planPath string) error {
 		}
 	}
 	for _, service := range []string{"nginx", "php8.3-fpm", "mariadb", "redis-server", "wp-panel"} {
+		if plan.MaintenanceRoundID > 0 && !wasActive[service] {
+			continue
+		}
 		if err := systemPackageUpdateCommand(ctx, "systemctl", "is-active", "--quiet", service); err != nil {
 			return fail("services", "settings.system_update_status_health_failed")
 		}
@@ -347,6 +432,19 @@ func RunSystemPackageUpdatePlan(planPath string) error {
 		bootID, _ = systemPackageBootID()
 	}
 	status := SystemPackageUpdateStatus{ID: plan.ID, Status: "success", Stage: "complete", MessageKey: messageKey, StartedAt: started, UpdatedAt: time.Now().UTC().Format(time.RFC3339), RebootRequired: rebootRequired, BootID: bootID}
+	if plan.MaintenanceRoundID > 0 {
+		err = sealMaintenanceRound(ctx, maintenanceDB, plan.MaintenanceRoundID)
+		if err != nil {
+			// Package installation succeeded independently of runtime inspection.
+			// Preserve its reboot hint even when the scope cannot be sealed.
+			status.MessageKey = "settings.system_update_status_runtime_unknown"
+			if writeErr := writePanelDBRestoreJSON(plan.StatusPath, status); writeErr != nil {
+				return writeErr
+			}
+			_, err = maintenanceDB.Exec(`UPDATE system_maintenance_actions SET status='unknown',phase='runtime',message_code='runtime_unknown',overtime_allowed=0,updated_at=CURRENT_TIMESTAMP WHERE id=? AND kind='round' AND phase='install' AND status='pending'`, plan.MaintenanceRoundID)
+			return err
+		}
+	}
 	return writePanelDBRestoreJSON(plan.StatusPath, status)
 }
 

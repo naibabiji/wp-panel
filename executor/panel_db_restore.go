@@ -88,6 +88,11 @@ func StartPanelDBRestore(cfg *config.Config, backupPath string) (PanelDBRestoreS
 		return PanelDBRestoreStatus{}, errors.New("已有面板维护操作正在执行")
 	}
 	defer panelLifecycleMu.Unlock()
+	maintenanceLock, err := acquireMaintenanceLifecycleFile(cfg)
+	if err != nil {
+		return PanelDBRestoreStatus{}, errors.New("已有系统维护操作正在执行，或无法取得维护锁")
+	}
+	defer maintenanceLock.Close()
 	if SnapshotPanelUpdateStatus().Running {
 		return PanelDBRestoreStatus{}, errors.New("面板正在更新，请稍后再恢复")
 	}
