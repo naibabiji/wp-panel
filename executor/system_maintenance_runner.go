@@ -488,6 +488,27 @@ func executeMaintenanceTarget(ctx context.Context, cfg *config.Config, round *sy
 		}
 		return true, writeErr
 	}
+	// Lock before claiming: temporary guard/config activity must not consume
+	// a maintenance attempt. Non-guarded units (cron/rsyslog) need no lock.
+	var controlled []string
+	if target.Kind == "reboot" {
+		controlled = guardServiceNames
+	} else if name, ok := guardedServiceName(target.Target); ok {
+		controlled = []string{name}
+	}
+	releaseServices, err := tryServiceControlLocks(cfg.Panel.DataDir, controlled...)
+	if err != nil {
+		if errors.Is(err, errServiceControlBusy) {
+			return true, deferMaintenanceRound(db, round, "maintenance_busy")
+		}
+		return false, err
+	}
+	defer releaseServices()
+	if target.Kind == "service" && !retry {
+		if err := maintenanceCommand(ctx, "systemctl", "is-active", "--quiet", target.Target); err != nil {
+			return false, errors.New("service was not active; automatic start refused")
+		}
+	}
 	a, claimed, err := claimMaintenanceActionWithHealth(db, target.Kind, target.Target, evidence, boot, maintenanceClock(), health)
 	if err != nil {
 		return false, err

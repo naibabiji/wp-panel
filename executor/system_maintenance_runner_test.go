@@ -137,6 +137,99 @@ func maintenanceFixtureRound(t *testing.T, target maintenanceTarget, overtime bo
 	return r
 }
 
+func TestMaintenanceServiceControlBusyDoesNotConsumeAttempt(t *testing.T) {
+	cfg, f := setupMaintenanceRunner(t)
+	e := maintenanceTestEvidence(1)
+	f.files = []maintenanceRuntimeEvidence{e}
+	target := maintenanceTarget{"service", e.Unit, compactMaintenanceEvidence(f.files)}
+	round := maintenanceFixtureRound(t, target, true)
+	release, err := tryServiceControlLocks(cfg.Panel.DataDir, e.Unit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deferred, err := executeMaintenanceTarget(context.Background(), cfg, &round, target, f.files, false)
+	if err != nil || !deferred {
+		t.Fatalf("deferred=%v %v", deferred, err)
+	}
+	var count int
+	database.GetDB().QueryRow(`SELECT COUNT(*) FROM system_maintenance_actions WHERE kind='service'`).Scan(&count)
+	if count != 0 || strings.Contains(strings.Join(f.commands, " "), "restart") {
+		t.Fatalf("busy attempt consumed: %d %v", count, f.commands)
+	}
+	release()
+	if _, err := executeMaintenanceTarget(context.Background(), cfg, &round, target, f.files, false); err != nil {
+		t.Fatal(err)
+	}
+	var attempts int
+	if err := database.GetDB().QueryRow(`SELECT attempts FROM system_maintenance_actions WHERE kind='service'`).Scan(&attempts); err != nil || attempts != 1 {
+		t.Fatalf("attempts=%d %v", attempts, err)
+	}
+}
+
+func TestMaintenanceServiceControlHeldThroughVerification(t *testing.T) {
+	cfg, f := setupMaintenanceRunner(t)
+	e := maintenanceTestEvidence(1)
+	f.files = []maintenanceRuntimeEvidence{e}
+	target := maintenanceTarget{"service", e.Unit, compactMaintenanceEvidence(f.files)}
+	round := maintenanceFixtureRound(t, target, true)
+	maintenanceReady = func(context.Context, *config.Config, string) error {
+		if other, err := tryServiceControlLocks(cfg.Panel.DataDir, e.Unit); !errors.Is(err, errServiceControlBusy) {
+			if other != nil {
+				other()
+			}
+			t.Fatalf("ready without service lock: %v", err)
+		}
+		other, err := tryServiceControlLocks(cfg.Panel.DataDir, "mariadb")
+		if err != nil {
+			t.Fatalf("unrelated service blocked: %v", err)
+		}
+		other()
+		return nil
+	}
+	if _, err := executeMaintenanceTarget(context.Background(), cfg, &round, target, f.files, false); err != nil {
+		t.Fatal(err)
+	}
+	release, err := tryServiceControlLocks(cfg.Panel.DataDir, e.Unit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+}
+
+func TestMaintenanceRebootServiceLocksHeldThroughGrace(t *testing.T) {
+	cfg, _ := setupMaintenanceRunner(t)
+	oldRunning, oldGreater := systemPackageRunningKernel, systemPackageKernelGreater
+	t.Cleanup(func() { systemPackageRunningKernel, systemPackageKernelGreater = oldRunning, oldGreater })
+	systemPackageRunningKernel = func() (string, error) { return "6.12.115-amd64", nil }
+	systemPackageKernelGreater = func(string, string) (bool, error) { return true, nil }
+	target := maintenanceTarget{Kind: "reboot", Target: "kernel/6.12.117-amd64"}
+	round := maintenanceFixtureRound(t, target, true)
+	maintenanceWaitReboot = func(context.Context) error {
+		for _, unit := range guardServiceNames {
+			if other, err := tryServiceControlLocks(cfg.Panel.DataDir, unit); !errors.Is(err, errServiceControlBusy) {
+				if other != nil {
+					other()
+				}
+				t.Fatalf("reboot grace unlocked %s: %v", unit, err)
+			}
+		}
+		return nil // Existing grace expires without observing reboot.
+	}
+	if _, err := executeMaintenanceTarget(context.Background(), cfg, &round, target, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	var status, code string
+	database.GetDB().QueryRow(`SELECT status,message_code FROM system_maintenance_actions WHERE kind='reboot'`).Scan(&status, &code)
+	if status != "failed" || code != "reboot_not_observed" {
+		t.Fatalf("%s %s", status, code)
+	}
+	release, err := tryServiceControlLocks(cfg.Panel.DataDir, guardServiceNames...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+}
+
 func TestMaintenanceCycleHandlesExternalUpdateWithoutNewPackages(t *testing.T) {
 	cfg, f := setupMaintenanceRunner(t)
 	e := maintenanceTestEvidence(1)

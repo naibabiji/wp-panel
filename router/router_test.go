@@ -145,18 +145,19 @@ for (let i = 0; i < 100; i++) {
     if (/[:\n\r\0]/.test(password)) throw new Error('generated password contains a forbidden character');
     if (settings.rootPassword.confirmPassword !== password) throw new Error('confirmation password was not synchronized');
 }
+settings.timezone = 'UTC';
 settings.autoUpdate.enabled = true;
 settings.autoUpdate.lastCheck = '2026-10-08T12:00:00Z';
 settings.autoUpdate.lastAttempt = '2026-10-08T12:05:00Z';
 settings.autoUpdate.lastStatus = 'failed';
 settings.autoUpdate.lastStage = 'fetch_release';
-let nextCheck = new Date(settings.nextAutoUpdateCheck());
-if (nextCheck.getTime() !== Date.parse('2026-10-08T12:30:00Z')) {
+let nextCheck = settings.nextAutoUpdateCheck();
+if (nextCheck !== '2026-10-08 12:30:00') {
     throw new Error('fetch failure did not show a 30-minute retry');
 }
 settings.autoUpdate.lastStage = 'health_check';
-nextCheck = new Date(settings.nextAutoUpdateCheck());
-if (nextCheck.getTime() !== Date.parse('2026-10-09T12:05:00Z')) {
+nextCheck = settings.nextAutoUpdateCheck();
+if (nextCheck !== '2026-10-09 12:05:00') {
     throw new Error('installation failure did not show a 24-hour cooldown from the last attempt');
 }
 `)

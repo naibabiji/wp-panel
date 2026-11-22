@@ -15,6 +15,9 @@ import (
 )
 
 func TestRunSystemPackageUpdatePlanCompletesAllChecks(t *testing.T) {
+	oldCfg := config.AppConfig
+	config.AppConfig = nil // Detached manual runner executes before config loading.
+	t.Cleanup(func() { config.AppConfig = oldCfg })
 	tempDir := t.TempDir()
 	planPath := filepath.Join(tempDir, "plan.json")
 	statusPath := filepath.Join(tempDir, "status.json")
@@ -43,6 +46,14 @@ func TestRunSystemPackageUpdatePlanCompletesAllChecks(t *testing.T) {
 	systemPackageUpdateLockPath = filepath.Join(tempDir, "update.lock")
 	var calls []string
 	systemPackageUpdateCommand = func(_ context.Context, name string, args ...string) error {
+		for _, service := range guardServiceNames {
+			if other, err := tryServiceControlLocks(tempDir, service); !errors.Is(err, errServiceControlBusy) {
+				if other != nil {
+					other()
+				}
+				t.Fatalf("package command without service lock %s: %v", service, err)
+			}
+		}
 		calls = append(calls, name+" "+joinSystemPackageUpdateArgs(args))
 		return nil
 	}
@@ -68,6 +79,39 @@ func TestRunSystemPackageUpdatePlanCompletesAllChecks(t *testing.T) {
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("unexpected commands:\n got: %#v\nwant: %#v", calls, want)
+	}
+	release, err := tryServiceControlLocks(tempDir, guardServiceNames...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+}
+
+func TestManualPackageUpdateServiceBusyDoesNotRunCommands(t *testing.T) {
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.json")
+	statusPath := filepath.Join(dir, "status.json")
+	if err := writePanelDBRestoreJSON(planPath, systemPackageUpdatePlan{ID: "busy", PlanPath: planPath, StatusPath: statusPath}); err != nil {
+		t.Fatal(err)
+	}
+	oldLock, oldCommand := systemPackageUpdateLockPath, systemPackageUpdateCommand
+	systemPackageUpdateLockPath = filepath.Join(dir, "apt.lock")
+	t.Cleanup(func() { systemPackageUpdateLockPath, systemPackageUpdateCommand = oldLock, oldCommand })
+	systemPackageUpdateCommand = func(context.Context, string, ...string) error {
+		t.Fatal("package command during service operation")
+		return nil
+	}
+	release, err := tryServiceControlLocks(dir, "mariadb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if err := RunSystemPackageUpdatePlan(planPath); !errors.Is(err, errServiceControlBusy) {
+		t.Fatal(err)
+	}
+	status := readSystemPackageUpdateStatusFile(t, statusPath)
+	if status.Status != "failed" || status.Stage != "start" {
+		t.Fatalf("bad busy result: %+v", status)
 	}
 }
 

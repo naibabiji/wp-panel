@@ -57,6 +57,11 @@ type SafeApplyResult struct {
 func SafeApplyRestartConfig(configPath, newContent, oldContent, serviceName string, ready func(context.Context) error) SafeApplyResult {
 	safeApplyMu.Lock()
 	defer safeApplyMu.Unlock()
+	release, err := tryServiceControlLocks(serviceControlDataDir(), serviceName)
+	if err != nil {
+		return SafeApplyResult{Err: err}
+	}
+	defer release()
 
 	if err := atomicWriteConfigFile(configPath, newContent); err != nil {
 		return SafeApplyResult{Err: fmt.Errorf("写入配置失败，配置未改动: %w", err)}

@@ -2,11 +2,242 @@ package executor
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/naibabiji/wp-panel/config"
+	"github.com/naibabiji/wp-panel/database"
 )
+
+func setupServiceControlTest(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	oldCfg, oldDPKG := config.AppConfig, maintenanceDPKGQuery
+	config.AppConfig = &config.Config{Panel: config.PanelConfig{DataDir: dir}}
+	maintenanceDPKGQuery = func() (bool, error) { return false, nil }
+	t.Cleanup(func() { config.AppConfig, maintenanceDPKGQuery = oldCfg, oldDPKG })
+	return dir
+}
+
+func setupPlannedGuard(t *testing.T) (string, *ProcessGuard, *GuardService, *int) {
+	t.Helper()
+	dir := setupServiceControlTest(t)
+	db := openAlertTestDB(t)
+	mustExec(t, db, `CREATE TABLE process_guard_incidents (id INTEGER PRIMARY KEY,service TEXT,event TEXT,message TEXT,created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`)
+	mustExec(t, db, `CREATE TABLE security_settings (skey TEXT PRIMARY KEY,svalue TEXT)`)
+	notifications := new(int)
+	oldNotifier := serviceIncidentNotifier
+	serviceIncidentNotifier = func(string, string) { *notifications++ }
+	t.Cleanup(func() { serviceIncidentNotifier = oldNotifier })
+	s := &GuardService{Name: "MariaDB", ServiceName: "mariadb", Running: true, Restarts: 2, LastIncident: "old", restartCount: 3, countKnown: true}
+	pg := &ProcessGuard{services: []*GuardService{s}}
+	return dir, pg, s, notifications
+}
+
+func mockPlannedGuardCommand(t *testing.T, fn func(string, ...string) ([]byte, error)) {
+	t.Helper()
+	old := guardCommand
+	guardCommand = fn
+	t.Cleanup(func() { guardCommand = old })
+}
+
+func TestProcessGuardPlannedInterruptionRetainsStateAndRebaselines(t *testing.T) {
+	dir, pg, s, _ := setupPlannedGuard(t)
+	oldGuard := guard
+	guard = pg
+	t.Cleanup(func() { guard = oldGuard })
+	for _, running := range []bool{true, false} {
+		s.Running = running
+		release, err := tryServiceControlLocks(dir, "mariadb")
+		if err != nil {
+			t.Fatal(err)
+		}
+		mockPlannedGuardCommand(t, func(string, ...string) ([]byte, error) {
+			t.Fatal("queried service owned by planned operation")
+			return nil, nil
+		})
+		pg.check(s)
+		release()
+		if s.Running != running || s.Restarts != 2 || s.LastIncident != "old" || !s.rebaselineAfterPlannedOperation {
+			t.Fatalf("frozen state changed: %+v", s)
+		}
+		if firing, _ := checkService(); firing == running {
+			t.Fatal("planned interval changed pre-existing alert condition")
+		}
+	}
+	mockPlannedGuardCommand(t, func(string, ...string) ([]byte, error) { return nil, errors.New("query unavailable") })
+	pg.check(s)
+	if !s.rebaselineAfterPlannedOperation {
+		t.Fatal("query failure discarded rebaseline")
+	}
+	mockPlannedGuardCommand(t, func(_ string, args ...string) ([]byte, error) {
+		if other, err := tryServiceControlLocks(dir, "mariadb"); !errors.Is(err, errServiceControlBusy) {
+			if other != nil {
+				other()
+			}
+			t.Fatalf("read without held service lock: %v", err)
+		}
+		return []byte("ActiveState=active\nNRestarts=7\n"), nil
+	})
+	pg.check(s)
+	if !s.Running || s.restartCount != 7 || s.Restarts != 2 || s.LastIncident != "old" || s.rebaselineAfterPlannedOperation {
+		t.Fatalf("bad resumed state: %+v", s)
+	}
+	if firing, _ := checkService(); firing {
+		t.Fatal("real recovery did not clear service condition")
+	}
+}
+
+func TestProcessGuardPausedAndShortPlannedOperations(t *testing.T) {
+	_, pg, s, _ := setupPlannedGuard(t)
+	s.Paused = true
+	s.Running = false
+	s.rebaselineAfterPlannedOperation = true
+	mockPlannedGuardCommand(t, func(_ string, args ...string) ([]byte, error) {
+		if args[0] == "start" {
+			t.Fatal("started paused service")
+		}
+		return []byte("ActiveState=inactive\nNRestarts=0\n"), nil
+	})
+	pg.check(s)
+	if s.Running || s.Restarts != 2 || s.rebaselineAfterPlannedOperation {
+		t.Fatalf("paused state changed: %+v", s)
+	}
+	// A controlled restart between guard ticks resets systemd's automatic
+	// restart counter; it is not an increase and must retain incident history.
+	s.Paused = false
+	mockPlannedGuardCommand(t, func(string, ...string) ([]byte, error) { return []byte("ActiveState=active\nNRestarts=0\n"), nil })
+	pg.check(s)
+	if !s.Running || s.Restarts != 2 || s.LastIncident != "old" {
+		t.Fatalf("short operation misreported: %+v", s)
+	}
+}
+
+func TestSetServiceStateBusyDoesNotInvokeCommands(t *testing.T) {
+	dir := setupServiceControlTest(t)
+	release, err := tryServiceControlLocks(dir, "mariadb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	mockPlannedGuardCommand(t, func(string, ...string) ([]byte, error) {
+		t.Fatal("manual action ran through service owner")
+		return nil, nil
+	})
+	if err := SetServiceState("mariadb", "restart"); !errors.Is(err, errServiceControlBusy) {
+		t.Fatal(err)
+	}
+}
+
+func TestProcessGuardPlannedFailureIsVisibleEvenOnFirstRun(t *testing.T) {
+	for _, recovered := range []bool{true, false} {
+		t.Run(fmt.Sprintf("recovered_%v", recovered), func(t *testing.T) {
+			dir, pg, s, _ := setupPlannedGuard(t)
+			s.Running = false
+			s.Restarts = 0
+			pg.firstRun = true
+			release, err := tryServiceControlLocks(dir, "mariadb")
+			if err != nil {
+				t.Fatal(err)
+			}
+			pg.check(s)
+			release()
+			starts := 0
+			mockPlannedGuardCommand(t, func(name string, args ...string) ([]byte, error) {
+				if name == "journalctl" {
+					return nil, nil
+				}
+				if strings.Join(args, " ") == "show --property=SystemState --value" {
+					return []byte("running"), nil
+				}
+				if args[0] == "start" {
+					starts++
+					if other, err := tryServiceControlLocks(dir, "mariadb"); !errors.Is(err, errServiceControlBusy) {
+						if other != nil {
+							other()
+						}
+						t.Fatal("start without service lock")
+					}
+					return nil, nil
+				}
+				state := "failed"
+				if starts > 0 && recovered {
+					state = "active"
+				}
+				return []byte("ActiveState=" + state + "\nNRestarts=0\n"), nil
+			})
+			pg.check(s)
+			if starts != 1 || s.Running != recovered || s.Restarts != 1 {
+				t.Fatalf("starts=%d service=%+v", starts, s)
+			}
+			var message string
+			if err := database.GetDB().QueryRow(`SELECT message FROM process_guard_incidents`).Scan(&message); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(message, "计划操作结束后服务仍未运行") || strings.Contains(message, "进程异常退出") {
+				t.Fatal(message)
+			}
+		})
+	}
+}
+
+func TestProcessGuardTransitionsKeepRealRestartEvidence(t *testing.T) {
+	for _, state := range []string{"activating", "deactivating", "reloading"} {
+		t.Run(state, func(t *testing.T) {
+			_, pg, s, _ := setupPlannedGuard(t)
+			mockPlannedGuardCommand(t, func(string, ...string) ([]byte, error) {
+				return []byte("ActiveState=" + state + "\nNRestarts=5\n"), nil
+			})
+			pg.check(s)
+			if !s.Running || s.restartCount != 3 || s.Restarts != 2 || s.rebaselineAfterPlannedOperation {
+				t.Fatalf("transition altered baseline: %+v", s)
+			}
+			mockPlannedGuardCommand(t, func(string, ...string) ([]byte, error) { return []byte("ActiveState=active\nNRestarts=5\n"), nil })
+			pg.check(s)
+			if s.Restarts != 4 {
+				t.Fatalf("real automatic restart lost: %+v", s)
+			}
+		})
+	}
+}
+
+func TestProcessGuardDoesNotStartDuringShutdownOrDPKG(t *testing.T) {
+	for _, reason := range []string{"shutdown", "dpkg", "dpkg_error"} {
+		t.Run(reason, func(t *testing.T) {
+			_, pg, s, _ := setupPlannedGuard(t)
+			if reason != "shutdown" {
+				maintenanceDPKGQuery = func() (bool, error) {
+					if reason == "dpkg_error" {
+						return false, errors.New("unavailable")
+					}
+					return true, nil
+				}
+			}
+			mockPlannedGuardCommand(t, func(_ string, args ...string) ([]byte, error) {
+				if args[0] == "start" {
+					t.Fatal("start during shutdown/package operation")
+				}
+				if strings.Join(args, " ") == "show --property=SystemState --value" {
+					return []byte("stopping"), nil
+				}
+				return []byte("ActiveState=inactive\nNRestarts=0\n"), nil
+			})
+			pg.check(s)
+			if !s.Running || s.Restarts != 2 {
+				t.Fatalf("unsafe sample changed state: %+v", s)
+			}
+			if reason == "shutdown" {
+				pg.checkAll()
+				if !s.Running {
+					t.Fatal("shutdown cycle changed state")
+				}
+			}
+		})
+	}
+}
 
 func TestSetServiceStateRejectsUnknownService(t *testing.T) {
 	err := SetServiceState("not-managed", "restart")
@@ -16,6 +247,7 @@ func TestSetServiceStateRejectsUnknownService(t *testing.T) {
 }
 
 func TestSetServiceStateRejectsCommandSuccessWithoutActiveState(t *testing.T) {
+	setupServiceControlTest(t)
 	oldCommand := guardCommand
 	oldTimeout, oldPoll := guardStateWaitTimeout, guardStatePollInterval
 	guardCommand = func(_ string, args ...string) ([]byte, error) {
@@ -37,6 +269,7 @@ func TestSetServiceStateRejectsCommandSuccessWithoutActiveState(t *testing.T) {
 }
 
 func TestSetServiceStateRestoresServiceWhenPauseFileCannotBeSaved(t *testing.T) {
+	setupServiceControlTest(t)
 	oldCommand := guardCommand
 	oldPath := guard.pausedFile
 	service := guard.services[0]
@@ -164,6 +397,7 @@ func TestUnexpectedActiveDoesNotCreateAbnormalAlert(t *testing.T) {
 }
 
 func TestProcessGuardReadsStateAfterAcquiringLock(t *testing.T) {
+	setupServiceControlTest(t)
 	oldCommand := guardCommand
 	called := make(chan struct{}, 1)
 	guardCommand = func(_ string, _ ...string) ([]byte, error) {

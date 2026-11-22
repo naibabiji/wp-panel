@@ -375,6 +375,20 @@ func RunSystemPackageUpdatePlan(planPath string) error {
 		_ = writeStatus("failed", stage, messageKey, nil)
 		return errors.New(messageKey)
 	}
+	// This runner, not its short-lived systemd-run caller, owns the service
+	// descriptors through package scripts, health checks and final status.
+	releaseServices, err := tryServiceControlLocks(filepath.Dir(plan.StatusPath), guardServiceNames...)
+	if err != nil {
+		if plan.MaintenanceRoundID > 0 && errors.Is(err, errServiceControlBusy) {
+			if err := deferMaintenanceRound(maintenanceDB, &systemMaintenanceAction{ID: plan.MaintenanceRoundID}, "maintenance_busy"); err != nil {
+				return fail("start", "settings.system_update_status_start_failed")
+			}
+			return writeStatus("deferred", "start", "settings.maintenance_install_deferred", nil)
+		}
+		_ = writeStatus("failed", "start", "settings.system_update_status_start_failed", nil)
+		return err
+	}
+	defer releaseServices()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
 	// Preserve intentionally stopped services in automated installations.

@@ -36,8 +36,10 @@ type GuardService struct {
 	Paused       bool   `json:"paused"`
 	Restarts     int    `json:"restarts"`
 	LastIncident string `json:"last_incident"`
-	restartCount uint64
-	countKnown   bool
+
+	restartCount                    uint64
+	countKnown                      bool
+	rebaselineAfterPlannedOperation bool
 }
 
 type ProcessGuard struct {
@@ -102,6 +104,11 @@ func SetServiceState(serviceName, action string) error {
 	if s == nil {
 		return fmt.Errorf("%w: %s", ErrUnknownGuardService, serviceName)
 	}
+	release, err := tryServiceControlLocks(serviceControlDataDir(), serviceName)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	oldPaused := s.Paused
 	oldRunning := s.Running
@@ -184,6 +191,9 @@ func (pg *ProcessGuard) loop() {
 }
 
 func (pg *ProcessGuard) checkAll() {
+	if guardSystemStopping() {
+		return
+	}
 	for _, s := range pg.services {
 		pg.check(s)
 	}
@@ -192,13 +202,38 @@ func (pg *ProcessGuard) checkAll() {
 
 func (pg *ProcessGuard) check(s *GuardService) {
 	pg.mu.Lock()
-	state := readGuardServiceState(s.ServiceName)
-	if !state.valid {
+	release, err := tryServiceControlLocks(serviceControlDataDir(), s.ServiceName)
+	if err != nil {
+		if errors.Is(err, errServiceControlBusy) {
+			s.rebaselineAfterPlannedOperation = true
+		} else {
+			log.Printf("服务守护锁不可用 service=%s: %v", s.ServiceName, err)
+		}
 		pg.mu.Unlock()
 		return
 	}
+	defer release()
+	state := readGuardServiceState(s.ServiceName)
+	if !state.valid || state.activeState == "activating" || state.activeState == "deactivating" || state.activeState == "reloading" {
+		pg.mu.Unlock()
+		return
+	}
+	if !state.active && !s.Paused {
+		// A killed runner may leave dpkg alive. Observe its POSIX locks rather
+		// than competing with its package scripts using the panel's flock.
+		busy, err := maintenanceDPKGQuery()
+		if err != nil || busy || guardSystemStopping() {
+			if err != nil {
+				log.Printf("服务守护无法确认软件包状态 service=%s: %v", s.ServiceName, err)
+			}
+			pg.mu.Unlock()
+			return
+		}
+	}
 	active := state.active
 	wasRunning := s.Running
+	resuming := s.rebaselineAfterPlannedOperation
+	s.rebaselineAfterPlannedOperation = false
 	s.Running = active
 
 	if s.Paused {
@@ -212,7 +247,7 @@ func (pg *ProcessGuard) check(s *GuardService) {
 	var incidentEvent string
 	var incidentState guardServiceState
 	recovered := false
-	if !s.countKnown {
+	if !s.countKnown || resuming {
 		s.restartCount = state.restarts
 		s.countKnown = state.valid
 	} else if state.valid && state.restarts > s.restartCount {
@@ -227,14 +262,14 @@ func (pg *ProcessGuard) check(s *GuardService) {
 	}
 
 	if !active {
-		if pg.firstRun {
+		if pg.firstRun && !resuming {
 			pg.mu.Unlock()
 			return
 		}
 		_, _ = guardCommand("systemctl", "start", s.ServiceName)
 		recovered = readGuardServiceState(s.ServiceName).active
 		s.Running = recovered
-		if wasRunning {
+		if wasRunning || resuming {
 			s.Restarts++
 			now := time.Now().Format("2006-01-02 15:04:05")
 			s.LastIncident = now
@@ -245,9 +280,14 @@ func (pg *ProcessGuard) check(s *GuardService) {
 	pg.mu.Unlock()
 
 	if incidentEvent != "" {
-		message := diagnoseServiceIncident(s, incidentState, recovered)
+		message := diagnoseServiceIncident(s, incidentState, recovered, resuming)
 		logIncident(s, incidentEvent, message, recovered)
 	}
+}
+
+func guardSystemStopping() bool {
+	out, err := guardCommand("systemctl", "show", "--property=SystemState", "--value")
+	return err == nil && strings.TrimSpace(string(out)) == "stopping"
 }
 
 func (pg *ProcessGuard) loadPaused() {
@@ -342,10 +382,13 @@ func readGuardServiceState(service string) guardServiceState {
 			state.exitStatus = value
 		}
 	}
+	if state.activeState == "" {
+		state.valid = false
+	}
 	return state
 }
 
-func diagnoseServiceIncident(s *GuardService, state guardServiceState, recovered bool) string {
+func diagnoseServiceIncident(s *GuardService, state guardServiceState, recovered, afterPlannedOperation bool) string {
 	out, _ := guardCommand(
 		"journalctl", "-u", s.ServiceName, "--since", "2 minutes ago",
 		"--no-pager", "-n", "30",
@@ -355,7 +398,11 @@ func diagnoseServiceIncident(s *GuardService, state guardServiceState, recovered
 	if !recovered {
 		recovery = "自动恢复失败"
 	}
-	return fmt.Sprintf("%s 进程异常退出，%s；初步原因：%s", s.Name, recovery, reason)
+	failure := "进程异常退出"
+	if afterPlannedOperation {
+		failure = "计划操作结束后服务仍未运行"
+	}
+	return fmt.Sprintf("%s %s，%s；初步原因：%s", s.Name, failure, recovery, reason)
 }
 
 func classifyServiceFailure(journal string, state guardServiceState) string {

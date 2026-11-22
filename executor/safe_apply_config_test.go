@@ -26,12 +26,42 @@ func shrinkSafeApplyTimeouts(t *testing.T) {
 
 func withFakeRestart(t *testing.T, fn func(serviceName string) error) {
 	t.Helper()
+	setupServiceControlTest(t)
 	old := restartServiceFunc
-	restartServiceFunc = fn
+	restartServiceFunc = func(service string) error {
+		if release, err := tryServiceControlLocks(serviceControlDataDir(), service); !errors.Is(err, errServiceControlBusy) {
+			if release != nil {
+				release()
+			}
+			t.Fatalf("restart/rollback without service lock: %v", err)
+		}
+		return fn(service)
+	}
 	t.Cleanup(func() { restartServiceFunc = old })
 }
 
 func alwaysReady(context.Context) error { return nil }
+
+func TestSafeApplyServiceBusyDoesNotWrite(t *testing.T) {
+	dir := setupServiceControlTest(t)
+	path := filepath.Join(dir, "mariadb.cnf")
+	if err := os.WriteFile(path, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	release, err := tryServiceControlLocks(dir, "mariadb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	result := SafeApplyRestartConfig(path, "new", "old", "mariadb", alwaysReady)
+	if result.Applied || result.RolledBack || !errors.Is(result.Err, errServiceControlBusy) {
+		t.Fatalf("%+v", result)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "old" {
+		t.Fatalf("config changed: %q %v", data, err)
+	}
+}
 
 func TestSafeApplyRestartConfigSucceeds(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.conf")
@@ -42,7 +72,7 @@ func TestSafeApplyRestartConfigSucceeds(t *testing.T) {
 	restartCalls := 0
 	withFakeRestart(t, func(string) error { restartCalls++; return nil })
 
-	result := SafeApplyRestartConfig(path, "new", "old", "fake-service", alwaysReady)
+	result := SafeApplyRestartConfig(path, "new", "old", "mariadb", alwaysReady)
 	if !result.Applied || result.Err != nil {
 		t.Fatalf("expected success, got %+v", result)
 	}
@@ -69,7 +99,7 @@ func TestSafeApplyRestartConfigRollsBackWhenRestartFails(t *testing.T) {
 		return nil // rollback restart succeeds
 	})
 
-	result := SafeApplyRestartConfig(path, "new", "old", "fake-service", alwaysReady)
+	result := SafeApplyRestartConfig(path, "new", "old", "mariadb", alwaysReady)
 	if result.Applied {
 		t.Fatal("expected Applied=false")
 	}
@@ -103,7 +133,7 @@ func TestSafeApplyRestartConfigRollsBackWhenReadinessFails(t *testing.T) {
 		return errors.New("not ready")
 	}
 
-	result := SafeApplyRestartConfig(path, "new", "old", "fake-service", ready)
+	result := SafeApplyRestartConfig(path, "new", "old", "mariadb", ready)
 	if result.Applied {
 		t.Fatal("expected Applied=false since new config never became ready in time")
 	}
@@ -126,7 +156,7 @@ func TestSafeApplyRestartConfigReportsCriticalFailureWhenRollbackRestartAlsoFail
 
 	withFakeRestart(t, func(string) error { return errors.New("service refuses to start") })
 
-	result := SafeApplyRestartConfig(path, "new", "old", "fake-service", alwaysReady)
+	result := SafeApplyRestartConfig(path, "new", "old", "mariadb", alwaysReady)
 	if result.Applied {
 		t.Fatal("expected Applied=false")
 	}
@@ -164,7 +194,7 @@ func TestSafeApplyRestartConfigReportsCriticalFailureWhenRollbackWriteFails(t *t
 		return errors.New("boom")
 	})
 
-	result := SafeApplyRestartConfig(path, "new", "old", "fake-service", alwaysReady)
+	result := SafeApplyRestartConfig(path, "new", "old", "mariadb", alwaysReady)
 	if result.Applied {
 		t.Fatal("expected Applied=false")
 	}
@@ -208,7 +238,7 @@ func TestSafeApplyRestartConfigSerializesConcurrentCalls(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			SafeApplyRestartConfig(path, "new", "old", "fake-service", alwaysReady)
+			SafeApplyRestartConfig(path, "new", "old", "mariadb", alwaysReady)
 		}()
 	}
 	wg.Wait()
@@ -229,7 +259,7 @@ func TestSafeApplyRestartConfigPreservesFilePermissions(t *testing.T) {
 
 	withFakeRestart(t, func(string) error { return nil })
 
-	result := SafeApplyRestartConfig(path, "new", "old", "fake-service", alwaysReady)
+	result := SafeApplyRestartConfig(path, "new", "old", "mariadb", alwaysReady)
 	if !result.Applied {
 		t.Fatalf("expected success, got %+v", result)
 	}
@@ -250,7 +280,7 @@ func TestSafeApplyRestartConfigDoesNotTouchServiceWhenInitialWriteFails(t *testi
 	restartCalls := 0
 	withFakeRestart(t, func(string) error { restartCalls++; return nil })
 
-	result := SafeApplyRestartConfig(path, "new", "old", "fake-service", alwaysReady)
+	result := SafeApplyRestartConfig(path, "new", "old", "mariadb", alwaysReady)
 	if result.Applied || result.RolledBack {
 		t.Fatalf("expected a plain write failure with no restart/rollback attempted, got %+v", result)
 	}

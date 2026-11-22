@@ -22,6 +22,48 @@ func maintenanceInstallPlanFixture(t *testing.T, cfg *config.Config, id int64) s
 	return p
 }
 
+func TestMaintenanceInstallerServiceBusyDefersAndResumes(t *testing.T) {
+	cfg, f := setupMaintenanceRunner(t)
+	round, err := createMaintenanceRound(database.GetDB(), nil, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := maintenanceInstallPlanFixture(t, cfg, round.ID)
+	release, err := tryServiceControlLocks(cfg.Panel.DataDir, "mariadb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCommand := systemPackageUpdateCommand
+	t.Cleanup(func() { systemPackageUpdateCommand = oldCommand })
+	systemPackageUpdateCommand = func(context.Context, string, ...string) error {
+		t.Fatal("installer ran while service was busy")
+		return nil
+	}
+	if err := RunSystemPackageUpdatePlan(p.PlanPath); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	status := ReadSystemPackageUpdateStatus(cfg)
+	if status.Status != "deferred" {
+		t.Fatalf("%+v", status)
+	}
+	var phase, reason string
+	var overtime bool
+	if err := database.GetDB().QueryRow(`SELECT phase,message_code,overtime_allowed FROM system_maintenance_actions WHERE id=?`, round.ID).Scan(&phase, &reason, &overtime); err != nil {
+		t.Fatal(err)
+	}
+	if phase != "install" || reason != "maintenance_busy" || overtime {
+		t.Fatalf("%s %s %v", phase, reason, overtime)
+	}
+	// Reuse the existing deferred-install continuation, not another worker.
+	if err := runMaintenanceCycle(context.Background(), cfg, true); err != nil {
+		t.Fatal(err)
+	}
+	if f.installs != 1 {
+		t.Fatalf("deferred installer lost daily opportunity: %d", f.installs)
+	}
+}
+
 func TestMaintenanceAutomaticInstallerDefersBeforeAnyPackageCommand(t *testing.T) {
 	cfg, f := setupMaintenanceRunner(t)
 	db := database.GetDB()
