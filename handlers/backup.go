@@ -360,12 +360,18 @@ func (h *BackupHandler) RestoreStatus(c *gin.Context) {
 		message = task.Result.Message
 		success = task.Result.Success
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	data := gin.H{
 		"task_id": task.ID,
 		"status":  task.Status,
 		"success": success,
 		"message": message,
-	}))
+	}
+	if task.Status == executor.TaskStatusRunning {
+		if progress := payload.SQLProgress(); progress != nil {
+			data["sql_progress"] = progress
+		}
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(data))
 }
 
 func (h *BackupHandler) GetSettings(c *gin.Context) {

@@ -98,6 +98,8 @@
                     <span class="mt-0.5 inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-blue-300 border-t-transparent" aria-hidden="true"></span>
                     <div>
                         <p class="text-sm font-medium text-blue-100" x-text="restoreStatusLabel()"></p>
+                        {{template "sql_restore_progress" .}}
+                        <p x-show="restoreStatusUnavailable" class="mt-1 text-xs text-amber-200">{{t .Lang "portable_import.status_unavailable"}}</p>
                         <p class="mt-1 text-xs leading-5 text-blue-200/80" x-text="t('website.restore_long_running_help')"></p>
                     </div>
                 </div>
@@ -284,8 +286,11 @@ function databaseDetail() {
         restoreUploading: false,
         restorePhase: '',
         restoreElapsedSeconds: 0,
+        restoreStartedAt: 0,
         restoreTimer: null,
         restorePollingActive: true,
+        restoreStatusUnavailable: false,
+        sqlProgress: null,
         adminerStatus: { enabled: false },
         adminerDuration: 30,
         adminerPassword: '',
@@ -298,16 +303,16 @@ function databaseDetail() {
                 this.stopRestoreTimer();
             });
             this.fetchDetail();
+            this.resumeRestoreTask();
         },
         restoreBusy() { return this.restorePhase !== ''; },
-        startRestoreTimer(phase) {
+        startRestoreTimer(phase, startedAt = Date.now()) {
             this.stopRestoreTimer();
             this.restorePhase = phase;
-            this.restoreElapsedSeconds = 0;
-            const startedAt = Date.now();
-            this.restoreTimer = window.setInterval(() => {
-                this.restoreElapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
-            }, 1000);
+            this.restoreStartedAt = startedAt;
+            const tick = () => { this.restoreElapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000)); };
+            tick();
+            this.restoreTimer = window.setInterval(tick, 1000);
         },
         stopRestoreTimer() {
             if (this.restoreTimer !== null) window.clearInterval(this.restoreTimer);
@@ -318,6 +323,8 @@ function databaseDetail() {
             this.restorePhase = '';
             this.restoreUploading = false;
             this.restoringId = null;
+            this.restoreStatusUnavailable = false;
+            this.sqlProgress = null;
         },
         formatRestoreElapsed() {
             const minutes = Math.floor(this.restoreElapsedSeconds / 60);
@@ -545,6 +552,7 @@ function databaseDetail() {
                 const r = await api('/websites/' + this.site.id + '/backups/' + b.id + '/restore', { method: 'POST' });
                 if (!r.data?.task_id) throw new Error(t('website.restore_task_failed'));
                 showToast(r.data?.message || t('website.restore_started'), 'info');
+                this.saveRestoreTask(r.data.task_id);
                 await this.pollRestoreTask(r.data.task_id);
             } catch (e) { showToast(e.message, 'error'); }
             this.finishRestore();
@@ -572,26 +580,60 @@ function databaseDetail() {
                 if (!r.data?.task_id) throw new Error(t('website.restore_task_failed'));
                 this.restorePhase = 'waiting';
                 showToast(r.data?.message || t('website.restore_started'), 'info');
+                this.saveRestoreTask(r.data.task_id);
                 await this.pollRestoreTask(r.data.task_id);
                 await this.fetchBackups();
             } catch (e) { showToast(e.message, 'error'); }
             this.finishRestore();
             event.target.value = '';
         },
+        restoreStorageKey() { return 'wpp-restore:' + window.location.pathname; },
+        saveRestoreTask(taskID) {
+            try {
+                if (taskID) sessionStorage.setItem(this.restoreStorageKey(), JSON.stringify({taskID, startedAt: this.restoreStartedAt}));
+                else sessionStorage.removeItem(this.restoreStorageKey());
+            } catch {}
+        },
+        async resumeRestoreTask() {
+            let saved;
+            try { saved = JSON.parse(sessionStorage.getItem(this.restoreStorageKey())); } catch { return; }
+            if (!saved?.taskID || !Number.isFinite(saved.startedAt)) return;
+            this.startRestoreTimer('waiting', saved.startedAt);
+            try { await this.pollRestoreTask(saved.taskID); }
+            catch (e) { showToast(e.message, 'error'); }
+            finally { this.finishRestore(); }
+        },
         async pollRestoreTask(taskID) {
             this.restorePollingActive = true;
-            for (let i = 0; i < 3600 && this.restorePollingActive; i++) {
-                const r = await api('/websites/' + this.site.id + '/backups/restore-tasks/' + encodeURIComponent(taskID));
-                if (r.data?.status === 'running') this.restorePhase = 'running';
-                if (r.data?.status === 'waiting') this.restorePhase = 'waiting';
-                if (r.data?.status === 'success') {
+            const path = '/websites/' + this.siteID() + '/backups/restore-tasks/' + encodeURIComponent(taskID);
+            while (this.restorePollingActive) {
+                let data;
+                try {
+                    ({data} = await api(path, {silent: true, timeout: 15000}));
+                    this.restoreStatusUnavailable = false;
+                } catch (e) {
+                    if (e.status === 404) {
+                        this.saveRestoreTask(null);
+                        throw new Error(t('website.restore_task_unavailable'));
+                    }
+                    if (e.status === 401 || e.status === 403) throw e;
+                    this.restoreStatusUnavailable = true;
+                }
+                if (data?.status === 'running' || data?.status === 'waiting') {
+                    this.restorePhase = data.status;
+                    this.sqlProgress = data.sql_progress || null;
+                }
+                if (data?.status === 'success') {
+                    this.saveRestoreTask(null);
                     showToast(t('website.restore_success_elapsed', { time: this.formatRestoreElapsed() }), 'success');
                     return;
                 }
-                if (r.data?.status === 'failed') throw new Error(r.data.message || t('website.restore_failed'));
+                if (data?.status === 'failed') {
+                    this.saveRestoreTask(null);
+                    throw new Error(data.message || t('website.restore_failed'));
+                }
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
-            if (this.restorePollingActive) throw new Error(t('website.restore_still_running'));
         },
         async clearDatabase() {
             if (!await confirmModal(t('website.confirm_clear_database', { db: this.site.db_name }))) return;

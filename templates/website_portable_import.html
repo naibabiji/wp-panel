@@ -1,0 +1,192 @@
+{{template "base" .}}
+{{define "website_portable_import_content"}}
+<div x-data="portableImport" class="max-w-3xl space-y-5">
+    <div>
+        <a class="text-sm text-blue-400" href="/{{.RandomSuffix}}/websites/new">{{t .Lang "website.create_title"}}</a>
+        <h2 class="mt-1 text-xl font-bold text-white">{{t .Lang "portable_import.title"}}</h2>
+    </div>
+
+    <form class="card space-y-4" @submit.prevent="sourceMode === 'remote' ? startRemote() : upload(canRetry)">
+        <p>{{t .Lang "portable_import.intro_before_plugin"}} <a href="https://wp-panel.org/wp-panel-backup/" target="_blank" rel="noopener noreferrer" class="text-blue-400 underline">{{t .Lang "portable_import.plugin_name"}}</a>{{t .Lang "portable_import.intro_after_plugin"}}</p>
+        <p class="text-sm text-gray-400">{{t .Lang "portable_import.flow"}}</p>
+        <fieldset class="flex flex-wrap gap-4" :disabled="working || confirmingSubmit || task?.status === 'running'">
+            <label class="inline-flex items-center gap-2"><input type="radio" value="upload" x-model="sourceMode">{{t .Lang "portable_import.source_upload"}}</label>
+            <label class="inline-flex items-center gap-2"><input type="radio" value="remote" x-model="sourceMode">{{t .Lang "portable_import.source_remote"}}</label>
+        </fieldset>
+        <div x-show="sourceMode === 'remote'" class="space-y-2">
+            <label class="label" for="portable-remote-link">{{t .Lang "portable_import.remote_link"}}</label>
+            <input id="portable-remote-link" class="input-field" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false"
+                   x-model="remoteLink" @input="remoteReady = false" :disabled="working || confirmingSubmit || task?.status === 'running'">
+            <p class="text-sm text-gray-400">{{t .Lang "portable_import.remote_help"}}</p>
+            <p x-show="usesHTTPLink && !editingSourceIP" class="text-sm text-amber-200">{{t .Lang "portable_import.remote_http_notice"}}</p>
+            <div x-show="task?.remote_source?.ip" class="flex flex-wrap items-center gap-2 text-sm">
+                <span class="break-all">
+                    {{t .Lang "portable_import.remote_pinned"}} <span x-text="task?.remote_source?.host"></span>
+                    <span x-text="task?.remote_source?.ip"></span>
+                </span>
+                <button type="button" x-ref="editSourceIP" class="text-blue-400 underline disabled:opacity-50"
+                        @click="editSourceIP()"
+                        :disabled="working || confirmingSubmit || task?.status === 'running'">
+                    {{t .Lang "portable_import.remote_correct_ip"}}
+                </button>
+            </div>
+            <p x-show="task?.remote_conflict" class="text-sm text-amber-200" x-text="task?.remote_conflict"></p>
+            <button type="button" class="btn-secondary" @click="previewRemote()"
+                    :disabled="working || confirmingSubmit || task?.status === 'running' || !remoteLink.trim()">
+                {{t .Lang "portable_import.remote_preview"}}
+            </button>
+        </div>
+        <div x-show="sourceMode === 'upload'">
+        <label class="block">
+            <span class="label">{{t .Lang "portable_import.files"}}</span>
+            <input class="input-field mt-1" type="file" multiple accept=".json,.ndjson,.zip,.tar" :disabled="working || confirmingSubmit || task?.status === 'running'" @change="choose($event)">
+        </label>
+        <p class="text-sm text-gray-400">{{t .Lang "portable_import.file_help"}}</p>
+        </div>
+        <p x-show="chosen.size" class="text-sm text-gray-300">
+            {{t .Lang "portable_import.selected"}} <span x-text="chosen.size"></span>
+        </p>
+        <div x-show="domain">
+            <label class="label" for="portable-domain">{{t .Lang "website.main_domain"}}</label>
+            <input id="portable-domain" class="input-field" type="text" readonly :value="domain">
+        </div>
+        <div x-show="domain && (manifest || task?.status === 'receiving' || canRetry)">
+            <label class="label" for="portable-aliases">{{t .Lang "website.aliases_one_per_line"}}</label>
+            <textarea id="portable-aliases" class="input-field" rows="2" spellcheck="false" placeholder="www.example.com"
+                aria-describedby="portable-alias-help" :value="aliasesText" @input="aliasesDraft = $event.target.value"
+                :disabled="working || confirmingSubmit || task?.status === 'running'"></textarea>
+            <p id="portable-alias-help" class="mt-1 text-sm text-gray-400">{{t .Lang "portable_import.aliases_help"}}</p>
+        </div>
+        <div x-show="sourceMode === 'upload' && missing.length" class="rounded border border-amber-700 p-3 text-sm text-amber-200">
+            <p>{{t .Lang "portable_import.missing"}}</p>
+            <p class="break-words" x-text="missing.join(', ')"></p>
+        </div>
+        <div class="space-y-2 rounded bg-gray-800 p-3 text-sm">
+            <p>{{t .Lang "portable_import.dns"}}</p>
+            <p>{{t .Lang "portable_import.dns_visitors"}}</p>
+        </div>
+        <p class="text-sm text-gray-400">{{t .Lang "portable_import.warning"}}</p>
+        <button x-show="sourceMode === 'upload' && !canRetry" class="btn-primary" type="submit" :disabled="working || confirmingSubmit || suggestingAlias || task?.status === 'running' || (!manifest && task?.status !== 'receiving')">
+            {{t .Lang "portable_import.start"}}
+        </button>
+        <button x-show="sourceMode === 'remote' && remoteReady" class="btn-primary" type="submit"
+                :disabled="working || confirmingSubmit || task?.status === 'running'">
+            {{t .Lang "portable_import.remote_start"}}
+        </button>
+        <section x-show="uploadFiles.length" class="space-y-3" aria-labelledby="portable-upload-progress">
+            <div class="flex flex-wrap justify-between gap-2 text-sm">
+                <h3 id="portable-upload-progress" class="font-semibold text-white">
+                    <span x-show="showingRemoteProgress">{{t .Lang "portable_import.total_download_progress"}}</span>
+                    <span x-show="!showingRemoteProgress">{{t .Lang "portable_import.total_progress"}}</span>
+                </h3>
+                <span x-text="uploadPercent(uploadProgress.received, uploadProgress.total)"></span>
+            </div>
+            <progress class="block w-full" aria-labelledby="portable-upload-progress" :value="uploadProgress.received" :max="uploadProgress.total || 1"></progress>
+            <ul class="max-h-72 space-y-3 overflow-auto rounded border border-gray-700 p-3">
+                <template x-for="file in uploadFiles" :key="file.name">
+                    <li class="space-y-1">
+                        <div class="flex flex-wrap justify-between gap-2 text-xs">
+                            <span class="break-all font-medium text-gray-200" x-text="chosen.get(file.name)?.name || file.name"></span>
+                            <span x-text="uploadStatus(file)"></span>
+                        </div>
+                        <progress class="block w-full" :aria-label="file.name" :value="received(file)" :max="file.size"></progress>
+                        <p class="text-xs text-gray-400" x-text="formatBytes(received(file)) + ' / ' + formatBytes(file.size) + ' · ' + uploadPercent(received(file), file.size)"></p>
+                    </li>
+                </template>
+            </ul>
+        </section>
+        <p x-show="error" class="break-words text-sm text-red-300" role="alert" x-text="error"></p>
+    </form>
+
+    <div x-show="editingSourceIP" x-cloak class="modal-overlay" @click.self="closeSourceIP()" @keydown.escape.window="closeSourceIP()">
+        <form class="modal-content max-w-md space-y-4" role="dialog" aria-modal="true" aria-labelledby="portable-source-ip-title" @submit.prevent="applySourceIP()">
+            <h3 id="portable-source-ip-title" class="text-lg font-semibold text-white">{{t .Lang "portable_import.remote_set_ip"}}</h3>
+            <label for="portable-source-ip" class="label">{{t .Lang "portable_import.remote_old_ip"}}</label>
+            <input id="portable-source-ip" x-ref="sourceIP" x-model="sourceIP" class="input-field" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" required :disabled="working">
+            <p class="text-sm text-gray-400">{{t .Lang "portable_import.remote_ip_help"}}</p>
+            <p x-show="usesHTTPLink" class="text-sm text-amber-200">{{t .Lang "portable_import.remote_http_notice"}}</p>
+            <p x-show="!remoteLink.trim()" class="text-sm text-amber-200">{{t .Lang "portable_import.remote_ip_link_required"}}</p>
+            <p x-show="error" class="break-words text-sm text-red-300" role="alert" x-text="error"></p>
+            <div class="flex justify-end gap-2">
+                <button type="button" class="btn-secondary" @click="closeSourceIP()" :disabled="working">{{t .Lang "common.cancel"}}</button>
+                <button type="submit" class="btn-primary" :disabled="working || !sourceIP.trim() || !remoteLink.trim()">{{t .Lang "portable_import.remote_ip_verify"}}</button>
+            </div>
+        </form>
+    </div>
+
+    <div x-show="task" x-cloak class="card space-y-3" aria-live="polite">
+        <h3 class="font-semibold text-white" x-text="task?.domain"></h3>
+        <template x-if="task?.aliases?.length">
+            <p class="break-words text-sm text-gray-400">{{t .Lang "website.aliases"}} <span x-text="task.aliases.join(', ')"></span></p>
+        </template>
+        <p class="flex items-center gap-2">
+            <span x-show="task?.status === 'running' && !statusUnavailable" class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-blue-300 border-t-transparent" aria-hidden="true"></span>
+            <span x-text="statusText"></span>
+        </p>
+        <p x-show="confirmingSubmit" class="text-sm text-amber-200">{{t .Lang "portable_import.confirming_submit"}}</p>
+        <p x-show="statusUnavailable" class="text-sm text-amber-200">{{t .Lang "portable_import.status_unavailable"}}</p>
+        <div x-show="task?.status === 'running'" class="space-y-1 text-sm text-gray-400">
+            <p>{{t .Lang "portable_import.long_restore"}}</p>
+            <p>{{t .Lang "portable_import.background"}}</p>
+        </div>
+        {{template "sql_restore_progress" .}}
+        <p x-show="canRetry && failedStage" class="text-sm text-gray-400">{{t .Lang "portable_import.failed_stage"}} <span x-text="failedStage"></span></p>
+        <p x-show="task?.message && task?.status !== 'succeeded'" class="break-words text-sm text-amber-200" x-text="task?.message"></p>
+        <p x-show="task?.expires_at && task?.status !== 'running' && task?.status !== 'succeeded'" class="text-sm text-gray-400">
+            {{t .Lang "portable_import.materials_until"}}
+            <time x-text="task?.expires_at ? new Date(task.expires_at * 1000).toLocaleString(currentLocale()) : ''"></time>
+        </p>
+        <p x-show="canRetry" class="text-sm text-gray-400">{{t .Lang "portable_import.retry_help"}}</p>
+        <div x-show="task?.status === 'succeeded'" class="space-y-3">
+            <p class="text-sm">{{t .Lang "portable_import.manual_check"}}</p>
+            <div x-show="task?.ssl_temporary_until" class="rounded border border-amber-700 p-3 text-sm text-amber-200">
+                <p>{{t .Lang "portable_import.temporary_ssl"}}</p>
+                <p>{{t .Lang "portable_import.temporary_ssl_dns"}}</p>
+                <time x-text="task?.ssl_temporary_until ? new Date(task.ssl_temporary_until).toLocaleDateString(currentLocale()) : ''"></time>
+                <p x-show="task?.message" x-text="task?.message"></p>
+            </div>
+            <template x-if="task?.ssl_uncovered?.length">
+                <div class="rounded border border-amber-700 p-3 text-sm text-amber-200">
+                    <p>{{t .Lang "portable_import.ssl_uncovered"}}</p>
+                    <p class="break-words" x-text="task.ssl_uncovered.join(', ')"></p>
+                </div>
+            </template>
+            <div class="flex flex-wrap gap-3">
+                <a :href="task?.url" target="_blank" rel="noopener noreferrer" class="btn-primary">{{t .Lang "portable_import.open_site"}}</a>
+                <a x-show="task?.site_id" :href="siteLink" class="btn-secondary">{{t .Lang "portable_import.site_settings"}}</a>
+                <button type="button" class="btn-secondary" @click="showLog">{{t .Lang "portable_import.php_log"}}</button>
+            </div>
+        </div>
+        <details x-show="task?.resource_paths?.length" class="space-y-2 text-sm">
+            <summary>{{t .Lang "portable_import.kept_resources"}}</summary>
+            <ul class="space-y-1 font-mono text-xs">
+                <template x-for="resource in task?.resource_paths || []" :key="resource">
+                    <li class="break-all" x-text="resource"></li>
+                </template>
+            </ul>
+        </details>
+        <pre x-show="logs !== null" class="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-gray-900 p-3 text-xs" x-text="logs || t('portable_import.empty_log')"></pre>
+        <div class="flex flex-wrap gap-3">
+            <button type="button" x-show="canRetry && sourceMode === 'upload'" :disabled="working" class="btn-primary" @click="upload(true)">
+                <span x-text="t(task?.resources ? 'portable_import.cleanup_retry' : 'portable_import.retry')"></span>
+            </button>
+            <button type="button" x-show="canDeleteTask" :disabled="working" class="btn-secondary" @click="remove">
+                {{t .Lang "portable_import.delete_task"}}
+            </button>
+        </div>
+    </div>
+
+    <div x-show="tasks.length" class="card space-y-2">
+        <h3 class="font-semibold text-white">{{t .Lang "portable_import.tasks"}}</h3>
+        <div class="max-h-72 space-y-2 overflow-auto">
+            <template x-for="item in tasks" :key="item.id">
+                <button type="button" :disabled="working" class="flex w-full justify-between gap-4 rounded bg-gray-800 p-2 text-left text-sm" @click="open(item.id)">
+                    <span x-text="item.domain"></span>
+                    <span x-text="statusFor(item)"></span>
+                </button>
+            </template>
+        </div>
+    </div>
+</div>
+<script src="{{.AssetPrefix}}/js/portable_import.js?v={{.AssetVersion}}-11"></script>
+{{end}}

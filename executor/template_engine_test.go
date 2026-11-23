@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,6 +21,17 @@ func TestWaitForPHPFPMSocket(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := waitForPHPFPMSocket(path, 1, 0); err == nil {
+		t.Fatal("regular file should not satisfy socket readiness")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
 	if err := waitForPHPFPMSocket(path, 1, time.Millisecond); err != nil {
 		t.Fatalf("existing socket should be accepted: %v", err)
 	}
@@ -45,9 +57,11 @@ func TestRestorePHPFPMPoolRestoresFileServiceAndSocket(t *testing.T) {
 	if err := os.WriteFile(target, []byte("new"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(socket, nil, 0600); err != nil {
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer listener.Close()
 	actions := 0
 	runPHPFPMServiceAction = func(action string) error {
 		actions++
@@ -65,6 +79,26 @@ func TestRestorePHPFPMPoolRestoresFileServiceAndSocket(t *testing.T) {
 	}
 	if string(content) != "old" || actions != 1 {
 		t.Fatalf("content=%q actions=%d", content, actions)
+	}
+}
+
+func TestRestoreNewPHPFPMPoolDoesNotWaitForRemovedSocket(t *testing.T) {
+	setupPHPFPMPoolRestoreTest(t)
+	target := filepath.Join(t.TempDir(), "site.conf")
+	if err := os.WriteFile(target, []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runPHPFPMServiceAction = func(action string) error {
+		if action != "restart" {
+			t.Fatalf("action = %q, want restart", action)
+		}
+		return nil
+	}
+	if err := restorePHPFPMPool(target, nil, false, true, filepath.Join(filepath.Dir(target), "absent.sock")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("new pool config must be removed: %v", err)
 	}
 }
 

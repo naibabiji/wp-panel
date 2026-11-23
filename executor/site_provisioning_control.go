@@ -148,7 +148,11 @@ func deriveBasicSiteProvisioningResources(domain string) (siteProvisioningResour
 }
 
 func deriveSiteProvisioningResources(domain, siteType, siteName string) (siteProvisioningResources, error) {
-	if config.AppConfig == nil {
+	return deriveProvisioningResources(config.AppConfig, domain, siteType, siteName)
+}
+
+func deriveProvisioningResources(cfg *config.Config, domain, siteType, siteName string) (siteProvisioningResources, error) {
+	if cfg == nil {
 		return siteProvisioningResources{}, errors.New("面板配置未加载")
 	}
 	domain = strings.ToLower(strings.TrimSpace(domain))
@@ -161,12 +165,12 @@ func deriveSiteProvisioningResources(domain, siteType, siteName string) (sitePro
 		SiteName: siteName, SystemUser: systemUser,
 		DBName:           "db_" + siteName,
 		DBUser:           "user_" + siteName,
-		WebRoot:          filepath.Join(config.AppConfig.Paths.WWWRoot, domain),
-		LogDir:           filepath.Join(config.AppConfig.Paths.WWWLogs, domain),
-		PHPFPMPath:       filepath.Join(config.AppConfig.Paths.PHPFPMPool, configBase+".conf"),
-		NginxConfigPath:  filepath.Join(config.AppConfig.Paths.NginxSitesAvailable, configBase+".conf"),
-		NginxEnabledPath: filepath.Join(config.AppConfig.Paths.NginxSitesEnabled, configBase+".conf"),
-		PHPSocketPath:    filepath.Join(config.AppConfig.Paths.PHPFPMSock, configBase+".sock"),
+		WebRoot:          filepath.Join(cfg.Paths.WWWRoot, domain),
+		LogDir:           filepath.Join(cfg.Paths.WWWLogs, domain),
+		PHPFPMPath:       filepath.Join(cfg.Paths.PHPFPMPool, configBase+".conf"),
+		NginxConfigPath:  filepath.Join(cfg.Paths.NginxSitesAvailable, configBase+".conf"),
+		NginxEnabledPath: filepath.Join(cfg.Paths.NginxSitesEnabled, configBase+".conf"),
+		PHPSocketPath:    filepath.Join(cfg.Paths.PHPFPMSock, configBase+".sock"),
 	}
 	if err := validateUnixSocketPath(resources.PHPSocketPath); err != nil {
 		return siteProvisioningResources{}, err
@@ -232,7 +236,7 @@ func normalizeSiteProvisioningAliases(aliases []string, domain string) ([]string
 			continue
 		}
 		if !IsValidDomain(alias) {
-			return nil, siteProvisioningError("invalid_domain", "附加域名格式不合法")
+			return nil, siteProvisioningError("invalid_domain", "附加域名格式不合法："+alias)
 		}
 		if !seen[alias] {
 			seen[alias] = true
@@ -248,7 +252,7 @@ func findSiteProvisioningDomainConflict(ctx context.Context, domain string, alia
 	for _, alias := range aliases {
 		claimed[strings.ToLower(strings.TrimSpace(alias))] = true
 	}
-	rows, err := database.GetDB().QueryContext(ctx, "SELECT domain, aliases FROM websites")
+	rows, err := database.GetDB().QueryContext(ctx, "SELECT domain, COALESCE(aliases, '') FROM websites")
 	if err != nil {
 		return fmt.Errorf("check website domains: %w", err)
 	}
@@ -259,11 +263,11 @@ func findSiteProvisioningDomainConflict(ctx context.Context, domain string, alia
 			return err
 		}
 		if claimed[strings.ToLower(strings.TrimSpace(existingDomain))] {
-			return siteProvisioningError("domain_conflict", "域名或别名已被其它网站占用")
+			return siteProvisioningError("domain_conflict", "域名或别名已被其它网站占用："+existingDomain)
 		}
 		for _, alias := range strings.Split(existingAliases, "\n") {
 			if claimed[strings.ToLower(strings.TrimSpace(alias))] {
-				return siteProvisioningError("domain_conflict", "域名或别名已被其它网站占用")
+				return siteProvisioningError("domain_conflict", "域名或别名已被其它网站占用："+alias)
 			}
 		}
 	}

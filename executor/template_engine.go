@@ -684,7 +684,7 @@ func (e *TemplateEngine) ApplyPHPFPMPool(configContent string, targetPath string
 
 	// PHP-FPM 主服务可正常 reload/restart，不代表本次站点 Pool 已成功创建自己的 Socket。
 	// 必须检查调用方根据同一份受控配置计算出的站点 Socket，避免单站配置未加载仍返回成功。
-	if err := checkPHPFPMSocket(socketPath, 30, 100*time.Millisecond); err != nil {
+	if err := checkPHPFPMSocket(socketPath, 150, 100*time.Millisecond); err != nil {
 		if restoreErr := restorePHPFPMPool(targetPath, oldContent, hadOld, true, socketPath); restoreErr != nil {
 			return fmt.Errorf("网站 PHP-FPM Pool 未就绪: %v；自动恢复不完整，需要人工检查: %w", err, restoreErr)
 		}
@@ -708,15 +708,17 @@ func restorePHPFPMPool(targetPath string, oldContent []byte, hadOld, restart boo
 	if err := runPHPFPMServiceAction("restart"); err != nil {
 		return fmt.Errorf("恢复旧配置后重启 PHP-FPM 失败: %w", err)
 	}
-	if err := checkPHPFPMSocket(socketPath, 30, 100*time.Millisecond); err != nil {
-		return fmt.Errorf("恢复旧配置后网站 Pool 仍未就绪: %w", err)
+	if hadOld {
+		if err := checkPHPFPMSocket(socketPath, 150, 100*time.Millisecond); err != nil {
+			return fmt.Errorf("恢复旧配置后网站 Pool 仍未就绪: %w", err)
+		}
 	}
 	return nil
 }
 
 func waitForPHPFPMSocket(path string, attempts int, interval time.Duration) error {
 	for i := 0; i < attempts; i++ {
-		if _, err := os.Stat(path); err == nil {
+		if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSocket != 0 {
 			return nil
 		}
 		if i+1 < attempts {

@@ -77,12 +77,18 @@ func FixWPConfigCredentials(webRoot, domain, dbName, dbUser, tablePrefix string)
 }
 
 func generateWPConfig(webRoot, domain, dbName, dbUser, dbPassword string) error {
+	return generateWPConfigForPrefix(webRoot, domain, dbName, dbUser, dbPassword, generateWPTablePrefix())
+}
+
+func generateWPConfigForPrefix(webRoot, domain, dbName, dbUser, dbPassword, tablePrefix string) error {
+	if !IsValidWPTablePrefix(tablePrefix) {
+		return fmt.Errorf("invalid WordPress table prefix")
+	}
 	salts, err := generateWPSalts()
 	if err != nil {
 		salts = fallbackSalts()
 	}
 	cacheSalt := wpCacheKeySalt(domain)
-	tablePrefix := generateWPTablePrefix()
 
 	config := fmt.Sprintf(`<?php
 /**

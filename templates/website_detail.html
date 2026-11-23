@@ -121,6 +121,7 @@
                 <p x-text="site.ssl_last_error"></p>
             </div>
             <div x-show="site.ssl_enabled">
+                <p x-show="site.ssl_temporary" class="mb-3 text-sm text-amber-200">{{t .Lang "portable_import.temporary_ssl"}}</p>
                 <dl class="space-y-3 mb-4">
                     <div><dt class="text-sm text-gray-400">{{t .Lang "website.cert_path"}}</dt><dd class="text-white font-mono text-sm break-all" x-text="site.ssl_cert_path"></dd></div>
                     <div><dt class="text-sm text-gray-400">{{t .Lang "website.private_key_path"}}</dt><dd class="text-white font-mono text-sm break-all" x-text="site.ssl_key_path"></dd></div>

@@ -6,14 +6,19 @@
         <form @submit.prevent="submit">
             <div class="mb-4">
                 <label class="label">{{t .Lang "website.site_type"}}</label>
-                <div class="flex space-x-4 mt-1">
+                <div class="flex flex-wrap gap-4 mt-1">
                     <label class="flex items-center space-x-2 cursor-pointer text-gray-300">
-                        <input type="radio" x-model="siteType" value="wordpress" class="w-4 h-4 text-blue-600 focus:ring-blue-500">
+                        <input type="radio" name="site-type" x-model="siteType" value="wordpress" class="w-4 h-4 text-blue-600 focus:ring-blue-500">
                         <span>WordPress</span>
                     </label>
                     <label class="flex items-center space-x-2 cursor-pointer text-gray-300">
-                        <input type="radio" x-model="siteType" value="php" class="w-4 h-4 text-blue-600 focus:ring-blue-500">
+                        <input type="radio" name="site-type" x-model="siteType" value="php" class="w-4 h-4 text-blue-600 focus:ring-blue-500">
                         <span>{{t .Lang "website.generic_php_site"}}</span>
+                    </label>
+                    <label class="flex items-center space-x-2 cursor-pointer text-gray-300">
+                        <input type="radio" name="site-type" value="backup" class="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                               @change="window.location.assign('/{{.RandomSuffix}}/websites/new/backup')">
+                        <span>{{t .Lang "portable_import.title"}}</span>
                     </label>
                 </div>
             </div>

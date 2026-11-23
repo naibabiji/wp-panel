@@ -469,7 +469,7 @@ func applyHTTPNginxToSite(site *models.Website) error {
 
 func persistSSLDatabaseState(siteID int, certPath, keyPath string, expiry time.Time, source string) error {
 	result, err := database.GetDB().Exec(
-		`UPDATE websites SET ssl_enabled = 1, ssl_cert_path = ?, ssl_key_path = ?, ssl_expires_at = ?, ssl_last_error = '', ssl_cert_source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		`UPDATE websites SET ssl_enabled = 1, ssl_cert_path = ?, ssl_key_path = ?, ssl_expires_at = ?, ssl_last_error = '', ssl_cert_source = ?, ssl_temporary_fingerprint = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		certPath, keyPath, expiry, source, siteID,
 	)
 	if err != nil {
@@ -484,7 +484,7 @@ func persistSSLDatabaseState(siteID int, certPath, keyPath string, expiry time.T
 
 func persistSSLDisabledDatabaseState(siteID int) error {
 	result, err := database.GetDB().Exec(
-		`UPDATE websites SET ssl_enabled = 0, ssl_cert_path = '', ssl_key_path = '', ssl_expires_at = NULL, ssl_last_error = '', ssl_cert_source = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		`UPDATE websites SET ssl_enabled = 0, ssl_cert_path = '', ssl_key_path = '', ssl_expires_at = NULL, ssl_last_error = '', ssl_cert_source = '', ssl_temporary_fingerprint = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		siteID,
 	)
 	if err != nil {
@@ -499,8 +499,8 @@ func persistSSLDisabledDatabaseState(siteID int) error {
 
 func restoreSSLDatabaseState(site *models.Website) error {
 	result, err := database.GetDB().Exec(
-		`UPDATE websites SET ssl_enabled = ?, ssl_cert_path = ?, ssl_key_path = ?, ssl_expires_at = ?, ssl_last_error = ?, ssl_cert_source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		boolInt(site.SSLEnabled), site.SSLCertPath, site.SSLKeyPath, site.SSLExpiresAt, site.SSLLastError, site.SSLCertSource, site.ID,
+		`UPDATE websites SET ssl_enabled = ?, ssl_cert_path = ?, ssl_key_path = ?, ssl_expires_at = ?, ssl_last_error = ?, ssl_cert_source = ?, ssl_temporary_fingerprint = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		boolInt(site.SSLEnabled), site.SSLCertPath, site.SSLKeyPath, site.SSLExpiresAt, site.SSLLastError, site.SSLCertSource, site.SSLTemporaryFingerprint, site.ID,
 	)
 	if err != nil {
 		return err

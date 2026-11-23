@@ -500,6 +500,44 @@ func TestUpdateSecuritySettingsSerializesSnapshotThroughRuntimeApply(t *testing.
 	}
 }
 
+func TestUpdateTelemetrySettingPersists(t *testing.T) {
+	setupSecurityTestDB(t)
+
+	const path = "/api/security/settings"
+	register := func(router *gin.Engine, h *SecurityHandler) {
+		router.PUT(path, h.UpdateSettings)
+		router.GET(path, h.GetSettings)
+	}
+
+	for _, want := range []string{"false", "true"} {
+		rec := performSecurityRequest(http.MethodPut, path, `{"telemetry_enabled":"`+want+`"}`, register)
+		if rec.Code != http.StatusOK || !decodeAPIResponse(t, rec).Success {
+			t.Fatalf("save %s: status = %d, body = %s", want, rec.Code, rec.Body.String())
+		}
+
+		rec = performSecurityRequest(http.MethodGet, path, "", register)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("reload settings: status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		var response struct {
+			Data []models.SecuritySetting `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode settings: %v", err)
+		}
+		var got string
+		for _, setting := range response.Data {
+			if setting.Key == "telemetry_enabled" {
+				got = setting.Value
+				break
+			}
+		}
+		if got != want {
+			t.Fatalf("reloaded telemetry_enabled = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestNormalizeSecuritySettingAcceptsBotLimitSettings(t *testing.T) {
 	for _, tc := range []struct {
 		key  string

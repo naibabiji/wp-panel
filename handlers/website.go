@@ -31,7 +31,7 @@ import (
 // canonical column list shared by all website queries.
 const websiteCols = `id, name, domain, aliases, status, system_user, web_root, document_root_subdir, log_dir,
 	db_name, db_user, php_pool_path, nginx_conf_path, site_type, ssl_enabled,
-	ssl_cert_path, ssl_key_path, ssl_expires_at, ssl_last_error, ssl_cert_source, ssl_export_enabled, template_version, access_log_mode,
+	ssl_cert_path, ssl_key_path, ssl_expires_at, ssl_last_error, ssl_cert_source, ssl_temporary_fingerprint, ssl_export_enabled, template_version, access_log_mode,
 	fastcgi_cache_enabled, fastcgi_cache_ttl, fastcgi_cache_key,
 	monitoring_enabled, monitoring_interval, disable_wp_updates, disable_file_editing,
 		xmlrpc_enabled, disable_application_passwords, wp_debug_enabled, wp_post_revisions, wp_memory_limit,
@@ -111,7 +111,7 @@ func scanWebsite(scanner func(dest ...interface{}) error) (*models.Website, erro
 		&w.ID, &w.Name, &w.Domain, &aliases, &status, &w.SystemUser,
 		&w.WebRoot, &w.DocumentRootSubdir, &w.LogDir, &w.DBName, &w.DBUser, &w.PHPPoolPath,
 		&w.NginxConfPath, &w.SiteType, &sslEnabled, &w.SSLCertPath, &w.SSLKeyPath,
-		&w.SSLExpiresAt, &w.SSLLastError, &w.SSLCertSource, &sslExportEnabled, &w.TemplateVersion, &w.AccessLogMode,
+		&w.SSLExpiresAt, &w.SSLLastError, &w.SSLCertSource, &w.SSLTemporaryFingerprint, &sslExportEnabled, &w.TemplateVersion, &w.AccessLogMode,
 		&fCacheEnabled, &w.FCacheTTL, &w.FCacheKey,
 		&monitoringEnabled, &monitoringInterval, &disableWPUpdates, &disableFileEditing,
 		&xmlrpcEnabled, &disableApplicationPasswords, &wpDebugEnabled, &wpPostRevisions, &wpMemoryLimit,
@@ -436,6 +436,7 @@ func (h *WebsiteHandler) Get(c *gin.Context) {
 		w.WPDebugDisplay = executor.WPDebugDisplayEnabled(w.WebRoot)
 	}
 	executor.LoadWebsiteCDNRealIPGroups(w)
+	w.SSLTemporary = executor.PortableCertificateIsTemporary(w.SSLCertPath, w.SSLTemporaryFingerprint)
 
 	c.JSON(http.StatusOK, models.SuccessResponse(w))
 }

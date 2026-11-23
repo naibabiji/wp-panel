@@ -183,6 +183,7 @@
                 {{if eq .ContentTemplate "site_migration_content"}}{{template "site_migration_content" .}}{{end}}
                 {{if eq .ContentTemplate "wordpress_overview_content"}}{{template "wordpress_overview_content" .}}{{end}}
                 {{if eq .ContentTemplate "websites_new_content"}}{{template "websites_new_content" .}}{{end}}
+                {{if eq .ContentTemplate "website_portable_import_content"}}{{template "website_portable_import_content" .}}{{end}}
                 {{if eq .ContentTemplate "websites_detail_content"}}{{template "websites_detail_content" .}}{{end}}
                 {{if eq .ContentTemplate "wordpress_site_detail_content"}}{{template "wordpress_site_detail_content" .}}{{end}}
                 {{if eq .ContentTemplate "databases_content"}}{{template "databases_content" .}}{{end}}
@@ -205,4 +206,17 @@
     </div>
 </body>
 </html>
+{{end}}
+
+{{define "sql_restore_progress"}}
+<template x-if="sqlProgress">
+    <div class="mt-1 space-y-1 text-xs text-gray-300">
+        <p x-text="sqlProgress.total_bytes
+            ? t('website.restore_sql_progress', {read: formatBytes(sqlProgress.bytes_read), total: formatBytes(sqlProgress.total_bytes), percent: Math.floor(sqlProgress.bytes_read * 100 / sqlProgress.total_bytes)})
+            : t('website.restore_sql_read', {read: formatBytes(sqlProgress.bytes_read)})"></p>
+        <p x-show="sqlProgress.last_advance_at"
+           x-text="t('website.restore_sql_last_advance', {time: new Date(sqlProgress.last_advance_at * 1000).toLocaleTimeString(currentLocale())})"></p>
+        <p x-show="sqlProgress.waiting">{{t .Lang "website.restore_sql_waiting"}}</p>
+    </div>
+</template>
 {{end}}

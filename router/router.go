@@ -80,6 +80,37 @@ var i18nKeys = []string{
 	"maintenance.operation_unavailable", "maintenance.verification_failed", "maintenance.password_required",
 	"maintenance.lock_mode_required",
 	"maintenance.copied", "maintenance.invalid_configuration",
+	"portable_import.expired",
+	"portable_import.receiving",
+	"portable_import.validating",
+	"portable_import.downloading",
+	"portable_import.resources",
+	"portable_import.files_stage",
+	"portable_import.database",
+	"portable_import.configuration",
+	"portable_import.https",
+	"portable_import.publishing",
+	"portable_import.succeeded",
+	"portable_import.failed",
+	"portable_import.interrupted",
+	"portable_import.empty_log",
+	"portable_import.cleanup_retry",
+	"portable_import.cleanup",
+	"portable_import.confirm_cleanup_retry",
+	"portable_import.confirm_delete_task",
+	"portable_import.confirm_delete_task_resources",
+	"portable_import.submit_not_started",
+	"portable_import.separate",
+	"portable_import.bad_manifest",
+	"portable_import.incomplete",
+	"portable_import.part_uploaded",
+	"portable_import.part_downloaded",
+	"portable_import.part_downloading",
+	"portable_import.part_download_pending",
+	"portable_import.part_verifying",
+	"portable_import.part_uploading",
+	"portable_import.part_resume",
+	"portable_import.part_pending",
 	"auth.connect_failed",
 	"auth.login_failed",
 	"auth.missing_credentials",
@@ -1150,6 +1181,10 @@ var i18nKeys = []string{
 	"website.restore_file_invalid",
 	"website.restore_long_running_help",
 	"website.restore_running_elapsed",
+	"website.restore_sql_progress",
+	"website.restore_sql_read",
+	"website.restore_sql_last_advance",
+	"website.restore_task_unavailable",
 	"website.restore_started",
 	"website.restore_still_running",
 	"website.restore_success",
@@ -1408,7 +1443,7 @@ var i18nKeys = []string{
 	"wp_update_log.event_result_manual",
 }
 
-func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version string, configPath string) *gin.Engine {
+func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version string, configPath string, imports ...*executor.PortableImports) *gin.Engine {
 	panelVersion = version
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -1592,6 +1627,24 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 		c.Next()
 	})
 	protected.Use(middleware.CSRF())
+	portable := executor.NewPortableImports(db, cfg)
+	if len(imports) > 0 && imports[0] != nil {
+		portable = imports[0]
+	}
+	portableHandler := handlers.PortableImportHandler{Service: portable}
+	protected.GET("/api/portable-imports", portableHandler.List)
+	protected.POST("/api/portable-imports", portableHandler.Begin)
+	protected.POST("/api/portable-imports/remote-preview", portableHandler.RemotePreview)
+	protected.POST("/api/portable-imports/:id/remote-submit", portableHandler.RemoteSubmit)
+	protected.GET("/api/portable-imports/:id", portableHandler.Detail)
+	protected.GET("/api/portable-imports/alias-suggestion", portableHandler.AliasSuggestion)
+	protected.PUT("/api/portable-imports/:id/files/:name", portableHandler.Upload)
+	protected.PUT("/api/portable-imports/:id/aliases", portableHandler.SaveUploadAliases)
+	protected.POST("/api/portable-imports/:id/submit", portableHandler.Submit)
+	protected.POST("/api/portable-imports/:id/retry", portableHandler.Retry)
+	protected.POST("/api/portable-imports/:id/retry-plan", portableHandler.RetryPlan)
+	protected.DELETE("/api/portable-imports/:id/record", portableHandler.DeleteTask)
+
 	protected.GET("/api/websites/:id/maintenance", maintenanceHandler.Panel)
 	protected.PUT("/api/websites/:id/maintenance", maintenanceHandler.Panel)
 	protected.POST("/api/websites/:id/maintenance/relock", maintenanceHandler.Panel)
@@ -1859,6 +1912,10 @@ func SetupRouter(cfg *config.Config, tmplFS embed.FS, staticFS embed.FS, version
 	protected.GET("/websites/new", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "website_new.html", pageData(suffix, "websites", "websites_new_content", c))
 	})
+	protected.GET("/websites/new/backup", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "website_portable_import.html", pageData(suffix, "websites", "website_portable_import_content", c))
+	})
+
 	protected.GET("/websites/migration", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "site_migration.html", pageData(suffix, "websites", "site_migration_content", c))
 	})

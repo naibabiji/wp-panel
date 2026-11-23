@@ -16,7 +16,7 @@ var allowedCommands = map[string][]string{
 	"nginx":           {"-t", "-s", "-c"},
 	"nft":             {"add", "delete", "list", "flush", "create", "insert", "set"},
 	"fail2ban-client": {"-t", "--with-time", "set", "unban", "reload", "status", "banip", "start", "stop", "add", "get"},
-	"useradd":         {"-r", "-s", "-d", "-m", "-g", "-M", "-U"},
+	"useradd":         {"-r", "-s", "-d", "-m", "-g", "-M", "-U", "-c"},
 	"userdel":         {"-r", "-f"},
 	"usermod":         {"-a", "-G", "-g"},
 	"groupadd":        {"-r"},

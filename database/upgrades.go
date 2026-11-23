@@ -788,6 +788,28 @@ var upgrades = []Upgrade{
 		Description: "新增自动系统维护策略、动作预算与重启恢复记录",
 		SQL:         systemMaintenanceSchemaStatements,
 	},
+	{
+		Version:     "1.0.72",
+		Description: "新增备份恢复建站任务和临时证书指纹",
+		SQL: []string{
+			portableImportSchema,
+			`ALTER TABLE websites ADD COLUMN ssl_temporary_fingerprint TEXT NOT NULL DEFAULT ''`,
+		},
+	},
+	{
+		Version:     "1.0.73",
+		Description: "保存备份恢复建站任务选择的域名别名",
+		SQL: []string{
+			`ALTER TABLE portable_import_tasks ADD COLUMN aliases TEXT NOT NULL DEFAULT ''`,
+		},
+	},
+	{
+		Version:     "1.0.74",
+		Description: "保存备份恢复任务的残留资源归属",
+		SQL: []string{
+			`ALTER TABLE portable_import_tasks ADD COLUMN cleanup_proof TEXT NOT NULL DEFAULT ''`,
+		},
+	},
 }
 
 func ensureAlertLogAttributionColumn() error {

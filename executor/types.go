@@ -173,4 +173,9 @@ type RestoreBackupPayload struct {
 	UpdateBackupPath string          `json:"-"`
 	ExpectedSHA256   string          `json:"-"`
 	RemoveFileAfter  bool            `json:"remove_file_after"`
+	sqlProgress      sqlRestoreProgress
+}
+
+func (p *RestoreBackupPayload) SQLProgress() *SQLRestoreProgress {
+	return p.sqlProgress.snapshot()
 }

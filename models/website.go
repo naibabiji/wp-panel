@@ -37,6 +37,8 @@ type Website struct {
 	SSLExpiresAt                *time.Time       `json:"ssl_expires_at"`
 	SSLLastError                string           `json:"ssl_last_error"`
 	SSLCertSource               string           `json:"ssl_cert_source"`
+	SSLTemporaryFingerprint     string           `json:"-"`
+	SSLTemporary                bool             `json:"ssl_temporary,omitempty"`
 	SSLExportEnabled            bool             `json:"ssl_export_enabled"`
 	FCacheEnabled               bool             `json:"fastcgi_cache_enabled"`
 	FCacheTTL                   int              `json:"fastcgi_cache_ttl"`

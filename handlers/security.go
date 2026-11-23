@@ -504,7 +504,7 @@ func normalizeSecuritySetting(key string, val interface{}) (string, bool, error)
 		return normalizeRange(key, val, 1, 50)
 	case "wp_sqli_ban_window_seconds":
 		return normalizeRange(key, val, 60, 3600)
-	case "auto_whitelist_enabled", "rate_limit_enabled", "bot_limit_enabled", "wp_sqli_block_enabled", "wp_sqli_autoban_enabled":
+	case "auto_whitelist_enabled", "rate_limit_enabled", "bot_limit_enabled", "wp_sqli_block_enabled", "wp_sqli_autoban_enabled", "telemetry_enabled":
 		v, err := normalizeBool(val)
 		return v, true, err
 	case "whitelist_ips":

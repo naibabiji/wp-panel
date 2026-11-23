@@ -620,7 +620,11 @@ func main() {
 		}
 	}()
 
-	r := router.SetupRouter(cfg, TemplatesFS, StaticFS, Version, *configPath)
+	portableImports := executor.NewPortableImports(database.GetDB(), cfg)
+	portableCtx, stopPortableImports := context.WithCancel(context.Background())
+	defer stopPortableImports()
+	portableImports.Start(portableCtx)
+	r := router.SetupRouter(cfg, TemplatesFS, StaticFS, Version, *configPath, portableImports)
 
 	if cfg.Panel.TLSPort > 0 && cfg.Panel.TLSCertPath != "" && cfg.Panel.TLSKeyPath != "" {
 		go func() {

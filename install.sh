@@ -1478,10 +1478,9 @@ fi
 # ============================================================
 # 最终输出
 # ============================================================
+PANEL_RUNNING=false
 if systemctl is-active --quiet wp-panel; then
-    STATUS="${GREEN}运行中${NC}"
-else
-    STATUS="${RED}未运行${NC}"
+    PANEL_RUNNING=true
 fi
 
 if $REPAIR_MODE; then
@@ -1495,109 +1494,45 @@ if $REPAIR_MODE; then
     REPAIR_COMMITTED=true
 fi
 
-LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-[[ -z "$LOCAL_IP" ]] && LOCAL_IP="<未知>"
+printf '\n%b\n' "${BOLD}WP Panel 安装完成 / Installation Complete${NC}"
+printf '官方网站 / Official Website: https://wp-panel.org\n\n'
 
-PUBLIC_IP=$(curl -s --connect-timeout 5 ip.sb 2>/dev/null || curl -s --connect-timeout 5 ifconfig.me 2>/dev/null)
-[[ -z "$PUBLIC_IP" ]] && PUBLIC_IP="<未知>"
-
-echo ""
-echo -e "${BOLD}============================================${NC}"
-echo -e "${BOLD}  WP Panel 安装完成 / Installation Complete${NC}"
-echo -e "${BOLD}============================================${NC}"
-echo ""
-echo -e "${BOLD}官方来源 / Official Sources:${NC}"
-echo -e "  官网 / Website: ${BOLD}https://wp-panel.org${NC}"
-echo -e "  GitHub:     ${BOLD}https://github.com/naibabiji/wp-panel${NC}"
-echo -e "  其他域名均非本项目官网，与本项目无关。"
-echo -e "  Other domains are not official WP Panel websites."
-echo ""
-echo -e "公网 IP / Public IP:  ${BOLD}${PUBLIC_IP}${NC}"
-echo -e "内网 IP / Private IP: ${BOLD}${LOCAL_IP}${NC}"
-echo ""
-if $REPAIR_MODE; then
-    echo -e "面板地址和两层登录凭据已保持不变，本次repair不重新显示秘密。"
-    echo -e "Panel URL and both login credentials are unchanged. Repair mode does not print secrets again."
-elif [[ "$PUBLIC_IP" != "<未知>" ]]; then
-    echo -e "面板地址 / Panel URL: ${BOLD}https://${PUBLIC_IP}:8443/${PANEL_SUFFIX}/${NC}"
-    if [[ "$LOCAL_IP" != "<未知>" && "$LOCAL_IP" != "$PUBLIC_IP" ]]; then
-        echo -e "内网地址 / LAN URL:   ${BOLD}https://${LOCAL_IP}:8443/${PANEL_SUFFIX}/${NC}"
+if ! $REPAIR_MODE || $REPAIR_SERVICE_WAS_ACTIVE; then
+    if ! $PANEL_RUNNING; then
+        printf '%b\n' "${YELLOW}警告：面板服务未运行。 / Warning: The panel service is not running.${NC}"
+    elif ! $PORT_OK; then
+        printf '%b\n' "${YELLOW}警告：未检测到 TCP 8443 监听。 / Warning: TCP 8443 is not listening.${NC}"
     fi
+    printf '%s\n' "无法访问？检查云安全组是否放行 TCP 8443，或运行 wpp log 查看日志。" \
+        "Can't connect? Check that your cloud firewall allows TCP 8443, or run wpp log to view logs."
+fi
+
+if $REPAIR_MODE; then
+    if ! $REPAIR_SERVICE_WAS_ACTIVE; then
+        printf '%s\n' "面板保持原有停止状态。 / The panel remains stopped."
+    fi
+    printf '%s\n' "已有登录地址和凭据已保留。运行 wpp 查看地址及状态。" \
+        "Existing login details were preserved. Run wpp to view the panel address and status."
 else
-    echo -e "面板地址 / Panel URL: ${BOLD}https://${LOCAL_IP}:8443/${PANEL_SUFFIX}/${NC}"
+    LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+    PUBLIC_IP=$(curl -s --connect-timeout 5 ip.sb 2>/dev/null || curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || true)
+    [[ "$LOCAL_IP" == *:* ]] && LOCAL_IP="[${LOCAL_IP}]"
+    [[ "$PUBLIC_IP" == *:* ]] && PUBLIC_IP="[${PUBLIC_IP}]"
+
+    printf '\n%b\n' "${BOLD}──────────── 面板登录信息 / Panel Login ────────────${NC}"
+    printf '%s\n\n' "请保存登录地址和凭据。密码仅在首次安装时显示。" \
+        "Save the login URLs and credentials. Passwords are shown only on first install."
+    printf '面板地址 / Panel URL: %b%s%b\n' "$BOLD" "https://${PUBLIC_IP:-${LOCAL_IP:-<SERVER_IP>}}:8443/${PANEL_SUFFIX}/" "$NC"
+    if [[ -n "$PUBLIC_IP" && -n "$LOCAL_IP" && "$LOCAL_IP" != "$PUBLIC_IP" ]]; then
+        printf '内网地址 / LAN URL:   %b%s%b\n' "$BOLD" "https://${LOCAL_IP}:8443/${PANEL_SUFFIX}/" "$NC"
+    fi
+
+    printf '\n%s\n' '1. BasicAuth'
+    printf '   用户名 / Username: %b%s%b    密码 / Password: %b%s%b\n' "$BOLD" "$BASIC_USER" "$NC" "$BOLD" "$BASIC_PASS" "$NC"
+    printf '%s\n' '2. Web Login'
+    printf '   用户名 / Username: %b%s%b    密码 / Password: %b%s%b\n' "$BOLD" "$WEB_USER" "$NC" "$BOLD" "$WEB_PASS" "$NC"
+
+    printf '\n%s\n' "首次登录：先输入 BasicAuth，再输入 Web Login。浏览器可能提示自签名证书。" \
+        "First login: Enter BasicAuth first, then Web Login. Your browser may warn about the self-signed certificate."
+    printf '%b\n' "${BOLD}──────────────────────────────────────────────────${NC}"
 fi
-echo -e "面板状态 / Panel Status: ${STATUS}"
-if $PORT_OK; then
-    echo -e "端口监听 / Port:         ${GREEN}8443 is listening${NC}"
-else
-    echo -e "端口监听 / Port:         ${YELLOW}8443 is not listening. Check logs: journalctl -u wp-panel -n 20${NC}"
-fi
-if ! $REPAIR_MODE; then
-    echo ""
-    echo -e "  ┌─────────────────────────────────────────┐"
-    echo -e "  │  第 1 层 / Layer 1 — BasicAuth          │"
-    echo -e "  ├─────────────────────────────────────────┤"
-    echo -e "  │  用户名 / Username: ${BOLD}${BASIC_USER}${NC}"
-    echo -e "  │  密码 / Password:   ${BOLD}${BASIC_PASS}${NC}"
-    echo -e "  └─────────────────────────────────────────┘"
-    echo ""
-    echo -e "  ┌─────────────────────────────────────────┐"
-    echo -e "  │  第 2 层 / Layer 2 — Web Login          │"
-    echo -e "  ├─────────────────────────────────────────┤"
-    echo -e "  │  用户名 / Username: ${BOLD}${WEB_USER}${NC}"
-    echo -e "  │  密码 / Password:   ${BOLD}${WEB_PASS}${NC}"
-    echo -e "  └─────────────────────────────────────────┘"
-    echo ""
-    echo -e "  ${BOLD}登录流程 / Login Steps:${NC}"
-    echo -e "  1. 打开上方地址，输入第 1 层 BasicAuth 凭据"
-    echo -e "     Open the URL above and enter the Layer 1 BasicAuth credentials"
-    echo -e "  2. 进入登录页后，输入第 2 层 Web 登录凭据"
-    echo -e "     On the login page, enter the Layer 2 Web Login credentials"
-    echo -e "  3. 进入控制台 / Enter the dashboard"
-fi
-echo ""
-echo -e "${YELLOW}⚠ 当前使用自签名证书，浏览器会提示「不安全」${NC}"
-echo -e "${YELLOW}  A self-signed certificate is used, so your browser may show a warning.${NC}"
-echo -e "${YELLOW}  请点击「高级」→「继续访问」即可进入面板${NC}"
-echo -e "${YELLOW}  Click Advanced, then continue to the site to open the panel.${NC}"
-echo -e "${YELLOW}  面板使用 8443 端口（HTTPS），与 Nginx 网站 443 端口不冲突${NC}"
-echo -e "${YELLOW}  The panel uses HTTPS port 8443 and does not conflict with Nginx port 443.${NC}"
-echo ""
-echo -e "${BOLD}无法访问？ / Cannot Access?${NC}"
-echo -e "  1. 云服务器请检查安全组/防火墙是否放行 8443 端口"
-echo -e "     For cloud servers, allow port 8443 in the security group/firewall"
-echo -e "  2. 检查本地防火墙 / Check local firewall: ${BOLD}nft list ruleset${NC}"
-echo -e "  3. 查看面板日志 / View panel logs: ${BOLD}journalctl -u wp-panel -f${NC}"
-echo ""
-echo -e "${BOLD}软件安装路径 / Installed Paths:${NC}"
-echo -e "  Nginx:      /etc/nginx/"
-echo -e "  PHP-FPM:    /etc/php/8.3/fpm/"
-echo -e "  MariaDB:    /etc/mysql/"
-echo -e "  Redis:      /etc/redis/"
-echo -e "  面板程序 / Panel binary: /usr/local/bin/wp-panel"
-echo -e "  面板数据 / Panel data:   /www/server/panel/"
-echo -e "  SSL 证书 / SSL certs:    ${CERT_DIR}/"
-echo ""
-echo -e "${BOLD}面板 CLI (wpp):${NC}"
-echo -e "  wpp              查看面板信息 / Show panel info"
-echo -e "  wpp restart      重启面板 / Restart panel"
-echo -e "  wpp password     一键重置管理员密码 / Reset admin password"
-echo -e "  wpp unban        一键清空所有IP封禁 / Clear all IP bans"
-echo -e "  wpp status       查看运行状态 / Show runtime status"
-echo ""
-if ! $REPAIR_MODE; then
-    echo -e "${YELLOW}请立即保存以上凭据，此信息仅显示一次${NC}"
-    echo -e "${YELLOW}Save these credentials now. They are shown only once.${NC}"
-fi
-echo ""
-echo -e "${BOLD}匿名安装统计 / Anonymous Install Telemetry${NC}"
-echo -e "  面板会每天上报一次匿名安装统计，内容仅包含："
-echo -e "  The panel reports anonymous install telemetry once per day. It includes only:"
-echo -e "  机器匿名标识（/etc/machine-id 的 SHA256 哈希）"
-echo -e "  Anonymous machine ID (SHA256 hash of /etc/machine-id)"
-echo -e "  面板版本号 / Panel version"
-echo -e "  不会上报 IP、域名、网站信息等任何敏感数据。"
-echo -e "  It does not report IPs, domains, website data, or other sensitive information."
-echo -e "  如需关闭，请在面板安全设置中关闭。"
-echo -e "  You can disable it in the panel security settings."
-echo ""

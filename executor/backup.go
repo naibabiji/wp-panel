@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -113,6 +114,7 @@ func executeRestoreBackup(task *Task) TaskResult {
 	}
 
 	site := payload.Site
+	defer payload.sqlProgress.set(nil)
 	if site == nil {
 		return TaskResult{Success: false, Message: "恢复失败: 网站不存在"}
 	}
@@ -171,7 +173,8 @@ func executeRestoreBackup(task *Task) TaskResult {
 		defer os.Remove(filePath)
 	}
 
-	if err := validateRestoreBackupFile(filePath); err != nil {
+	totalBytes, err := restoreBackupSQLSize(filePath)
+	if err != nil {
 		return TaskResult{Success: false, Message: "恢复文件校验失败: " + err.Error()}
 	}
 	if err := ClearDatabaseTables(int64(site.ID), site.DBName, dbPass); err != nil {
@@ -180,18 +183,18 @@ func executeRestoreBackup(task *Task) TaskResult {
 
 	ext := strings.ToLower(filepath.Ext(filePath))
 	if ext == ".gz" {
-		return restoreFromGz(filePath, site.DBName, dbPass)
+		return restoreFromGz(filePath, site.DBName, dbPass, totalBytes, &payload.sqlProgress)
 	}
 	if ext == ".sql" {
-		return restoreFromSql(filePath, site.DBName, dbPass)
+		return restoreFromSql(filePath, site.DBName, dbPass, totalBytes, &payload.sqlProgress)
 	}
 	if ext == ".zip" {
-		return restoreFromZip(filePath, site.DBName, dbPass)
+		return restoreFromZip(filePath, site.DBName, dbPass, totalBytes, &payload.sqlProgress)
 	}
 	return TaskResult{Success: false, Message: "不支持的备份文件格式"}
 }
 
-func restoreFromGz(filePath, dbName, dbPass string) TaskResult {
+func restoreFromGz(filePath, dbName, dbPass string, totalBytes int64, progress *sqlRestoreProgress) TaskResult {
 	f, err := os.Open(filePath)
 	if err != nil {
 		log.Printf("读取备份文件失败: %v", err)
@@ -204,20 +207,20 @@ func restoreFromGz(filePath, dbName, dbPass string) TaskResult {
 		return TaskResult{Success: false, Message: "恢复失败，gzip 文件损坏或格式不正确"}
 	}
 	defer gz.Close()
-	return restoreSQLReader(gz, dbName, dbPass)
+	return restoreSQLReader(gz, dbName, dbPass, totalBytes, progress)
 }
 
-func restoreFromSql(filePath, dbName, dbPass string) TaskResult {
+func restoreFromSql(filePath, dbName, dbPass string, totalBytes int64, progress *sqlRestoreProgress) TaskResult {
 	f, err := os.Open(filePath)
 	if err != nil {
 		log.Printf("读取备份文件失败: %v", err)
 		return TaskResult{Success: false, Message: "读取备份文件失败"}
 	}
 	defer f.Close()
-	return restoreSQLReader(f, dbName, dbPass)
+	return restoreSQLReader(f, dbName, dbPass, totalBytes, progress)
 }
 
-func restoreFromZip(filePath, dbName, dbPass string) TaskResult {
+func restoreFromZip(filePath, dbName, dbPass string, totalBytes int64, progress *sqlRestoreProgress) TaskResult {
 	r, err := zip.OpenReader(filePath)
 	if err != nil {
 		log.Printf("解压 zip 失败: %v", err)
@@ -243,11 +246,14 @@ func restoreFromZip(filePath, dbName, dbPass string) TaskResult {
 	}
 	defer rc.Close()
 
-	return restoreSQLReader(rc, dbName, dbPass)
+	return restoreSQLReader(rc, dbName, dbPass, totalBytes, progress)
 }
 
-func restoreSQLReader(r io.Reader, dbName, dbPass string) TaskResult {
-	cmd := exec.Command("mysql", "-u", "root", dbName)
+func restoreSQLReader(r io.Reader, dbName, dbPass string, totalBytes int64, progress *sqlRestoreProgress) TaskResult {
+	return restoreSQLWithClient(r, exec.Command("mysql", "-u", "root", dbName), dbPass, totalBytes, progress)
+}
+
+func restoreSQLWithClient(r io.Reader, cmd *exec.Cmd, dbPass string, totalBytes int64, progress *sqlRestoreProgress) TaskResult {
 	cmd.Env = append(os.Environ(), "MYSQL_PWD="+dbPass)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -265,81 +271,85 @@ func restoreSQLReader(r io.Reader, dbName, dbPass string) TaskResult {
 		_ = cmd.Wait()
 		return TaskResult{Success: false, Message: "恢复失败，初始化 mysql 导入失败: " + err.Error()}
 	}
-	copyErr := filterRestoreSQLBuffered(stdin, r)
+	reader := &sqlRestoreReader{
+		Reader: r, progress: progress, value: SQLRestoreProgress{TotalBytes: totalBytes},
+	}
+	reader.publish(time.Now())
+	copyErr := filterRestoreSQLBuffered(stdin, reader)
 	if copyErr == nil {
 		_, copyErr = io.WriteString(stdin, "\nSET FOREIGN_KEY_CHECKS=1;\n")
 	}
 	closeErr := stdin.Close()
-	if copyErr != nil {
-		waitErr := cmd.Wait()
-		msg := strings.TrimSpace(stderr.String())
-		if msg != "" {
-			log.Printf("恢复失败 mysql pipe: %v; mysql: %s", copyErr, msg)
-			return TaskResult{Success: false, Message: "恢复失败，mysql 导入错误: " + msg}
-		}
-		if waitErr != nil {
-			log.Printf("恢复失败 mysql pipe: %v; wait: %v", copyErr, waitErr)
-			return TaskResult{Success: false, Message: "恢复失败，mysql 导入中断: " + waitErr.Error()}
-		}
-		return TaskResult{Success: false, Message: "恢复失败，写入 mysql 中断: " + copyErr.Error()}
+	if copyErr == nil && closeErr == nil {
+		reader.value.TotalBytes = reader.value.BytesRead
+		reader.value.Waiting = true
+		reader.publish(time.Now())
 	}
-	if closeErr != nil {
-		waitErr := cmd.Wait()
-		msg := strings.TrimSpace(stderr.String())
-		if msg != "" {
-			log.Printf("恢复失败 mysql close: %v; mysql: %s", closeErr, msg)
-			return TaskResult{Success: false, Message: "恢复失败，mysql 导入错误: " + msg}
-		}
-		if waitErr != nil {
-			return TaskResult{Success: false, Message: "恢复失败，mysql 导入中断: " + waitErr.Error()}
-		}
-		return TaskResult{Success: false, Message: "恢复失败，写入 mysql 失败: " + closeErr.Error()}
-	}
-	if err := cmd.Wait(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		log.Printf("恢复失败 mysql: %v: %s", err, msg)
-		return TaskResult{Success: false, Message: "恢复失败，mysql 导入错误: " + msg}
+	waitErr := cmd.Wait()
+	if copyErr != nil || closeErr != nil || waitErr != nil {
+		message := mysqlRestoreErrorMessage(stderr.String())
+		log.Printf("%s（SQL 流错误=%v，客户端关闭错误=%v，客户端退出错误=%v）", message, copyErr, closeErr, waitErr)
+		return TaskResult{Success: false, Message: message}
 	}
 	return TaskResult{Success: true, Message: "数据库恢复成功"}
 }
 
+var mysqlRestoreErrorPattern = regexp.MustCompile(`(?m)^ERROR ([0-9]{4,5})(?: \([0-9A-Z]+\))?(?: at line ([0-9]+))?`)
+
+func mysqlRestoreErrorMessage(stderr string) string {
+	match := mysqlRestoreErrorPattern.FindStringSubmatch(stderr)
+	if match == nil {
+		return "数据库导入失败，无法完成 SQL 读取或 MariaDB 导入"
+	}
+	message := "数据库导入失败，MariaDB 错误 " + match[1]
+	if match[2] != "" {
+		message += "，输入第 " + match[2] + " 行"
+	}
+	if match[1] == "1153" || match[1] == "2020" {
+		message += "，SQL 语句超过客户端或服务器的 max_allowed_packet 限制"
+	}
+	return message
+}
+
 func validateRestoreBackupFile(filePath string) error {
+	_, err := restoreBackupSQLSize(filePath)
+	return err
+}
+
+func restoreBackupSQLSize(filePath string) (int64, error) {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	info, err := os.Stat(filePath)
 	if err != nil {
-		return fmt.Errorf("文件不存在或不可读取")
+		return 0, fmt.Errorf("文件不存在或不可读取")
 	}
 	if info.IsDir() || info.Size() == 0 {
-		return fmt.Errorf("文件为空或格式不正确")
+		return 0, fmt.Errorf("文件为空或格式不正确")
 	}
 
 	switch ext {
 	case ".sql":
 		f, err := os.Open(filePath)
 		if err != nil {
-			return fmt.Errorf("读取 SQL 文件失败")
+			return 0, fmt.Errorf("读取 SQL 文件失败")
 		}
 		defer f.Close()
-		return validateRestoreSQL(f)
+		return validateRestoreSQLSize(f)
 	case ".gz":
 		f, err := os.Open(filePath)
 		if err != nil {
-			return fmt.Errorf("读取 gzip 文件失败")
+			return 0, fmt.Errorf("读取 gzip 文件失败")
 		}
 		defer f.Close()
 		gz, err := gzip.NewReader(f)
 		if err != nil {
-			return fmt.Errorf("gzip 文件损坏或格式不正确")
+			return 0, fmt.Errorf("gzip 文件损坏或格式不正确")
 		}
 		defer gz.Close()
-		return validateRestoreSQL(gz)
+		return validateRestoreSQLSize(gz)
 	case ".zip":
 		zr, err := zip.OpenReader(filePath)
 		if err != nil {
-			return fmt.Errorf("zip 文件损坏或格式不正确")
+			return 0, fmt.Errorf("zip 文件损坏或格式不正确")
 		}
 		defer zr.Close()
 		var sqlFile *zip.File
@@ -350,20 +360,20 @@ func validateRestoreBackupFile(filePath string) error {
 			}
 		}
 		if sqlFile == nil {
-			return fmt.Errorf("zip 文件中未找到 .sql 文件")
+			return 0, fmt.Errorf("zip 文件中未找到 .sql 文件")
 		}
 		rc, err := sqlFile.Open()
 		if err != nil {
-			return fmt.Errorf("读取 zip 内 SQL 文件失败")
+			return 0, fmt.Errorf("读取 zip 内 SQL 文件失败")
 		}
 		defer rc.Close()
-		return validateRestoreSQL(rc)
+		return validateRestoreSQLSize(rc)
 	default:
-		return fmt.Errorf("不支持的备份文件格式")
+		return 0, fmt.Errorf("不支持的备份文件格式")
 	}
 }
 
-func validateRestoreSQL(r io.Reader) error {
+func validateRestoreSQLSize(r io.Reader) (int64, error) {
 	const maxStatementPrefix = 128
 	buf := make([]byte, 32*1024)
 	sawCreateTable := false
@@ -373,9 +383,11 @@ func validateRestoreSQL(r io.Reader) error {
 	inDoubleQuote := false
 	inBacktick := false
 	escaped := false
+	var size int64
 
 	for {
 		n, err := r.Read(buf)
+		size += int64(n)
 		if n > 0 {
 			chunk := string(buf[:n])
 			for _, b := range []byte(chunk) {
@@ -438,14 +450,14 @@ func validateRestoreSQL(r io.Reader) error {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("SQL 文件读取失败")
+			return 0, fmt.Errorf("SQL 文件读取失败")
 		}
 	}
 
 	if !sawCreateTable {
-		return fmt.Errorf("未找到建表语句")
+		return 0, fmt.Errorf("未找到建表语句")
 	}
-	return nil
+	return size, nil
 }
 
 // restoreSQLWriteBufferSize is shared by every database restore entry point
@@ -702,9 +714,11 @@ func ClearDatabaseTables(siteID int64, dbName, dbPass string) error {
 	cmd := exec.Command("mysql", "-u", "root", "-B", "-N", "-e",
 		fmt.Sprintf("SELECT CONCAT('DROP TABLE IF EXISTS `', REPLACE(TABLE_NAME, '`', '``'), '`;') FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '%s' AND TABLE_TYPE = 'BASE TABLE'", dbName))
 	cmd.Env = append(os.Environ(), "MYSQL_PWD="+dbPass)
-	dropSQL, err := cmd.CombinedOutput()
+	var listStderr bytes.Buffer
+	cmd.Stderr = &listStderr
+	dropSQL, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("获取表列表失败: %s", string(dropSQL))
+		return fmt.Errorf("获取表列表失败: %w: %s", err, listStderr.String())
 	}
 
 	mysqlCmd := exec.Command("mysql", "-u", "root", dbName)
