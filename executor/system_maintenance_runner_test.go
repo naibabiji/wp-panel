@@ -528,8 +528,9 @@ func TestMaintenanceInspectionSeparatesRuntimeUnknownFromOtherAttention(t *testi
 		if got.Status != tc.status || got.UnknownUnits != tc.unknown {
 			t.Fatalf("%s: %+v", tc.unit, got)
 		}
-		if triggered, message := checkSystemMaintenance(); !triggered || (tc.unknown == 0 && strings.Contains(message, "运行检查无法确认")) {
-			t.Fatalf("misleading alert for %s: %v %s", tc.unit, triggered, message)
+		kind, message := maintenanceInspectionNotice(got, nil)
+		if (kind != "") != (tc.unknown == 0) || strings.Contains(message, "运行检查无法确认") {
+			t.Fatalf("misleading urgent alert for %s: %s %s", tc.unit, kind, message)
 		}
 	}
 }

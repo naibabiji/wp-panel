@@ -28,6 +28,8 @@ type maintenanceRuntimeSnapshot struct {
 	UnknownUnits   map[string]bool              `json:"unknown_units"`
 	UnknownReasons map[string]string            `json:"unknown_reasons,omitempty"`
 	Unsupported    int                          `json:"unsupported"`
+	budgetOwned    bool
+	pendingAction  bool
 }
 
 const maintenanceMaxUnitFiles = 512

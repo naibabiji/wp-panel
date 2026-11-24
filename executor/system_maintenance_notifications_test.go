@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -20,10 +21,10 @@ func TestMaintenanceMigrationNotificationTracksSuccessfulChannelsOnly(t *testing
 	}
 	// Unconfigured channels must not be marked delivered. Local event logging
 	// is idempotent and does not stop maintenance.
-	if err := notifyMaintenanceActions(context.Background(), db); err != nil {
+	if err := runMaintenanceActionNoticesForTest(db); err != nil {
 		t.Fatal(err)
 	}
-	if err := notifyMaintenanceActions(context.Background(), db); err != nil {
+	if err := runMaintenanceActionNoticesForTest(db); err != nil {
 		t.Fatal(err)
 	}
 	var marker string
@@ -50,24 +51,24 @@ func TestMaintenanceMigrationNotificationTracksSuccessfulChannelsOnly(t *testing
 		return nil
 	}
 	maintenanceSendWebhook = func(string, string) error { webhookCalls++; return nil }
-	if err := notifyMaintenanceActions(context.Background(), db); err != nil {
+	if err := runMaintenanceActionNoticesForTest(db); err != nil {
 		t.Fatal(err)
 	}
 	db.QueryRow(`SELECT notified_status FROM system_maintenance_actions WHERE kind='notice'`).Scan(&marker)
 	if strings.Contains(marker, "mail,") || !strings.Contains(marker, "webhook,") {
 		t.Fatalf("incorrect delivery result: %s", marker)
 	}
-	if err := notifyMaintenanceActions(context.Background(), db); err != nil {
+	if err := runMaintenanceActionNoticesForTest(db); err != nil {
 		t.Fatal(err)
 	}
 	if mailCalls != 1 {
 		t.Fatal("failed channel ignored notification backoff")
 	}
 	f.now = f.now.Add(time.Hour)
-	if err := notifyMaintenanceActions(context.Background(), db); err != nil {
+	if err := runMaintenanceActionNoticesForTest(db); err != nil {
 		t.Fatal(err)
 	}
-	if err := notifyMaintenanceActions(context.Background(), db); err != nil {
+	if err := runMaintenanceActionNoticesForTest(db); err != nil {
 		t.Fatal(err)
 	}
 	if mailCalls != 2 || webhookCalls != 1 {
@@ -95,7 +96,7 @@ func TestMaintenanceFailureReasonsAreTranslatedInBothLanguagesAndNotices(t *test
 		t.Fatal(err)
 	}
 	setSecuritySetting("alert_system_maintenance", "true")
-	if err := notifyMaintenanceActions(context.Background(), database.GetDB()); err != nil {
+	if err := runMaintenanceActionNoticesForTest(database.GetDB()); err != nil {
 		t.Fatal(err)
 	}
 	var message string
@@ -105,4 +106,16 @@ func TestMaintenanceFailureReasonsAreTranslatedInBothLanguagesAndNotices(t *test
 	if strings.Contains(message, "service_verification_failed") || !strings.Contains(message, i18n.T(i18n.DefaultLang, SystemMaintenanceReasonKey("service_verification_failed"))) {
 		t.Fatalf("untranslated notice: %s", message)
 	}
+}
+
+func runMaintenanceActionNoticesForTest(db *sql.DB) error {
+	actions, err := loadMaintenanceActions(db)
+	if err != nil {
+		return err
+	}
+	policy, err := ReadSystemMaintenancePolicy(db)
+	if err != nil {
+		return err
+	}
+	return notifyMaintenanceActions(context.Background(), db, actions, policy, 0)
 }

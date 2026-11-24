@@ -47,6 +47,11 @@ type SystemMaintenanceInspection struct {
 	Unsupported   int    `json:"unsupported"`
 	BudgetBlocked bool   `json:"budget_blocked"`
 	RebootUnknown bool   `json:"reboot_unknown"`
+	sampledAt     time.Time
+	unknownUnits  []string
+	unknownReason string
+	budgetOwned   bool
+	checkFailed   bool
 }
 
 func SnapshotSystemMaintenanceInspection() SystemMaintenanceInspection {
@@ -56,11 +61,23 @@ func SnapshotSystemMaintenanceInspection() SystemMaintenanceInspection {
 }
 
 func recordMaintenanceInspection(s maintenanceRuntimeSnapshot, err error) {
-	v := SystemMaintenanceInspection{Status: "checked", CheckedAt: maintenanceClock().UTC().Format(time.RFC3339), Unsupported: s.Unsupported, BudgetBlocked: s.UnknownUnits["action_budget"], RebootUnknown: s.UnknownUnits["kernel_or_marker"]}
+	v := SystemMaintenanceInspection{Status: "checked", CheckedAt: maintenanceClock().UTC().Format(time.RFC3339), Unsupported: s.Unsupported, BudgetBlocked: s.UnknownUnits["action_budget"], RebootUnknown: s.UnknownUnits["kernel_or_marker"], sampledAt: s.At, budgetOwned: s.budgetOwned}
 	for unit, unknown := range s.UnknownUnits {
 		if unknown && unit != "action_budget" && unit != "kernel_or_marker" {
 			v.UnknownUnits++
+			v.unknownUnits = append(v.unknownUnits, unit)
 		}
+	}
+	sort.Strings(v.unknownUnits)
+	if len(v.unknownUnits) > 0 {
+		v.unknownReason = s.UnknownReasons[v.unknownUnits[0]]
+	}
+	if len(v.unknownUnits) > 3 {
+		v.unknownUnits = v.unknownUnits[:3]
+	}
+	if err != nil {
+		v.sampledAt = time.Time{}
+		v.checkFailed = true
 	}
 	if err != nil || v.UnknownUnits > 0 {
 		v.Status = "unknown"
@@ -68,10 +85,10 @@ func recordMaintenanceInspection(s maintenanceRuntimeSnapshot, err error) {
 		v.Status = "reboot_unknown"
 	} else if v.BudgetBlocked {
 		v.Status = "attention"
+	} else if len(s.Evidence) > 0 || s.pendingAction {
+		v.Status = "waiting"
 	} else if s.At.IsZero() {
 		v.Status = "busy"
-	} else if len(s.Evidence) > 0 {
-		v.Status = "waiting"
 	}
 	maintenanceInspectionMu.Lock()
 	maintenanceInspection = v
@@ -111,6 +128,11 @@ func runSystemMaintenanceTick(cfg *config.Config, force bool) {
 		recordMaintenanceInspection(maintenanceRuntimeSnapshot{}, err)
 		log.Printf("系统自动维护检查未完成: %v", err)
 	}
+	// Evaluate recovery before sending round results so the two paths can
+	// share the round's persisted channel markers for a verified recovery.
+	if err := maintenanceAlerts.run(ctx, database.GetDB()); err != nil {
+		log.Printf("维护通知未完成: %v", err)
+	}
 }
 
 func runMaintenanceCycle(ctx context.Context, cfg *config.Config, force bool) error {
@@ -119,15 +141,15 @@ func runMaintenanceCycle(ctx context.Context, cfg *config.Config, force bool) er
 	if err != nil {
 		return err
 	}
-	if err := notifyMaintenanceActions(ctx, db); err != nil {
-		log.Printf("维护通知未完成: %v", err)
-	}
 	// Accepted actions must be reconciled even if authorization was disabled.
 	actions, err := loadMaintenanceActions(db)
 	if err != nil {
 		return err
 	}
 	if pending, err := recoverMaintenanceActions(ctx, cfg, actions); err != nil || pending {
+		if pending {
+			recordMaintenanceInspection(maintenanceRuntimeSnapshot{}, nil)
+		}
 		return err
 	}
 	if !policy.Enabled {
@@ -155,6 +177,7 @@ func runMaintenanceCycle(ctx context.Context, cfg *config.Config, force bool) er
 	}
 	if round != nil && round.Phase == "install" {
 		status := ReconcileSystemPackageUpdateStatus(cfg)
+		recordMaintenanceInspection(maintenanceRuntimeSnapshot{pendingAction: status.Status == "deferred"}, nil)
 		if status.Status == "running" {
 			maintenanceObserver.previous = maintenanceRuntimeSnapshot{}
 			return nil
@@ -228,6 +251,7 @@ func runMaintenanceCycle(ctx context.Context, cfg *config.Config, force bool) er
 			}
 			recordSystemPackageAutoCheck("update_started", countAPTUpgradablePackages(out), "")
 			maintenanceObserver.previous = maintenanceRuntimeSnapshot{}
+			recordMaintenanceInspection(maintenanceRuntimeSnapshot{}, nil)
 			return nil
 		}
 	}
@@ -250,6 +274,7 @@ func runMaintenanceCycle(ctx context.Context, cfg *config.Config, force bool) er
 	if err != nil {
 		return err
 	}
+	snapshot.pendingAction = len(current) > 0
 	if err := resolveExternallyCompletedMaintenance(ctx, cfg, actions, snapshot); err != nil {
 		return err
 	}
@@ -258,13 +283,14 @@ func runMaintenanceCycle(ctx context.Context, cfg *config.Config, force bool) er
 		return runManualMaintenanceRetry(ctx, cfg, actions, snapshot, stable)
 	}
 	if round == nil {
-		var blocked bool
+		var blocked []maintenanceTarget
 		current, blocked, err = eligibleMaintenanceTargets(db, current, actions)
 		if err != nil {
 			return err
 		}
-		if blocked {
+		if len(blocked) > 0 {
 			snapshot.UnknownUnits["action_budget"] = true
+			snapshot.budgetOwned = maintenanceBlockedActionsOwnNotices(blocked, actions)
 		}
 		recordMaintenanceInspection(snapshot, nil)
 		if len(current) == 0 || (!allowed && !manual) {
@@ -583,12 +609,12 @@ func restartMaintenanceService(ctx context.Context, cfg *config.Config, target m
 	return nil
 }
 
-func eligibleMaintenanceTargets(db *sql.DB, targets []maintenanceTarget, actions []systemMaintenanceAction) ([]maintenanceTarget, bool, error) {
+func eligibleMaintenanceTargets(db *sql.DB, targets []maintenanceTarget, actions []systemMaintenanceAction) ([]maintenanceTarget, []maintenanceTarget, error) {
 	result := make([]maintenanceTarget, 0, len(targets))
-	blocked := false
+	var blocked []maintenanceTarget
 	boot, err := systemPackageBootID()
 	if err != nil {
-		return nil, false, err
+		return nil, nil, err
 	}
 	for _, t := range targets {
 		eligible := true
@@ -620,14 +646,14 @@ func eligibleMaintenanceTargets(db *sql.DB, targets []maintenanceTarget, actions
 			}
 			fresh, err := freshMaintenanceRebootIntent(db, t.Target, evidence, boot)
 			if err != nil {
-				return nil, false, err
+				return nil, nil, err
 			}
 			eligible = fresh
 		}
 		if eligible {
 			result = append(result, t)
 		} else {
-			blocked = true
+			blocked = append(blocked, t)
 		}
 	}
 	return result, blocked, nil

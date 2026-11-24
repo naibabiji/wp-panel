@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/naibabiji/wp-panel/config"
-	"github.com/naibabiji/wp-panel/database"
 	"github.com/naibabiji/wp-panel/i18n"
 )
+
+const maintenanceAlertKey = "alert_system_maintenance"
 
 var maintenanceSendMail = SendMail
 var maintenanceSendWebhook = SendWebhook
@@ -19,20 +19,12 @@ func SystemMaintenanceNotificationsConfigured() bool {
 	return alertSMTPConfigured(GetSMTPConfig()) || webhookConfigured(GetWebhookConfig())
 }
 
-func notifyMaintenanceActions(ctx context.Context, db *sql.DB) error {
-	if !isRuleEnabled("alert_system_maintenance") {
-		return nil
-	}
-	actions, err := loadMaintenanceActions(db)
-	if err != nil {
-		return err
-	}
-	policy, err := ReadSystemMaintenancePolicy(db)
-	if err != nil {
-		return err
-	}
+func notifyMaintenanceActions(ctx context.Context, db *sql.DB, actions []systemMaintenanceAction, policy SystemMaintenancePolicy, awaitingRound int64) error {
 	deliveries := 0
 	for _, a := range actions {
+		if a.ID == awaitingRound {
+			continue
+		}
 		if next, err := time.Parse(time.RFC3339, a.NotifyAfter); err == nil && maintenanceClock().Before(next) {
 			continue
 		}
@@ -56,31 +48,55 @@ func notifyMaintenanceActions(ctx context.Context, db *sql.DB) error {
 		if !eligible {
 			continue
 		}
-		prefix := fmt.Sprintf("%s:%d:", a.Status, a.Attempts)
+		prefix := maintenanceNotificationPrefix(a)
 		sent := a.NotifiedStatus
 		if !strings.HasPrefix(sent, prefix) {
 			sent = prefix
 		}
 		reason := i18n.T(i18n.DefaultLang, SystemMaintenanceReasonKey(a.MessageCode))
-		message := fmt.Sprintf("自动系统维护：%s，%s。", a.Target, reason)
+		title := "自动维护需要关注"
+		message := fmt.Sprintf("自动系统维护：%s，%s。请在设置的系统更新卡片查看动作结果。", a.Target, reason)
 		if a.Kind == "notice" {
+			title = "自动维护设置已迁移"
 			message = "原系统自动安装已升级为完整自动维护：默认按服务器时区 04:00–06:00 安装更新，并在必要时重启服务或服务器；可在设置中关闭或调整。"
 		}
 		if a.Kind == "round" && a.Status == "pending" {
+			title = "自动维护已延期"
 			message = "自动维护连续延期至少 3 天，需要调整任务或时段；阻止原因：" + reason
 		} else if a.Kind == "round" {
+			if a.Status == "succeeded" {
+				title = "自动维护已完成"
+			}
 			message = "自动维护轮次结果：" + reason + "。请在系统更新卡片查看详细结果。"
-			if a.Status == "succeeded" && SnapshotSystemMaintenanceInspection().Status == "unknown" {
-				message += "仍有运行检查无法确认，不代表全部安全修复已生效。"
+			if strings.Contains(sent, "recovered,") {
+				title = "自动维护已完成，告警已解除"
+				message += "后续运行检查已确认此前维护告警解除。"
+				var targets []string
+				for _, child := range actions {
+					if child.RoundID == a.ID && child.Status == "succeeded" && maintenanceTargetName.MatchString(child.Target) {
+						targets = append(targets, child.Target)
+						if len(targets) == 3 {
+							break
+						}
+					}
+				}
+				if len(targets) > 0 {
+					message += "已核验的部分维护目标包括 " + strings.Join(targets, "、") + "。"
+				}
+			} else if a.Status == "succeeded" && SnapshotSystemMaintenanceInspection().Status == "unknown" {
+				message += "仍有运行检查无法确认。"
 			}
 		}
+		if eventAt := maintenanceActionTime(a); !eventAt.IsZero() {
+			message += " 记录时间 " + maintenanceNoticeTime(eventAt) + "。"
+		}
 		if !strings.Contains(sent, "local,") {
-			logAlertEvent("alert_system_maintenance", "info", message, "")
+			logAlertEvent(maintenanceAlertKey, "info", message, "")
 			sent += "local,"
 		}
 		failed := false
 		if smtp := GetSMTPConfig(); alertSMTPConfigured(smtp) && !strings.Contains(sent, "mail,") {
-			if err := maintenanceSendMail("", getPanelTitle()+" 自动维护通知", formatEmailHTML("自动系统维护", message, "", a.Status != "succeeded")); err == nil {
+			if err := maintenanceSendMail("", getPanelTitle()+" "+title, formatEmailHTML(title, message, "", a.Status != "succeeded")); err == nil {
 				sent += "mail,"
 			} else {
 				failed = true
@@ -89,7 +105,7 @@ func notifyMaintenanceActions(ctx context.Context, db *sql.DB) error {
 			deliveries++
 		}
 		if webhookConfigured(GetWebhookConfig()) && !strings.Contains(sent, "webhook,") {
-			if err := maintenanceSendWebhook(getPanelTitle()+" 自动维护通知", message); err == nil {
+			if err := maintenanceSendWebhook(getPanelTitle()+" "+title, message); err == nil {
 				sent += "webhook,"
 			} else {
 				failed = true
@@ -111,44 +127,21 @@ func notifyMaintenanceActions(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func checkSystemMaintenance() (bool, string) {
-	actions, err := loadMaintenanceActions(database.GetDB())
-	if err != nil {
-		return true, "自动维护状态读取失败，无法确认运行结果，请检查面板。"
+func maintenanceNotificationPrefix(a systemMaintenanceAction) string {
+	return fmt.Sprintf("%s:%d:", a.Status, a.Attempts)
+}
+
+func maintenanceActionTime(a systemMaintenanceAction) time.Time {
+	if finished, err := time.Parse(time.RFC3339Nano, a.FinishedAt); err == nil {
+		return finished
 	}
-	count := 0
-	for _, a := range actions {
-		if (a.Kind == "service" || a.Kind == "reboot") && (a.Status == "failed" || a.Status == "unknown") {
-			count++
-		}
+	requested, _ := time.Parse(time.RFC3339Nano, a.RequestedAt)
+	return requested
+}
+
+func maintenanceNoticeTime(at time.Time) string {
+	if location, err := currentMaintenanceLocation(); err == nil {
+		at = at.In(location)
 	}
-	for _, a := range actions {
-		if a.Kind != "round" || !strings.HasPrefix(a.MessageCode, "installation_") || (a.Status != "failed" && a.Status != "unknown") {
-			continue
-		}
-		status := ReadSystemPackageUpdateStatus(config.AppConfig)
-		started, startErr := time.Parse(time.RFC3339, status.StartedAt)
-		roundAt, roundErr := time.Parse(time.RFC3339Nano, a.RequestedAt)
-		if status.Status != "success" || startErr != nil || roundErr != nil || started.Before(roundAt.Add(-2*time.Second)) {
-			count++
-		}
-		break
-	}
-	inspection := SnapshotSystemMaintenanceInspection()
-	if inspection.RebootUnknown {
-		return true, "自动维护无法确认内核或重启标记的状态，请在系统更新卡片查看结果。"
-	}
-	if inspection.BudgetBlocked {
-		return true, "自动维护存在已尝试的目标，需要人工重新检查并重试。"
-	}
-	if inspection.Status == "unknown" {
-		return true, "自动维护的运行检查无法确认，请在系统更新卡片查看状态。"
-	}
-	if inspection.Status == "not_checked" {
-		var status string
-		if err := database.GetDB().QueryRow(`SELECT status FROM alert_runtime_state WHERE alert_type='alert_system_maintenance'`).Scan(&status); err == nil && status == "firing" {
-			return true, "自动维护等待重新检查，尚不能确认此前问题已恢复。"
-		}
-	}
-	return count > 0, fmt.Sprintf("自动维护有 %d 项需要人工关注，请在设置的系统更新卡片查看结果。", count)
+	return at.Format("2006-01-02 15:04 MST")
 }

@@ -85,11 +85,11 @@ func StartAlertMonitor(currentVersion string) {
 		{key: "alert_cron_fail", checkFn: checkCronFail, sendRecovery: true},
 		{key: "alert_site", checkFn: checkSites, sendRecovery: true},
 		{key: "alert_system_update", checkFn: checkSystemUpdate},
-		{key: "alert_system_maintenance", checkFn: checkSystemMaintenance, sendRecovery: true},
 		{key: "alert_panel_update", checkFn: checkPanelUpdate},
 		{key: "alert_wp_fake_search_bot", checkFn: checkWPFakeSearchBotThreshold},
 	}
 	loadAlertRuntimeState(alertMgr.rules)
+	loadAlertRuntimeState([]*alertRule{&maintenanceAlerts.rule})
 	go alertMgr.loop()
 }
 

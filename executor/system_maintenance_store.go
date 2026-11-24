@@ -25,6 +25,7 @@ type systemMaintenanceAction struct {
 	Attempts          int
 	ManualRetry       bool
 	RequestedAt       string
+	FinishedAt        string
 	RoundID           int64
 	MessageCode       string
 	DeferredSince     string
@@ -37,7 +38,7 @@ type systemMaintenanceAction struct {
 
 func loadMaintenanceActions(db *sql.DB) ([]systemMaintenanceAction, error) {
 	rows, err := db.Query(`SELECT id,kind,target,status,evidence_json,last_success_json,boot_id_before,attempts,manual_retry,requested_at,
-		COALESCE(round_id,0),message_code,deferred_since,overtime_allowed,notified_status,deferred_windows,deferred_window_key,notify_after,health_json,phase
+		COALESCE(round_id,0),message_code,deferred_since,overtime_allowed,notified_status,deferred_windows,deferred_window_key,notify_after,health_json,phase,finished_at
 		FROM system_maintenance_actions ORDER BY updated_at DESC,id DESC LIMIT 256`)
 	if err != nil {
 		return nil, err
@@ -47,7 +48,7 @@ func loadMaintenanceActions(db *sql.DB) ([]systemMaintenanceAction, error) {
 	for rows.Next() {
 		var a systemMaintenanceAction
 		if err := rows.Scan(&a.ID, &a.Kind, &a.Target, &a.Status, &a.EvidenceJSON, &a.LastSuccessJSON, &a.BootIDBefore, &a.Attempts, &a.ManualRetry, &a.RequestedAt,
-			&a.RoundID, &a.MessageCode, &a.DeferredSince, &a.OvertimeAllowed, &a.NotifiedStatus, &a.DeferredWindows, &a.DeferredWindowKey, &a.NotifyAfter, &a.HealthJSON, &a.Phase); err != nil {
+			&a.RoundID, &a.MessageCode, &a.DeferredSince, &a.OvertimeAllowed, &a.NotifiedStatus, &a.DeferredWindows, &a.DeferredWindowKey, &a.NotifyAfter, &a.HealthJSON, &a.Phase, &a.FinishedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, a)
