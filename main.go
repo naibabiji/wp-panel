@@ -212,6 +212,18 @@ func main() {
 		return
 	}
 
+	if *updateWatchdog != "" {
+		// Rollback may be needed precisely because the live SQLite database
+		// cannot be opened. An optional handle is only for records and mail.
+		if err := database.Open(cfg.SQLite.Path); err != nil {
+			log.Printf("[更新守护] 无法打开数据库，继续检查及回退: %v", err)
+		} else {
+			defer database.Close()
+		}
+		executor.RunUpdateWatchdog(cfg, *updateWatchdog)
+		return
+	}
+
 	if err := database.Open(cfg.SQLite.Path); err != nil {
 		log.Fatalf("打开数据库失败: %v", err)
 	}
@@ -388,11 +400,6 @@ func main() {
 			log.Print(result.Message)
 			os.Exit(1)
 		}
-		return
-	}
-
-	if *updateWatchdog != "" {
-		executor.RunUpdateWatchdog(cfg, *updateWatchdog)
 		return
 	}
 

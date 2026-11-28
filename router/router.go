@@ -48,6 +48,7 @@ var i18nKeys = []string{
 	"settings.maintenance_retry",
 	"settings.maintenance_retry_confirm",
 	"settings.maintenance_retry_accepted",
+	"settings.maintenance_diagnosis_copied",
 	"settings.maintenance_retry_unavailable",
 	"settings.maintenance_state_not_checked",
 	"settings.maintenance_state_checked",

@@ -305,10 +305,12 @@ func StartPanelAutoUpdateScheduler(currentVersion, configPath string, cfg *confi
 	panelUpdateAutoStarted.Do(func() {
 		go func() {
 			time.Sleep(2 * time.Minute)
+			retryWatchdogRollbackMail(cfg)
 			runPanelAutoUpdateCheck(currentVersion, configPath, cfg)
 			ticker := time.NewTicker(autoUpdateCheckInterval)
 			defer ticker.Stop()
 			for range ticker.C {
+				retryWatchdogRollbackMail(cfg)
 				runPanelAutoUpdateCheck(currentVersion, configPath, cfg)
 			}
 		}()
@@ -351,7 +353,7 @@ func RunUpdateWatchdog(cfg *config.Config, planPath string) {
 		time.Sleep(3 * time.Second)
 		if err := healthCheckVersion(plan.HealthURL, plan.TargetVersion); err == nil {
 			recordPanelUpdateStage(plan.Trigger, plan.TargetVersion, "health_check", "success", "更新后健康检查通过")
-			if plan.Trigger == "auto" {
+			if plan.Trigger == "auto" && detailedNotifications() {
 				sendPanelUpdateMail(true, plan.TargetVersion, "health_check", "自动更新成功，健康检查通过")
 			}
 			setSecuritySetting("panel_auto_update_last_status", "success")
@@ -373,12 +375,18 @@ func RunUpdateWatchdog(cfg *config.Config, planPath string) {
 	if err := copyPanelFile(plan.BackupBinary, panelInstallPath, 0755); err != nil {
 		failMsg := "恢复旧二进制失败: " + err.Error()
 		recordPanelUpdateStage(plan.Trigger, plan.TargetVersion, "rollback_binary", "failed", failMsg)
-		sendPanelUpdateMail(false, plan.TargetVersion, "rollback_binary", failMsg)
+		reportWatchdogRollback(cfg, plan, "rollback_binary", failMsg, nil)
 		return
 	}
 	recordPanelUpdateStage(plan.Trigger, plan.TargetVersion, "rollback_binary", "success", "旧二进制已恢复")
+	var databaseRollbackErr error
+	var reservedMail *watchdogMailReservation
 	if shouldRestoreDBAfterHealthFailure(plan.BackupDB) {
+		if plan.Trigger == "auto" {
+			reservedMail = reserveWatchdogMail()
+		}
 		if err := restoreDBFile(cfg, plan.BackupDB); err != nil {
+			databaseRollbackErr = err
 			recordPanelUpdateStage(plan.Trigger, plan.TargetVersion, "rollback_database", "failed", "恢复数据库失败: "+err.Error())
 		} else {
 			recordPanelUpdateStage(plan.Trigger, plan.TargetVersion, "rollback_database", "success", "数据库备份已恢复")
@@ -387,18 +395,24 @@ func RunUpdateWatchdog(cfg *config.Config, planPath string) {
 	setSecuritySetting("panel_auto_update_last_status", "failed")
 	setSecuritySetting("panel_auto_update_last_stage", "health_check")
 	setSecuritySetting("panel_auto_update_last_error", msg)
-	if plan.Trigger == "auto" {
-		sendPanelUpdateMail(false, plan.TargetVersion, "health_check", msg+"；已尝试回滚旧版本")
-	}
 	if err := exec.Command("systemctl", "restart", "wp-panel").Run(); err != nil {
-		recordPanelUpdateStage(plan.Trigger, plan.CurrentVersion, "rollback_restart", "failed", "恢复旧版本后重启失败: "+err.Error())
+		detail := "恢复旧版本后重启失败: " + err.Error()
+		recordPanelUpdateStage(plan.Trigger, plan.CurrentVersion, "rollback_restart", "failed", detail)
+		reportWatchdogRollback(cfg, plan, "rollback_restart", detail, reservedMail)
 		return
 	}
 	if err := waitForPanelVersion(plan.HealthURL, plan.CurrentVersion, 30*time.Second); err != nil {
-		recordPanelUpdateStage(plan.Trigger, plan.CurrentVersion, "rollback_health", "failed", "旧版本恢复后健康检查失败: "+err.Error())
+		detail := "旧版本恢复后健康检查失败: " + err.Error()
+		recordPanelUpdateStage(plan.Trigger, plan.CurrentVersion, "rollback_health", "failed", detail)
+		reportWatchdogRollback(cfg, plan, "rollback_health", detail, reservedMail)
+		return
+	}
+	if databaseRollbackErr != nil {
+		reportWatchdogRollback(cfg, plan, "rollback_database", "旧版已启动，但数据库回退失败: "+databaseRollbackErr.Error(), reservedMail)
 		return
 	}
 	recordPanelUpdateStage(plan.Trigger, plan.CurrentVersion, "rollback_health", "success", "旧版本进程已恢复并通过健康检查")
+	reportWatchdogRollback(cfg, plan, "rolled_back", msg, reservedMail)
 	_ = os.Remove(planPath)
 }
 
@@ -1202,10 +1216,10 @@ func stageLabel(stage string) string {
 	}
 }
 
-func sendPanelUpdateMail(success bool, targetVersion, stage, message string) {
+func sendPanelUpdateMail(success bool, targetVersion, stage, message string) error {
 	cfg := GetSMTPConfig()
 	if cfg == nil || cfg.Host == "" || cfg.AdminEmail == "" {
-		return
+		return errors.New("自动更新邮件渠道未配置")
 	}
 	status := "失败"
 	if success {
@@ -1220,9 +1234,11 @@ func sendPanelUpdateMail(success bool, targetVersion, stage, message string) {
 <p>详情：%s</p>
 <p style="font-size: 12px; color: #aaa; margin-top: 20px;">来自 %s 面板</p>
 </body></html>`, status, html.EscapeString(targetVersion), html.EscapeString(stageLabel(stage)), html.EscapeString(message), html.EscapeString(getPanelTitle()))
-	if err := SendMail("", getPanelTitle()+" 自动更新"+status, body); err != nil {
+	err := SendMail("", getPanelTitle()+" 自动更新"+status, body)
+	if err != nil {
 		log.Printf("自动更新邮件发送失败: %v", err)
 	}
+	return err
 }
 
 func readSecuritySetting(key string) string {

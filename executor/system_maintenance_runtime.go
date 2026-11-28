@@ -30,6 +30,7 @@ type maintenanceRuntimeSnapshot struct {
 	Unsupported    int                          `json:"unsupported"`
 	budgetOwned    bool
 	pendingAction  bool
+	manualReboot   bool
 }
 
 const maintenanceMaxUnitFiles = 512

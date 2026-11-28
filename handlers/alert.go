@@ -83,6 +83,12 @@ func (h *AlertHandler) SaveSettings(c *gin.Context) {
 
 func normalizeAlertSetting(key string, val interface{}) (string, bool, error) {
 	switch key {
+	case "alert_notification_mode":
+		mode, ok := val.(string)
+		if !ok || (mode != "actionable" && mode != "detailed") {
+			return "", false, fmt.Errorf("通知模式无效")
+		}
+		return mode, true, nil
 	case "smtp_host":
 		v, err := normalizePlainString(val, 300, key)
 		if err != nil {

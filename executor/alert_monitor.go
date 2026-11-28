@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -78,7 +79,6 @@ func StartAlertMonitor(currentVersion string) {
 		{key: "alert_memory", checkFn: checkMemory, thresholdDuration: 5 * time.Minute, sendRecovery: true},
 		{key: "alert_disk", checkFn: checkDisk, sendRecovery: true},
 		{key: "alert_service", checkFn: checkService, sendRecovery: true},
-		{key: "alert_ssl", checkFn: checkSSL, sendRecovery: true},
 		{key: "alert_backup", checkFn: checkBackup, sendRecovery: true},
 		{key: "alert_website_expiry", checkFn: checkWebsiteExpiry, eventOnly: true},
 		{key: "alert_remote_backup", checkFn: checkRemoteBackup, sendRecovery: true},
@@ -123,14 +123,7 @@ func (m *alertManager) runChecks() {
 			siteResultCh <- alertCheckResult{firing: firing, message: message}
 		}()
 	}
-	var sslResultCh chan alertCheckResult
-	if isRuleEnabled("alert_ssl") {
-		sslResultCh = make(chan alertCheckResult, 1)
-		go func() {
-			firing, message := checkSSL()
-			sslResultCh <- alertCheckResult{firing: firing, message: message}
-		}()
-	}
+	go runPublishedSSLAlerts()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -153,13 +146,15 @@ func (m *alertManager) runChecks() {
 		if r.key == "alert_site" && siteResultCh != nil {
 			result := <-siteResultCh
 			instantFiring, msg = result.firing, result.message
-		} else if r.key == "alert_ssl" && sslResultCh != nil {
-			result := <-sslResultCh
-			instantFiring, msg = result.firing, result.message
+
 		} else {
 			instantFiring, msg = r.checkFn()
 		}
 		now := time.Now()
+		if r.key == "alert_system_update" || r.key == "alert_panel_update" {
+			recordAvailableUpdate(r, instantFiring, msg, now, hasSMTP, hasWebhook)
+			continue
+		}
 		if r.eventOnly {
 			if instantFiring {
 				sendAlertMilestone(r.key, msg)
@@ -217,6 +212,25 @@ func (m *alertManager) runChecks() {
 			persistAlertRuntimeState(r)
 		}
 	}
+}
+
+// Update availability is a discovery, not a fault that needs periodic reminders.
+func recordAvailableUpdate(rule *alertRule, available bool, message string, now time.Time, hasSMTP, hasWebhook bool) {
+	if !available || (rule.firing && rule.lastAlertMsg == message) {
+		return
+	}
+	rule.firing = true
+	rule.lastFired = now
+	rule.lastAlertMsg = message
+	logAlertEvent(rule.key, "info", message, "")
+	if detailedNotifications() {
+		deliverAlertNotification(rule.key, message, false, hasSMTP, hasWebhook)
+	}
+	_ = persistAlertRuntimeState(rule)
+}
+
+func detailedNotifications() bool {
+	return readSecuritySetting("alert_notification_mode") == "detailed"
 }
 
 func retryDirtyAlertRuntimeState(r *alertRule) {
@@ -491,22 +505,29 @@ func logAlertEvent(alertType, level, message, attribution string) {
 
 // logAlertWithAttribution 写入告警历史。message 始终是原始告警内容；
 // 只有存在归因时才写 attribution 列。
-func logAlertWithAttribution(alertType, level, message, attribution string, resolved bool) {
+func logAlertWithAttribution(alertType, level, message, attribution string, resolved bool) int64 {
 	db := database.GetDB()
 	if db == nil {
-		return
+		return 0
 	}
 	resolvedValue := 0
 	if resolved {
 		resolvedValue = 1
 	}
+	var result sql.Result
+	var err error
 	if attribution == "" {
-		db.Exec("INSERT INTO alert_log (alert_type, level, message, resolved) VALUES (?, ?, ?, ?)", alertType, level, message, resolvedValue)
+		result, err = db.Exec("INSERT INTO alert_log (alert_type, level, message, resolved) VALUES (?, ?, ?, ?)", alertType, level, message, resolvedValue)
 	} else {
-		db.Exec("INSERT INTO alert_log (alert_type, level, message, resolved, attribution) VALUES (?, ?, ?, ?, ?)", alertType, level, message, resolvedValue, attribution)
+		result, err = db.Exec("INSERT INTO alert_log (alert_type, level, message, resolved, attribution) VALUES (?, ?, ?, ?, ?)", alertType, level, message, resolvedValue, attribution)
 	}
 	// 告警历史按时间保留，避免高频事件在数小时内挤掉所有上下文。
 	db.Exec("DELETE FROM alert_log WHERE created_at < datetime('now', '-90 days')")
+	if err != nil {
+		return 0
+	}
+	id, _ := result.LastInsertId()
+	return id
 }
 
 func getEmailTip(key string, isRecovery bool) string {
@@ -670,73 +691,6 @@ func checkService() (bool, string) {
 		if !s.Running && !s.Paused && s.Restarts > 0 {
 			msgs = append(msgs, fmt.Sprintf("%s 异常（已自动重启 %d 次，最近: %s）", s.Name, s.Restarts, s.LastIncident))
 		}
-	}
-	if len(msgs) > 0 {
-		return true, strings.Join(msgs, "；")
-	}
-	return false, ""
-}
-
-func checkSSL() (bool, string) {
-	db := database.GetDB()
-	rows, err := db.Query(`SELECT domain, ssl_expires_at, COALESCE(ssl_last_error, '')
-		FROM websites WHERE ssl_enabled = 1 AND ssl_expires_at IS NOT NULL`)
-	if err != nil {
-		return false, ""
-	}
-	type sslAlertCandidate struct {
-		domain           string
-		message          string
-		detectCloudflare bool
-		cloudflare       bool
-	}
-	var candidates []sslAlertCandidate
-	now := time.Now()
-	for rows.Next() {
-		var domain, lastError string
-		var expiresAt time.Time
-		if rows.Scan(&domain, &expiresAt, &lastError) != nil {
-			continue
-		}
-		days := int(expiresAt.Sub(now).Hours() / 24)
-		message := ""
-		if days < 0 {
-			message = fmt.Sprintf("%s 证书已过期 %d 天", domain, -days)
-		} else if days <= 14 {
-			message = fmt.Sprintf("%s 证书 %d 天后到期", domain, days)
-		}
-		if message == "" {
-			continue
-		}
-		detectCloudflare := false
-		if strings.TrimSpace(lastError) != "" {
-			message += "，自动续签未成功"
-			detectCloudflare = true
-		}
-		candidates = append(candidates, sslAlertCandidate{domain: domain, message: message, detectCloudflare: detectCloudflare})
-	}
-	rows.Close()
-
-	var wg sync.WaitGroup
-	for i := range candidates {
-		if !candidates[i].detectCloudflare {
-			continue
-		}
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-			candidates[index].cloudflare = cloudflareProxyDetector(candidates[index].domain)
-		}(i)
-	}
-	wg.Wait()
-
-	msgs := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		message := candidate.message
-		if candidate.cloudflare {
-			message += "。可能使用 Cloudflare；Full (strict) 仍需有效源站证书，可放行 ACME 路径或手动上传证书"
-		}
-		msgs = append(msgs, message)
 	}
 	if len(msgs) > 0 {
 		return true, strings.Join(msgs, "；")
@@ -1098,6 +1052,7 @@ func checkSystemUpdate() (bool, string) {
 		return false, ""
 	}
 	names := parseAPTUpgradableNames(string(out))
+	sort.Strings(names)
 
 	sysUpdateCache.mu.Lock()
 	sysUpdateCache.lastAt = time.Now()

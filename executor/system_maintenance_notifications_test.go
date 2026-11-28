@@ -50,7 +50,7 @@ func TestMaintenanceMigrationNotificationTracksSuccessfulChannelsOnly(t *testing
 		}
 		return nil
 	}
-	maintenanceSendWebhook = func(string, string) error { webhookCalls++; return nil }
+	maintenanceSendWebhook = func(*WebhookConfig, string, string) error { webhookCalls++; return nil }
 	if err := runMaintenanceActionNoticesForTest(db); err != nil {
 		t.Fatal(err)
 	}

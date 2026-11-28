@@ -41,17 +41,20 @@ var maintenanceInspectionMu sync.RWMutex
 var maintenanceInspection = SystemMaintenanceInspection{Status: "not_checked"}
 
 type SystemMaintenanceInspection struct {
-	Status        string `json:"status"`
-	CheckedAt     string `json:"checked_at"`
-	UnknownUnits  int    `json:"unknown_units"`
-	Unsupported   int    `json:"unsupported"`
-	BudgetBlocked bool   `json:"budget_blocked"`
-	RebootUnknown bool   `json:"reboot_unknown"`
-	sampledAt     time.Time
-	unknownUnits  []string
-	unknownReason string
-	budgetOwned   bool
-	checkFailed   bool
+	Status          string            `json:"status"`
+	CheckedAt       string            `json:"checked_at"`
+	UnknownUnits    int               `json:"unknown_units"`
+	Unsupported     int               `json:"unsupported"`
+	BudgetBlocked   bool              `json:"budget_blocked"`
+	RebootUnknown   bool              `json:"reboot_unknown"`
+	DiagnosticUnits map[string]string `json:"diagnostic_units,omitempty"`
+	ManualReboot    bool              `json:"manual_reboot,omitempty"`
+	sampledAt       time.Time
+	unknownUnits    []string
+	unknownProblems map[string]string
+	unknownReason   string
+	budgetOwned     bool
+	checkFailed     bool
 }
 
 func SnapshotSystemMaintenanceInspection() SystemMaintenanceInspection {
@@ -61,11 +64,17 @@ func SnapshotSystemMaintenanceInspection() SystemMaintenanceInspection {
 }
 
 func recordMaintenanceInspection(s maintenanceRuntimeSnapshot, err error) {
-	v := SystemMaintenanceInspection{Status: "checked", CheckedAt: maintenanceClock().UTC().Format(time.RFC3339), Unsupported: s.Unsupported, BudgetBlocked: s.UnknownUnits["action_budget"], RebootUnknown: s.UnknownUnits["kernel_or_marker"], sampledAt: s.At, budgetOwned: s.budgetOwned}
+	v := SystemMaintenanceInspection{Status: "checked", CheckedAt: maintenanceClock().UTC().Format(time.RFC3339), Unsupported: s.Unsupported, BudgetBlocked: s.UnknownUnits["action_budget"], RebootUnknown: s.UnknownUnits["kernel_or_marker"], sampledAt: s.At, budgetOwned: s.budgetOwned, ManualReboot: s.manualReboot}
 	for unit, unknown := range s.UnknownUnits {
 		if unknown && unit != "action_budget" && unit != "kernel_or_marker" {
 			v.UnknownUnits++
 			v.unknownUnits = append(v.unknownUnits, unit)
+			if maintenanceServiceTarget.MatchString(unit) {
+				if v.unknownProblems == nil {
+					v.unknownProblems = make(map[string]string)
+				}
+				v.unknownProblems[unit] = s.UnknownReasons[unit]
+			}
 		}
 	}
 	sort.Strings(v.unknownUnits)
@@ -74,6 +83,14 @@ func recordMaintenanceInspection(s maintenanceRuntimeSnapshot, err error) {
 	}
 	if len(v.unknownUnits) > 3 {
 		v.unknownUnits = v.unknownUnits[:3]
+	}
+	if len(v.unknownUnits) > 0 {
+		v.DiagnosticUnits = make(map[string]string, len(v.unknownUnits))
+		for _, unit := range v.unknownUnits {
+			if maintenanceServiceTarget.MatchString(unit) {
+				v.DiagnosticUnits[unit] = s.UnknownReasons[unit]
+			}
+		}
 	}
 	if err != nil {
 		v.sampledAt = time.Time{}
@@ -291,6 +308,13 @@ func runMaintenanceCycle(ctx context.Context, cfg *config.Config, force bool) er
 		if len(blocked) > 0 {
 			snapshot.UnknownUnits["action_budget"] = true
 			snapshot.budgetOwned = maintenanceBlockedActionsOwnNotices(blocked, actions)
+			for _, target := range blocked {
+				// Only an independently verified kernel/marker can support this
+				// manual hint. Unknown library paths never qualify.
+				if target.Kind == "reboot" && target.Target != "runtime" && len(current) == 0 {
+					snapshot.manualReboot = true
+				}
+			}
 		}
 		recordMaintenanceInspection(snapshot, nil)
 		if len(current) == 0 || (!allowed && !manual) {

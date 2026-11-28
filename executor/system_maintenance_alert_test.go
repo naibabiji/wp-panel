@@ -14,6 +14,7 @@ func maintenanceAlertFixture(t *testing.T) (*maintenanceRunnerFixture, *maintena
 	t.Helper()
 	_, f := setupMaintenanceRunner(t)
 	setSecuritySetting(maintenanceAlertKey, "true")
+	setSecuritySetting("alert_notification_mode", "detailed")
 	for key, value := range map[string]string{
 		"smtp_host": "mail.example.test", "smtp_user": "test@example.test",
 		"smtp_pass": "fixture", "admin_email": "admin@example.test",
@@ -25,8 +26,11 @@ func maintenanceAlertFixture(t *testing.T) (*maintenanceRunnerFixture, *maintena
 	t.Cleanup(func() { maintenanceSendMail, maintenanceSendWebhook = oldMail, oldWebhook })
 	var mail, webhook []string
 	maintenanceSendMail = func(_, title, body string) error { mail = append(mail, title+" "+body); return nil }
-	maintenanceSendWebhook = func(title, body string) error { webhook = append(webhook, title+" "+body); return nil }
-	return f, &maintenanceAlertMonitor{rule: alertRule{key: maintenanceAlertKey}, dispatch: func(send func()) { send() }}, &mail, &webhook
+	maintenanceSendWebhook = func(_ *WebhookConfig, title, body string) error {
+		webhook = append(webhook, title+" "+body)
+		return nil
+	}
+	return f, &maintenanceAlertMonitor{rule: alertRule{key: maintenanceAlertKey}}, &mail, &webhook
 }
 
 func TestMaintenanceAlertReplaysWindowAndRequiresFreshRecovery(t *testing.T) {
@@ -82,7 +86,7 @@ func TestMaintenanceAlertReplaysWindowAndRequiresFreshRecovery(t *testing.T) {
 	recordMaintenanceInspection(maintenanceRuntimeSnapshot{}, nil)
 	f.now = f.now.Add(24 * time.Hour)
 	check(2) // Busy never closes an active alert or advances the reminder.
-	monitor = &maintenanceAlertMonitor{rule: alertRule{key: maintenanceAlertKey}, dispatch: func(send func()) { send() }}
+	monitor = &maintenanceAlertMonitor{rule: alertRule{key: maintenanceAlertKey}}
 	loadAlertRuntimeState([]*alertRule{&monitor.rule})
 	check(2)
 	recordMaintenanceInspection(maintenanceRuntimeSnapshot{At: f.now}, nil)
@@ -149,23 +153,23 @@ func TestMaintenanceImmediateReminderAndUrgentEscalation(t *testing.T) {
 	scan(e.Unit, 0)
 	f.now = f.now.Add(10 * time.Minute)
 	scan(e.Unit, 1)
-	f.now = f.now.Add(6*time.Hour - time.Minute)
+	f.now = f.now.Add(6*time.Hour - 11*time.Minute)
 	scan(e.Unit, 1)
 	f.now = f.now.Add(time.Minute)
 	scan(e.Unit, 2)
 	f.now = f.now.Add(24*time.Hour - time.Minute)
 	scan(e.Unit, 2)
 	f.now = f.now.Add(time.Minute)
-	scan(e.Unit, 3)
+	scan(e.Unit, 2)
 	f.now = f.now.Add(time.Minute)
-	scan("kernel_or_marker", 4)
-	scan("kernel_or_marker", 4)
-	if !strings.Contains((*webhook)[3], "内核或重启标记") {
-		t.Fatal((*webhook)[3])
+	scan("kernel_or_marker", 3)
+	scan("kernel_or_marker", 3)
+	if !strings.Contains((*webhook)[2], "内核或重启标记") {
+		t.Fatal((*webhook)[2])
 	}
 }
 
-func TestMaintenanceUrgentReminderRequiresNewEvidence(t *testing.T) {
+func TestMaintenanceUnchangedUrgentEvidenceDoesNotResend(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		unit string
@@ -199,31 +203,27 @@ func TestMaintenanceUrgentReminderRequiresNewEvidence(t *testing.T) {
 			check(1)
 			f.now = f.now.Add(time.Minute)
 			check(1) // The saved observation predates the reminder deadline.
-			monitor = &maintenanceAlertMonitor{rule: alertRule{key: maintenanceAlertKey}, dispatch: func(send func()) { send() }}
+			monitor = &maintenanceAlertMonitor{rule: alertRule{key: maintenanceAlertKey}}
 			loadAlertRuntimeState([]*alertRule{&monitor.rule})
 			recordMaintenanceInspection(maintenanceRuntimeSnapshot{}, nil)
 			check(1) // No new evidence while busy, even after restart.
 			sample()
-			check(2)
-			check(2)
-			if !strings.Contains((*webhook)[1], "自动维护仍需人工关注") {
-				t.Fatal((*webhook)[1])
-			}
+			check(1)
 			f.now = f.now.Add(24 * time.Hour)
 			sample()
-			check(3)
+			check(1)
 		})
 	}
 }
 
-func TestMaintenanceUrgentReadFailureUsesFreshRead(t *testing.T) {
+func TestMaintenanceUnchangedReadFailureDoesNotResend(t *testing.T) {
 	f, monitor, _, webhook := maintenanceAlertFixture(t)
 	db := database.GetDB()
 	readErr := errors.New("fixture read failure")
 	for _, step := range []struct {
 		elapsed time.Duration
 		want    int
-	}{{0, 1}, {23 * time.Hour, 1}, {time.Hour, 2}, {0, 2}} {
+	}{{0, 1}, {23 * time.Hour, 1}, {time.Hour, 1}, {0, 1}} {
 		f.now = f.now.Add(step.elapsed)
 		_, err := monitor.evaluate(db, nil, SystemMaintenanceInspection{Status: "not_checked"},
 			SystemMaintenancePolicy{}, nil, f.now, readErr)
@@ -281,8 +281,8 @@ func TestMaintenanceRoundRecoveryRequiresPostActionSample(t *testing.T) {
 	recordMaintenanceInspection(maintenanceRuntimeSnapshot{At: f.now}, nil)
 	run()
 	run()
-	if len(*mail) != 2 || len(*webhook) != 2 || !strings.Contains((*webhook)[1], "自动维护已完成，告警已解除") {
-		t.Fatalf("expected one combined result: %v", *webhook)
+	if len(*mail) != 3 || len(*webhook) != 3 || !strings.Contains((*webhook)[1], "告警已解除") {
+		t.Fatalf("expected one recovery and a detailed round result: %v", *webhook)
 	}
 	f.now = f.now.Add(time.Minute)
 	routine, err := createMaintenanceRound(db, nil, false, false)
@@ -293,7 +293,202 @@ func TestMaintenanceRoundRecoveryRequiresPostActionSample(t *testing.T) {
 		t.Fatal(err)
 	}
 	run()
-	if len(*webhook) != 3 || strings.Contains((*webhook)[2], "告警已解除") {
+	if len(*webhook) != 4 || strings.Contains((*webhook)[3], "告警已解除") {
 		t.Fatalf("routine success notice: %v", *webhook)
+	}
+}
+
+func TestMaintenanceUnknownDeadlineWithoutRoundSurvivesRestart(t *testing.T) {
+	f, monitor, mail, webhook := maintenanceAlertFixture(t)
+	setSecuritySetting("alert_notification_mode", "actionable")
+	db := database.GetDB()
+	if err := SaveSystemMaintenancePolicy(db, SystemMaintenancePolicy{Enabled: true, Mode: "scheduled", Window: "04:00-06:00"}); err != nil {
+		t.Fatal(err)
+	}
+	location, err := currentMaintenanceLocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.now = time.Date(2026, 11, 23, 7, 0, 0, 0, location)
+	first := f.now
+	run := func() {
+		t.Helper()
+		if err := monitor.run(context.Background(), db); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unknown := maintenanceRuntimeSnapshot{At: first, UnknownUnits: map[string]bool{"cron.service": true}}
+	recordMaintenanceInspection(unknown, nil)
+	run()
+	monitor = &maintenanceAlertMonitor{rule: alertRule{key: maintenanceAlertKey}}
+	loadAlertRuntimeState([]*alertRule{&monitor.rule})
+	recordMaintenanceInspection(maintenanceRuntimeSnapshot{}, nil)
+	f.now = time.Date(2026, 11, 26, 5, 59, 0, 0, location)
+	run()
+	if len(*mail) != 0 {
+		t.Fatalf("reported before the deadline: %v", *mail)
+	}
+	f.now = f.now.Add(time.Minute)
+	run()
+	if len(*mail) != 1 || !strings.Contains((*mail)[0], "复查长期未完成") {
+		t.Fatalf("deadline mail: %v", *mail)
+	}
+	f.now = f.now.Add(time.Minute)
+	setSecuritySetting("admin_email", "new-admin@example.test")
+	unknown.At = f.now
+	recordMaintenanceInspection(unknown, nil)
+	run()
+	f.now = f.now.Add(time.Minute)
+	recordMaintenanceInspection(maintenanceRuntimeSnapshot{At: f.now}, nil)
+	run()
+	if len(*mail) != 1 || len(*webhook) != 2 || !strings.Contains((*webhook)[1], "已解除") {
+		t.Fatalf("recovery must go to the original target only: mail=%v webhook=%v", *mail, *webhook)
+	}
+}
+
+func TestMaintenanceRecoveryRetriesOnlyFailedTargetAfterRestart(t *testing.T) {
+	f, monitor, mail, webhook := maintenanceAlertFixture(t)
+	db := database.GetDB()
+	run := func() {
+		t.Helper()
+		if err := monitor.run(context.Background(), db); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		recordMaintenanceInspection(maintenanceRuntimeSnapshot{
+			At: f.now, UnknownUnits: map[string]bool{"cron.service": true},
+		}, nil)
+		run()
+		f.now = f.now.Add(10 * time.Minute)
+	}
+	send := maintenanceSendMail
+	maintenanceSendMail = func(to, title, body string) error {
+		return errors.New("temporary recovery failure")
+	}
+	recordMaintenanceInspection(maintenanceRuntimeSnapshot{At: f.now}, nil)
+	run()
+	if len(*mail) != 1 || len(*webhook) != 2 || monitor.rule.firing {
+		t.Fatalf("unexpected recovery state: mail=%v webhook=%v", *mail, *webhook)
+	}
+	maintenanceSendMail = send
+	f.now = f.now.Add(time.Hour)
+	monitor = &maintenanceAlertMonitor{rule: alertRule{key: maintenanceAlertKey}}
+	loadAlertRuntimeState([]*alertRule{&monitor.rule})
+	run()
+	run()
+	if len(*mail) != 2 || len(*webhook) != 2 || !strings.Contains((*mail)[1], "已解除") {
+		t.Fatalf("retry should only submit the failed recovery channel: mail=%v webhook=%v", *mail, *webhook)
+	}
+}
+
+func TestMaintenanceUnknownDeadlineWithStaleSnapshot(t *testing.T) {
+	f, monitor, mail, _ := maintenanceAlertFixture(t)
+	setSecuritySetting("alert_notification_mode", "actionable")
+	db := database.GetDB()
+	if err := SaveSystemMaintenancePolicy(db, SystemMaintenancePolicy{Enabled: true, Mode: "immediate", Window: "04:00-06:00"}); err != nil {
+		t.Fatal(err)
+	}
+	first := f.now
+	run := func() {
+		t.Helper()
+		if err := monitor.run(context.Background(), db); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		recordMaintenanceInspection(maintenanceRuntimeSnapshot{
+			At: f.now, UnknownUnits: map[string]bool{"cron.service": true},
+		}, nil)
+		run()
+		f.now = f.now.Add(10 * time.Minute)
+	}
+	// An early APT error leaves the last sample intact rather than clearing it.
+	f.now = first.Add(6*time.Hour - time.Second)
+	run()
+	if len(*mail) != 0 {
+		t.Fatalf("notified before the deadline: %v", *mail)
+	}
+	monitor = &maintenanceAlertMonitor{rule: alertRule{key: maintenanceAlertKey}}
+	loadAlertRuntimeState([]*alertRule{&monitor.rule})
+	f.now = first.Add(6 * time.Hour)
+	run()
+	run()
+	if len(*mail) != 1 || !strings.Contains((*mail)[0], "复查长期未完成") {
+		t.Fatalf("stale sample must trigger one deadline notification: %v", *mail)
+	}
+}
+
+func TestMaintenanceIndependentlyConfirmedProblemsCanNotify(t *testing.T) {
+	for _, mode := range []string{"actionable", "detailed"} {
+		t.Run(mode, func(t *testing.T) {
+			f, monitor, mail, _ := maintenanceAlertFixture(t)
+			setSecuritySetting("alert_notification_mode", mode)
+			db := database.GetDB()
+			if err := SaveSystemMaintenancePolicy(db, SystemMaintenancePolicy{Enabled: true, Mode: "immediate", Window: "04:00-06:00"}); err != nil {
+				t.Fatal(err)
+			}
+			scan := func(cronReason string, extra map[string]string) {
+				t.Helper()
+				units := map[string]bool{"cron.service": true}
+				reasons := map[string]string{"cron.service": cronReason}
+				for unit, reason := range extra {
+					units[unit], reasons[unit] = true, reason
+				}
+				recordMaintenanceInspection(maintenanceRuntimeSnapshot{At: f.now, UnknownUnits: units, UnknownReasons: reasons}, nil)
+				if err := monitor.run(context.Background(), db); err != nil {
+					t.Fatal(err)
+				}
+			}
+			first := f.now
+			scan("mapping_path_missing", nil)
+			f.now = first.Add(10 * time.Minute)
+			scan("mapping_path_missing", nil)
+			f.now = first.Add(6 * time.Hour)
+			scan("mapping_path_missing", nil)
+			original := len(*mail)
+			if original == 0 {
+				t.Fatal("original problem did not notify")
+			}
+
+			f.now = f.now.Add(time.Minute)
+			scan("mapping_path_missing", map[string]string{"transient.service": "mapping_unreadable"})
+			f.now = f.now.Add(time.Minute)
+			scan("mapping_path_missing", nil)
+			if len(*mail) != original {
+				t.Fatalf("a transient object notified: %v", *mail)
+			}
+
+			f.now = f.now.Add(time.Minute)
+			second := f.now
+			extra := map[string]string{"dbus.service": "non_host_view"}
+			scan("mapping_path_missing", extra)
+			scan("mapping_path_missing", extra)
+			if len(*mail) != original {
+				t.Fatalf("a repeated sample confirmed a new problem: %v", *mail)
+			}
+			monitor = &maintenanceAlertMonitor{rule: alertRule{key: maintenanceAlertKey}}
+			loadAlertRuntimeState([]*alertRule{&monitor.rule})
+			f.now = second.Add(10 * time.Minute)
+			scan("mapping_path_missing", extra)
+			f.now = second.Add(6 * time.Hour)
+			scan("mapping_path_missing", extra)
+			f.now = f.now.Add(time.Minute)
+			scan("mapping_path_missing", extra)
+			if len(*mail) != original+1 || !strings.Contains((*mail)[original], "dbus.service") {
+				t.Fatalf("expected a single independent notification: %v", *mail)
+			}
+
+			f.now = f.now.Add(time.Minute)
+			third := f.now
+			scan("mapping_unreadable", extra)
+			f.now = third.Add(10 * time.Minute)
+			scan("mapping_unreadable", extra)
+			f.now = third.Add(6 * time.Hour)
+			scan("mapping_unreadable", extra)
+			if len(*mail) != original+2 || !strings.Contains((*mail)[original+1], "cron.service") {
+				t.Fatalf("expected a single notification for an independent reason: %v", *mail)
+			}
+		})
 	}
 }

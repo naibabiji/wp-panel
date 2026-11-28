@@ -129,6 +129,14 @@
 
         <div class="card">
             <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "alert.rules"}}</h3>
+        <div class="mb-4">
+            <label for="alert-notification-mode" class="block text-sm text-gray-300 mb-1">{{t .Lang "alert.notification_mode"}}</label>
+            <select id="alert-notification-mode" class="input-field text-sm" x-model="notificationMode" @change="saveNotificationMode">
+                <option value="actionable">{{t .Lang "alert.mode_actionable"}}</option>
+                <option value="detailed">{{t .Lang "alert.mode_detailed"}}</option>
+            </select>
+            <p class="text-xs text-gray-500 mt-1">{{t .Lang "alert.notification_mode_help"}}</p>
+        </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
                 <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer mb-3">
@@ -503,6 +511,7 @@ function webhookConfig() {
 function alertManager() {
     return {
         rules: {},
+        notificationMode: "actionable",
         wpSecCfg: { threshold: 10, windowHours: 24 },
         wpSecSaving: false,
         logs: [],
@@ -511,11 +520,12 @@ function alertManager() {
                 const r = await alertSettings();
                 if (r.success) {
                     const d = r.data || {};
+                    this.notificationMode = d.alert_notification_mode === "detailed" ? "detailed" : "actionable";
                     for (const k of Object.keys(d)) {
                         // alert_wp_security_threshold / alert_wp_security_window_hours
                         // 是数值键，不能走布尔 rules 通道，否则 "10" 会被 !== 'false'
                         // 判成 true，下次 save() 又把 true 写回去覆盖数值。
-                        if (k.startsWith('alert_') && k !== 'alert_wp_sqli_probe' && k !== 'alert_wp_security_threshold' && k !== 'alert_wp_security_window_hours') {
+                        if (k.startsWith('alert_') && k !== 'alert_notification_mode' && k !== 'alert_wp_sqli_probe' && k !== 'alert_wp_security_threshold' && k !== 'alert_wp_security_window_hours') {
                             this.rules[k] = d[k] !== 'false';
                         }
                     }
@@ -532,6 +542,14 @@ function alertManager() {
                     body[k] = this.rules[k] ? 'true' : 'false';
                 }
                 await api('/alert/settings', { method: 'PUT', body });
+            } catch(e) {
+                showToast(e.message || t('common.operation_failed'), 'error');
+                await this.fetchAll();
+            }
+        },
+        async saveNotificationMode() {
+            try {
+                await api('/alert/settings', { method: 'PUT', body: { alert_notification_mode: this.notificationMode } });
             } catch(e) {
                 showToast(e.message || t('common.operation_failed'), 'error');
                 await this.fetchAll();

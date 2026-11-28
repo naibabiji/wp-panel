@@ -2,7 +2,9 @@ package executor
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,31 +17,49 @@ import (
 
 var maintenanceAlerts = maintenanceAlertMonitor{rule: alertRule{key: maintenanceAlertKey}}
 
-const maintenanceReminderInterval = 24 * time.Hour
-
 type maintenanceAlertMonitor struct {
 	rule          alertRule
 	pendingSample time.Time
 	pendingReason string
-	dispatch      func(func())
 }
 
 // This value occupies last_message for the maintenance rule only. That rule
 // has no consumer of the previous display text. History still stores plain text
 // and old binaries can load the existing normal/pending/firing row.
 type maintenanceAlertState struct {
-	Kind      string   `json:"kind"`
-	Units     []string `json:"units,omitempty"`
-	ActionIDs []int64  `json:"actions,omitempty"`
-	Reminded  bool     `json:"reminded,omitempty"`
+	Kind           string                               `json:"kind"`
+	Units          []string                             `json:"units,omitempty"`
+	ActionIDs      []int64                              `json:"actions,omitempty"`
+	Reminded       bool                                 `json:"reminded,omitempty"`
+	WindowEnd      time.Time                            `json:"window_end,omitempty"`
+	MailTarget     string                               `json:"mail_target,omitempty"`
+	WebhookTarget  string                               `json:"webhook_target,omitempty"`
+	MailPending    string                               `json:"mail_pending,omitempty"`
+	WebhookPending string                               `json:"webhook_pending,omitempty"`
+	RetryAfter     time.Time                            `json:"retry_after,omitempty"`
+	Recovery       bool                                 `json:"recovery,omitempty"`
+	Title          string                               `json:"title,omitempty"`
+	Detail         string                               `json:"detail,omitempty"`
+	Problems       map[string]maintenanceUnknownProblem `json:"problems"`
+}
+
+type maintenanceUnknownProblem struct {
+	First, Last, WindowEnd time.Time
+	Confirmed, Reported    bool
 }
 
 func (m *maintenanceAlertMonitor) run(ctx context.Context, db *sql.DB) error {
 	retryDirtyAlertRuntimeState(&m.rule)
 	if !isRuleEnabled(maintenanceAlertKey) {
 		disableAlertRule(&m.rule)
+		if m.rule.lastAlertMsg != "" {
+			m.rule.lastAlertMsg = ""
+			if err := persistAlertRuntimeState(&m.rule); err != nil {
+				return err
+			}
+		}
 		m.pendingSample = time.Time{}
-		return nil
+		return cancelPendingMaintenanceNotices(ctx, db)
 	}
 	actions, actionErr := loadMaintenanceActions(db)
 	policy, policyErr := ReadSystemMaintenancePolicy(db)
@@ -53,13 +73,53 @@ func (m *maintenanceAlertMonitor) run(ctx context.Context, db *sql.DB) error {
 	if locationErr != nil && policy.Mode == "scheduled" {
 		reportAlertStateError("维护提醒时区不可用: %v", locationErr)
 	}
-	return notifyMaintenanceActions(ctx, db, actions, policy, awaitingRound)
+	var retry maintenanceAlertState
+	if json.Unmarshal([]byte(m.rule.lastAlertMsg), &retry) == nil &&
+		(m.rule.firing || retry.Recovery) && !retry.RetryAfter.IsZero() && !now.Before(retry.RetryAfter) {
+		m.send(&retry, retry.Title, retry.Detail, !retry.Recovery, false, now)
+		if retry.Recovery && retry.RetryAfter.IsZero() {
+			m.rule.lastAlertMsg = ""
+			if err := persistAlertRuntimeState(&m.rule); err != nil {
+				return err
+			}
+		} else if err := m.saveState(retry); err != nil {
+			return err
+		}
+	}
+	if err := notifyMaintenanceActions(ctx, db, actions, policy, awaitingRound); err != nil {
+		return err
+	}
+	var state maintenanceAlertState
+	if m.rule.firing && json.Unmarshal([]byte(m.rule.lastAlertMsg), &state) == nil && state.Kind == "action" {
+		oldMail, oldWebhook := state.MailTarget, state.WebhookTarget
+		for _, action := range actions {
+			if !slices.Contains(state.ActionIDs, action.ID) {
+				continue
+			}
+			if smtp := GetSMTPConfig(); alertSMTPConfigured(smtp) {
+				target := notificationTarget(strings.TrimSpace(smtp.AdminEmail))
+				if strings.Contains(action.NotifiedStatus, "smtp-target-"+target+",") {
+					state.MailTarget = target
+				}
+			}
+			if webhook := GetWebhookConfig(); webhookConfigured(webhook) {
+				target := notificationTarget(webhook.Channel + "\x00" + strings.TrimSpace(webhook.URL))
+				if strings.Contains(action.NotifiedStatus, "webhook-target-"+target+",") {
+					state.WebhookTarget = target
+				}
+			}
+		}
+		if state.MailTarget != oldMail || state.WebhookTarget != oldWebhook {
+			return m.saveState(state)
+		}
+	}
+	return nil
 }
 
 func (m *maintenanceAlertMonitor) evaluate(db *sql.DB, actions []systemMaintenanceAction, inspection SystemMaintenanceInspection, policy SystemMaintenancePolicy, location *time.Location, now time.Time, readErr error) (int64, error) {
 	r := &m.rule
 	var state maintenanceAlertState
-	if r.firing {
+	if r.firing || !r.pendingSince.IsZero() {
 		// A pre-upgrade row has plain text. Its firing status and time remain
 		// authoritative, but the old text cannot identify an action or unit.
 		_ = json.Unmarshal([]byte(r.lastAlertMsg), &state)
@@ -67,14 +127,8 @@ func (m *maintenanceAlertMonitor) evaluate(db *sql.DB, actions []systemMaintenan
 	packageStatus := ReadSystemPackageUpdateStatus(config.AppConfig)
 	actionIDs, actionPending := maintenanceActiveActions(actions, packageStatus)
 	kind, detail := maintenanceInspectionNotice(inspection, readErr)
-	evidenceAt := inspection.sampledAt
-	if readErr != nil {
-		// The failing read was attempted in this evaluation.
-		evidenceAt = now
-	}
 	if kind == "" && inspection.checkFailed && len(actionIDs) == 0 {
 		kind, detail = "check_failed", "自动维护检查未能完成，运行状态无法确认。"
-		evidenceAt = parseAlertStateTime(inspection.CheckedAt)
 	}
 	if kind != "" {
 		// Independent actionable states take precedence over routine sampling.
@@ -82,10 +136,7 @@ func (m *maintenanceAlertMonitor) evaluate(db *sql.DB, actions []systemMaintenan
 			r.pendingSince = now
 			return 0, m.raise(now, maintenanceAlertState{Kind: kind}, "自动维护需要人工关注", detail)
 		}
-		due := r.lastFired.Add(maintenanceReminderInterval)
-		if !r.lastFired.IsZero() && !now.Before(due) && !evidenceAt.Before(due) {
-			return 0, m.raise(now, state, "自动维护仍需人工关注", detail)
-		}
+
 		return 0, nil
 	}
 	if len(actionIDs) > 0 {
@@ -99,30 +150,72 @@ func (m *maintenanceAlertMonitor) evaluate(db *sql.DB, actions []systemMaintenan
 		// A related round waits for newer evidence before choosing its message.
 		return round.ID, nil
 	}
+	deadline := maintenanceUnknownDeadline(policy, location, r.pendingSince)
+	observing := state.Kind == "unknown" || (!r.firing && !r.pendingSince.IsZero())
+	if observing && !state.Reminded && policy.Enabled && !r.pendingSince.IsZero() &&
+		(inspection.Status == "unknown" || inspection.sampledAt.IsZero()) &&
+		!now.Before(deadline) && inspection.sampledAt.Before(deadline) {
+		state.Kind, state.Reminded = "unknown", true
+		if state.Problems == nil && !inspection.sampledAt.IsZero() {
+			state.Problems = maintenanceBaselineProblems(inspection)
+		}
+		return 0, m.raise(now, state, "自动维护复查长期未完成", "面板一直未取得新的有效运行检查结果。请在设置的系统更新卡片复制诊断并联系管理员。")
+	}
+	if state.Kind == "unknown" && policy.Enabled &&
+		(inspection.Status == "unknown" || inspection.sampledAt.IsZero()) {
+		if units := expireUnverifiedMaintenanceProblems(&state, inspection, policy, location, now); len(units) != 0 {
+			detail := "以下新增问题长期未取得有效复查结果：" + strings.Join(units, "、") + "。请复制诊断并联系管理员。"
+			return 0, m.raise(now, state, "自动维护复查长期未完成", detail)
+		}
+	}
 	if readErr == nil && inspection.Status == "unknown" && !inspection.sampledAt.IsZero() {
 		// Adopt an existing alert without a second first notification on upgrade.
 		if r.firing && state.Kind == "" {
 			r.pendingSince = r.lastFired
 			return 0, m.saveState(maintenanceAlertState{Kind: "unknown", Units: maintenanceKnownUnknownUnits(inspection)})
 		}
+		windowEnd := state.WindowEnd
+		if policy.Mode == "scheduled" && windowEnd.IsZero() {
+			start, end := maintenanceNoticeWindow(policy, location, inspection.sampledAt)
+			if !start.IsZero() && !inspection.sampledAt.Before(start) && inspection.sampledAt.Before(end) {
+				windowEnd = end
+			}
+		}
 		if state.Kind != "unknown" {
+			if m.pendingSample.IsZero() && !r.firing && !r.pendingSince.IsZero() {
+				m.pendingSample, m.pendingReason = r.pendingSince, state.Kind
+			}
 			if m.pendingSample.IsZero() || m.pendingReason != inspection.unknownReason {
 				m.pendingSample, m.pendingReason = inspection.sampledAt, inspection.unknownReason
 				if !r.firing {
 					r.pendingSince = inspection.sampledAt
 				}
-				return 0, persistAlertRuntimeState(r)
+				return 0, m.saveState(maintenanceAlertState{Kind: inspection.unknownReason, WindowEnd: windowEnd})
 			}
 			if !inspection.sampledAt.After(m.pendingSample) {
 				return 0, nil
 			}
 			r.pendingSince = m.pendingSample
-			return 0, m.raise(now, maintenanceAlertState{Kind: "unknown", Units: maintenanceKnownUnknownUnits(inspection)}, "自动维护待确认", maintenanceUnknownNotice(inspection, packageStatus, policy, location, now))
+			state = maintenanceAlertState{Kind: "unknown", Units: maintenanceKnownUnknownUnits(inspection), WindowEnd: windowEnd, Problems: maintenanceBaselineProblems(inspection)}
+			detail := maintenanceUnknownNotice(inspection, packageStatus, policy, location, now)
+			if detailedNotifications() {
+				return 0, m.raise(now, state, "自动维护待确认", detail)
+			}
+			logAlertEvent(maintenanceAlertKey, "info", detail+" 暂时无需操作，面板将继续复查。", "")
+			return 0, m.raise(now, state, "", "")
 		}
-		if maintenanceReminderDue(state, r, policy, location, inspection.sampledAt, now) {
+		windowChanged := !state.WindowEnd.Equal(windowEnd)
+		state.WindowEnd = windowEnd
+		if !state.Reminded && maintenanceReminderDue(state, r, policy, location, inspection.sampledAt, now) {
 			state.Reminded = true
 			state.Units = maintenanceKnownUnknownUnits(inspection)
-			return 0, m.raise(now, state, "自动维护仍待确认", maintenanceUnknownNotice(inspection, packageStatus, policy, location, now))
+			return 0, m.raise(now, state, "自动维护仍待确认", maintenanceUnknownNotice(inspection, packageStatus, policy, location, now)+" 请复制诊断并联系管理员。")
+		}
+		if changed, problems := trackMaintenanceUnknownProblems(&state, inspection, policy, location, now, detailedNotifications()); len(problems) != 0 {
+			detail := "新的运行检查问题仍待确认，涉及 " + strings.Join(problems, "、") + "。请在设置的系统更新卡片复制诊断并联系管理员。"
+			return 0, m.raise(now, state, "自动维护发现新的待确认问题", detail)
+		} else if changed || windowChanged {
+			return 0, m.saveState(state)
 		}
 		return 0, nil
 	}
@@ -143,28 +236,16 @@ func (m *maintenanceAlertMonitor) evaluate(db *sql.DB, actions []systemMaintenan
 	if !inspection.sampledAt.After(r.lastFired) || !inspection.sampledAt.After(lastActionAt) {
 		return 0, nil
 	}
-	if round.ID != 0 {
-		marker := maintenanceNotificationPrefix(round) + "recovered,"
-		result, err := db.Exec(`UPDATE system_maintenance_actions SET notified_status=? WHERE id=? AND notified_status=?`, marker, round.ID, round.NotifiedStatus)
-		if err != nil {
-			return 0, err
-		}
-		if n, err := result.RowsAffected(); err != nil || n != 1 {
-			return 0, errors.Join(err, errors.New("maintenance recovery round changed during notification"))
-		}
-		for i := range actions {
-			if actions[i].ID == round.ID {
-				actions[i].NotifiedStatus = marker
-				break
-			}
-		}
-	}
 	if _, err := db.Exec(`UPDATE alert_log SET resolved=1 WHERE alert_type=? AND resolved=0`, maintenanceAlertKey); err != nil {
 		return 0, err
 	}
 	r.firing, r.pendingSince, r.lastAlertMsg = false, time.Time{}, ""
-	if round.ID == 0 {
-		m.deliver("系统自动维护告警已解除", "后续运行检查已确认此前维护告警解除。检查时间 "+maintenanceNoticeTime(inspection.sampledAt)+"。详情见设置的系统更新卡片。", false)
+	detail = "后续运行检查已确认此前维护告警解除。检查时间 " + maintenanceNoticeTime(inspection.sampledAt) + "。详情见设置的系统更新卡片。"
+	logAlertEvent(maintenanceAlertKey, "info", detail, "")
+	state = maintenanceAlertState{MailTarget: state.MailTarget, WebhookTarget: state.WebhookTarget, Recovery: true}
+	m.send(&state, "系统自动维护告警已解除", detail, false, true, now)
+	if !state.RetryAfter.IsZero() {
+		return 0, m.saveState(state)
 	}
 	return 0, persistAlertRuntimeState(r)
 }
@@ -177,7 +258,9 @@ func (m *maintenanceAlertMonitor) raise(now time.Time, state maintenanceAlertSta
 	r.firing, r.lastFired = true, now
 	m.pendingSample = time.Time{}
 	if title != "" {
-		m.deliver(title, detail+" 首次发现时间 "+maintenanceNoticeTime(r.pendingSince)+"。请在设置的系统更新卡片查看详情。", true)
+		detail += " 首次发现时间 " + maintenanceNoticeTime(r.pendingSince) + "。请在设置的系统更新卡片查看详情。"
+		logAlert(maintenanceAlertKey, "critical", detail)
+		m.send(&state, title, detail, true, true, now)
 	}
 	return m.saveState(state)
 }
@@ -191,35 +274,40 @@ func (m *maintenanceAlertMonitor) saveState(state maintenanceAlertState) error {
 	return persistAlertRuntimeState(&m.rule)
 }
 
-func (m *maintenanceAlertMonitor) deliver(title, detail string, firing bool) {
-	if firing {
-		logAlert(maintenanceAlertKey, "critical", detail)
-	} else {
-		logAlertEvent(maintenanceAlertKey, "info", detail, "")
-	}
-	hasMail, hasWebhook := alertSMTPConfigured(GetSMTPConfig()), webhookConfigured(GetWebhookConfig())
-	if !hasMail && !hasWebhook {
-		return
-	}
+func notificationTarget(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func (m *maintenanceAlertMonitor) send(state *maintenanceAlertState, title, detail string, firing, fresh bool, now time.Time) {
 	subject := getPanelTitle() + " " + title
-	sendMail, sendWebhook := maintenanceSendMail, maintenanceSendWebhook
-	dispatch := m.dispatch
-	if dispatch == nil {
-		dispatch = func(send func()) { go send() }
-	}
-	if hasMail {
-		dispatch(func() {
-			if err := sendMail("", subject, formatEmailHTML(title, detail, "", firing)); err != nil {
+	pendingMail, pendingWebhook := state.MailPending, state.WebhookPending
+	state.MailPending, state.WebhookPending = "", ""
+	if smtp := GetSMTPConfig(); alertSMTPConfigured(smtp) {
+		target := notificationTarget(strings.TrimSpace(smtp.AdminEmail))
+		if (fresh && (firing || target == state.MailTarget)) || (!fresh && target == pendingMail) {
+			if err := maintenanceSendMail(smtp.AdminEmail, subject, formatEmailHTML(title, detail, "", firing)); err != nil {
 				reportAlertStateError("维护邮件发送失败: %v", err)
+				state.MailPending = target
+			} else if firing {
+				state.MailTarget = target
 			}
-		})
+		}
 	}
-	if hasWebhook {
-		dispatch(func() {
-			if err := sendWebhook(subject, detail); err != nil {
+	if webhook := GetWebhookConfig(); webhookConfigured(webhook) {
+		target := notificationTarget(webhook.Channel + "\x00" + strings.TrimSpace(webhook.URL))
+		if (fresh && (firing || target == state.WebhookTarget)) || (!fresh && target == pendingWebhook) {
+			if err := maintenanceSendWebhook(webhook, subject, detail); err != nil {
 				reportAlertStateError("维护 Webhook 发送失败: %v", err)
+				state.WebhookPending = target
+			} else if firing {
+				state.WebhookTarget = target
 			}
-		})
+		}
+	}
+	state.RetryAfter, state.Title, state.Detail = time.Time{}, "", ""
+	if state.MailPending != "" || state.WebhookPending != "" {
+		state.RetryAfter, state.Title, state.Detail = now.Add(time.Hour), title, detail
 	}
 }
 
@@ -297,6 +385,9 @@ func maintenanceUnknownNotice(inspection SystemMaintenanceInspection, packageSta
 	switch inspection.unknownReason {
 	case "mapping_path_missing", "mapping_unreadable", "process_unreadable", "non_host_view":
 		message += "无法从受支持的进程视图核验至少一项文件映射。"
+		if inspection.unknownReason == "mapping_path_missing" {
+			message += "至少一个映射的旧文件路径已不存在，例如升级更换库文件名时会发生这种情况。"
+		}
 	case "package_unconfirmed":
 		message += "至少一项映射无法确认所属软件包。"
 	}
@@ -328,21 +419,125 @@ func maintenanceNoticeWindow(policy SystemMaintenancePolicy, location *time.Loca
 	return windowStart, windowEnd
 }
 
+func maintenanceProblemKeys(inspection SystemMaintenanceInspection) map[string]string {
+	keys := make(map[string]string, len(inspection.unknownProblems))
+	for unit, reason := range inspection.unknownProblems {
+		keys[unit+"\x00"+reason] = unit
+	}
+	return keys
+}
+
+func maintenanceBaselineProblems(inspection SystemMaintenanceInspection) map[string]maintenanceUnknownProblem {
+	problems := make(map[string]maintenanceUnknownProblem)
+	for key := range maintenanceProblemKeys(inspection) {
+		// The enclosing alert owns all problems in its initial sample.
+		problems[key] = maintenanceUnknownProblem{Reported: true}
+	}
+	return problems
+}
+
+func trackMaintenanceUnknownProblems(state *maintenanceAlertState, inspection SystemMaintenanceInspection,
+	policy SystemMaintenancePolicy, location *time.Location, now time.Time, detailed bool,
+) (bool, []string) {
+	if state.Problems == nil {
+		state.Problems = maintenanceBaselineProblems(inspection)
+		return true, nil
+	}
+	keys := maintenanceProblemKeys(inspection)
+	changed := false
+	var ready []string
+	for key, unit := range keys {
+		problem := state.Problems[key]
+		if problem.Reported || !inspection.sampledAt.After(problem.Last) {
+			continue
+		}
+		changed = true
+		problem.Last = inspection.sampledAt
+		if problem.First.IsZero() {
+			problem.First = problem.Last
+		} else {
+			problem.Confirmed = true
+		}
+		if policy.Mode == "scheduled" && problem.WindowEnd.IsZero() {
+			start, end := maintenanceNoticeWindow(policy, location, problem.Last)
+			if !start.IsZero() && !problem.Last.Before(start) && problem.Last.Before(end) {
+				problem.WindowEnd = end
+			}
+		}
+		due := maintenanceProblemDue(problem, policy, location)
+		if problem.Confirmed && (detailed || (policy.Enabled && !now.Before(due) && !problem.Last.Before(due))) {
+			problem.Reported = true
+			ready = append(ready, unit)
+		}
+		state.Problems[key] = problem
+	}
+	for key, problem := range state.Problems {
+		if _, present := keys[key]; !present && !problem.Reported && inspection.sampledAt.After(problem.Last) {
+			delete(state.Problems, key)
+			changed = true
+		}
+	}
+	slices.Sort(ready)
+	return changed, slices.Compact(ready)
+}
+
+func expireUnverifiedMaintenanceProblems(state *maintenanceAlertState, inspection SystemMaintenanceInspection,
+	policy SystemMaintenancePolicy, location *time.Location, now time.Time,
+) []string {
+	var units []string
+	for key, problem := range state.Problems {
+		if problem.Reported || problem.First.IsZero() {
+			continue
+		}
+		due := maintenanceUnknownDeadline(policy, location, problem.First)
+		if now.Before(due) || !inspection.sampledAt.Before(due) {
+			continue
+		}
+		problem.Reported = true
+		state.Problems[key] = problem
+		unit, _, _ := strings.Cut(key, "\x00")
+		units = append(units, unit)
+	}
+	slices.Sort(units)
+	return slices.Compact(units)
+}
+
+func maintenanceProblemDue(problem maintenanceUnknownProblem, policy SystemMaintenancePolicy, location *time.Location) time.Time {
+	due := maintenanceUnknownDeadline(policy, location, problem.First)
+	if policy.Mode == "scheduled" && !problem.WindowEnd.IsZero() && problem.WindowEnd.Add(30*time.Minute).Before(due) {
+		return problem.WindowEnd.Add(30 * time.Minute)
+	}
+	return due
+}
+
+func maintenanceUnknownDeadline(policy SystemMaintenancePolicy, location *time.Location, first time.Time) time.Time {
+	if policy.Mode == "immediate" {
+		return first.Add(6 * time.Hour)
+	}
+	deadline := first.Add(72 * time.Hour)
+	at := first
+	for i := 0; i < 3; i++ {
+		_, end := maintenanceNoticeWindow(policy, location, at)
+		if end.IsZero() {
+			return deadline
+		}
+		at = end
+	}
+	if at.Before(deadline) {
+		return at
+	}
+	return deadline
+}
+
 func maintenanceReminderDue(state maintenanceAlertState, r *alertRule, policy SystemMaintenancePolicy, location *time.Location, sample, now time.Time) bool {
-	if !policy.Enabled || r.lastFired.IsZero() || !sample.After(r.lastFired) {
+	if !policy.Enabled || r.lastFired.IsZero() || r.pendingSince.IsZero() || !sample.After(r.lastFired) {
 		return false
 	}
-	due := r.lastFired.Add(6 * time.Hour)
-	if state.Reminded {
-		due = r.lastFired.Add(maintenanceReminderInterval)
-	} else if policy.Mode == "scheduled" {
-		_, end := maintenanceNoticeWindow(policy, location, r.pendingSince)
-		if end.IsZero() {
-			return false
-		}
-		due = end.Add(30 * time.Minute)
-		if !due.After(r.lastFired) {
-			due = r.lastFired.Add(maintenanceReminderInterval)
+	due := maintenanceUnknownDeadline(policy, location, r.pendingSince)
+	if policy.Mode == "scheduled" && !state.WindowEnd.IsZero() {
+		afterObservedWindow := state.WindowEnd.Add(30 * time.Minute)
+		if afterObservedWindow.Before(due) {
+			due = afterObservedWindow
 		}
 	}
 	return !now.Before(due) && !sample.Before(due)

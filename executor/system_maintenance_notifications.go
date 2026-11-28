@@ -13,7 +13,7 @@ import (
 const maintenanceAlertKey = "alert_system_maintenance"
 
 var maintenanceSendMail = SendMail
-var maintenanceSendWebhook = SendWebhook
+var maintenanceSendWebhook = sendWebhookWithConfig
 
 func SystemMaintenanceNotificationsConfigured() bool {
 	return alertSMTPConfigured(GetSMTPConfig()) || webhookConfigured(GetWebhookConfig())
@@ -21,7 +21,7 @@ func SystemMaintenanceNotificationsConfigured() bool {
 
 func notifyMaintenanceActions(ctx context.Context, db *sql.DB, actions []systemMaintenanceAction, policy SystemMaintenancePolicy, awaitingRound int64) error {
 	deliveries := 0
-	for _, a := range actions {
+	for index, a := range actions {
 		if a.ID == awaitingRound {
 			continue
 		}
@@ -68,22 +68,7 @@ func notifyMaintenanceActions(ctx context.Context, db *sql.DB, actions []systemM
 				title = "自动维护已完成"
 			}
 			message = "自动维护轮次结果：" + reason + "。请在系统更新卡片查看详细结果。"
-			if strings.Contains(sent, "recovered,") {
-				title = "自动维护已完成，告警已解除"
-				message += "后续运行检查已确认此前维护告警解除。"
-				var targets []string
-				for _, child := range actions {
-					if child.RoundID == a.ID && child.Status == "succeeded" && maintenanceTargetName.MatchString(child.Target) {
-						targets = append(targets, child.Target)
-						if len(targets) == 3 {
-							break
-						}
-					}
-				}
-				if len(targets) > 0 {
-					message += "已核验的部分维护目标包括 " + strings.Join(targets, "、") + "。"
-				}
-			} else if a.Status == "succeeded" && SnapshotSystemMaintenanceInspection().Status == "unknown" {
+			if a.Status == "succeeded" && SnapshotSystemMaintenanceInspection().Status == "unknown" {
 				message += "仍有运行检查无法确认。"
 			}
 		}
@@ -94,24 +79,41 @@ func notifyMaintenanceActions(ctx context.Context, db *sql.DB, actions []systemM
 			logAlertEvent(maintenanceAlertKey, "info", message, "")
 			sent += "local,"
 		}
-		failed := false
-		if smtp := GetSMTPConfig(); alertSMTPConfigured(smtp) && !strings.Contains(sent, "mail,") {
-			if err := maintenanceSendMail("", getPanelTitle()+" "+title, formatEmailHTML(title, message, "", a.Status != "succeeded")); err == nil {
-				sent += "mail,"
-			} else {
-				failed = true
-				reportAlertStateError("维护邮件发送失败: %v", err)
+		if a.Kind == "round" && a.Status == "succeeded" && !detailedNotifications() {
+			if !strings.Contains(sent, "panel_only,") {
+				sent += "panel_only,"
 			}
-			deliveries++
 		}
-		if webhookConfigured(GetWebhookConfig()) && !strings.Contains(sent, "webhook,") {
-			if err := maintenanceSendWebhook(getPanelTitle()+" "+title, message); err == nil {
-				sent += "webhook,"
-			} else {
-				failed = true
-				reportAlertStateError("维护 Webhook 发送失败: %v", err)
+		failed := false
+		if smtp := GetSMTPConfig(); alertSMTPConfigured(smtp) && !strings.Contains(sent, "panel_only,") && !strings.Contains(sent, "mail,") {
+			target := notificationTarget(strings.TrimSpace(smtp.AdminEmail))
+			if maintenanceActionTargetEligible(&sent, "smtp", target) {
+				if err := maintenanceSendMail(smtp.AdminEmail, getPanelTitle()+" "+title, formatEmailHTML(title, message, "", a.Status != "succeeded")); err == nil {
+					sent += "mail,smtp-target-" + target + ","
+				} else {
+					sent += "smtp-pending-" + target + ","
+					failed = true
+					reportAlertStateError("维护邮件发送失败: %v", err)
+				}
+				deliveries++
 			}
-			deliveries++
+		} else if !alertSMTPConfigured(smtp) {
+			maintenanceActionTargetEligible(&sent, "smtp", "")
+		}
+		if webhook := GetWebhookConfig(); webhookConfigured(webhook) && !strings.Contains(sent, "panel_only,") && !strings.Contains(sent, "webhook,") {
+			target := notificationTarget(webhook.Channel + "\x00" + strings.TrimSpace(webhook.URL))
+			if maintenanceActionTargetEligible(&sent, "webhook", target) {
+				if err := maintenanceSendWebhook(webhook, getPanelTitle()+" "+title, message); err == nil {
+					sent += "webhook,webhook-target-" + target + ","
+				} else {
+					sent += "webhook-pending-" + target + ","
+					failed = true
+					reportAlertStateError("维护 Webhook 发送失败: %v", err)
+				}
+				deliveries++
+			}
+		} else if !webhookConfigured(webhook) {
+			maintenanceActionTargetEligible(&sent, "webhook", "")
 		}
 		next := ""
 		if failed {
@@ -120,11 +122,56 @@ func notifyMaintenanceActions(ctx context.Context, db *sql.DB, actions []systemM
 		if _, err := db.ExecContext(ctx, `UPDATE system_maintenance_actions SET notified_status=?,notify_after=? WHERE id=? AND status=? AND attempts=?`, sent, next, a.ID, a.Status, a.Attempts); err != nil {
 			return err
 		}
+		actions[index].NotifiedStatus = sent
 		if deliveries >= 4 {
 			break
 		}
 	}
 	return nil
+}
+
+func cancelPendingMaintenanceNotices(ctx context.Context, db *sql.DB) error {
+	actions, err := loadMaintenanceActions(db)
+	if err != nil {
+		return err
+	}
+	for _, action := range actions {
+		if action.NotifyAfter == "" {
+			continue
+		}
+		status := action.NotifiedStatus
+		maintenanceActionTargetEligible(&status, "smtp", "")
+		maintenanceActionTargetEligible(&status, "webhook", "")
+		if status == action.NotifiedStatus {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE system_maintenance_actions
+			SET notified_status=?,notify_after='' WHERE id=? AND notified_status=?`,
+			status, action.ID, action.NotifiedStatus); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func maintenanceActionTargetEligible(status *string, channel, target string) bool {
+	if strings.Contains(*status, channel+"-cancelled,") {
+		return false
+	}
+	prefix := channel + "-pending-"
+	if start := strings.Index(*status, prefix); start >= 0 {
+		end := start + strings.IndexByte((*status)[start:], ',')
+		if end < start {
+			return false
+		}
+		previous := (*status)[start+len(prefix) : end]
+		*status = (*status)[:start] + (*status)[end+1:]
+		if target != previous {
+			*status += channel + "-cancelled,"
+			return false
+		}
+	}
+	return target != ""
 }
 
 func maintenanceNotificationPrefix(a systemMaintenanceAction) string {

@@ -88,7 +88,10 @@ func safeWebhookClient() *http.Client {
 }
 
 func SendWebhook(subject, body string) error {
-	cfg := GetWebhookConfig()
+	return sendWebhookWithConfig(GetWebhookConfig(), subject, body)
+}
+
+func sendWebhookWithConfig(cfg *WebhookConfig, subject, body string) error {
 	if !webhookConfigured(cfg) {
 		return fmt.Errorf("Webhook 未配置")
 	}

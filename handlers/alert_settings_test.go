@@ -100,3 +100,30 @@ func TestSaveAlertSettingsValidatesAndSavesManagedMailLimits(t *testing.T) {
 		t.Fatalf("preset=%q day=%q", preset, day)
 	}
 }
+
+func TestNotificationModeDefaultAndPersistedChoice(t *testing.T) {
+	setupBackupOverviewTestDB(t)
+	db := database.GetDB()
+	if err := database.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	checkMode := func(want string) {
+		t.Helper()
+		var got string
+		err := db.QueryRow(`SELECT svalue FROM security_settings WHERE skey='alert_notification_mode'`).Scan(&got)
+		if err != nil || got != want {
+			t.Fatalf("mode=%q err=%v want=%q", got, err, want)
+		}
+	}
+	checkMode("actionable")
+	if result := saveAlertSettings(t, `{"alert_notification_mode":true}`); result.Code != http.StatusBadRequest {
+		t.Fatalf("invalid mode status=%d", result.Code)
+	}
+	if result := saveAlertSettings(t, `{"alert_notification_mode":"detailed"}`); result.Code != http.StatusOK {
+		t.Fatalf("valid mode status=%d body=%s", result.Code, result.Body.String())
+	}
+	if err := database.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	checkMode("detailed")
+}

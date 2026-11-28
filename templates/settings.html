@@ -49,7 +49,7 @@
             <p class="text-xs text-yellow-400 mt-2" x-show="accountSaved">{{t .Lang "settings.account_saved_logout"}}</p>
         </div>
 
-        <div class="card">
+        <div id="server-settings" class="card">
             <h3 class="text-lg font-semibold text-white mb-4">{{t .Lang "settings.server_settings"}}</h3>
 
             <div class="mb-4">
@@ -260,6 +260,14 @@
                     <p class="text-xs text-gray-500">{{t .Lang "settings.maintenance_window_help"}}</p>
                     <p x-show="!maintenanceNotifications" class="text-xs text-yellow-400">{{t .Lang "settings.maintenance_no_notifications"}}</p>
                     <p class="text-xs text-gray-400" x-text="maintenanceStateText(maintenanceInspection.status)"></p>
+                    <div x-show="maintenanceInspection.status === 'unknown'" class="space-y-1">
+                        <p class="text-xs text-gray-400">{{t .Lang "settings.maintenance_unknown_help"}}</p>
+                        <button type="button" @click="copyMaintenanceDiagnosis()" class="btn-secondary text-xs">{{t .Lang "settings.system_update_removal_copy"}}</button>
+                    </div>
+                    <div x-show="maintenanceInspection.manual_reboot" class="text-xs text-yellow-400">
+                        <p>{{t .Lang "settings.maintenance_manual_reboot_help"}}</p>
+                        <a href="#server-settings" class="underline">{{t .Lang "settings.server_settings"}}</a>
+                    </div>
                     <p x-show="maintenanceUnavailable" class="text-xs text-red-400">{{t .Lang "settings.maintenance_unavailable"}}</p>
                     <template x-for="action in maintenanceActions" :key="action.id">
                         <div class="flex flex-wrap justify-between gap-2 border-t border-gray-700 pt-2 text-xs text-gray-400">
@@ -1120,6 +1128,16 @@ function systemUpdate() {
         maintenanceStateText(status) {
             const states = {not_checked: t('settings.maintenance_state_not_checked'), checked: t('settings.maintenance_state_checked'), waiting: t('settings.maintenance_state_waiting'), busy: t('settings.maintenance_state_busy'), unknown: t('settings.maintenance_state_unknown'), attention: t('settings.maintenance_state_attention'), reboot_unknown: t('settings.maintenance_state_reboot_unknown'), pending: t('settings.maintenance_state_waiting'), requested: t('settings.maintenance_state_requested'), failed: t('settings.maintenance_state_failed'), succeeded: t('settings.maintenance_state_completed')};
             return states[status] || states.unknown;
+        },
+        async copyMaintenanceDiagnosis() {
+            const result = this.maintenanceInspection;
+            const state = this.maintenanceStateText(result.status);
+            const units = Object.entries(result.diagnostic_units || {}).map(([unit, reason]) => unit + ' · ' + reason);
+            const text = [state, this.formatSettingsTime(result.checked_at), ...units].filter(Boolean).join('\n');
+            try {
+                await navigator.clipboard.writeText(text);
+                showToast(t('settings.maintenance_diagnosis_copied'), 'success');
+            } catch(e) { showToast(t('common.operation_failed'), 'error'); }
         },
         async retryMaintenance(action) {
             if (!this.autoInstall || !await confirmModal(t('settings.maintenance_retry_confirm'))) return;

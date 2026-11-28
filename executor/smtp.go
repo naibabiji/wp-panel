@@ -52,7 +52,10 @@ func SendMail(to, subject, body string) error {
 }
 
 func sendMail(to, subject, body string, protectSystemQuota bool) error {
-	cfg := GetSMTPConfig()
+	return sendMailWithConfig(GetSMTPConfig(), to, subject, body, protectSystemQuota)
+}
+
+func sendMailWithConfig(cfg *SMTPConfig, to, subject, body string, protectSystemQuota bool) error {
 	if cfg == nil || cfg.Host == "" || cfg.User == "" || cfg.Pass == "" {
 		return fmt.Errorf("SMTP 未配置")
 	}
@@ -149,9 +152,15 @@ func reserveSystemMailAttempt(db *sql.DB, now time.Time) error {
 	if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
 		limit = parsed
 	}
-	_ = db.QueryRow(`SELECT svalue FROM security_settings WHERE skey='managed_mail_quota_notice_state'`).Scan(&rawState)
+	if err := db.QueryRow(`SELECT svalue FROM security_settings WHERE skey='managed_mail_quota_notice_state'`).Scan(&rawState); err != nil {
+		return err
+	}
 	state := managedMailNoticeState{}
-	_ = json.Unmarshal([]byte(rawState), &state)
+	if rawState != "" {
+		if err := json.Unmarshal([]byte(rawState), &state); err != nil {
+			return err
+		}
+	}
 	day := now.Format("2006-01-02")
 	if state.Day != day {
 		state = managedMailNoticeState{Day: day, Notices: map[string]bool{}}
@@ -167,12 +176,17 @@ func reserveSystemMailAttempt(db *sql.DB, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	result, err := db.Exec(`UPDATE security_settings SET svalue=?,updated_at=CURRENT_TIMESTAMP WHERE skey='managed_mail_quota_notice_state'`, string(encoded))
+	result, err := db.Exec(`UPDATE security_settings SET svalue=?,updated_at=CURRENT_TIMESTAMP
+		WHERE skey='managed_mail_quota_notice_state' AND svalue=?`, string(encoded), rawState)
 	if err != nil {
 		return err
 	}
-	if changed, _ := result.RowsAffected(); changed == 0 {
-		return nil
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return fmt.Errorf("系统邮件额度被其他进程更新，请稍后重试")
 	}
 	return nil
 }
